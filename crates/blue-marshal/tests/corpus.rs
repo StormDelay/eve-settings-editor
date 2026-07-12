@@ -13,8 +13,10 @@ fn collect_dat_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// M0 gate: full decode coverage reached in Task 9 (GLOBAL, INSTANCE,
+/// REDUCE). This is now a permanent regression test — any future corpus
+/// addition or decoder change must keep every file decoding cleanly.
 #[test]
-#[ignore = "M0 gate: un-ignore when Task 9 reaches full corpus coverage"]
 fn every_corpus_file_decodes() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
     let mut files = Vec::new();
