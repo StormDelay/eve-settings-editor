@@ -15,6 +15,21 @@ corpus diffing. No character/account names in this file — numeric IDs only.
 - Corpus contains two anomalous real files worth keeping as edge cases:
   `core_char_('char', None, 'dat').dat` and the tiny `core_char__.dat` /
   `core_user__.dat`.
+- **2026-07-13 — M0 complete.** Format confirmed for the current client;
+  decoder coverage 100% (`bmdump scan`: 5022 files scanned across
+  historical, fresh-baseline, and experiment snapshots, 0 failures; corpus
+  gate test un-ignored and green). Mappings complete: window geometry,
+  overview columns (per-tab), suggestion lists, resolution keys (see
+  *Mappings*). Name decision recorded: local extraction rejected, ESI
+  primary for character IDs (spec §6 revised). Surprises affecting M1:
+  (1) leaf values are `(FILETIME, value)` wrapper tuples — the M1 encoder
+  and mutation layer must preserve/update them; (2) overview column config
+  spans BOTH files (visibility/order per-tab in `core_user`, widths
+  per-char in `core_char`) — the OverviewColumns category is two-file;
+  (3) INSTANCE/REDUCE objects are pervasive (~94% of historical files
+  failed until implemented) — the M1 encoder must re-emit them exactly;
+  (4) geometry is absolute pixels with per-window saved resolution —
+  batch-apply resolution warnings can compare per window, not per file.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
