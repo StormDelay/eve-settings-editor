@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-12
 **Status:** Approved pending user review
-**Audience:** Personal tool shared with friends/corp — "download & run" simplicity, solid robustness, no public-release pipeline.
+**Audience:** Personal tool shared with friends/corp — "download & run" simplicity, solid robustness. No public-release pipeline in V1, but the project is structured so one can be switched on later (see §11).
 
 ## 1. Purpose
 
@@ -114,7 +114,25 @@ Flow: pick a **source** file → choose categories (window layout / overview col
 - ESI character-name resolution in the file picker (network feature; app is otherwise fully offline).
 - Purpose-built overview filter-preset editor.
 
-## 11. Key decisions log
+## 11. Public release path (optional, designed-for)
+
+V1 targets friends/corp, but nothing in the design may block a later public release. Practices adopted **from M1** so the door stays open at near-zero cost:
+
+- **Semantic versioning + tagged releases + changelog** from the first shared build.
+- **CI builds** (GitHub Actions + Tauri's official action) already produce the per-OS artifacts (`.msi`/`.exe`, `.dmg`, `.AppImage`/`.deb`) that a public release would ship — "release" is then just making the artifacts public.
+- **No personal data anywhere in the repo** (already required by §8: local-only corpus, synthetic CI fixtures).
+- **No telemetry, no network calls** in the core app (ESI name lookup, if ever built, stays opt-in) — nothing to disclose or harden later.
+- **Fail-safe file handling** (§5, §7) is already public-grade: unknown/corrupt files can never be corrupted further.
+- **License chosen up front** (MIT, matching EVE community tooling norms) so early corp-mate distribution doesn't create relicensing friction.
+
+Activated **only if/when going public** (tracked, not built):
+
+- **Code signing:** Windows Authenticode certificate and macOS Developer ID + notarization (both cost money/accounts; unsigned builds are acceptable for corp-mates who trust the source). CI is structured so signing is an added step, not a rework.
+- **Auto-update** via the Tauri updater (requires signing keys; pointless before signing exists).
+- **Support surface:** README with install/usage docs, issue templates, and a compatibility statement naming the last EVE client version validated against (M0's checklist becomes the recurring post-patch validation routine).
+- **CCP compliance note:** the tool only edits local settings files — the same ones players already copy by hand — and never touches the client process, network traffic, or game automation; a public README states this scope explicitly.
+
+## 12. Key decisions log
 
 | Decision | Choice | Why |
 |---|---|---|
