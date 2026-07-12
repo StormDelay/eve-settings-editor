@@ -39,7 +39,14 @@ fn scan(dir: &Path) -> ExitCode {
     collect(dir, &mut files);
     let (mut ok, mut failed) = (0u32, 0u32);
     for f in &files {
-        let data = fs::read(f).unwrap_or_default();
+        let data = match fs::read(f) {
+            Ok(d) => d,
+            Err(e) => {
+                failed += 1;
+                println!("FAIL {}: read error: {e}", f.display());
+                continue;
+            }
+        };
         match blue_marshal::decode(&data) {
             Ok(_) => ok += 1,
             Err(e) => {
