@@ -1,0 +1,450 @@
+//! Recursive decoder for a blue-marshal stream. The single entry point is
+//! [`decode`]. Wire-format rules follow `docs/format-notes.md`, whose
+//! "Per-opcode encoding details (verified against marshal.c)" sections are
+//! authoritative; every non-obvious choice below cites the marshal.c line it
+//! was verified against.
+
+use crate::error::{DecodeError, ErrorKind};
+use crate::opcodes as op;
+use crate::reader::Reader;
+use crate::string_table::STRING_TABLE;
+use crate::value::Value;
+
+/// Decode a complete blue-marshal stream into a [`Value`].
+pub fn decode(data: &[u8]) -> Result<Value, DecodeError> {
+    // Header: magic (marshal.c:467) then shared-object map size, read as a
+    // signed i32 LE (marshal.c:478).
+    let mut header = Reader::new(data);
+    let magic = header.read_u8()?;
+    if magic != op::PROTOCOL {
+        return Err(DecodeError { offset: 0, kind: ErrorKind::BadMagic(magic) });
+    }
+    let shared_count = header.read_u32()? as i32;
+    if shared_count < 0 {
+        // Non-negative in practice; a negative map size is malformed. No new
+        // ErrorKind variant per task constraints.
+        return Err(DecodeError { offset: 1, kind: ErrorKind::Unsupported("negative shared count") });
+    }
+    let shared_count = shared_count as usize;
+
+    // The last `shared_count * 4` bytes are the tail map; the object stream
+    // (and every payload read) must stop at its start (marshal.c:489-502).
+    // Bound the payload Reader to `data[..end]` so reads cannot spill into the
+    // map, while map entries are read separately from the full `data` slice.
+    // `end >= 5` also covers marshal.c:482's "room for map" check.
+    let map_start = data
+        .len()
+        .checked_sub(shared_count * 4)
+        .filter(|&end| end >= 5)
+        .ok_or(DecodeError { offset: 1, kind: ErrorKind::UnexpectedEof })?;
+
+    let mut r = Reader::new(&data[..map_start]);
+    r.read_bytes(5)?; // skip the header we already parsed (safe: map_start >= 5)
+
+    let mut dec = Decoder {
+        shared: vec![None; shared_count],
+        shared_next: 0,
+        data,
+    };
+    dec.load(&mut r)
+}
+
+struct Decoder<'a> {
+    /// Shared-object slots, indexed by (map entry - 1). `None` until stored.
+    shared: Vec<Option<Value>>,
+    /// Encounter counter: index of the next tail-map entry to consume.
+    shared_next: usize,
+    /// Full stream, used only to read tail-map slot numbers.
+    data: &'a [u8],
+}
+
+/// Opcodes for which the reference actually stores a shared object when
+/// SHARED_FLAG is set (CHECK_SHARED / NEW_SEQUENCE call sites: LONG @602,
+/// STRINGL/BUFFER/STREAM @667, LIST0 @714, DICT @733/739, and the
+/// TUPLE/LIST containers via NEW_SEQUENCE @212). Note the asymmetry: LIST0 is
+/// eligible but TUPLE0/STRING0/UNICODE0 are served from the constants table
+/// (marshal.c:1246 etc.) and are NOT eligible. On every other opcode the flag
+/// is silently ignored, so we must not consume a map slot for it.
+/// GLOBAL/DBROW/INSTANCE/NEWOBJ/REDUCE are also eligible in the reference but
+/// are Unsupported in this task, so they error before any store matters.
+fn stores_shared(code: u8) -> bool {
+    matches!(
+        code,
+        op::LONG
+            | op::STRINGL
+            | op::BUFFER
+            | op::STREAM
+            | op::LIST0
+            | op::DICT
+            | op::TUPLE
+            | op::TUPLE1
+            | op::TUPLE2
+            | op::LIST
+            | op::LIST1
+    )
+}
+
+impl<'a> Decoder<'a> {
+    /// Consume the next tail-map entry (marshal.c STORE/RESERVE_SLOT, 111-139)
+    /// and return the 1-based slot it designates. Called at the object's
+    /// *encounter* (container-open) time, before its children decode, so
+    /// nested shared objects take later map entries than their parent.
+    fn reserve_slot(&mut self, at: usize) -> Result<usize, DecodeError> {
+        let n = self.shared.len();
+        if self.shared_next >= n {
+            // More shared-flagged objects than the map has room for
+            // (marshal.c:113/131 overflow).
+            return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(self.shared_next + 1) });
+        }
+        let start = self.data.len() - n * 4 + self.shared_next * 4;
+        let slot = i32::from_le_bytes(self.data[start..start + 4].try_into().unwrap());
+        self.shared_next += 1;
+        // Map entries must be 1..=shared_mapsize (marshal.c:492-499);
+        // validated here lazily per-reservation rather than upfront.
+        if slot < 1 || slot as usize > n {
+            return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(slot as usize) });
+        }
+        Ok(slot as usize)
+    }
+
+    fn load(&mut self, r: &mut Reader<'a>) -> Result<Value, DecodeError> {
+        let raw = r.read_u8()?;
+        let opcode_offset = r.pos() - 1;
+        // Reference masks only SHARED_FLAG (0x40) before dispatch
+        // (marshal.c:525-526); a set 0x80 bit stays in `code` and falls out as
+        // an UnknownOpcode below.
+        let shared = raw & op::SHARED_FLAG != 0;
+        let code = raw & !op::SHARED_FLAG;
+
+        // Reserve the shared slot BEFORE decoding payload/children, but only on
+        // opcodes the reference actually stores — matching its encounter-order
+        // slot assignment. The completed value is written back afterwards.
+        let slot = if shared && stores_shared(code) {
+            Some(self.reserve_slot(opcode_offset)?)
+        } else {
+            None
+        };
+
+        let value = self.load_op(code, r, opcode_offset)?;
+
+        if let Some(slot) = slot {
+            self.shared[slot - 1] = Some(value.clone());
+        }
+        Ok(value)
+    }
+
+    fn load_op(&mut self, code: u8, r: &mut Reader<'a>, at: usize) -> Result<Value, DecodeError> {
+        Ok(match code {
+            op::NONE => Value::None,
+            op::TRUE => Value::Bool(true),
+            op::FALSE => Value::Bool(false),
+            op::MINUSONE => Value::Int(-1),
+            op::ZERO => Value::Int(0),
+            op::ONE => Value::Int(1),
+            op::INT8 => Value::Int(r.read_u8()? as i8 as i64),
+            op::INT16 => Value::Int(r.read_u16()? as i16 as i64),
+            op::INT32 => Value::Int(r.read_u32()? as i32 as i64),
+            op::INT64 => Value::Int(r.read_i64()?),
+            op::FLOAT => Value::Float(r.read_f64()?),
+            op::FLOAT0 => Value::Float(0.0),
+            // LONG (marshal.c:592-604): READ_LENGTH byte count of a
+            // little-endian two's-complement integer; raw bytes kept as-is.
+            op::LONG => {
+                let n = r.read_len()?;
+                Value::Long(r.read_bytes(n)?.to_vec())
+            }
+            op::STRING0 => Value::Bytes(vec![]),
+            op::STRING1 => Value::Bytes(r.read_bytes(1)?.to_vec()),
+            // STRING (0x10, marshal.c:643-650) is NOT in `needlength`; it reads
+            // its own bare one-byte count with no 0xFF escape.
+            op::STRING => {
+                let n = r.read_u8()? as usize;
+                Value::Bytes(r.read_bytes(n)?.to_vec())
+            }
+            // STRINGL/BUFFER share one body (marshal.c:658-668): READ_LENGTH
+            // raw bytes. (STREAM shares it too but we recurse — see below.)
+            op::STRINGL | op::BUFFER => {
+                let n = r.read_len()?;
+                Value::Bytes(r.read_bytes(n)?.to_vec())
+            }
+            // STRINGR (marshal.c:630-641): count is a DIRECT index into the
+            // fixed table; index 0 and >= table size are rejected. Our
+            // STRING_TABLE has index 0 = "" placeholder so wire indices map
+            // straight through.
+            op::STRINGR => {
+                let idx = r.read_len()?;
+                if idx < 1 || idx >= STRING_TABLE.len() {
+                    return Err(DecodeError { offset: at, kind: ErrorKind::BadStringRef(idx) });
+                }
+                Value::Str(STRING_TABLE[idx].to_string())
+            }
+            op::UNICODE0 => Value::Str(String::new()),
+            // UNICODE1 = exactly one UTF-16LE unit (2 bytes, no count);
+            // UNICODE = count code units, payload count*2 bytes (marshal.c:670-688).
+            op::UNICODE1 | op::UNICODE => {
+                let units = if code == op::UNICODE1 { 1 } else { r.read_len()? };
+                let bytes = r.read_bytes(units * 2)?;
+                let u16s: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&u16s)
+                    .map(Value::Str)
+                    .map_err(|_| DecodeError { offset: at, kind: ErrorKind::BadUtf8 })?
+            }
+            // UTF8 (marshal.c:690-694): READ_LENGTH byte count of UTF-8 bytes.
+            op::UTF8 => {
+                let n = r.read_len()?;
+                let bytes = r.read_bytes(n)?;
+                std::str::from_utf8(bytes)
+                    .map(|s| Value::Str(s.to_string()))
+                    .map_err(|_| DecodeError { offset: at, kind: ErrorKind::BadUtf8 })?
+            }
+            op::TUPLE0 => Value::Tuple(vec![]),
+            op::TUPLE1 => Value::Tuple(vec![self.load(r)?]),
+            op::TUPLE2 => {
+                let a = self.load(r)?;
+                let b = self.load(r)?;
+                Value::Tuple(vec![a, b])
+            }
+            op::TUPLE => {
+                let n = r.read_len()?;
+                let mut items = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    items.push(self.load(r)?);
+                }
+                Value::Tuple(items)
+            }
+            op::LIST0 => Value::List(vec![]),
+            op::LIST1 => Value::List(vec![self.load(r)?]),
+            op::LIST => {
+                let n = r.read_len()?;
+                let mut items = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    items.push(self.load(r)?);
+                }
+                Value::List(items)
+            }
+            // DICT (marshal.c:725-741 + POPULATE_DICT 182): count entries, each
+            // encoded value-first then key; normalized to (key, value).
+            op::DICT => {
+                let n = r.read_len()?;
+                let mut entries = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    let value = self.load(r)?; // wire order: value first
+                    let key = self.load(r)?;
+                    entries.push((key, value));
+                }
+                Value::Dict(entries)
+            }
+            // REF (marshal.c:748-764): 1-based index into the shared table;
+            // out of range or not-yet-populated -> BadRef.
+            op::REF => {
+                let idx = r.read_len()?;
+                if idx < 1 || idx > self.shared.len() {
+                    return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(idx) });
+                }
+                match &self.shared[idx - 1] {
+                    Some(v) => v.clone(),
+                    None => return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(idx) }),
+                }
+            }
+            // STREAM (marshal.c:658-668): READ_LENGTH raw bytes that are
+            // themselves a complete marshal stream; decode recursively.
+            op::STREAM => {
+                let n = r.read_len()?;
+                let bytes = r.read_bytes(n)?;
+                Value::Stream(Box::new(decode(bytes)?))
+            }
+            // Complex / deferred types (see docs/format-notes.md); not needed
+            // for M0 settings files. Implemented in Task 9 if the corpus needs
+            // them. BLUE/CALLBACK/PICKLER have no case in the reference either.
+            op::GLOBAL => return Err(unsupported(at, "GLOBAL")),
+            op::INSTANCE => return Err(unsupported(at, "INSTANCE")),
+            op::BLUE => return Err(unsupported(at, "BLUE")),
+            op::CALLBACK => return Err(unsupported(at, "CALLBACK")),
+            op::CHECKSUM => return Err(unsupported(at, "CHECKSUM")),
+            op::PICKLER => return Err(unsupported(at, "PICKLER")),
+            op::REDUCE => return Err(unsupported(at, "REDUCE")),
+            op::NEWOBJ => return Err(unsupported(at, "NEWOBJ")),
+            op::DBROW => return Err(unsupported(at, "DBROW")),
+            op::MARK => return Err(unsupported(at, "MARK")),
+            other => {
+                return Err(DecodeError { offset: at, kind: ErrorKind::UnknownOpcode(other) })
+            }
+        })
+    }
+}
+
+fn unsupported(at: usize, name: &'static str) -> DecodeError {
+    DecodeError { offset: at, kind: ErrorKind::Unsupported(name) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Value;
+
+    // header: magic 0x7E + u32 shared-count 0
+    fn stream(body: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x7E, 0, 0, 0, 0];
+        v.extend_from_slice(body);
+        v
+    }
+
+    #[test]
+    fn rejects_bad_magic() {
+        let err = decode(&[0x00, 0, 0, 0, 0, 0x01]).unwrap_err();
+        assert_eq!(err.kind, crate::ErrorKind::BadMagic(0x00));
+    }
+
+    #[test]
+    fn decodes_scalar_opcodes() {
+        assert_eq!(decode(&stream(&[0x01])).unwrap(), Value::None);
+        assert_eq!(decode(&stream(&[0x1F])).unwrap(), Value::Bool(true));
+        assert_eq!(decode(&stream(&[0x20])).unwrap(), Value::Bool(false));
+        assert_eq!(decode(&stream(&[0x07])).unwrap(), Value::Int(-1));
+        assert_eq!(decode(&stream(&[0x08])).unwrap(), Value::Int(0));
+        assert_eq!(decode(&stream(&[0x09])).unwrap(), Value::Int(1));
+        assert_eq!(decode(&stream(&[0x06, 0x2A])).unwrap(), Value::Int(42));
+        assert_eq!(decode(&stream(&[0x05, 0x34, 0x12])).unwrap(), Value::Int(0x1234));
+        assert_eq!(
+            decode(&stream(&[0x04, 0x78, 0x56, 0x34, 0x12])).unwrap(),
+            Value::Int(0x12345678)
+        );
+        assert_eq!(
+            decode(&stream(&[0x0A, 0, 0, 0, 0, 0, 0, 0x04, 0x40])).unwrap(),
+            Value::Float(2.5)
+        );
+        assert_eq!(decode(&stream(&[0x0B])).unwrap(), Value::Float(0.0));
+    }
+
+    #[test]
+    fn decodes_buffer_and_short_strings() {
+        // BUFFER 0x13, len 3, "foo" — observed encoding in real files
+        assert_eq!(
+            decode(&stream(&[0x13, 0x03, b'f', b'o', b'o'])).unwrap(),
+            Value::Bytes(b"foo".to_vec())
+        );
+        assert_eq!(decode(&stream(&[0x0E])).unwrap(), Value::Bytes(vec![])); // STRING0
+        assert_eq!(
+            decode(&stream(&[0x0F, b'x'])).unwrap(),
+            Value::Bytes(b"x".to_vec())
+        ); // STRING1
+    }
+
+    #[test]
+    fn decodes_containers_dict_wire_order_value_then_key() {
+        // TUPLE2(ZERO, ONE)
+        assert_eq!(
+            decode(&stream(&[0x2C, 0x08, 0x09])).unwrap(),
+            Value::Tuple(vec![Value::Int(0), Value::Int(1)])
+        );
+        // TUPLE0 / TUPLE1 / LIST0 / LIST1
+        assert_eq!(decode(&stream(&[0x24])).unwrap(), Value::Tuple(vec![]));
+        assert_eq!(
+            decode(&stream(&[0x25, 0x01])).unwrap(),
+            Value::Tuple(vec![Value::None])
+        );
+        assert_eq!(decode(&stream(&[0x26])).unwrap(), Value::List(vec![]));
+        assert_eq!(
+            decode(&stream(&[0x27, 0x09])).unwrap(),
+            Value::List(vec![Value::Int(1)])
+        );
+        // DICT len 1: value ZERO, then key BUFFER "foo" (wire order observed
+        // in real core_char files) -> normalized to (key, value)
+        let d = decode(&stream(&[0x16, 0x01, 0x08, 0x13, 0x03, b'f', b'o', b'o'])).unwrap();
+        assert_eq!(
+            d,
+            Value::Dict(vec![(Value::Bytes(b"foo".to_vec()), Value::Int(0))])
+        );
+    }
+
+    #[test]
+    fn unknown_opcode_reports_offset() {
+        let err = decode(&stream(&[0x3D])).unwrap_err();
+        assert_eq!(err.kind, crate::ErrorKind::UnknownOpcode(0x3D));
+        assert_eq!(err.offset, 5); // right after the 5-byte header
+    }
+
+    // --- Shared-object mechanics (author additions) ---
+    // These hand-build a stream with shared_count = 1 and a tail map of one
+    // i32 LE slot number. A SHARED_FLAG-ed object is stored, then REF'd back.
+
+    #[test]
+    fn shared_buffer_stored_then_ref() {
+        // 7E | count=1 | TUPLE2( BUFFER|SHARED "hi", REF 1 ) | map[0]=1
+        //   header:  7E 01 00 00 00
+        //   body:    2C            TUPLE2
+        //            53 02 68 69   BUFFER|0x40, len 2, "hi"  (stored in slot 1)
+        //            1B 01         REF index 1
+        //   tail:    01 00 00 00   shared_map[0] = slot 1
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x2C, // TUPLE2
+            0x53, 0x02, b'h', b'i', // BUFFER + SHARED_FLAG, len 2
+            0x1B, 0x01, // REF -> slot 1
+            0x01, 0x00, 0x00, 0x00, // tail map: entry 0 = slot 1
+        ];
+        assert_eq!(
+            decode(&data).unwrap(),
+            Value::Tuple(vec![
+                Value::Bytes(b"hi".to_vec()),
+                Value::Bytes(b"hi".to_vec()),
+            ])
+        );
+    }
+
+    #[test]
+    fn shared_dict_stored_then_ref() {
+        // 7E | count=1 | TUPLE2( DICT|SHARED {k:1}, REF 1 ) | map[0]=1
+        //   body:    2C                 TUPLE2
+        //            56 01              DICT|0x40, 1 entry (stored in slot 1)
+        //            09                 value ONE (=1)   [wire order: value first]
+        //            13 01 6B           key BUFFER "k"
+        //            1B 01              REF index 1
+        //   tail:    01 00 00 00        shared_map[0] = slot 1
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x2C, // TUPLE2
+            0x56, 0x01, 0x09, 0x13, 0x01, b'k', // DICT+SHARED, 1 entry (val ONE, key "k")
+            0x1B, 0x01, // REF -> slot 1
+            0x01, 0x00, 0x00, 0x00, // tail map: entry 0 = slot 1
+        ];
+        let dict = Value::Dict(vec![(Value::Bytes(b"k".to_vec()), Value::Int(1))]);
+        assert_eq!(
+            decode(&data).unwrap(),
+            Value::Tuple(vec![dict.clone(), dict])
+        );
+    }
+
+    #[test]
+    fn ref_to_unpopulated_slot_is_bad_ref() {
+        // 7E | count=1 | REF 1 | map[0]=1  — nothing ever stored into slot 1
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x1B, 0x01, // REF -> slot 1 (never populated)
+            0x01, 0x00, 0x00, 0x00, // tail map
+        ];
+        let err = decode(&data).unwrap_err();
+        assert_eq!(err.kind, crate::ErrorKind::BadRef(1));
+    }
+
+    #[test]
+    fn string_0x10_reads_bare_count_no_ff_escape() {
+        // Common path: STRING 0x10, count 3, "bar".
+        assert_eq!(
+            decode(&stream(&[0x10, 0x03, b'b', b'a', b'r'])).unwrap(),
+            Value::Bytes(b"bar".to_vec())
+        );
+        // Count byte 0xFF is a LITERAL 255, NOT a 0xFF->i32 length escape.
+        // A read_len-based (buggy) STRING would read the next 4 payload bytes
+        // as a u32 length (~2e9) and fail; the correct bare-count reads 255.
+        let mut body = vec![0x10, 0xFF];
+        body.extend_from_slice(&[b'z'; 255]);
+        assert_eq!(
+            decode(&stream(&body)).unwrap(),
+            Value::Bytes(vec![b'z'; 255])
+        );
+    }
+}
