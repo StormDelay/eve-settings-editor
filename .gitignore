@@ -8,3 +8,6 @@ dist/
 
 # SDD progress ledger (scratch)
 .superpowers/
+
+# Read-only reference clone of ntt/reverence (Task 4)
+vendor/
