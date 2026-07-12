@@ -3,5 +3,7 @@
 
 pub mod error;
 pub mod reader;
+pub mod value;
 
 pub use error::{DecodeError, ErrorKind};
+pub use value::{dump_text, Value};
