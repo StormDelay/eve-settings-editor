@@ -85,8 +85,11 @@ The whole document as an expandable tree: type-aware inline editing for scalars,
 ### Name display & resolution
 Wherever a character or account ID appears (file picker, batch-apply source/target lists, backups panel, window titles), the UI shows a human-readable name alongside it whenever one is available.
 
-- **Character IDs** (`core_char_<id>.dat`): resolved via ESI's public `POST /universe/names` endpoint — no authentication, batched (one request for all discovered IDs), cached persistently in the app's data directory. Offline or on ESI failure, the UI falls back to bare IDs; cached names keep working. A settings toggle disables all network access, and this is the app's **only** network call.
-- **Account IDs** (`core_user_<id>.dat`): CCP exposes no public API for account identities, so these cannot be resolved online. Instead: (a) the user can assign a persistent **alias** to any account ID in the UI; (b) M0 investigates a best-effort correlation heuristic — char and user files written in the same login session (matching modification timestamps, or cross-references found inside the files) let the UI suggest "account of *CharacterName*", clearly marked as a guess and confirmable into an alias with one click.
+Resolution sources, in priority order:
+
+1. **Local extraction (primary).** A string-scan of real files already shows player names embedded in the settings data (e.g., character names in `core_user_*.dat`, plausibly from the login character-select screen). **M0 decodes the files properly to determine whether each file's own character/account name is reliably present and linked to its ID** — as opposed to names of other players (fleet members, contacts) that also appear. If reliable, local extraction is the primary and default source: zero network, works offline, always current with the file.
+2. **ESI fallback (character IDs only).** Where local extraction is absent or unreliable, character IDs resolve via ESI's public `POST /universe/names` endpoint — no authentication, batched (one request for all unresolved IDs), cached persistently in the app's data directory. Offline or on ESI failure, the UI falls back to bare IDs; cached names keep working. A settings toggle disables all network access; this is the app's **only** network call. Account IDs have no public API and never resolve online.
+3. **User aliases + correlation (accounts).** The user can assign a persistent **alias** to any account ID. M0 also investigates a correlation heuristic — char and user files written in the same login session (matching modification timestamps, or cross-references found inside the files) let the UI suggest "account of *CharacterName*", clearly marked as a guess and confirmable into an alias with one click.
 
 ### Batch apply (M4)
 Flow: pick a **source** file → choose categories (window layout / overview columns / suggestion lists) → multi-select **target** files (char categories to char files, user categories to user files) → preview summary → apply. Each target runs the full save-path invariant chain independently; one failure does not halt the others; a per-target success/failure report is shown at the end.
@@ -109,7 +112,7 @@ Flow: pick a **source** file → choose categories (window layout / overview col
 
 ## 9. Milestones
 
-- **M0 — Format validation & mapping:** parse fresh current-client files; diff in-game changes (move a window, run a search) against file changes to pin down where geometry, columns, and suggestions live. Also investigate the account↔character correlation heuristic (§6, *Name display & resolution*). Explicitly allowed to revise this spec.
+- **M0 — Format validation & mapping:** parse fresh current-client files; diff in-game changes (move a window, run a search) against file changes to pin down where geometry, columns, and suggestions live. Also determine whether each file's own character/account name is stored inside it (local name extraction, the primary source for §6 *Name display & resolution*), and investigate the account↔character correlation heuristic. Explicitly allowed to revise this spec.
 - **M1 — Core:** codec + raw tree editor + full save chain with backups. The tool is already useful here.
 - **M2 — Layout canvas** + properties panel.
 - **M3 — Overview columns + autofill editors;** ESI name resolution + account aliases; packaging for Windows/macOS/Linux.
@@ -147,4 +150,4 @@ Activated **only if/when going public** (tracked, not built):
 | Backups | Timestamped copies in a subfolder **before every write**, keep-all | User requirement; hard invariant of the save path. |
 | Multi-character | Batch apply is M4; category model designed for it from M1 | User promoted it from "deferred" into V1 scope. |
 | Editing model | Visual canvas + always-available direct property editing | User requirement: never rely purely on visuals. |
-| Names next to IDs | Characters via public ESI (cached, offline-safe); accounts via user aliases + M0 correlation heuristic | User requirement; accounts have no public API, so honest best-effort there. |
+| Names next to IDs | Local extraction from the files first (M0 validates); public ESI as character-ID fallback; aliases + correlation for accounts | User requirement; names demonstrably exist inside real files, so avoid network when local data suffices. Accounts have no public API. |
