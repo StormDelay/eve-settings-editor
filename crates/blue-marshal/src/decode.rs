@@ -10,8 +10,22 @@ use crate::reader::Reader;
 use crate::string_table::STRING_TABLE;
 use crate::value::Value;
 
+/// Maximum object-hierarchy depth, mirroring the reference
+/// (`#define MAX_DEPTH 64`, marshal.c:22; enforced by PUSH_CONTAINER,
+/// marshal.c:167-171, "object hierarchy too deep"). Without this, a corrupt
+/// stream of chained container opcodes recurses one frame per byte and
+/// overflows the stack — an uncatchable process abort — instead of returning
+/// a `DecodeError`.
+const MAX_DEPTH: usize = 64;
+
 /// Decode a complete blue-marshal stream into a [`Value`].
 pub fn decode(data: &[u8]) -> Result<Value, DecodeError> {
+    decode_at_depth(data, 0)
+}
+
+/// Inner entry point that threads the nesting depth through embedded STREAM
+/// decodes, so a chain of nested streams also stays within [`MAX_DEPTH`].
+fn decode_at_depth(data: &[u8], depth: usize) -> Result<Value, DecodeError> {
     // Header: magic (marshal.c:467) then shared-object map size, read as a
     // signed i32 LE (marshal.c:478).
     let mut header = Reader::new(data);
@@ -45,6 +59,7 @@ pub fn decode(data: &[u8]) -> Result<Value, DecodeError> {
         shared: vec![None; shared_count],
         shared_next: 0,
         data,
+        depth,
     };
     dec.load(&mut r)
 }
@@ -56,6 +71,8 @@ struct Decoder<'a> {
     shared_next: usize,
     /// Full stream, used only to read tail-map slot numbers.
     data: &'a [u8],
+    /// Current object-nesting depth; guarded against [`MAX_DEPTH`].
+    depth: usize,
 }
 
 /// Opcodes for which the reference actually stores a shared object when
@@ -110,6 +127,17 @@ impl<'a> Decoder<'a> {
     fn load(&mut self, r: &mut Reader<'a>) -> Result<Value, DecodeError> {
         let raw = r.read_u8()?;
         let opcode_offset = r.pos() - 1;
+        // Depth guard (reference: MAX_DEPTH check in PUSH_CONTAINER,
+        // marshal.c:167-171). `load` recurses once per nesting level, so
+        // bounding it bounds stack use. No decrement needed on error paths:
+        // any error aborts the whole decode.
+        if self.depth >= MAX_DEPTH {
+            return Err(DecodeError {
+                offset: opcode_offset,
+                kind: ErrorKind::Unsupported("object hierarchy too deep"),
+            });
+        }
+        self.depth += 1;
         // Reference masks only SHARED_FLAG (0x40) before dispatch
         // (marshal.c:525-526); a set 0x80 bit stays in `code` and falls out as
         // an UnknownOpcode below.
@@ -127,6 +155,7 @@ impl<'a> Decoder<'a> {
 
         let value = self.load_op(code, r, opcode_offset)?;
 
+        self.depth -= 1;
         if let Some(slot) = slot {
             self.shared[slot - 1] = Some(value.clone());
         }
@@ -250,11 +279,14 @@ impl<'a> Decoder<'a> {
                 }
             }
             // STREAM (marshal.c:658-668): READ_LENGTH raw bytes that are
-            // themselves a complete marshal stream; decode recursively.
+            // themselves a complete marshal stream; decode recursively,
+            // carrying the current depth so nested streams cannot bypass the
+            // MAX_DEPTH guard. (Inner errors report offsets relative to the
+            // embedded stream.)
             op::STREAM => {
                 let n = r.read_len()?;
                 let bytes = r.read_bytes(n)?;
-                Value::Stream(Box::new(decode(bytes)?))
+                Value::Stream(Box::new(decode_at_depth(bytes, self.depth)?))
             }
             // Complex / deferred types (see docs/format-notes.md); not needed
             // for M0 settings files. Implemented in Task 9 if the corpus needs
@@ -428,6 +460,54 @@ mod tests {
         ];
         let err = decode(&data).unwrap_err();
         assert_eq!(err.kind, crate::ErrorKind::BadRef(1));
+    }
+
+    #[test]
+    fn shared_slots_assigned_in_encounter_order_not_completion_order() {
+        // Two shared objects, one nested inside the other, with a NON-identity
+        // tail map [2, 1]. The reference consumes map entries at *encounter*
+        // (container-open) time, so the outer TUPLE1 takes map[0]=2 (slot 2)
+        // and the inner LONG takes map[1]=1 (slot 1). A completion-order
+        // implementation would hand them out the other way around (the inner
+        // LONG completes first) and flip both REF results below.
+        //
+        //   header:  7E 02 00 00 00     shared_count = 2
+        //   body:    14 03              TUPLE, 3 elements
+        //            65                 TUPLE1|SHARED  -> reserves map[0]=2
+        //            6F 01 2A           LONG|SHARED, 1 byte 0x2A -> map[1]=1
+        //            1B 01              REF 1 -> slot 1 = the LONG
+        //            1B 02              REF 2 -> slot 2 = the TUPLE1
+        //   tail:    02 00 00 00        map[0] = slot 2
+        //            01 00 00 00        map[1] = slot 1
+        let data = [
+            0x7E, 0x02, 0x00, 0x00, 0x00, // header, shared_count = 2
+            0x14, 0x03, // TUPLE, 3 elements
+            0x65, // TUPLE1 + SHARED_FLAG
+            0x6F, 0x01, 0x2A, // LONG + SHARED_FLAG, len 1, payload 0x2A
+            0x1B, 0x01, // REF -> slot 1
+            0x1B, 0x02, // REF -> slot 2
+            0x02, 0x00, 0x00, 0x00, // tail map: entry 0 = slot 2
+            0x01, 0x00, 0x00, 0x00, // tail map: entry 1 = slot 1
+        ];
+        let long = Value::Long(vec![0x2A]);
+        let inner = Value::Tuple(vec![long.clone()]);
+        assert_eq!(
+            decode(&data).unwrap(),
+            Value::Tuple(vec![inner.clone(), long, inner])
+        );
+    }
+
+    #[test]
+    fn deep_nesting_errors_instead_of_overflowing_stack() {
+        // A corrupt stream of chained TUPLE1 opcodes recurses one frame per
+        // byte; without a depth guard that is an uncatchable stack-overflow
+        // abort, not a DecodeError. Reference limit: MAX_DEPTH = 64
+        // (marshal.c:22), "object hierarchy too deep" (marshal.c:167-171).
+        let err = decode(&stream(&[0x25; 100_000])).unwrap_err();
+        assert_eq!(
+            err.kind,
+            crate::ErrorKind::Unsupported("object hierarchy too deep")
+        );
     }
 
     #[test]
