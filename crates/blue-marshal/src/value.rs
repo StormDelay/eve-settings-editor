@@ -30,11 +30,21 @@ pub enum Value {
 /// form so that two dumps of semantically equal data diff cleanly.
 pub fn dump_text(v: &Value) -> String {
     let mut out = String::new();
-    write_value(&mut out, v, 0);
+    write_value(&mut out, v, 0, 0);
     out
 }
 
-fn write_value(out: &mut String, v: &Value, indent: usize) {
+/// `stream_depth` counts nested-stream decode attempts made by the
+/// `Value::Bytes` arm below (a `Bytes` payload starting with the 0x7E magic,
+/// double-marshaled settings values). That path calls `crate::decode::decode`
+/// — the public entry point, which always starts a fresh decoder at depth 0
+/// — so, unlike ordinary container recursion (Tuple/List/Dict/Instance/
+/// Stream, which only ever mirrors a `Value` tree that `decode`'s own
+/// `MAX_DEPTH` has already bounded), a chain of such payloads is
+/// attacker-lengthenable independent of that guard. Bounded here with the
+/// same `MAX_DEPTH`, threaded through unchanged by every other recursive
+/// call and incremented only where a nested stream is actually decoded.
+fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) {
     let pad = "  ".repeat(indent);
     match v {
         Value::None => out.push_str("None"),
@@ -73,18 +83,18 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
             // and lossless — but a readable dump is worth attempting one
             // decode of the payload; fall back to plain rendering if it
             // doesn't parse (0x7E can just as well be an ordinary byte).
-            if b.first() == Some(&0x7E) {
+            if b.first() == Some(&0x7E) && stream_depth < crate::decode::MAX_DEPTH {
                 if let Ok(inner) = crate::decode::decode(b) {
                     out.push_str("stream?");
-                    write_value(out, &inner, indent);
+                    write_value(out, &inner, indent, stream_depth + 1);
                     return;
                 }
             }
             write_bytes_body(out, b, "b");
         }
         Value::Global(name) => write_bytes_body(out, name, "global:"),
-        Value::Tuple(items) => write_seq(out, items, indent, '(', ')'),
-        Value::List(items) => write_seq(out, items, indent, '[', ']'),
+        Value::Tuple(items) => write_seq(out, items, indent, '(', ')', stream_depth),
+        Value::List(items) => write_seq(out, items, indent, '[', ']', stream_depth),
         Value::Dict(entries) => {
             if entries.is_empty() {
                 out.push_str("{}");
@@ -98,22 +108,22 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
             out.push_str("{\n");
             for (key, val) in rendered {
                 let _ = write!(out, "{pad}  {key}: ");
-                write_value(out, val, indent + 1);
+                write_value(out, val, indent + 1, stream_depth);
                 out.push('\n');
             }
             let _ = write!(out, "{pad}}}");
         }
         Value::Stream(inner) => {
             out.push_str("stream:");
-            write_value(out, inner, indent);
+            write_value(out, inner, indent, stream_depth);
         }
         Value::Instance { class, state } => {
             out.push_str("instance{\n");
             let _ = write!(out, "{pad}  class: ");
-            write_value(out, class, indent + 1);
+            write_value(out, class, indent + 1, stream_depth);
             out.push('\n');
             let _ = write!(out, "{pad}  state: ");
-            write_seq(out, state, indent + 1, '[', ']');
+            write_seq(out, state, indent + 1, '[', ']', stream_depth);
             out.push('\n');
             let _ = write!(out, "{pad}}}");
         }
@@ -134,7 +144,14 @@ fn write_bytes_body(out: &mut String, b: &[u8], prefix: &str) {
     }
 }
 
-fn write_seq(out: &mut String, items: &[Value], indent: usize, open: char, close: char) {
+fn write_seq(
+    out: &mut String,
+    items: &[Value],
+    indent: usize,
+    open: char,
+    close: char,
+    stream_depth: usize,
+) {
     let pad = "  ".repeat(indent);
     if items.is_empty() {
         out.push(open);
@@ -146,7 +163,7 @@ fn write_seq(out: &mut String, items: &[Value], indent: usize, open: char, close
     for item in items {
         out.push_str(&pad);
         out.push_str("  ");
-        write_value(out, item, indent + 1);
+        write_value(out, item, indent + 1, stream_depth);
         out.push('\n');
     }
     out.push_str(&pad);
@@ -187,6 +204,67 @@ mod tests {
         // Starts with 0x7E but is not a valid stream (too short to hold the
         // shared-count word) — falls back to plain byte rendering.
         assert_eq!(dump_text(&Value::Bytes(vec![0x7E])), "b\"~\"");
+    }
+
+    #[test]
+    fn dump_bytes_bounds_nested_stream_recursion_depth() {
+        // Regression test for unbounded recursion in the nested-stream
+        // decode attempt above: it calls `crate::decode::decode` — which
+        // always starts a fresh decoder at depth 0 — so a chain of `Bytes`
+        // payloads, each wrapping the next as a valid marshal stream, used to
+        // recurse once per chain link with no bound at all, independent of
+        // `decode`'s own MAX_DEPTH guard. A crafted file with such a chain
+        // could drive this to a stack-overflow process abort.
+        //
+        // A genuine stack-overflow demonstration aborts the whole process
+        // (uncatchable — not a normal panic), which `cargo test` can't
+        // capture as a clean pass/fail on Windows, so this demonstrates the
+        // same fact a different way, per this task's documented fallback:
+        // a chain long enough to prove the bound (well beyond MAX_DEPTH) but
+        // shallow enough that even the unbounded pre-fix code completes
+        // normally (no crash) — before the fix it decodes the *entire*
+        // chain (all `chain_len` links, leaf included); after the fix it
+        // stops attempting nested decodes at exactly MAX_DEPTH links and
+        // falls back to raw rendering for the rest, so the leaf is never
+        // reached.
+        let chain_len = 200; // well beyond MAX_DEPTH (64)
+        let leaf = b"LEAF_MARKER_UNIQUE";
+        let payload = nested_stream_chain(chain_len, leaf);
+
+        let text = dump_text(&Value::Bytes(payload));
+
+        assert_eq!(
+            text.matches("stream?").count(),
+            crate::decode::MAX_DEPTH,
+            "nested-stream decoding must stop at MAX_DEPTH, not recurse the whole chain"
+        );
+        assert!(
+            !text.contains("LEAF_MARKER_UNIQUE"),
+            "leaf beyond MAX_DEPTH must never be reached"
+        );
+    }
+
+    /// Build a chain of `depth` nested marshal streams, each a BUFFER opcode
+    /// (0x13) whose payload is the next level down, bottoming out at `leaf`
+    /// (which must not itself start with 0x7E, so the chain has a clean
+    /// terminator). Built in one O(depth) pass — level sizes precomputed
+    /// bottom-up, then headers written top-down directly into position —
+    /// rather than by repeated wrapping, which would re-copy the whole
+    /// growing payload at every level (O(depth^2)).
+    fn nested_stream_chain(depth: usize, leaf: &[u8]) -> Vec<u8> {
+        const HEADER_LEN: usize = 5 + 1 + 5; // stream header + BUFFER opcode + extended length
+        let mut sizes = Vec::with_capacity(depth + 1);
+        sizes.push(leaf.len());
+        for i in 1..=depth {
+            sizes.push(sizes[i - 1] + HEADER_LEN);
+        }
+        let mut buf = Vec::with_capacity(sizes[depth]);
+        for i in (1..=depth).rev() {
+            buf.extend_from_slice(&[0x7E, 0, 0, 0, 0, 0x13, 0xFF]);
+            buf.extend_from_slice(&(sizes[i - 1] as u32).to_le_bytes());
+        }
+        buf.extend_from_slice(leaf);
+        buf
     }
 
     #[test]
