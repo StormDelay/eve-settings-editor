@@ -13,6 +13,15 @@ pub enum Value {
     List(Vec<Value>),
     Dict(Vec<(Value, Value)>),
     Stream(Box<Value>),
+    /// GLOBAL (0x02): a dotted Python type/function name, e.g. `__builtin__.set`.
+    /// Kept distinct from `Bytes` so M1's encoder can re-emit opcode 0x02
+    /// rather than a string opcode.
+    Global(Vec<u8>),
+    /// INSTANCE (0x17): mirrors marshal.c's load order rather than modeling
+    /// Python construction. `class` is the class name object; `state` holds
+    /// the single state object applied via `__setstate__`/`__dict__.update`
+    /// in the reference.
+    Instance { class: Box<Value>, state: Vec<Value> },
 }
 
 /// Deterministic text rendering. Dict keys are sorted by their rendered
@@ -49,15 +58,8 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
         Value::Str(s) => {
             let _ = write!(out, "{s:?}");
         }
-        Value::Bytes(b) => {
-            if !b.is_empty() && b.iter().all(|c| (0x20..0x7F).contains(c)) {
-                let _ = write!(out, "b\"{}\"", String::from_utf8_lossy(b));
-            } else if b.is_empty() {
-                out.push_str("b\"\"");
-            } else {
-                let _ = write!(out, "hex:{}", hex(b));
-            }
-        }
+        Value::Bytes(b) => write_bytes_body(out, b, "b"),
+        Value::Global(name) => write_bytes_body(out, name, "global:"),
         Value::Tuple(items) => write_seq(out, items, indent, '(', ')'),
         Value::List(items) => write_seq(out, items, indent, '[', ']'),
         Value::Dict(entries) => {
@@ -82,6 +84,30 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
             out.push_str("stream:");
             write_value(out, inner, indent);
         }
+        Value::Instance { class, state } => {
+            out.push_str("instance{\n");
+            let _ = write!(out, "{pad}  class: ");
+            write_value(out, class, indent + 1);
+            out.push('\n');
+            let _ = write!(out, "{pad}  state: ");
+            write_seq(out, state, indent + 1, '[', ']');
+            out.push('\n');
+            let _ = write!(out, "{pad}}}");
+        }
+    }
+}
+
+/// Shared rendering for byte strings (`Bytes` and `Global`): printable ASCII
+/// (and empty) render quoted with `prefix`, anything else renders as hex —
+/// matching the original `Bytes`-only behavior (`prefix = "b"` reproduces it
+/// exactly), reused for `Global` with `prefix = "global:"`.
+fn write_bytes_body(out: &mut String, b: &[u8], prefix: &str) {
+    if b.is_empty() {
+        let _ = write!(out, "{prefix}\"\"");
+    } else if b.iter().all(|c| (0x20..0x7F).contains(c)) {
+        let _ = write!(out, "{prefix}\"{}\"", String::from_utf8_lossy(b));
+    } else {
+        let _ = write!(out, "hex:{}", hex(b));
     }
 }
 
@@ -125,6 +151,22 @@ mod tests {
     fn dump_bytes_printable_and_hex() {
         assert_eq!(dump_text(&Value::Bytes(b"overview".to_vec())), "b\"overview\"");
         assert_eq!(dump_text(&Value::Bytes(vec![0x00, 0xFF])), "hex:00ff");
+    }
+
+    #[test]
+    fn dump_global_and_instance() {
+        assert_eq!(
+            dump_text(&Value::Global(b"__builtin__.set".to_vec())),
+            "global:\"__builtin__.set\""
+        );
+        let inst = Value::Instance {
+            class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
+            state: vec![Value::Int(1)],
+        };
+        assert_eq!(
+            dump_text(&inst),
+            "instance{\n  class: b\"M.Cls\"\n  state: [\n    1\n  ]\n}"
+        );
     }
 
     #[test]

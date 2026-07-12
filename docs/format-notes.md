@@ -278,12 +278,47 @@ NEW_SEQUENCE does a sanity CHECK_SIZE(count) before allocating (202-213).
   inline from the stream, then `descriptor.rd_num_objects` trailing
   non-scalar objects. Complex; hope settings files avoid it.
 
+### GLOBAL and INSTANCE — implemented (Task 9)
+
+Confirmed against real corpus bytes (`core_char_123456789.dat` offset
+0x34c, historical snapshot):
+
+- `GLOBAL` decodes to a new `Value::Global(Vec<u8>)` (kept distinct from
+  `Bytes` so M1's encoder can re-emit opcode 0x02 rather than a string
+  opcode). Observed both un-shared (a one-off callable name) and
+  `SHARED_FLAG`-ed (a class/callable name reused across many objects in the
+  same file, e.g. `__builtin__.set` cached and REF'd back) — the latter
+  needed adding `GLOBAL` to the decoder's `stores_shared` set.
+- `INSTANCE` decodes to a new `Value::Instance { class: Box<Value>, state:
+  Vec<Value> }`. Confirmed the two children are ordinary objects read
+  through the normal recursive path (no MARK/iterator framing, unlike
+  NEWOBJ/REDUCE): `class` is the class-name object (observed as a `BUFFER`,
+  itself `SHARED_FLAG`-ed since class names repeat across instances — e.g.
+  `utillib.KeyVal`), `state` is `vec![the one state object]` (observed as a
+  plain `DICT`, e.g. `{"id": "agency", "children": None, "btnType": 1}`).
+  Both fields are handled through `stores_shared`'s existing
+  reserve-before-children/store-after-completion path (same encounter-order
+  mechanics already verified for containers in Task 4) — `INSTANCE`'s own
+  RESERVE_SLOT/UPDATE_SLOT (marshal.c:128-147) turned out to need no special
+  casing beyond adding it to that match arm.
+- No `GLOBAL`-encoded class name was observed for `INSTANCE` in the corpus
+  (always a plain string opcode, per marshal.c's `find_global(obj)` where
+  `obj` can be any string-typed object) — implementing `INSTANCE` alone
+  (with `GLOBAL` available for anything nested in its `state`) was
+  independently verified to close all corpus files that don't also contain
+  a nested `REDUCE`.
+
 ## Decoder coverage log
 
 Task 8 baseline (2026-07-12): scanned 1116, ok 70, failed 1046.
 Distinct error kinds:
 - `INSTANCE` (694 files): offsets 0x34c, 0x113f, 0x795, 0xd716, 0xd6d4, 0xd98e, etc.
 - `REDUCE` (352 files): offsets 0x22, 0x2d, 0xcc, 0x138f8, 0xebed, 0xfc42, etc.
+
+Task 9 increment 1 (2026-07-12), GLOBAL + INSTANCE implemented: scanned
+1116, ok 550, failed 566. Remaining failures are all `Unsupported("REDUCE")`
+(352 top-level, plus files where a REDUCE is nested inside what used to be
+the first INSTANCE failure).
 
 ## Mappings
 

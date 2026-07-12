@@ -35,6 +35,15 @@ impl<'a> Reader<'a> {
         Ok(self.read_bytes(1)?[0])
     }
 
+    /// Look at the next byte without consuming it. Used where a MARK-vs-object
+    /// lookahead decides control flow before dispatch (REDUCE's iterator tail).
+    pub fn peek_u8(&self) -> Result<u8, DecodeError> {
+        if self.remaining() < 1 {
+            return Err(self.err(ErrorKind::UnexpectedEof));
+        }
+        Ok(self.data[self.pos])
+    }
+
     pub fn read_u16(&mut self) -> Result<u16, DecodeError> {
         Ok(u16::from_le_bytes(self.read_bytes(2)?.try_into().unwrap()))
     }
@@ -102,5 +111,16 @@ mod tests {
         let mut r = Reader::new(&data);
         assert_eq!(r.read_bytes(3).unwrap(), &[1, 2, 3]);
         assert!(r.read_bytes(2).is_err());
+    }
+
+    #[test]
+    fn peek_u8_does_not_advance() {
+        let mut r = Reader::new(&[0x2D, 0x09]);
+        assert_eq!(r.peek_u8().unwrap(), 0x2D);
+        assert_eq!(r.pos(), 0); // unchanged
+        assert_eq!(r.read_u8().unwrap(), 0x2D); // same byte, now consumed
+        assert_eq!(r.peek_u8().unwrap(), 0x09);
+        r.read_u8().unwrap();
+        assert_eq!(r.peek_u8().unwrap_err().kind, ErrorKind::UnexpectedEof);
     }
 }

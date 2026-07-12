@@ -77,13 +77,18 @@ struct Decoder<'a> {
 
 /// Opcodes for which the reference actually stores a shared object when
 /// SHARED_FLAG is set (CHECK_SHARED / NEW_SEQUENCE call sites: LONG @602,
-/// STRINGL/BUFFER/STREAM @667, LIST0 @714, DICT @733/739, and the
+/// STRINGL/BUFFER/STREAM @667, LIST0 @714, DICT @733/739, GLOBAL @782, and the
 /// TUPLE/LIST containers via NEW_SEQUENCE @212). Note the asymmetry: LIST0 is
 /// eligible but TUPLE0/STRING0/UNICODE0 are served from the constants table
 /// (marshal.c:1246 etc.) and are NOT eligible. On every other opcode the flag
 /// is silently ignored, so we must not consume a map slot for it.
-/// GLOBAL/DBROW/INSTANCE/NEWOBJ/REDUCE are also eligible in the reference but
-/// are Unsupported in this task, so they error before any store matters.
+/// INSTANCE reserves its slot at container open via a different mechanism
+/// (RESERVE_SLOT, marshal.c:128-139) rather than CHECK_SHARED, but it lands
+/// in the same `shared_count`/`shared_map` sequence at the same
+/// encounter-order position, so folding it into this same "reserve before
+/// children, store after" path (see `load` below) reproduces it exactly.
+/// DBROW/NEWOBJ/REDUCE are also eligible in the reference but are Unsupported
+/// in this task, so they error before any store matters.
 fn stores_shared(code: u8) -> bool {
     matches!(
         code,
@@ -98,6 +103,8 @@ fn stores_shared(code: u8) -> bool {
             | op::TUPLE2
             | op::LIST
             | op::LIST1
+            | op::GLOBAL
+            | op::INSTANCE
     )
 }
 
@@ -288,11 +295,29 @@ impl<'a> Decoder<'a> {
                 let bytes = r.read_bytes(n)?;
                 Value::Stream(Box::new(decode_at_depth(bytes, self.depth)?))
             }
+            // GLOBAL (marshal.c:766-784): READ_LENGTH byte count of a dotted
+            // Python name (e.g. "__builtin__.set"), used elsewhere as a class
+            // or callable reference. The reference resolves it via
+            // find_global; we have no Python runtime to resolve into, so we
+            // keep the raw name. Honors SHARED_FLAG (CHECK_SHARED @782).
+            op::GLOBAL => {
+                let n = r.read_len()?;
+                Value::Global(r.read_bytes(n)?.to_vec())
+            }
+            // INSTANCE (marshal.c:787-793 open; 913-944 fill): no immediate
+            // payload beyond the opcode byte; exactly two plain objects
+            // follow in order — the class name, then the state object
+            // (applied via __setstate__/__dict__.update in the reference).
+            // Both are ordinary objects decoded through the normal recursive
+            // path, so SHARED_FLAG on either (e.g. a cached class-name
+            // BUFFER) is handled automatically by `load`.
+            op::INSTANCE => {
+                let class = self.load(r)?;
+                let state = self.load(r)?;
+                Value::Instance { class: Box::new(class), state: vec![state] }
+            }
             // Complex / deferred types (see docs/format-notes.md); not needed
-            // for M0 settings files. Implemented in Task 9 if the corpus needs
-            // them. BLUE/CALLBACK/PICKLER have no case in the reference either.
-            op::GLOBAL => return Err(unsupported(at, "GLOBAL")),
-            op::INSTANCE => return Err(unsupported(at, "INSTANCE")),
+            // yet. BLUE/CALLBACK/PICKLER have no case in the reference either.
             op::BLUE => return Err(unsupported(at, "BLUE")),
             op::CALLBACK => return Err(unsupported(at, "CALLBACK")),
             op::CHECKSUM => return Err(unsupported(at, "CHECKSUM")),
@@ -507,6 +532,37 @@ mod tests {
         assert_eq!(
             err.kind,
             crate::ErrorKind::Unsupported("object hierarchy too deep")
+        );
+    }
+
+    #[test]
+    fn decodes_global_dotted_name() {
+        // GLOBAL 0x02, len 15, "__builtin__.set" — dotted name observed in
+        // real files (a Python builtin, not personal data).
+        let mut body = vec![0x02, 15];
+        body.extend_from_slice(b"__builtin__.set");
+        assert_eq!(
+            decode(&stream(&body)).unwrap(),
+            Value::Global(b"__builtin__.set".to_vec())
+        );
+    }
+
+    #[test]
+    fn decodes_instance_class_then_state() {
+        // INSTANCE 0x17: two plain child objects follow in order — class
+        // name (BUFFER "M.Cls"), then state (here a scalar for simplicity;
+        // real files use a DICT, itself already covered elsewhere).
+        let data = [
+            0x17, // INSTANCE
+            0x13, 0x05, b'M', b'.', b'C', b'l', b's', // BUFFER class name
+            0x09, // state: ONE
+        ];
+        assert_eq!(
+            decode(&stream(&data)).unwrap(),
+            Value::Instance {
+                class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
+                state: vec![Value::Int(1)],
+            }
         );
     }
 
