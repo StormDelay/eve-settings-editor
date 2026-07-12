@@ -1,0 +1,7 @@
+# Real EVE settings files copied for local testing — personal data, never commit
+testdata/corpus/
+
+# Build outputs
+target/
+node_modules/
+dist/

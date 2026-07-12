@@ -104,11 +104,13 @@ Flow: pick a **source** file → choose categories (window layout / overview col
 
 ## 8. Testing
 
+**Live-directory rule:** automated tests, development experiments, and M0 format investigation **never read from or write to the live EVE settings directory** (`%LOCALAPPDATA%\CCP\EVE\…` and OS equivalents). Files needed for testing are copied into the project's `testdata/corpus/` folder (via a small sync script) and everything under `testdata/corpus/` is **gitignored** — the `.gitignore` entry exists from the first commit, before any file is copied. The only permitted interaction with the live directory is the deliberate, manual in-game validation step below, which goes through the app's full save chain (§5), backups included.
+
 - **Codec unit tests** per opcode.
-- **Golden corpus:** all ~50 real historical files plus fresh current-client files. Target: decode → encode reproduces the input **byte-identically**; if a normalization makes that impossible for some construct, the fallback gate is decode-equivalence (re-decode the output and require structural equality), with the normalization documented. The corpus contains personal data and stays on the developer's machine (never committed); corpus tests run locally, while CI runs codec unit/property tests on synthetic fixtures.
+- **Golden corpus:** all ~50 real historical files plus fresh current-client files, copied into `testdata/corpus/`. Target: decode → encode reproduces the input **byte-identically**; if a normalization makes that impossible for some construct, the fallback gate is decode-equivalence (re-decode the output and require structural equality), with the normalization documented. The corpus contains personal data and stays on the developer's machine (never committed); corpus tests run locally, while CI runs codec unit/property tests on synthetic fixtures.
 - **Property-based fuzz tests** on encode/decode.
-- **Save-path integration tests** on temp copies, verifying the full backup-then-atomic-write chain and its abort behavior.
-- **Manual M0 checklist:** change a setting in-game → diff files → confirm mapping; edit a file with the tool → launch game → confirm the change took effect and the client accepts the file.
+- **Save-path integration tests** on temp copies under `testdata/` or the OS temp dir, verifying the full backup-then-atomic-write chain and its abort behavior.
+- **Manual M0 checklist:** change a setting in-game → copy the changed file into the corpus and diff against the previous copy → confirm mapping; then, as the sole live-directory step: edit a live file with the tool (full save chain, backup taken) → launch game → confirm the change took effect and the client accepts the file.
 
 ## 9. Milestones
 
