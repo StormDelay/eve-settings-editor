@@ -100,9 +100,22 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
                 out.push_str("{}");
                 return;
             }
+            // Render each key through the depth-threaded path rather than
+            // the public `dump_text` entry point: `dump_text` always starts
+            // a fresh `write_value` at `stream_depth = 0`, so a chain of
+            // dicts nested via their *keys* (each key a Bytes payload that
+            // decodes to the next dict) would get a brand-new depth budget
+            // at every hop, bypassing the nested-stream guard entirely.
+            // Indentation still starts at 0 for the sort key (matching
+            // `dump_text`'s own behavior), but `stream_depth` is the ambient
+            // one, not reset.
             let mut rendered: Vec<(String, &Value)> = entries
                 .iter()
-                .map(|(k, v)| (dump_text(k), v))
+                .map(|(k, v)| {
+                    let mut key_buf = String::new();
+                    write_value(&mut key_buf, k, 0, stream_depth);
+                    (key_buf, v)
+                })
                 .collect();
             rendered.sort_by(|a, b| a.0.cmp(&b.0));
             out.push_str("{\n");
@@ -261,6 +274,69 @@ mod tests {
         let mut buf = Vec::with_capacity(sizes[depth]);
         for i in (1..=depth).rev() {
             buf.extend_from_slice(&[0x7E, 0, 0, 0, 0, 0x13, 0xFF]);
+            buf.extend_from_slice(&(sizes[i - 1] as u32).to_le_bytes());
+        }
+        buf.extend_from_slice(leaf);
+        buf
+    }
+
+    #[test]
+    fn dump_dict_key_nested_stream_bypasses_depth_guard_via_dump_text() {
+        // Regression test for a review finding on the fix above: the `Dict`
+        // arm's key-rendering closure calls the *public* `dump_text` entry
+        // point (not the depth-threaded `write_value`), which always starts
+        // a fresh `write_value` at `stream_depth = 0`. Decoded dict keys are
+        // ordinary `Value`s (typically `Bytes`), so a chain of
+        // `Dict { key: Bytes(nested 0x7E stream wrapping the next dict),
+        // value: None }` gets a brand-new depth budget at every hop — the
+        // `stream_depth < MAX_DEPTH` guard in the `Bytes` arm is checked
+        // each time, but against a depth that was just reset to 0, so it
+        // never actually stops the chain.
+        //
+        // Same RED/GREEN approach as
+        // `dump_bytes_bounds_nested_stream_recursion_depth`: a genuine
+        // stack-overflow demonstration aborts the whole process
+        // (uncatchable, not capturable as a clean `cargo test` pass/fail on
+        // Windows), so this uses a chain well beyond MAX_DEPTH but shallow
+        // enough that even the unbounded buggy code completes normally.
+        let chain_len = 200; // well beyond MAX_DEPTH (64)
+        let leaf = b"DICT_KEY_LEAF_MARKER";
+        let chain = nested_dict_key_chain(chain_len, leaf);
+        let top = Value::Dict(vec![(Value::Bytes(chain), Value::None)]);
+
+        let text = dump_text(&top);
+
+        assert_eq!(
+            text.matches("stream?").count(),
+            crate::decode::MAX_DEPTH,
+            "dict-key nested-stream decoding must stop at MAX_DEPTH, not restart at 0 every hop"
+        );
+        assert!(
+            !text.contains("DICT_KEY_LEAF_MARKER"),
+            "leaf beyond MAX_DEPTH must never be reached"
+        );
+    }
+
+    /// Build a chain of `depth` nested marshal streams, each a DICT with one
+    /// entry `{ value: None, key: <BUFFER wrapping the next level down> }`,
+    /// bottoming out at `leaf` (which must not itself start with 0x7E, so
+    /// the chain has a clean terminator). Mirrors `nested_stream_chain`'s
+    /// O(depth) flat-buffer construction (fixed-size prefix per level,
+    /// precomputed sizes bottom-up, then written top-down directly into
+    /// position) — just with a bigger per-level prefix (DICT opcode + count
+    /// + NONE value ahead of the BUFFER key), since here the nesting is
+    /// through a dict key rather than a bare BUFFER payload.
+    fn nested_dict_key_chain(depth: usize, leaf: &[u8]) -> Vec<u8> {
+        // stream header + DICT op + count(=1) + NONE value + BUFFER key op + ext length
+        const HEADER_LEN: usize = 5 + 1 + 1 + 1 + 1 + 5;
+        let mut sizes = Vec::with_capacity(depth + 1);
+        sizes.push(leaf.len());
+        for i in 1..=depth {
+            sizes.push(sizes[i - 1] + HEADER_LEN);
+        }
+        let mut buf = Vec::with_capacity(sizes[depth]);
+        for i in (1..=depth).rev() {
+            buf.extend_from_slice(&[0x7E, 0, 0, 0, 0, 0x16, 0x01, 0x01, 0x13, 0xFF]);
             buf.extend_from_slice(&(sizes[i - 1] as u32).to_le_bytes());
         }
         buf.extend_from_slice(leaf);
