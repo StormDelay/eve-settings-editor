@@ -82,13 +82,14 @@ struct Decoder<'a> {
 /// eligible but TUPLE0/STRING0/UNICODE0 are served from the constants table
 /// (marshal.c:1246 etc.) and are NOT eligible. On every other opcode the flag
 /// is silently ignored, so we must not consume a map slot for it.
-/// INSTANCE reserves its slot at container open via a different mechanism
-/// (RESERVE_SLOT, marshal.c:128-139) rather than CHECK_SHARED, but it lands
-/// in the same `shared_count`/`shared_map` sequence at the same
-/// encounter-order position, so folding it into this same "reserve before
+/// INSTANCE and REDUCE reserve their slot at container open via a different
+/// mechanism (RESERVE_SLOT, marshal.c:128-139) rather than CHECK_SHARED, but
+/// it lands in the same `shared_count`/`shared_map` sequence at the same
+/// encounter-order position, so folding them into this same "reserve before
 /// children, store after" path (see `load` below) reproduces it exactly.
-/// DBROW/NEWOBJ/REDUCE are also eligible in the reference but are Unsupported
-/// in this task, so they error before any store matters.
+/// DBROW/NEWOBJ are also eligible in the reference but are Unsupported in
+/// this task (absent from the corpus), so they error before any store
+/// matters.
 fn stores_shared(code: u8) -> bool {
     matches!(
         code,
@@ -105,6 +106,7 @@ fn stores_shared(code: u8) -> bool {
             | op::LIST1
             | op::GLOBAL
             | op::INSTANCE
+            | op::REDUCE
     )
 }
 
@@ -316,13 +318,48 @@ impl<'a> Decoder<'a> {
                 let state = self.load(r)?;
                 Value::Instance { class: Box::new(class), state: vec![state] }
             }
-            // Complex / deferred types (see docs/format-notes.md); not needed
-            // yet. BLUE/CALLBACK/PICKLER have no case in the reference either.
+            // REDUCE (marshal.c:789-793 open; 985-1010 fill): one plain
+            // object follows — a Tuple shaped (callable, args[, state]) —
+            // then an *unconditional* list-then-dict iterator tail: zero or
+            // more objects (would be `list.append`ed), a MARK, zero or more
+            // (key, value) pairs in that order (POPULATE_DICT's "iterated
+            // (key,val)" form, line 182 — note this is the opposite wire
+            // order from plain DICT's counted (val,key) form), then a second
+            // MARK. Every REDUCE observed in the corpus has an empty tail
+            // (MARK immediately follows the ctor tuple twice), but the loop
+            // below handles a non-empty one losslessly: appended objects and
+            // each (key, value) pair (as a 2-element Tuple) land in `state`,
+            // in wire order, after the ctor tuple itself (`class`).
+            op::REDUCE => {
+                let ctor = self.load(r)?;
+                let mut state = Vec::new();
+                loop {
+                    let next = r.peek_u8()?;
+                    if next & !op::SHARED_FLAG == op::MARK {
+                        r.read_u8()?;
+                        break;
+                    }
+                    state.push(self.load(r)?);
+                }
+                loop {
+                    let next = r.peek_u8()?;
+                    if next & !op::SHARED_FLAG == op::MARK {
+                        r.read_u8()?;
+                        break;
+                    }
+                    let key = self.load(r)?;
+                    let value = self.load(r)?;
+                    state.push(Value::Tuple(vec![key, value]));
+                }
+                Value::Instance { class: Box::new(ctor), state }
+            }
+            // Complex / deferred types (see docs/format-notes.md); not
+            // exercised by any file in the corpus. BLUE/CALLBACK/PICKLER
+            // have no case in the reference either.
             op::BLUE => return Err(unsupported(at, "BLUE")),
             op::CALLBACK => return Err(unsupported(at, "CALLBACK")),
             op::CHECKSUM => return Err(unsupported(at, "CHECKSUM")),
             op::PICKLER => return Err(unsupported(at, "PICKLER")),
-            op::REDUCE => return Err(unsupported(at, "REDUCE")),
             op::NEWOBJ => return Err(unsupported(at, "NEWOBJ")),
             op::DBROW => return Err(unsupported(at, "DBROW")),
             op::MARK => return Err(unsupported(at, "MARK")),
@@ -562,6 +599,58 @@ mod tests {
             Value::Instance {
                 class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
                 state: vec![Value::Int(1)],
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_reduce_ctor_then_double_mark_tail() {
+        // REDUCE 0x22: one child object (the (callable, args) tuple), then
+        // an always-present list-then-dict iterator tail terminated by two
+        // MARK bytes — empty in every real occurrence observed so far.
+        let mut data = vec![0x22, 0x2C]; // REDUCE, TUPLE2
+        data.push(0x02);
+        data.push(3);
+        data.extend_from_slice(b"M.f"); // GLOBAL callable "M.f"
+        data.push(0x25); // TUPLE1 (args)
+        data.push(0x26); // LIST0 (args[0] = [])
+        data.push(0x2D); // MARK: end of (empty) list-items phase
+        data.push(0x2D); // MARK: end of (empty) dict-items phase
+        let ctor = Value::Tuple(vec![
+            Value::Global(b"M.f".to_vec()),
+            Value::Tuple(vec![Value::List(vec![])]),
+        ]);
+        assert_eq!(
+            decode(&stream(&data)).unwrap(),
+            Value::Instance { class: Box::new(ctor), state: vec![] }
+        );
+    }
+
+    #[test]
+    fn decodes_reduce_with_nonempty_iterator_tail() {
+        // Same framing as above, but exercises the general MARK-terminated
+        // loop with real (non-empty) list-items and dict-items, per
+        // marshal.c's unconditional LIST_ITERATOR/DICT_ITERATOR switch —
+        // never observed in the corpus, but part of the wire spec.
+        let mut data = vec![0x22, 0x2C]; // REDUCE, TUPLE2
+        data.push(0x02);
+        data.push(3);
+        data.extend_from_slice(b"M.f");
+        data.push(0x24); // TUPLE0 (args = ())
+        data.push(0x09); // list-item: ONE
+        data.push(0x2D); // MARK: end of list-items phase
+        data.push(0x08); // dict-item key: ZERO
+        data.push(0x09); // dict-item value: ONE
+        data.push(0x2D); // MARK: end of dict-items phase
+        let ctor = Value::Tuple(vec![Value::Global(b"M.f".to_vec()), Value::Tuple(vec![])]);
+        assert_eq!(
+            decode(&stream(&data)).unwrap(),
+            Value::Instance {
+                class: Box::new(ctor),
+                state: vec![
+                    Value::Int(1),
+                    Value::Tuple(vec![Value::Int(0), Value::Int(1)]),
+                ],
             }
         );
     }

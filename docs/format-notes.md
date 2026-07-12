@@ -308,6 +308,44 @@ Confirmed against real corpus bytes (`core_char_123456789.dat` offset
   independently verified to close all corpus files that don't also contain
   a nested `REDUCE`.
 
+### REDUCE — implemented (Task 9)
+
+Confirmed against real corpus bytes (`core_char_123456788.dat` offset
+0x22, historical snapshot, and `core_user_987654.dat` offset 0x684, fresh
+snapshot — both reconstructing a Python `set` via `__builtin__.set`):
+
+- Decodes to the same `Value::Instance { class, state }` shape as INSTANCE:
+  `class` is the whole ctor object as decoded — a `Tuple` of 2 elements,
+  `(callable, args)`, observed as `(Global("__builtin__.set"), Tuple([the
+  set's elements as a List]))` — since the wire only ever hands REDUCE one
+  plain object here (the tuple itself), not two separate class/state reads
+  like INSTANCE. `state` holds whatever the list-then-dict iterator tail
+  contributes (see below); the field is reused rather than adding a new
+  variant, per the brief's guidance to mirror load order generically across
+  INSTANCE/NEWOBJ/REDUCE.
+- The callable was observed both as a plain `GLOBAL` (unshared) and as
+  `GLOBAL|SHARED_FLAG` (cached across multiple REDUCE occurrences in the
+  same file) — both handled by the generic recursive decode of the ctor
+  tuple's first element, no REDUCE-specific code needed.
+- The list-then-dict iterator tail (marshal.c's unconditional switch to
+  `LIST_ITERATOR` then `DICT_ITERATOR` after building the object,
+  985-1011/1014-1058) is **always present** on the wire — every REDUCE
+  observed in the corpus is followed immediately by two consecutive `MARK`
+  (0x2D) bytes with nothing in between, i.e. an empty tail. The decoder
+  implements the general MARK-terminated loop (not just "expect two MARKs
+  immediately") since that's the actual mandatory framing per marshal.c, not
+  a speculative extension: it reads objects into `state` until a MARK, then
+  `(key, value)` pairs (note: *iterated* order is key-then-value, the
+  opposite of plain DICT's counted value-then-key, per the POPULATE_DICT
+  macro comment at marshal.c:182) into `state` as 2-element `Tuple`s until a
+  second MARK. A non-empty tail is exercised only by a synthetic unit test
+  (`decodes_reduce_with_nonempty_iterator_tail`), never by the corpus.
+- `NEWOBJ` (0x23) shares this exact framing (`(args_tuple[, state])` instead
+  of `(callable, args_tuple[, state])`, per marshal.c:947-982) but is never
+  observed in the corpus, so it is left `Unsupported` — implementing it
+  would be speculative (YAGNI). Likewise `DBROW` (0x2A) is left
+  `Unsupported`; it never appears either.
+
 ## Decoder coverage log
 
 Task 8 baseline (2026-07-12): scanned 1116, ok 70, failed 1046.
@@ -319,6 +357,11 @@ Task 9 increment 1 (2026-07-12), GLOBAL + INSTANCE implemented: scanned
 1116, ok 550, failed 566. Remaining failures are all `Unsupported("REDUCE")`
 (352 top-level, plus files where a REDUCE is nested inside what used to be
 the first INSTANCE failure).
+
+Task 9 increment 2 (2026-07-12), REDUCE implemented: scanned 1116, ok 1116,
+failed 0. Full corpus coverage reached — both the historical and fresh
+snapshots decode cleanly, including the two anomalous files
+(`core_char_('char', None, 'dat').dat` and `core_char__.dat`).
 
 ## Mappings
 
