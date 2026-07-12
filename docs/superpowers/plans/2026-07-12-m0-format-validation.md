@@ -1066,6 +1066,7 @@ fn collect_dat_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
+#[ignore = "M0 gate: un-ignore when Task 9 reaches full corpus coverage"]
 fn every_corpus_file_decodes() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
     let mut files = Vec::new();
@@ -1171,7 +1172,10 @@ Expected: builds cleanly; prints per-file `FAIL` lines and a summary like `scann
 - [ ] **Step 4: Run the test suite**
 
 Run: `cargo test -p blue-marshal`
-Expected: unit tests pass; `every_corpus_file_decodes` **fails** listing the same files as the scan (or passes if Task 7 already covers everything). Either result is acceptable to commit — the corpus test is the M0 gate, not a per-task gate; it must pass by the end of Task 9.
+Expected: all tests pass; `every_corpus_file_decodes` is reported as ignored (it is the M0 gate — Task 9 un-ignores it once coverage is complete). Take the gate's baseline explicitly:
+
+Run: `cargo test -p blue-marshal --test corpus -- --ignored`
+Expected: fails listing the same files as the scan (or passes if Task 7 already covers everything). This red run is a measurement, not a commit gate — the committed suite stays green because the test is ignored.
 
 - [ ] **Step 5: Commit**
 
@@ -1220,7 +1224,7 @@ git commit -m "Decode <OPCODE> per reverence marshal.c"
 
 - [ ] **Step 5: Repeat Steps 1–4 until the scan reports `failed 0`**
 
-Exit criterion: `bmdump scan testdata/corpus` prints `failed 0` across **both** the historical and fresh snapshots, and `cargo test -p blue-marshal` is fully green including the corpus test. Also spot-check one large file end-to-end:
+Exit criterion: `bmdump scan testdata/corpus` prints `failed 0` across **both** the historical and fresh snapshots, and `cargo test -p blue-marshal --test corpus -- --ignored` passes. Then remove the `#[ignore]` attribute from `every_corpus_file_decodes` (the gate is now a permanent regression test) and confirm `cargo test -p blue-marshal` is fully green. Also spot-check one large file end-to-end:
 
 Run: `cargo run -p blue-marshal --bin bmdump -- dump testdata/corpus/<fresh snapshot>/<profile>/settings_Default/core_char_<id>.dat | Select-Object -First 40`
 Expected: readable tree with recognizable keys (e.g. `b"autoreload"`, window-ish structures), no `hex:` soup at the top level.
