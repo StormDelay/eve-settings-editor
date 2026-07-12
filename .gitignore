@@ -1,5 +1,5 @@
-# Real EVE settings files copied for local testing — personal data, never commit
-testdata/corpus/
+# Real EVE settings files and experiment dumps/diffs — personal data, never commit
+testdata/
 
 # Build outputs
 target/

@@ -389,4 +389,110 @@ snapshots decode cleanly, including the two anomalous files
 
 ## Mappings
 
-(filled by Tasks 10–11)
+All paths below are dict-key sequences from the file root (the root of every
+`core_char_*.dat` decodes to a Dict). Established by diffing before/after
+dumps around single in-game changes (Task 10 experiments).
+
+### Value-wrapper convention (applies file-wide)
+
+Most leaf settings are stored as a 2-tuple `(timestamp, value)`, where
+`timestamp` is a LONG holding a Windows FILETIME (100 ns ticks since
+1601-01-01 UTC). The client rewrites these timestamps for many entries on
+every save, so timestamp churn is the dominant diff noise between two saves
+of the same file. Editors must preserve the wrapper (rewriting the timestamp
+on edit is what the client itself does; keeping the old one also appears
+harmless — not yet verified).
+
+### Window geometry (experiments 1–2: moved, then resized the overview window)
+
+- File: `core_char_<id>.dat` (character-scoped; the paired `core_user` file
+  was also rewritten in the session but contains no geometry).
+- Path: root → `b"windows"` → `b"windowSizesAndPositions_1"` →
+  `(timestamp, dict)`; the inner dict maps window id → 6-tuple
+  `(x, y, width, height, screenW, screenH)`, all absolute pixels
+  (observed: overview `(2114, 424, 446, 1016, 2560, 1440)` on a 2560×1440
+  client; moving the window vertically changed only element 1 (y): 0 → 424).
+- Resize confirmation (experiment 2): resizing changed the tuple to
+  `(1707, 288, 853, 1152, 2560, 1440)` — w/h are elements 2–3; x/y moved
+  too because the drag origin moved. Apart from timestamp churn this tuple
+  was the *only* change in the file, so geometry is fully self-contained
+  here (no shadow copies elsewhere).
+- `screenW`/`screenH` are the client resolution the geometry was saved at,
+  embedded per window — this is the resolution source for the layout
+  canvas (spec §6); there is no separate global resolution key needed.
+- Window ids: plain byte-strings for singleton windows (`b"overview"`,
+  `b"overview_1"` for a second overview window, `b"fitting"`, …) and
+  stringified Python tuples (Str, e.g. `"('corpassets', 1000000000001L)"`)
+  for parameterized windows. Both kinds appear as keys of the same dict.
+- Generic across windows (experiment 5): moving the market window changed
+  only its own 6-tuple in the same `windowSizesAndPositions_1` dict (x/y
+  `(1544, 55)` → `(16, 825)`) plus its `b"openWindows"` flag — every
+  window uses the same structure, so the layout canvas can enumerate this
+  dict generically; no per-window special cases.
+- Stored window flags live in sibling `(timestamp, dict-by-window-id)`
+  entries under root → `b"windows"`: `b"openWindows"`,
+  `b"collapsedWindows"`, `b"minimizedWindows"`, `b"lockedWindows"`,
+  `b"compactWindows"`, `b"isOverlayedWindows"`,
+  `b"isLightBackgroundWindows"`, `b"stacksWindows"` (values bool, except
+  stacksWindows: stack id). These are the spec's WindowLayout flag fields.
+- Overview column *widths* observed under root → `b"ui"` →
+  `b"SortHeadersSizes"` / `b"SortHeadersSettings2"` keyed by tuple
+  `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
+  (details to be confirmed in experiment 3).
+
+### Overview columns (experiments 3a–3b: added a column, reordered columns)
+
+Column visibility and order are **per overview tab**, stored in
+`core_user_<id>.dat` (account-scoped), with widths per character in
+`core_char_<id>.dat`:
+
+- Visible set + order: user-file root → `b"overview"` →
+  `b"tabsettings_new"` → `(timestamp, dict)` keyed by tab index (Int).
+  Each tab is a dict: `"name"` (Str label), `b"bracket"` (bracket preset
+  name), `b"color"` (None or 3-float RGB tuple), `b"overview"` (overview
+  preset name), `b"showAll"`/`b"showNone"`/`b"showSpecials"` (bools),
+  `b"tabColumnOrder"` (list of column-name Bytes, full ordering) and
+  `b"tabColumns"` (list of column-name Bytes, the **visible** set — adding
+  Transversal Velocity to one tab appended `b"TRANSVERSALVELOCITY"` here).
+  A legacy sibling `b"tabsettings"` also exists (older shape, still
+  rewritten by the client).
+- Per-tab keys are sparse with inheritance (experiment 3b): a tab without
+  its own `b"tabColumnOrder"`/`b"tabColumns"` inherits the account defaults
+  below; the first drag-reorder on such a tab **creates** the tab's own
+  `b"tabColumnOrder"` (observed on tab 0: full 14-column list written with
+  the dragged column in its new slot). Reordering touched **only** the
+  user file — the char file had no non-timestamp change.
+- Account-level defaults: user-file root → `b"overview"` →
+  `b"overviewColumns"` (visible set) and `b"overviewColumnOrder"` (order)
+  — did **not** change when a single tab's columns were edited; they appear
+  to be the defaults applied to tabs without their own settings.
+- Widths: char-file root → `b"ui"` → `b"SortHeadersSizes"` →
+  `(timestamp, dict)` keyed by tuple `(b"overviewScroll2", tabIndex)` →
+  dict column-name → width px (adding the column created
+  `b"TRANSVERSALVELOCITY": 159` for the edited tab). Sibling
+  `b"SortHeadersSettings2"` has the same keying and holds per-tab sort
+  state. Width entries appear lazily when a tab is rendered.
+### Autofill / remembered-string lists (experiment 4: ran a People & Places search)
+
+All remembered text-input history in the client is **one structure**, in
+`core_user_<id>.dat` only (no `editHistory` key exists in the char file):
+
+- Path: user-file root → `b"ui"` → `b"editHistory"` → `(timestamp, dict)`;
+  the inner dict is keyed by UI widget path (Bytes, e.g.
+  `b"/addressbook/content/main/SearchPanel/Container/SingleLineEditText"`)
+  → list of remembered strings (Str; occasionally an empty Bytes entry).
+  New entries append at the end of the widget's list (the test search
+  appeared as the last element of the People & Places search list).
+- ~40 widget-path lists observed in one real file: People & Places
+  searches, inventory quick-filters, structure browser search, skill
+  catalogue search, fleet/fitting names, wallet transfer "reason",
+  overview-export filename, chat channel names, bug-report title, etc.
+  This whole dict is the spec's `SuggestionLists` category: the editor can
+  enumerate the keys generically and offer per-list add/remove/reorder/
+  clear without a hardcoded list of widgets.
+
+- Overview *filter presets* (tab contents) live in user-file root →
+  `b"overview"` → `b"overviewProfilePresets"` (dict keyed by preset-name
+  Str) with `b"overviewProfilePresets_notSaved"`, `b"presetHistoryKeys"`,
+  `b"restoreData"` as session-state siblings — raw-tree-only in V1 per
+  spec §6.
