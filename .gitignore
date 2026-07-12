@@ -5,3 +5,6 @@ testdata/corpus/
 target/
 node_modules/
 dist/
+
+# SDD progress ledger (scratch)
+.superpowers/
