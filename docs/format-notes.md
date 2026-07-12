@@ -280,7 +280,10 @@ NEW_SEQUENCE does a sanity CHECK_SIZE(count) before allocating (202-213).
 
 ## Decoder coverage log
 
-(filled by Tasks 8–9)
+Task 8 baseline (2026-07-12): scanned 1116, ok 70, failed 1046.
+Distinct error kinds:
+- `INSTANCE` (694 files): offsets 0x34c, 0x113f, 0x795, 0xd716, 0xd6d4, 0xd98e, etc.
+- `REDUCE` (352 files): offsets 0x22, 0x2d, 0xcc, 0x138f8, 0xebed, 0xfc42, etc.
 
 ## Mappings
 
