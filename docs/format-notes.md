@@ -496,3 +496,35 @@ All remembered text-input history in the client is **one structure**, in
   Str) with `b"overviewProfilePresets_notSaved"`, `b"presetHistoryKeys"`,
   `b"restoreData"` as session-state siblings — raw-tree-only in V1 per
   spec §6.
+
+### Name presence (Task 11 decision: local extraction NOT viable)
+
+Investigated on fresh current-client files with the account's real
+character names known out-of-band (names verified interactively, never
+recorded here):
+
+- The char file does **not** store its own character's name structurally.
+  It does not even contain its own character ID — the ID exists only in
+  the filename.
+- The user file has **no** characterID→name structure at all; none of the
+  account's three character IDs appear anywhere in its decoded tree.
+- Every name occurrence found is incidental UI state: chat-channel labels
+  (a channel named after the character), container-window ids of the form
+  `containerWnd_<CharacterName>'s Capsule` (capsule cargo windows, in the
+  **user** file), station-container keys embedding pilot names, and
+  editHistory search strings (names of *other* players searched for).
+- `core_public__.yaml` (machine audio/device settings, same
+  `(FILETIME, value)` convention in YAML) and `prefs.ini` contain no names.
+
+**Decision for spec §6:** ESI `POST /universe/names` is the primary
+resolution source for character IDs (batched, cached, offline-safe,
+disableable); account IDs get user aliases. Local extraction is demoted to
+a *suggestion-only* heuristic.
+
+**Account↔character correlation (works):** at logout the client writes the
+played character's `core_char` and its account's `core_user` within a few
+seconds of each other (observed 3 s apart), so mtime clustering is a solid
+"account of character <id>" suggestion. Weak corroborating in-file hint:
+the user file's capsule container-window ids embed the account's own
+characters' names (unreliable — capsules can be renamed; suggestion only,
+per spec §6's confirm-into-alias flow).
