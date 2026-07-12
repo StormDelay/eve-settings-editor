@@ -44,8 +44,14 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
             let _ = write!(out, "{i}");
         }
         Value::Long(bytes) => {
-            // Interpret as unsigned LE when it fits; adjust after Task 4
-            // pins down sign semantics.
+            // The wire payload is signed little-endian two's-complement
+            // (Task 4, confirmed against marshal.c's `_PyLong_FromByteArray`
+            // call), but this renders it as unsigned: a Task 9 corpus-wide
+            // scan of all 1116 files found zero negative Longs, so there is
+            // nothing in the corpus this misrenders. Left as-is per the
+            // task brief (fix only if negative Longs are observed); revisit
+            // if a future corpus file ever has the top bit of the last byte
+            // set.
             if bytes.len() <= 16 {
                 let mut buf = [0u8; 16];
                 buf[..bytes.len()].copy_from_slice(bytes);
@@ -60,7 +66,22 @@ fn write_value(out: &mut String, v: &Value, indent: usize) {
         Value::Str(s) => {
             let _ = write!(out, "{s:?}");
         }
-        Value::Bytes(b) => write_bytes_body(out, b, "b"),
+        Value::Bytes(b) => {
+            // Double-marshaled settings values: a Bytes payload that is
+            // itself a complete marshal stream (starts with the 0x7E magic).
+            // `decode` never does this automatically — the bytes stay exact
+            // and lossless — but a readable dump is worth attempting one
+            // decode of the payload; fall back to plain rendering if it
+            // doesn't parse (0x7E can just as well be an ordinary byte).
+            if b.first() == Some(&0x7E) {
+                if let Ok(inner) = crate::decode::decode(b) {
+                    out.push_str("stream?");
+                    write_value(out, &inner, indent);
+                    return;
+                }
+            }
+            write_bytes_body(out, b, "b");
+        }
         Value::Global(name) => write_bytes_body(out, name, "global:"),
         Value::Tuple(items) => write_seq(out, items, indent, '(', ')'),
         Value::List(items) => write_seq(out, items, indent, '[', ']'),
@@ -153,6 +174,19 @@ mod tests {
     fn dump_bytes_printable_and_hex() {
         assert_eq!(dump_text(&Value::Bytes(b"overview".to_vec())), "b\"overview\"");
         assert_eq!(dump_text(&Value::Bytes(vec![0x00, 0xFF])), "hex:00ff");
+    }
+
+    #[test]
+    fn dump_bytes_attempts_nested_stream_decode() {
+        // A Bytes payload that is itself a complete, valid marshal stream
+        // (magic 0x7E, shared_count 0, one ONE opcode) — double-marshaled
+        // settings values look like this. Rendered decoded, not as hex/text.
+        let nested = vec![0x7E, 0, 0, 0, 0, 0x09];
+        assert_eq!(dump_text(&Value::Bytes(nested)), "stream?1");
+
+        // Starts with 0x7E but is not a valid stream (too short to hold the
+        // shared-count word) — falls back to plain byte rendering.
+        assert_eq!(dump_text(&Value::Bytes(vec![0x7E])), "b\"~\"");
     }
 
     #[test]
