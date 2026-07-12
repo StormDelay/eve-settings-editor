@@ -17,10 +17,12 @@ pub enum Value {
     /// Kept distinct from `Bytes` so M1's encoder can re-emit opcode 0x02
     /// rather than a string opcode.
     Global(Vec<u8>),
-    /// INSTANCE (0x17): mirrors marshal.c's load order rather than modeling
-    /// Python construction. `class` is the class name object; `state` holds
-    /// the single state object applied via `__setstate__`/`__dict__.update`
-    /// in the reference.
+    /// INSTANCE (0x17) / REDUCE (0x22): mirrors marshal.c's load order rather
+    /// than modeling Python construction. For INSTANCE, `class` is the class
+    /// name object and `state` holds the single state object. For REDUCE,
+    /// `class` is the whole `(callable, args[, state])` tuple as decoded, and
+    /// `state` holds any list-then-dict iterator-tail items (each dict pair
+    /// as a 2-element `Tuple`) — empty in every corpus file observed so far.
     Instance { class: Box<Value>, state: Vec<Value> },
 }
 
