@@ -13,6 +13,7 @@ A cross-platform (Windows/macOS/Linux) desktop application that edits the EVE On
 3. Edit remembered-string / autofill suggestion lists (search suggestions confirmed; others discovered during M0).
 4. Load any existing settings file to view and edit **all** its settings via an editable raw tree.
 5. Batch-apply chosen setting categories from one character to many (Milestone 4).
+6. Display character and account names alongside the numeric IDs from file names, wherever IDs appear in the UI (see §6, *Name display & resolution*).
 
 Target: the **current Tranquility client** (user plays actively; fresh settings files can be generated on demand for validation).
 
@@ -81,6 +82,12 @@ One editable string list per discovered remembered-string collection (add, remov
 ### Raw tree editor
 The whole document as an expandable tree: type-aware inline editing for scalars, add/remove entries in dicts and lists, read-only hex view for opaque blobs. Serves as fallback editor for anything without a purpose-built UI and as the format-discovery instrument.
 
+### Name display & resolution
+Wherever a character or account ID appears (file picker, batch-apply source/target lists, backups panel, window titles), the UI shows a human-readable name alongside it whenever one is available.
+
+- **Character IDs** (`core_char_<id>.dat`): resolved via ESI's public `POST /universe/names` endpoint — no authentication, batched (one request for all discovered IDs), cached persistently in the app's data directory. Offline or on ESI failure, the UI falls back to bare IDs; cached names keep working. A settings toggle disables all network access, and this is the app's **only** network call.
+- **Account IDs** (`core_user_<id>.dat`): CCP exposes no public API for account identities, so these cannot be resolved online. Instead: (a) the user can assign a persistent **alias** to any account ID in the UI; (b) M0 investigates a best-effort correlation heuristic — char and user files written in the same login session (matching modification timestamps, or cross-references found inside the files) let the UI suggest "account of *CharacterName*", clearly marked as a guess and confirmable into an alias with one click.
+
 ### Batch apply (M4)
 Flow: pick a **source** file → choose categories (window layout / overview columns / suggestion lists) → multi-select **target** files (char categories to char files, user categories to user files) → preview summary → apply. Each target runs the full save-path invariant chain independently; one failure does not halt the others; a per-target success/failure report is shown at the end.
 **Geometry caveat:** window geometry is absolute pixels; the preview warns for each target whose stored resolution differs from the source's.
@@ -102,16 +109,15 @@ Flow: pick a **source** file → choose categories (window layout / overview col
 
 ## 9. Milestones
 
-- **M0 — Format validation & mapping:** parse fresh current-client files; diff in-game changes (move a window, run a search) against file changes to pin down where geometry, columns, and suggestions live. Explicitly allowed to revise this spec.
+- **M0 — Format validation & mapping:** parse fresh current-client files; diff in-game changes (move a window, run a search) against file changes to pin down where geometry, columns, and suggestions live. Also investigate the account↔character correlation heuristic (§6, *Name display & resolution*). Explicitly allowed to revise this spec.
 - **M1 — Core:** codec + raw tree editor + full save chain with backups. The tool is already useful here.
 - **M2 — Layout canvas** + properties panel.
-- **M3 — Overview columns + autofill editors;** packaging for Windows/macOS/Linux.
+- **M3 — Overview columns + autofill editors;** ESI name resolution + account aliases; packaging for Windows/macOS/Linux.
 - **M4 — Batch apply** across characters/accounts.
 
 ## 10. Deferred (designed-for, not built)
 
 - Settings diff between two characters.
-- ESI character-name resolution in the file picker (network feature; app is otherwise fully offline).
 - Purpose-built overview filter-preset editor.
 
 ## 11. Public release path (optional, designed-for)
@@ -121,7 +127,7 @@ V1 targets friends/corp, but nothing in the design may block a later public rele
 - **Semantic versioning + tagged releases + changelog** from the first shared build.
 - **CI builds** (GitHub Actions + Tauri's official action) already produce the per-OS artifacts (`.msi`/`.exe`, `.dmg`, `.AppImage`/`.deb`) that a public release would ship — "release" is then just making the artifacts public.
 - **No personal data anywhere in the repo** (already required by §8: local-only corpus, synthetic CI fixtures).
-- **No telemetry, no network calls** in the core app (ESI name lookup, if ever built, stays opt-in) — nothing to disclose or harden later.
+- **No telemetry.** The sole network call is ESI ID→name resolution (§6) — public data, unauthenticated, disableable via a settings toggle — so a public README has exactly one network behavior to disclose.
 - **Fail-safe file handling** (§5, §7) is already public-grade: unknown/corrupt files can never be corrupted further.
 - **License chosen up front** (MIT, matching EVE community tooling norms) so early corp-mate distribution doesn't create relicensing friction.
 
@@ -141,3 +147,4 @@ Activated **only if/when going public** (tracked, not built):
 | Backups | Timestamped copies in a subfolder **before every write**, keep-all | User requirement; hard invariant of the save path. |
 | Multi-character | Batch apply is M4; category model designed for it from M1 | User promoted it from "deferred" into V1 scope. |
 | Editing model | Visual canvas + always-available direct property editing | User requirement: never rely purely on visuals. |
+| Names next to IDs | Characters via public ESI (cached, offline-safe); accounts via user aliases + M0 correlation heuristic | User requirement; accounts have no public API, so honest best-effort there. |
