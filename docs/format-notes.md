@@ -212,6 +212,30 @@ consumer feeds back through Load — so nested settings values require a
 recursive decode of the byte payload as a fresh stream with its own shared
 table.
 
+### Nested streams inside Bytes (not STREAM opcode) — Task 9
+
+Confirmed in the corpus: many `BUFFER`/`STRINGL` (opcode 0x0D/0x13, decoded
+as `Value::Bytes`) payloads — **not** the dedicated `STREAM` opcode 0x2B —
+are themselves complete marshal streams (start with the `0x7E` magic byte);
+CCP calls this pattern "double-marshaled" settings values (a cached blob
+storing an already-serialized sub-object). A corpus-wide scan found 1942
+such `Bytes` values across all 1116 files, and zero negative `Long` values
+(see the `dump_text` Long-rendering TODO below — left unfixed since the
+corpus never exercises it).
+
+`decode` deliberately does **not** auto-decode these: bytes stay exact and
+lossless regardless of what they happen to contain, matching the "no lossy
+conversions" constraint and keeping `Value::Bytes` a single, predictable
+shape. Instead, `dump_text` (value.rs) attempts one `decode` call on any
+`Bytes` payload starting with `0x7E`, purely for readability:
+- success: render `stream?` followed by the decoded value's normal
+  rendering (e.g. `stream?{...}` for a dict-shaped payload) — the `?`
+  (vs. the real `STREAM` opcode's `stream:`) flags that this is a
+  heuristic reinterpretation of raw bytes, not a wire-guaranteed nested
+  stream.
+- failure (starts with `0x7E` by coincidence but isn't a valid stream):
+  falls back to the normal `Bytes` rendering (printable-quoted or hex).
+
 ### CHECKSUM (0x1C) — checklist item 6
 
 marshal.c:613-623. Payload: 4 bytes u32 LE = stored adler32 value. Yields
