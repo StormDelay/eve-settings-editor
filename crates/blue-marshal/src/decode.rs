@@ -15,8 +15,10 @@ use crate::value::Value;
 /// marshal.c:167-171, "object hierarchy too deep"). Without this, a corrupt
 /// stream of chained container opcodes recurses one frame per byte and
 /// overflows the stack — an uncatchable process abort — instead of returning
-/// a `DecodeError`.
-const MAX_DEPTH: usize = 64;
+/// a `DecodeError`. `pub(crate)` so `value.rs`'s `dump_text` can reuse the
+/// same bound for its own nested-stream decode attempts, which call this
+/// module's `decode` fresh (at depth 0) and so need their own depth guard.
+pub(crate) const MAX_DEPTH: usize = 64;
 
 /// Decode a complete blue-marshal stream into a [`Value`].
 pub fn decode(data: &[u8]) -> Result<Value, DecodeError> {
