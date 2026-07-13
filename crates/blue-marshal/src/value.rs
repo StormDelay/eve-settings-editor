@@ -66,6 +66,53 @@ impl Value {
             other => other,
         }
     }
+
+    /// Structural equality with floats compared by bit pattern. The derived
+    /// `PartialEq` uses `f64::eq`, under which `NaN != NaN` — so a tree
+    /// containing a NaN payload would compare unequal to itself and fail the
+    /// save-path verify step spuriously. Wire fidelity is bit-level, so
+    /// equality here is too ( +0.0 and -0.0 are *different*, matching the
+    /// encoder's FLOAT0 rule).
+    pub fn bits_eq(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::List(a), Value::List(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.bits_eq(y))
+            }
+            (Value::Dict(a), Value::Dict(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|((ak, av), (bk, bv))| ak.bits_eq(bk) && av.bits_eq(bv))
+            }
+            (Value::Stream(a), Value::Stream(b)) => a.bits_eq(b),
+            (
+                Value::Instance { class: ac, state: as_ },
+                Value::Instance { class: bc, state: bs },
+            ) => ac.bits_eq(bc) && as_.bits_eq(bs),
+            (
+                Value::Reduce { ctor: ac, items: ai, pairs: ap },
+                Value::Reduce { ctor: bc, items: bi, pairs: bp },
+            ) => {
+                ac.bits_eq(bc)
+                    && ai.len() == bi.len()
+                    && ai.iter().zip(bi).all(|(x, y)| x.bits_eq(y))
+                    && ap.len() == bp.len()
+                    && ap
+                        .iter()
+                        .zip(bp)
+                        .all(|((xk, xv), (yk, yv))| xk.bits_eq(yk) && xv.bits_eq(yv))
+            }
+            (
+                Value::Shared { slot: a, value: av },
+                Value::Shared { slot: b, value: bv },
+            ) => a == b && av.bits_eq(bv),
+            // Every remaining variant either has no f64 inside (scalars,
+            // strings, bytes, Global, Ref) or differs in kind — the derived
+            // PartialEq is exact for those.
+            (a, b) => a == b,
+        }
+    }
 }
 
 /// Deterministic text rendering. Dict keys are sorted by their rendered
@@ -501,6 +548,17 @@ mod tests {
         let shared = Value::Shared { slot: 1, value: Box::new(inner.clone()) };
         assert_eq!(shared.unshared(), &inner);
         assert_eq!(inner.unshared(), &inner);
+    }
+
+    #[test]
+    fn bits_eq_handles_nan_and_signed_zero() {
+        let nan = Value::Float(f64::NAN);
+        assert!(nan.bits_eq(&nan.clone()), "NaN tree must equal its own clone");
+        assert!(nan != nan.clone(), "derived PartialEq disagrees — that is the point");
+        assert!(!Value::Float(0.0).bits_eq(&Value::Float(-0.0)));
+        let t = Value::Tuple(vec![Value::Float(f64::NAN), Value::Int(1)]);
+        assert!(t.bits_eq(&t.clone()));
+        assert!(!t.bits_eq(&Value::Tuple(vec![Value::Float(f64::NAN), Value::Int(2)])));
     }
 
     #[test]

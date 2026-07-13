@@ -67,6 +67,7 @@ fn decode_at_depth(data: &[u8], depth: usize) -> Result<Value, DecodeError> {
 
     let mut dec = Decoder {
         shared: vec![false; shared_count],
+        reserved: vec![false; shared_count],
         shared_next: 0,
         data,
         depth,
@@ -93,6 +94,9 @@ fn decode_at_depth(data: &[u8], depth: usize) -> Result<Value, DecodeError> {
 struct Decoder<'a> {
     /// Whether each shared slot (indexed by map entry - 1) has been stored.
     shared: Vec<bool>,
+    /// Tail-map slots already designated by an earlier map entry (duplicate
+    /// detection); distinct from `shared`, which flips only on completion.
+    reserved: Vec<bool>,
     /// Encounter counter: index of the next tail-map entry to consume.
     shared_next: usize,
     /// Full stream, used only to read tail-map slot numbers.
@@ -156,6 +160,15 @@ impl<'a> Decoder<'a> {
         if slot < 1 || slot as usize > n {
             return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(slot as usize) });
         }
+        // Duplicate detection: a slot may be designated by only one map
+        // entry. `reserved` doubles as the seen-set — `true` means an earlier
+        // entry already claimed the slot (stores complete before any REF can
+        // read them, so no ordering hazard). Checked at reservation, i.e.
+        // the second SHARED-flagged object fails at its own opcode offset.
+        if self.reserved[slot as usize - 1] {
+            return Err(DecodeError { offset: at, kind: ErrorKind::DuplicateSharedSlot(slot as usize) });
+        }
+        self.reserved[slot as usize - 1] = true;
         Ok(slot as usize)
     }
 
@@ -816,5 +829,23 @@ mod tests {
             err.kind,
             crate::ErrorKind::UnconsumedSharedMap { declared: 1, stored: 0 }
         );
+    }
+
+    #[test]
+    fn duplicate_shared_map_slots_are_rejected() {
+        // Two SHARED-flagged objects whose map entries both designate slot 1
+        // (count = 2, map = [1, 1]). The reference lets the second store win;
+        // we reject at the second reservation so Ref(slot) stays unique.
+        let data = [
+            0x7E, 0x02, 0x00, 0x00, 0x00, // header, shared_count = 2
+            0x2C, // TUPLE2
+            0x6F, 0x01, 0x2A, // LONG|SHARED, len 1 — reserves map[0] = 1
+            0x6F, 0x01, 0x2B, // LONG|SHARED, len 1 — map[1] = 1 duplicate!
+            0x01, 0x00, 0x00, 0x00, // tail map entry 0 = slot 1
+            0x01, 0x00, 0x00, 0x00, // tail map entry 1 = slot 1 (duplicate)
+        ];
+        let err = decode(&data).unwrap_err();
+        assert_eq!(err.kind, crate::ErrorKind::DuplicateSharedSlot(1));
+        assert_eq!(err.offset, 9); // the second LONG|SHARED opcode byte
     }
 }
