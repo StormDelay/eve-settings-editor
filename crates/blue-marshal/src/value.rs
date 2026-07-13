@@ -90,9 +90,9 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
                     return;
                 }
             }
-            write_bytes_body(out, b, "b");
+            write_bytes_body(out, b, "b", "hex:");
         }
-        Value::Global(name) => write_bytes_body(out, name, "global:"),
+        Value::Global(name) => write_bytes_body(out, name, "global:", "global-hex:"),
         Value::Tuple(items) => write_seq(out, items, indent, '(', ')', stream_depth),
         Value::List(items) => write_seq(out, items, indent, '[', ']', stream_depth),
         Value::Dict(entries) => {
@@ -144,16 +144,22 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
 }
 
 /// Shared rendering for byte strings (`Bytes` and `Global`): printable ASCII
-/// (and empty) render quoted with `prefix`, anything else renders as hex —
-/// matching the original `Bytes`-only behavior (`prefix = "b"` reproduces it
-/// exactly), reused for `Global` with `prefix = "global:"`.
-fn write_bytes_body(out: &mut String, b: &[u8], prefix: &str) {
-    if b.is_empty() {
-        let _ = write!(out, "{prefix}\"\"");
-    } else if b.iter().all(|c| (0x20..0x7F).contains(c)) {
-        let _ = write!(out, "{prefix}\"{}\"", String::from_utf8_lossy(b));
+/// (and empty) renders quoted with `quoted_prefix` (embedded `"` and `\`
+/// escaped with a backslash); anything else renders as hex with `hex_prefix`,
+/// so `Bytes` and `Global` stay distinguishable in both branches.
+fn write_bytes_body(out: &mut String, b: &[u8], quoted_prefix: &str, hex_prefix: &str) {
+    if b.iter().all(|c| (0x20..0x7F).contains(c)) {
+        out.push_str(quoted_prefix);
+        out.push('"');
+        for &c in b {
+            if c == b'"' || c == b'\\' {
+                out.push('\\');
+            }
+            out.push(c as char);
+        }
+        out.push('"');
     } else {
-        let _ = write!(out, "hex:{}", hex(b));
+        let _ = write!(out, "{hex_prefix}{}", hex(b));
     }
 }
 
@@ -203,6 +209,20 @@ mod tests {
     #[test]
     fn dump_bytes_printable_and_hex() {
         assert_eq!(dump_text(&Value::Bytes(b"overview".to_vec())), "b\"overview\"");
+        assert_eq!(dump_text(&Value::Bytes(vec![0x00, 0xFF])), "hex:00ff");
+    }
+
+    #[test]
+    fn dump_bytes_escapes_quotes_and_backslashes() {
+        assert_eq!(
+            dump_text(&Value::Bytes(b"a\"b\\c".to_vec())),
+            r#"b"a\"b\\c""#
+        );
+    }
+
+    #[test]
+    fn dump_global_nonprintable_uses_global_hex_prefix() {
+        assert_eq!(dump_text(&Value::Global(vec![0x00, 0xFF])), "global-hex:00ff");
         assert_eq!(dump_text(&Value::Bytes(vec![0x00, 0xFF])), "hex:00ff");
     }
 

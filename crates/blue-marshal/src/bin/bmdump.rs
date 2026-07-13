@@ -37,6 +37,10 @@ fn dump(path: &Path) -> ExitCode {
 fn scan(dir: &Path) -> ExitCode {
     let mut files = Vec::new();
     collect(dir, &mut files);
+    if files.is_empty() {
+        eprintln!("no .dat files found under {}", dir.display());
+        return ExitCode::from(2);
+    }
     let (mut ok, mut failed) = (0u32, 0u32);
     for f in &files {
         let data = match fs::read(f) {

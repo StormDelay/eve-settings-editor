@@ -12,7 +12,6 @@ pub enum ErrorKind {
     BadMagic(u8),
     UnexpectedEof,
     UnknownOpcode(u8),
-    UnknownFlags(u8),
     BadRef(usize),
     BadStringRef(usize),
     BadUtf8,

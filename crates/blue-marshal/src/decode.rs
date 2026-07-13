@@ -3,6 +3,14 @@
 //! "Per-opcode encoding details (verified against marshal.c)" sections are
 //! authoritative; every non-obvious choice below cites the marshal.c line it
 //! was verified against.
+//!
+//! Known deviation: the reference stores containers into their shared slot at
+//! container *open* (NEW_SEQUENCE/RESERVE_SLOT), which lets a REF inside a
+//! container point back at the container itself — a cyclic reference. This
+//! decoder stores the completed value *after* its children decode, so such a
+//! self-referential REF fails with `BadRef` instead. An owned `Value` tree
+//! cannot represent a cycle anyway, and no corpus file contains one (all 5022
+//! decode cleanly).
 
 use crate::error::{DecodeError, ErrorKind};
 use crate::opcodes as op;
@@ -673,5 +681,58 @@ mod tests {
             decode(&stream(&body)).unwrap(),
             Value::Bytes(vec![b'z'; 255])
         );
+    }
+
+    #[test]
+    fn shared_global_stored_then_ref() {
+        // 7E | count=1 | TUPLE2( GLOBAL|SHARED "__builtin__.set", REF 1 ) | map[0]=1
+        let mut data = vec![
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x2C, // TUPLE2
+            0x42, 15, // GLOBAL(0x02)|SHARED_FLAG, len 15
+        ];
+        data.extend_from_slice(b"__builtin__.set");
+        data.extend_from_slice(&[0x1B, 0x01]); // REF -> slot 1
+        data.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // tail map: slot 1
+        let g = Value::Global(b"__builtin__.set".to_vec());
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![g.clone(), g]));
+    }
+
+    #[test]
+    fn shared_instance_stored_then_ref() {
+        // 7E | count=1 | TUPLE2( INSTANCE|SHARED(class "M.Cls", state ONE), REF 1 ) | map[0]=1
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x2C, // TUPLE2
+            0x57, // INSTANCE(0x17)|SHARED_FLAG — reserves slot 1 at open
+            0x13, 0x05, b'M', b'.', b'C', b'l', b's', // class BUFFER "M.Cls"
+            0x09, // state: ONE
+            0x1B, 0x01, // REF -> slot 1
+            0x01, 0x00, 0x00, 0x00, // tail map: slot 1
+        ];
+        let inst = Value::Instance {
+            class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
+            state: vec![Value::Int(1)],
+        };
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![inst.clone(), inst]));
+    }
+
+    #[test]
+    fn shared_reduce_stored_then_ref() {
+        // 7E | count=1 | TUPLE2( REDUCE|SHARED((M.f, ()), empty tail), REF 1 ) | map[0]=1
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x2C, // TUPLE2
+            0x62, // REDUCE(0x22)|SHARED_FLAG — reserves slot 1 at open
+            0x2C, // ctor TUPLE2
+            0x02, 3, b'M', b'.', b'f', // GLOBAL "M.f"
+            0x24, // args TUPLE0
+            0x2D, 0x2D, // empty list-then-dict iterator tail
+            0x1B, 0x01, // REF -> slot 1
+            0x01, 0x00, 0x00, 0x00, // tail map: slot 1
+        ];
+        let ctor = Value::Tuple(vec![Value::Global(b"M.f".to_vec()), Value::Tuple(vec![])]);
+        let red = Value::Instance { class: Box::new(ctor), state: vec![] };
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![red.clone(), red]));
     }
 }

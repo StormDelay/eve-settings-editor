@@ -91,9 +91,19 @@ mod tests {
     fn read_len_single_byte_and_extended() {
         let mut r = Reader::new(&[0x0A]);
         assert_eq!(r.read_len().unwrap(), 10);
-        // 0xFF escape -> u32 LE follows (observed in real files: 16 FF 76 02 00 00)
+        // 0xFF escape -> i32 LE follows (signed per marshal.c:99-108, non-negative in practice; observed in real files: 16 FF 76 02 00 00)
         let mut r = Reader::new(&[0xFF, 0x76, 0x02, 0x00, 0x00]);
         assert_eq!(r.read_len().unwrap(), 0x0276);
+    }
+
+    #[test]
+    fn reads_i64_and_f64_little_endian() {
+        let mut r = Reader::new(&[
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // i64 -1
+            0, 0, 0, 0, 0, 0, 0x04, 0x40, // f64 2.5
+        ]);
+        assert_eq!(r.read_i64().unwrap(), -1);
+        assert_eq!(r.read_f64().unwrap(), 2.5);
     }
 
     #[test]
