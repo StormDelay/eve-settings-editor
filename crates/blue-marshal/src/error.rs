@@ -29,3 +29,38 @@ impl fmt::Display for DecodeError {
 }
 
 impl std::error::Error for DecodeError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncodeError {
+    pub kind: EncodeErrorKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EncodeErrorKind {
+    /// Object hierarchy deeper than MAX_DEPTH (mirrors the decode guard, so
+    /// any tree that decoded successfully re-encodes within the bound).
+    TooDeep,
+    /// A length, count, or shared-map size exceeds the wire format's i32 range.
+    TooLong(usize),
+    /// SHARED_FLAG requested (via `Value::Shared`) on a node whose emitted
+    /// opcode the reference decoder ignores the flag for — emitting it would
+    /// desynchronize the tail map. Carries the node's kind name.
+    NotStorable(&'static str),
+    /// A tail-map slot number outside 1..=shared_count (e.g. after deleting
+    /// a `Shared` node while keeping higher slot numbers).
+    SlotOutOfRange { slot: u32, count: usize },
+    /// A `Ref` appeared before the `Shared` node storing its slot completed —
+    /// includes self-referential (cyclic) refs, which this codec rejects on
+    /// both sides.
+    RefBeforeStore(u32),
+    /// `StrTable(0)` — wire index 0 is rejected by the reference decoder.
+    BadTableIndex,
+}
+
+impl fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "encode error: {:?}", self.kind)
+    }
+}
+
+impl std::error::Error for EncodeError {}
