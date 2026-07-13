@@ -34,6 +34,12 @@ corpus diffing. No character/account names in this file — numeric IDs only.
   (a REF back into its own still-open container — legal for the reference
   decoder, which stores container slots at open) fail with `BadRef`. No
   corpus file contains a cycle; a Rust `Value` tree could not represent one.
+- **2026-07-13 — M1a complete.** Native encoder shipped; corpus gate proves
+  decode → encode reproduces all 5022 corpus files **byte-identically**
+  (tests/corpus.rs `every_corpus_file_reencodes_byte_identically`). The
+  `Value` model is fidelity-tagged (Str/StrUcs2/StrTable split, explicit
+  Shared/Ref slots, Instance/Reduce split); see "Corpus canonicality
+  measurements" below.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
@@ -443,6 +449,48 @@ Task 9 increment 2 (2026-07-12), REDUCE implemented: scanned 1116, ok 1116,
 failed 0. Full corpus coverage reached — both the historical and fresh
 snapshots decode cleanly, including the two anomalous files
 (`core_char_('char', None, 'dat').dat` and `core_char__.dat`).
+
+## Corpus canonicality measurements (2026-07-13, M1a)
+
+Instrumented decoder run over all 5022 corpus files (0 decode failures),
+taken before the encoder was designed; these facts justify the encoder's
+canonical opcode rules and the fidelity tags on `Value`. The byte-identical
+round-trip gate (tests/corpus.rs) re-proves all of them on every run, so a
+future client patch that breaks one fails loudly there.
+
+| Measurement | Count |
+|---|---|
+| READ_LENGTH 0xFF escapes / of which non-minimal (< 255) | 228,549 / **0** |
+| Streams with slack between root object and tail map | **0** |
+| Tail-map entries with slot ≠ encounter-index+1 | **963,660** |
+| SHARED_FLAG on opcodes the reference ignores it for | **0** |
+| STREAM (0x2B) / STRING (0x10) / STRINGL (0x0D) opcodes | **0** / **0** / **0** |
+| BUFFER with payload ≤ 1 byte | **0** |
+| Counted TUPLE with n ≤ 2 / counted LIST with n ≤ 1 | **0** / **0** |
+| INTn holding a value a narrower opcode could hold | **0** |
+| LONG with 0 payload bytes | **0** |
+| FLOAT whose payload is +0.0 bits | **0** |
+| UTF8 opcodes / with 0 bytes | 11,030,207 / 14,355 |
+| UNICODE (0x12) / UNICODE0 / UNICODE1 opcodes | **0** / 1,458 / 15,480 |
+| STRINGR opcodes | 71,847 |
+| Non-STRINGR strings whose content equals a table entry | 1,269 |
+
+Encoder consequences:
+
+- **Canonical (no tag needed):** length encoding always minimal; `Int` by
+  magnitude (constants, then narrowest INTn); `Float` +0.0 bits → FLOAT0;
+  `Bytes` by length (STRING0/STRING1/BUFFER); `Tuple`/`List` by count.
+- **Tagged (content cannot recover the opcode):** `Str` (UTF8) vs
+  `StrUcs2` (UNICODE0/UNICODE1/UNICODE by UTF-16 unit count) vs
+  `StrTable` (STRINGR index) — the client emits both UTF8("") and UNICODE0,
+  and writes table-content strings as UTF8 too (1,269 collisions), so
+  "look it up in the table" would mis-encode.
+- **Explicit sharing:** tail maps are heavily non-identity, so decoded trees
+  carry `Shared { slot }` wrappers and `Ref(slot)` nodes; the encoder
+  replays slots in encounter order. SHARED_FLAG is never emitted on
+  non-storing opcodes (and never observed there).
+- **Slack promoted to hard error:** `ErrorKind::TrailingBytes` — measured
+  zero occurrences, so any slack now means a mis-parse.
 
 ## Mappings
 
