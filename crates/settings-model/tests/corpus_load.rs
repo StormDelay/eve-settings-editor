@@ -8,8 +8,11 @@ use std::path::{Path, PathBuf};
 use settings_model::{Document, Fidelity};
 
 fn collect_dat_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("corpus walk failed at {}: {e}", dir.display()));
+    for entry in entries {
+        let entry = entry
+            .unwrap_or_else(|e| panic!("corpus walk failed under {}: {e}", dir.display()));
         let path = entry.path();
         if path.is_dir() {
             collect_dat_files(&path, out);
@@ -22,6 +25,10 @@ fn collect_dat_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn every_corpus_file_loads_editable() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
+    if !corpus.is_dir() {
+        eprintln!("corpus missing at {corpus:?} — skipping (run tools/sync-corpus.ps1)");
+        return;
+    }
     let mut files = Vec::new();
     collect_dat_files(&corpus, &mut files);
     if files.is_empty() {
