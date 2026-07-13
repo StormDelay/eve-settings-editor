@@ -32,7 +32,7 @@ fn build(
     removable: bool,
     in_shared: bool,
 ) -> Node {
-    let kind = kind_name(v);
+    let kind = crate::projection_kind(v);
     let editable = matches!(
         v,
         Value::Bool(_)
@@ -140,29 +140,6 @@ fn edit_text(v: &Value) -> Option<String> {
         Value::StrTable(i) => i.to_string(),
         _ => return None,
     })
-}
-
-fn kind_name(v: &Value) -> &'static str {
-    match v {
-        Value::None => "none",
-        Value::Bool(_) => "bool",
-        Value::Int(_) => "int",
-        Value::Long(_) => "long",
-        Value::Float(_) => "float",
-        Value::Bytes(_) => "bytes",
-        Value::Str(_) => "str",
-        Value::StrUcs2(_) => "str_ucs2",
-        Value::StrTable(_) => "str_table",
-        Value::Tuple(_) => "tuple",
-        Value::List(_) => "list",
-        Value::Dict(_) => "dict",
-        Value::Stream(_) => "stream",
-        Value::Global(_) => "global",
-        Value::Instance { .. } => "instance",
-        Value::Reduce { .. } => "reduce",
-        Value::Shared { .. } => "shared",
-        Value::Ref(_) => "ref",
-    }
 }
 
 /// Scalar rendering (and container summaries) for a node's own line.
