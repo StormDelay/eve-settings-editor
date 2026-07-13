@@ -66,17 +66,24 @@ fn decode_at_depth(data: &[u8], depth: usize) -> Result<Value, DecodeError> {
     r.read_bytes(5)?; // skip the header we already parsed (safe: map_start >= 5)
 
     let mut dec = Decoder {
-        shared: vec![None; shared_count],
+        shared: vec![false; shared_count],
         shared_next: 0,
         data,
         depth,
     };
-    dec.load(&mut r)
+    let value = dec.load(&mut r)?;
+    if r.remaining() > 0 {
+        return Err(DecodeError {
+            offset: r.pos(),
+            kind: ErrorKind::TrailingBytes(r.remaining()),
+        });
+    }
+    Ok(value)
 }
 
 struct Decoder<'a> {
-    /// Shared-object slots, indexed by (map entry - 1). `None` until stored.
-    shared: Vec<Option<Value>>,
+    /// Whether each shared slot (indexed by map entry - 1) has been stored.
+    shared: Vec<bool>,
     /// Encounter counter: index of the next tail-map entry to consume.
     shared_next: usize,
     /// Full stream, used only to read tail-map slot numbers.
@@ -175,10 +182,13 @@ impl<'a> Decoder<'a> {
         let value = self.load_op(code, r, opcode_offset)?;
 
         self.depth -= 1;
-        if let Some(slot) = slot {
-            self.shared[slot - 1] = Some(value.clone());
-        }
-        Ok(value)
+        Ok(match slot {
+            Some(slot) => {
+                self.shared[slot - 1] = true;
+                Value::Shared { slot: slot as u32, value: Box::new(value) }
+            }
+            None => value,
+        })
     }
 
     fn load_op(&mut self, code: u8, r: &mut Reader<'a>, at: usize) -> Result<Value, DecodeError> {
@@ -224,9 +234,9 @@ impl<'a> Decoder<'a> {
                 if idx < 1 || idx >= STRING_TABLE.len() {
                     return Err(DecodeError { offset: at, kind: ErrorKind::BadStringRef(idx) });
                 }
-                Value::Str(STRING_TABLE[idx].to_string())
+                Value::StrTable(idx as u8)
             }
-            op::UNICODE0 => Value::Str(String::new()),
+            op::UNICODE0 => Value::StrUcs2(String::new()),
             // UNICODE1 = exactly one UTF-16LE unit (2 bytes, no count);
             // UNICODE = count code units, payload count*2 bytes (marshal.c:670-688).
             op::UNICODE1 | op::UNICODE => {
@@ -237,7 +247,7 @@ impl<'a> Decoder<'a> {
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .collect();
                 String::from_utf16(&u16s)
-                    .map(Value::Str)
+                    .map(Value::StrUcs2)
                     .map_err(|_| DecodeError { offset: at, kind: ErrorKind::BadUtf8 })?
             }
             // UTF8 (marshal.c:690-694): READ_LENGTH byte count of UTF-8 bytes.
@@ -289,13 +299,10 @@ impl<'a> Decoder<'a> {
             // out of range or not-yet-populated -> BadRef.
             op::REF => {
                 let idx = r.read_len()?;
-                if idx < 1 || idx > self.shared.len() {
+                if idx < 1 || idx > self.shared.len() || !self.shared[idx - 1] {
                     return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(idx) });
                 }
-                match &self.shared[idx - 1] {
-                    Some(v) => v.clone(),
-                    None => return Err(DecodeError { offset: at, kind: ErrorKind::BadRef(idx) }),
-                }
+                Value::Ref(idx as u32)
             }
             // STREAM (marshal.c:658-668): READ_LENGTH raw bytes that are
             // themselves a complete marshal stream; decode recursively,
@@ -326,7 +333,7 @@ impl<'a> Decoder<'a> {
             op::INSTANCE => {
                 let class = self.load(r)?;
                 let state = self.load(r)?;
-                Value::Instance { class: Box::new(class), state: vec![state] }
+                Value::Instance { class: Box::new(class), state: Box::new(state) }
             }
             // REDUCE (marshal.c:789-793 open; 985-1010 fill): one plain
             // object follows — a Tuple shaped (callable, args[, state]) —
@@ -337,20 +344,21 @@ impl<'a> Decoder<'a> {
             // order from plain DICT's counted (val,key) form), then a second
             // MARK. Every REDUCE observed in the corpus has an empty tail
             // (MARK immediately follows the ctor tuple twice), but the loop
-            // below handles a non-empty one losslessly: appended objects and
-            // each (key, value) pair (as a 2-element Tuple) land in `state`,
-            // in wire order, after the ctor tuple itself (`class`).
+            // below handles a non-empty one losslessly: appended objects land
+            // in `items`, and each (key, value) pair lands in `pairs`, both
+            // in wire order, alongside the ctor tuple itself (`ctor`).
             op::REDUCE => {
                 let ctor = self.load(r)?;
-                let mut state = Vec::new();
+                let mut items = Vec::new();
                 loop {
                     let next = r.peek_u8()?;
                     if next & !op::SHARED_FLAG == op::MARK {
                         r.read_u8()?;
                         break;
                     }
-                    state.push(self.load(r)?);
+                    items.push(self.load(r)?);
                 }
+                let mut pairs = Vec::new();
                 loop {
                     let next = r.peek_u8()?;
                     if next & !op::SHARED_FLAG == op::MARK {
@@ -359,9 +367,9 @@ impl<'a> Decoder<'a> {
                     }
                     let key = self.load(r)?;
                     let value = self.load(r)?;
-                    state.push(Value::Tuple(vec![key, value]));
+                    pairs.push((key, value));
                 }
-                Value::Instance { class: Box::new(ctor), state }
+                Value::Reduce { ctor: Box::new(ctor), items, pairs }
             }
             // Complex / deferred types (see docs/format-notes.md); not
             // exercised by any file in the corpus. BLUE/CALLBACK/PICKLER
@@ -493,8 +501,8 @@ mod tests {
         assert_eq!(
             decode(&data).unwrap(),
             Value::Tuple(vec![
-                Value::Bytes(b"hi".to_vec()),
-                Value::Bytes(b"hi".to_vec()),
+                Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"hi".to_vec())) },
+                Value::Ref(1),
             ])
         );
     }
@@ -518,7 +526,10 @@ mod tests {
         let dict = Value::Dict(vec![(Value::Bytes(b"k".to_vec()), Value::Int(1))]);
         assert_eq!(
             decode(&data).unwrap(),
-            Value::Tuple(vec![dict.clone(), dict])
+            Value::Tuple(vec![
+                Value::Shared { slot: 1, value: Box::new(dict) },
+                Value::Ref(1),
+            ])
         );
     }
 
@@ -561,11 +572,14 @@ mod tests {
             0x02, 0x00, 0x00, 0x00, // tail map: entry 0 = slot 2
             0x01, 0x00, 0x00, 0x00, // tail map: entry 1 = slot 1
         ];
-        let long = Value::Long(vec![0x2A]);
-        let inner = Value::Tuple(vec![long.clone()]);
+        let long = Value::Shared { slot: 1, value: Box::new(Value::Long(vec![0x2A])) };
+        let inner = Value::Shared {
+            slot: 2,
+            value: Box::new(Value::Tuple(vec![long])),
+        };
         assert_eq!(
             decode(&data).unwrap(),
-            Value::Tuple(vec![inner.clone(), long, inner])
+            Value::Tuple(vec![inner, Value::Ref(1), Value::Ref(2)])
         );
     }
 
@@ -608,7 +622,7 @@ mod tests {
             decode(&stream(&data)).unwrap(),
             Value::Instance {
                 class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
-                state: vec![Value::Int(1)],
+                state: Box::new(Value::Int(1)),
             }
         );
     }
@@ -632,7 +646,7 @@ mod tests {
         ]);
         assert_eq!(
             decode(&stream(&data)).unwrap(),
-            Value::Instance { class: Box::new(ctor), state: vec![] }
+            Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![] }
         );
     }
 
@@ -655,12 +669,10 @@ mod tests {
         let ctor = Value::Tuple(vec![Value::Global(b"M.f".to_vec()), Value::Tuple(vec![])]);
         assert_eq!(
             decode(&stream(&data)).unwrap(),
-            Value::Instance {
-                class: Box::new(ctor),
-                state: vec![
-                    Value::Int(1),
-                    Value::Tuple(vec![Value::Int(0), Value::Int(1)]),
-                ],
+            Value::Reduce {
+                ctor: Box::new(ctor),
+                items: vec![Value::Int(1)],
+                pairs: vec![(Value::Int(0), Value::Int(1))],
             }
         );
     }
@@ -694,8 +706,11 @@ mod tests {
         data.extend_from_slice(b"__builtin__.set");
         data.extend_from_slice(&[0x1B, 0x01]); // REF -> slot 1
         data.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // tail map: slot 1
-        let g = Value::Global(b"__builtin__.set".to_vec());
-        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![g.clone(), g]));
+        let g = Value::Shared {
+            slot: 1,
+            value: Box::new(Value::Global(b"__builtin__.set".to_vec())),
+        };
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![g, Value::Ref(1)]));
     }
 
     #[test]
@@ -710,11 +725,14 @@ mod tests {
             0x1B, 0x01, // REF -> slot 1
             0x01, 0x00, 0x00, 0x00, // tail map: slot 1
         ];
-        let inst = Value::Instance {
-            class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
-            state: vec![Value::Int(1)],
+        let inst = Value::Shared {
+            slot: 1,
+            value: Box::new(Value::Instance {
+                class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
+                state: Box::new(Value::Int(1)),
+            }),
         };
-        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![inst.clone(), inst]));
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![inst, Value::Ref(1)]));
     }
 
     #[test]
@@ -732,7 +750,45 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, // tail map: slot 1
         ];
         let ctor = Value::Tuple(vec![Value::Global(b"M.f".to_vec()), Value::Tuple(vec![])]);
-        let red = Value::Instance { class: Box::new(ctor), state: vec![] };
-        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![red.clone(), red]));
+        let red = Value::Shared {
+            slot: 1,
+            value: Box::new(Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![] }),
+        };
+        assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![red, Value::Ref(1)]));
+    }
+
+    #[test]
+    fn decodes_text_variants_distinctly() {
+        // UTF8 "abc"
+        assert_eq!(
+            decode(&stream(&[0x2E, 0x03, b'a', b'b', b'c'])).unwrap(),
+            Value::Str("abc".into())
+        );
+        // UNICODE0 / UNICODE1 'x' / UNICODE "hi" (2 UTF-16LE units)
+        assert_eq!(decode(&stream(&[0x28])).unwrap(), Value::StrUcs2(String::new()));
+        assert_eq!(
+            decode(&stream(&[0x29, b'x', 0x00])).unwrap(),
+            Value::StrUcs2("x".into())
+        );
+        assert_eq!(
+            decode(&stream(&[0x12, 0x02, b'h', 0x00, b'i', 0x00])).unwrap(),
+            Value::StrUcs2("hi".into())
+        );
+        // STRINGR keeps the index, not the content
+        assert_eq!(decode(&stream(&[0x11, 0x07])).unwrap(), Value::StrTable(7));
+        // UTF8 "" and UNICODE0 stay distinguishable — the corpus contains both
+        assert_ne!(
+            decode(&stream(&[0x2E, 0x00])).unwrap(),
+            decode(&stream(&[0x28])).unwrap()
+        );
+    }
+
+    #[test]
+    fn trailing_bytes_after_root_are_a_hard_error() {
+        // Valid ONE root followed by a stray NONE byte before the (empty)
+        // tail map — previously silently ignored, now a decode error.
+        let err = decode(&stream(&[0x09, 0x01])).unwrap_err();
+        assert_eq!(err.kind, crate::ErrorKind::TrailingBytes(1));
+        assert_eq!(err.offset, 6); // header(5) + the ONE opcode
     }
 }
