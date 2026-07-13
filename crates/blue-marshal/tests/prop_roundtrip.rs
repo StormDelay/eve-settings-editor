@@ -61,9 +61,10 @@ fn gen_value(rng: &mut Rng, depth: u32) -> Value {
                 .map(|_| (gen_value(rng, depth + 1), gen_value(rng, depth + 1)))
                 .collect(),
         ),
-        _ => match rng.below(3) {
+        _ => match rng.below(4) {
             0 => Value::Global(b"__builtin__.set".to_vec()),
-            1 => Value::Instance {
+            1 => Value::Stream(Box::new(gen_value(rng, depth + 1))),
+            2 => Value::Instance {
                 class: Box::new(Value::Bytes(b"utillib.KeyVal".to_vec())),
                 state: Box::new(gen_value(rng, depth + 1)),
             },
