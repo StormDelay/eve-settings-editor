@@ -227,29 +227,67 @@ consumer feeds back through Load — so nested settings values require a
 recursive decode of the byte payload as a fresh stream with its own shared
 table.
 
-### Nested streams inside Bytes (not STREAM opcode) — Task 9
+### `0x7E`-prefixed Bytes payloads are NOT nested streams — Task 9 / re-measured
 
-Confirmed in the corpus: many `BUFFER`/`STRINGL` (opcode 0x0D/0x13, decoded
-as `Value::Bytes`) payloads — **not** the dedicated `STREAM` opcode 0x2B —
-are themselves complete marshal streams (start with the `0x7E` magic byte);
-CCP calls this pattern "double-marshaled" settings values (a cached blob
-storing an already-serialized sub-object). A corpus-wide scan found 1942
-such `Bytes` values across all 1116 files, and zero negative `Long` values
-(see the `dump_text` Long-rendering TODO below — left unfixed since the
-corpus never exercises it).
+This is a **different mechanism from the `STREAM` opcode above** — keep the
+two distinct: `STREAM` (0x2B) is a dedicated opcode whose payload is, by
+convention, guaranteed to be a nested marshal stream (previous section).
+What follows is about ordinary `BUFFER`/`STRINGL` (opcode 0x13/0x0D)
+payloads — decoded as plain `Value::Bytes`, with no opcode-level signal
+either way — that merely happen to start with the same `0x7E` magic byte
+that begins every marshal stream.
 
-`decode` deliberately does **not** auto-decode these: bytes stay exact and
-lossless regardless of what they happen to contain, matching the "no lossy
-conversions" constraint and keeping `Value::Bytes` a single, predictable
-shape. Instead, `dump_text` (value.rs) attempts one `decode` call on any
-`Bytes` payload starting with `0x7E`, purely for readability:
-- success: render `stream?` followed by the decoded value's normal
-  rendering (e.g. `stream?{...}` for a dict-shaped payload) — the `?`
-  (vs. the real `STREAM` opcode's `stream:`) flags that this is a
-  heuristic reinterpretation of raw bytes, not a wire-guaranteed nested
-  stream.
-- failure (starts with `0x7E` by coincidence but isn't a valid stream):
-  falls back to the normal `Bytes` rendering (printable-quoted or hex).
+An earlier version of this section claimed many such payloads "are
+themselves complete marshal streams" (a "double-marshaled" pattern: a
+cached blob storing an already-serialized sub-object). That claim is
+**wrong** and is corrected here. Full re-scan of the current corpus
+(`testdata/corpus`, all snapshots — historical, fresh-baseline, and the
+exp1–exp5 experiment directories added later — 5022 `.dat` files, decoding
+every file and recursively visiting the full `Value` tree including Dict
+keys/values and Tuple/List/Instance/Stream children):
+
+- **8739** `Value::Bytes` payloads start with the `0x7E` byte.
+- **0** of them decode successfully via `blue_marshal::decode` as a nested
+  marshal stream.
+
+(The original Task 9 diagnostic, run over just the 1116 historical +
+fresh-baseline files before the experiment snapshots existed, found 1942
+such payloads on that smaller set — same conclusion, zero decodable, just
+counted before the corpus grew. Re-running the identical method against
+that same 1116-file subset today still reproduces exactly 1942, confirming
+the method is consistent; the 8739 figure is the full current corpus.)
+
+So: `0x7E`-prefixed `Bytes` payloads exist in real settings files, but in
+every corpus file observed, none of them are valid nested marshal streams —
+the `0x7E` is coincidental (or comes from data that merely starts with that
+byte value), not a marker of embedded serialization. There is no confirmed
+"double-marshaled settings value" pattern in this corpus; that description
+was never traced to reverence/marshal.c or any CCP source and should be
+treated as unverified.
+
+Zero negative `Long` values were also found in the same scan (see the
+`dump_text` Long-rendering TODO below — left unfixed since the corpus never
+exercises it).
+
+**Consequences:**
+- `decode` deliberately does **not** attempt to auto-decode `Bytes`
+  payloads: bytes stay exact and lossless regardless of what they happen to
+  contain, matching the "no lossy conversions" constraint and keeping
+  `Value::Bytes` a single, predictable shape. This is correct and unaffected
+  by the correction above.
+- `dump_text` (value.rs) still attempts one `decode` call on any `Bytes`
+  payload starting with `0x7E`, rendering `stream?` + the decoded value on
+  success and falling back to normal `Bytes` rendering (printable-quoted or
+  hex) on failure. Given the measurement above, **this arm is dead code on
+  every real corpus file** — it exists purely as a synthetic-data /
+  future-proofing convenience for `dump_text` output readability, not
+  because real settings data needs it. It is bounded (`stream_depth <
+  MAX_DEPTH`) so it is safe to keep, but it should not be relied on or
+  assumed to fire.
+- **M1 guidance:** treat `Value::Bytes` as opaque bytes, period. Do not plan
+  encoder/mutation logic around an assumption that some `Bytes` payloads are
+  secretly nested marshal streams needing their own re-encode step — the
+  corpus gives no evidence that pattern exists.
 
 ### CHECKSUM (0x1C) — checklist item 6
 
