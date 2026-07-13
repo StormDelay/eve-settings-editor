@@ -11,7 +11,7 @@ pub mod path;
 pub mod projection;
 pub mod save;
 
-// pub use document::{Document, Fidelity, LoadError}; // enabled in Task 3
+pub use document::{Document, Fidelity, LoadError};
 // pub use mutate::{apply, Mutation, MutateError, NewValue}; // enabled in Task 4
 pub use path::{resolve, resolve_mut, NodePath, Step};
 // pub use projection::{project, Node}; // enabled in Task 5
