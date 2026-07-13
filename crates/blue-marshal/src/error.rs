@@ -26,6 +26,12 @@ pub enum ErrorKind {
     /// byte-identity gate); accepting it would decode to a tree that
     /// re-encodes with a smaller map — a silent divergence.
     UnconsumedSharedMap { declared: usize, stored: usize },
+    /// A tail-map slot number appeared more than once. The reference decoder
+    /// tolerates this (last store wins), but it makes REF targets ambiguous;
+    /// corpus-proven never to happen (0 duplicates across 4,986 files with
+    /// shared maps), so it is rejected to keep `Ref(slot)` a unique
+    /// identifier for the editing layer.
+    DuplicateSharedSlot(usize),
 }
 
 impl fmt::Display for DecodeError {
