@@ -11,6 +11,7 @@ pub mod path;
 pub mod projection;
 pub mod save;
 
+pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use document::{Document, Fidelity, LoadError};
 pub use mutate::{apply, Mutation, MutateError, NewValue};
 pub use path::{resolve, resolve_mut, NodePath, Step};
