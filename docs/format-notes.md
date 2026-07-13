@@ -30,6 +30,10 @@ corpus diffing. No character/account names in this file — numeric IDs only.
   failed until implemented) — the M1 encoder must re-emit them exactly;
   (4) geometry is absolute pixels with per-window saved resolution —
   batch-apply resolution warnings can compare per window, not per file.
+- Known decoder deviation (documented 2026-07-13): cyclic shared references
+  (a REF back into its own still-open container — legal for the reference
+  decoder, which stores container slots at open) fail with `BadRef`. No
+  corpus file contains a cycle; a Rust `Value` tree could not represent one.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
