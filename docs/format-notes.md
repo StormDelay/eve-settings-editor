@@ -1,7 +1,11 @@
 # EVE settings file format notes
 
 Living document. Sources: ntt/reverence (src/blue/marshal.{h,c}), our own
-corpus diffing. No character/account names in this file — numeric IDs only.
+corpus diffing. No character/account names in this file, and — since the
+2026-07-13 history scrub — no real numeric character/account/item IDs
+either: every ID appearing in examples below is a **synthetic placeholder**
+standing in for a real corpus file. Offsets and byte-level claims were
+measured on the real files; only the identifying numbers were replaced.
 
 ## Status
 
