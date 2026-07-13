@@ -4,26 +4,68 @@ use std::fmt::Write;
 pub enum Value {
     None,
     Bool(bool),
+    /// Encoded canonically by magnitude: -1/0/1 → MINUSONE/ZERO/ONE, then the
+    /// narrowest of INT8/INT16/INT32/INT64. Corpus-proven exact: the client
+    /// never writes a non-minimal width (int_nonminimal = 0 over 5022 files).
     Int(i64),
+    /// LONG (0x2F) payload: raw little-endian two's-complement bytes.
     Long(Vec<u8>),
+    /// Encoded canonically: exact +0.0 bit pattern → FLOAT0, else FLOAT
+    /// (−0.0 has a different bit pattern and stays FLOAT). Corpus-proven:
+    /// FLOAT never carries +0.0 (float_pluszero = 0).
     Float(f64),
+    /// Byte string. Encoded canonically by length: 0 → STRING0, 1 → STRING1,
+    /// else BUFFER. Corpus-proven: BUFFER never holds ≤ 1 bytes and the
+    /// deprecated STRING/STRINGL opcodes never occur.
     Bytes(Vec<u8>),
+    /// Text stored as UTF8 (0x2E) — the dominant wire form (11M occurrences).
     Str(String),
+    /// Text stored in the UCS-2 family, encoded by UTF-16 unit count:
+    /// 0 → UNICODE0, 1 → UNICODE1, n → UNICODE. Separate from `Str` because
+    /// the client emits BOTH UTF8("") and UNICODE0 — content alone cannot
+    /// recover the opcode.
+    StrUcs2(String),
+    /// STRINGR (0x11): index 1..=255 into [`crate::string_table::STRING_TABLE`].
+    /// Kept as the index because the client also writes table-content strings
+    /// as UTF8 (1269 corpus collisions) — content alone cannot recover the
+    /// opcode.
+    StrTable(u8),
     Tuple(Vec<Value>),
     List(Vec<Value>),
+    /// Entries in wire order (each entry is encoded value-first on the wire;
+    /// normalized to (key, value) here).
     Dict(Vec<(Value, Value)>),
+    /// STREAM (0x2B): the payload is a complete nested marshal stream,
+    /// decoded recursively and re-encoded recursively.
     Stream(Box<Value>),
-    /// GLOBAL (0x02): a dotted Python type/function name, e.g. `__builtin__.set`.
-    /// Kept distinct from `Bytes` so M1's encoder can re-emit opcode 0x02
-    /// rather than a string opcode.
+    /// GLOBAL (0x02): a dotted Python type/function name.
     Global(Vec<u8>),
-    /// INSTANCE (0x17) / REDUCE (0x22): mirrors marshal.c's load order rather
-    /// than modeling Python construction. For INSTANCE, `class` is the class
-    /// name object and `state` holds the single state object. For REDUCE,
-    /// `class` is the whole `(callable, args[, state])` tuple as decoded, and
-    /// `state` holds any list-then-dict iterator-tail items (each dict pair
-    /// as a 2-element `Tuple`) — empty in every corpus file observed so far.
-    Instance { class: Box<Value>, state: Vec<Value> },
+    /// INSTANCE (0x17): class-name object, then exactly one state object.
+    Instance { class: Box<Value>, state: Box<Value> },
+    /// REDUCE (0x22): ctor tuple `(callable, args[, state])`, then the
+    /// MARK-terminated list items, then the MARK-terminated (key, value)
+    /// pairs — the wire framing kept verbatim (both empty in every corpus
+    /// occurrence).
+    Reduce { ctor: Box<Value>, items: Vec<Value>, pairs: Vec<(Value, Value)> },
+    /// A SHARED_FLAG-ed store: wraps exactly the node whose opcode carried
+    /// the flag; `slot` is the 1-based tail-map slot it was stored into.
+    /// Slots are explicit because corpus tail maps are heavily non-identity
+    /// (963,660 out-of-order entries).
+    Shared { slot: u32, value: Box<Value> },
+    /// REF (0x1B): points at the `Shared` node with the same slot number,
+    /// which must appear earlier in the stream.
+    Ref(u32),
+}
+
+impl Value {
+    /// Peel a `Shared` wrapper (if any) to reach the stored node — the
+    /// wrapper is wire bookkeeping, not data. Does NOT resolve `Ref`.
+    pub fn unshared(&self) -> &Value {
+        match self {
+            Value::Shared { value, .. } => value,
+            other => other,
+        }
+    }
 }
 
 /// Deterministic text rendering. Dict keys are sorted by their rendered
@@ -75,6 +117,17 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
         }
         Value::Str(s) => {
             let _ = write!(out, "{s:?}");
+        }
+        Value::StrUcs2(s) => {
+            out.push('u');
+            let _ = write!(out, "{s:?}");
+        }
+        Value::StrTable(idx) => {
+            let _ = write!(
+                out,
+                "t{idx}:{:?}",
+                crate::string_table::STRING_TABLE[*idx as usize]
+            );
         }
         Value::Bytes(b) => {
             // Double-marshaled settings values: a Bytes payload that is
@@ -136,9 +189,43 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
             write_value(out, class, indent + 1, stream_depth);
             out.push('\n');
             let _ = write!(out, "{pad}  state: ");
-            write_seq(out, state, indent + 1, '[', ']', stream_depth);
+            write_value(out, state, indent + 1, stream_depth);
             out.push('\n');
             let _ = write!(out, "{pad}}}");
+        }
+        Value::Reduce { ctor, items, pairs } => {
+            out.push_str("reduce{\n");
+            let _ = write!(out, "{pad}  ctor: ");
+            write_value(out, ctor, indent + 1, stream_depth);
+            out.push('\n');
+            let _ = write!(out, "{pad}  items: ");
+            write_seq(out, items, indent + 1, '[', ']', stream_depth);
+            out.push('\n');
+            let _ = write!(out, "{pad}  pairs: ");
+            if pairs.is_empty() {
+                out.push_str("{}");
+            } else {
+                // Wire order, NOT sorted — this is a fidelity view of the
+                // REDUCE iterator tail, unlike Dict's sorted diff view.
+                out.push_str("{\n");
+                for (k, v) in pairs {
+                    let _ = write!(out, "{pad}    ");
+                    write_value(out, k, indent + 2, stream_depth);
+                    out.push_str(": ");
+                    write_value(out, v, indent + 2, stream_depth);
+                    out.push('\n');
+                }
+                let _ = write!(out, "{pad}  }}");
+            }
+            out.push('\n');
+            let _ = write!(out, "{pad}}}");
+        }
+        Value::Shared { slot, value } => {
+            let _ = write!(out, "shared[{slot}]:");
+            write_value(out, value, indent, stream_depth);
+        }
+        Value::Ref(slot) => {
+            let _ = write!(out, "ref[{slot}]");
         }
     }
 }
@@ -371,12 +458,49 @@ mod tests {
         );
         let inst = Value::Instance {
             class: Box::new(Value::Bytes(b"M.Cls".to_vec())),
-            state: vec![Value::Int(1)],
+            state: Box::new(Value::Int(1)),
         };
         assert_eq!(
             dump_text(&inst),
-            "instance{\n  class: b\"M.Cls\"\n  state: [\n    1\n  ]\n}"
+            "instance{\n  class: b\"M.Cls\"\n  state: 1\n}"
         );
+    }
+
+    #[test]
+    fn dump_new_string_variants() {
+        assert_eq!(dump_text(&Value::StrUcs2("hi".into())), "u\"hi\"");
+        // Expected text derives from the table itself so the test does not
+        // hardcode table content.
+        assert_eq!(
+            dump_text(&Value::StrTable(7)),
+            format!("t7:{:?}", crate::string_table::STRING_TABLE[7])
+        );
+    }
+
+    #[test]
+    fn dump_shared_ref_and_reduce() {
+        let v = Value::Tuple(vec![
+            Value::Shared { slot: 2, value: Box::new(Value::List(vec![])) },
+            Value::Ref(2),
+        ]);
+        assert_eq!(dump_text(&v), "(\n  shared[2]:[]\n  ref[2]\n)");
+        let r = Value::Reduce {
+            ctor: Box::new(Value::Global(b"M.f".to_vec())),
+            items: vec![Value::Int(1)],
+            pairs: vec![(Value::Int(0), Value::Int(1))],
+        };
+        assert_eq!(
+            dump_text(&r),
+            "reduce{\n  ctor: global:\"M.f\"\n  items: [\n    1\n  ]\n  pairs: {\n    0: 1\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn unshared_peels_exactly_one_wrapper() {
+        let inner = Value::Int(5);
+        let shared = Value::Shared { slot: 1, value: Box::new(inner.clone()) };
+        assert_eq!(shared.unshared(), &inner);
+        assert_eq!(inner.unshared(), &inner);
     }
 
     #[test]

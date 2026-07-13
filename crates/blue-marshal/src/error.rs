@@ -16,6 +16,10 @@ pub enum ErrorKind {
     BadStringRef(usize),
     BadUtf8,
     Unsupported(&'static str),
+    /// Bytes remained between the end of the root object and the tail map.
+    /// Corpus-proven never to happen (slack_streams = 0 over 5022 files), so
+    /// it is a hard error: it would mean we mis-parsed the stream.
+    TrailingBytes(usize),
 }
 
 impl fmt::Display for DecodeError {
