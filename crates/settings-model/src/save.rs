@@ -72,11 +72,21 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
     let backup_path = backup_current(&doc.path).map_err(SaveError::Backup)?;
     // 5. Atomic write.
     atomic_write(&doc.path, &encoded).map_err(SaveError::Write)?;
-    // Refresh the conflict baseline so the next save diffs against what we
-    // just wrote.
-    let meta = fs::metadata(&doc.path).map_err(|e| SaveError::Write(e.to_string()))?;
-    doc.loaded_mtime = meta.modified().ok();
-    doc.loaded_len = meta.len();
+    // Refresh the conflict baseline. The write itself has already succeeded,
+    // so a failure to re-read metadata here must NOT surface as an error:
+    // fall back to a degraded baseline — the length is known exactly (we
+    // wrote it), and an unknown mtime merely disables the mtime half of the
+    // next conflict check until a later save refreshes it.
+    match fs::metadata(&doc.path) {
+        Ok(meta) => {
+            doc.loaded_mtime = meta.modified().ok();
+            doc.loaded_len = meta.len();
+        }
+        Err(_) => {
+            doc.loaded_mtime = None;
+            doc.loaded_len = encoded.len() as u64;
+        }
+    }
     Ok(SaveReport { backup_path, bytes_written: encoded.len(), recent_sibling_writes })
 }
 
@@ -107,12 +117,22 @@ pub(crate) fn backup_current(target: &Path) -> Result<PathBuf, String> {
 pub(crate) fn atomic_write(target: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = target.parent().ok_or_else(|| "no parent dir".to_string())?;
     let name = target.file_name().unwrap_or_default().to_string_lossy();
-    let temp = dir.join(format!(".{name}.tmp-{}", std::process::id()));
+    let temp = temp_path(dir, &name);
     fs::write(&temp, bytes).map_err(|e| format!("write temp: {e}"))?;
     fs::rename(&temp, target).map_err(|e| {
         let _ = fs::remove_file(&temp);
         format!("rename over target: {e}")
     })
+}
+
+/// Unique temp path per call: the pid guards against other processes, the
+/// counter against two saves of the same path racing within this process
+/// (two `Document`s independently opened on one file).
+fn temp_path(dir: &Path, name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".{name}.tmp-{}-{n}", std::process::id()))
 }
 
 fn recent_writes(target: &Path) -> Vec<String> {
@@ -191,5 +211,11 @@ mod tests {
         assert!(s.ends_with('Z'));
         assert_eq!(&s[4..5], "-");
         assert_eq!(&s[10..11], "T");
+    }
+
+    #[test]
+    fn temp_paths_are_unique_within_a_process() {
+        let dir = Path::new("x");
+        assert_ne!(temp_path(dir, "f.dat"), temp_path(dir, "f.dat"));
     }
 }
