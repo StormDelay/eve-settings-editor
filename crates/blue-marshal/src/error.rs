@@ -20,6 +20,12 @@ pub enum ErrorKind {
     /// Corpus-proven never to happen (slack_streams = 0 over 5022 files), so
     /// it is a hard error: it would mean we mis-parsed the stream.
     TrailingBytes(usize),
+    /// The header declared more shared-map entries than SHARED-flagged
+    /// objects actually occurred in the stream (`declared` vs `stored`).
+    /// Corpus-proven never to happen (such a file would fail the
+    /// byte-identity gate); accepting it would decode to a tree that
+    /// re-encodes with a smaller map — a silent divergence.
+    UnconsumedSharedMap { declared: usize, stored: usize },
 }
 
 impl fmt::Display for DecodeError {

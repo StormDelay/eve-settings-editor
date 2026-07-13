@@ -78,6 +78,15 @@ fn decode_at_depth(data: &[u8], depth: usize) -> Result<Value, DecodeError> {
             kind: ErrorKind::TrailingBytes(r.remaining()),
         });
     }
+    if dec.shared_next != dec.shared.len() {
+        return Err(DecodeError {
+            offset: r.pos(),
+            kind: ErrorKind::UnconsumedSharedMap {
+                declared: dec.shared.len(),
+                stored: dec.shared_next,
+            },
+        });
+    }
     Ok(value)
 }
 
@@ -790,5 +799,22 @@ mod tests {
         let err = decode(&stream(&[0x09, 0x01])).unwrap_err();
         assert_eq!(err.kind, crate::ErrorKind::TrailingBytes(1));
         assert_eq!(err.offset, 6); // header(5) + the ONE opcode
+    }
+
+    #[test]
+    fn unconsumed_shared_map_is_a_hard_error() {
+        // Header declares one shared slot, but no SHARED-flagged object ever
+        // occurs: without this check the tree decodes to zero Shared nodes
+        // and re-encodes with count 0 — silently different bytes.
+        let data = [
+            0x7E, 0x01, 0x00, 0x00, 0x00, // header, shared_count = 1
+            0x09, // ONE (unflagged)
+            0x01, 0x00, 0x00, 0x00, // tail map: slot 1 (never consumed)
+        ];
+        let err = decode(&data).unwrap_err();
+        assert_eq!(
+            err.kind,
+            crate::ErrorKind::UnconsumedSharedMap { declared: 1, stored: 0 }
+        );
     }
 }
