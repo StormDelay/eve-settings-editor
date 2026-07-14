@@ -8,9 +8,9 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use settings_model::{
-    default_roots, discover, project, Document, Fidelity, LoadError, Node, Profile,
+    apply, default_roots, discover, project, save, Document, Fidelity, LoadError, Mutation,
+    Node, Profile, SaveReport,
 };
-// Task 3 extends this import list with: apply, save, Mutation, SaveReport.
 
 /// One document open at a time in V1 (spec batch-apply arrives in M4).
 pub struct AppState(pub Mutex<Option<Document>>);
@@ -88,6 +88,59 @@ pub fn open_file(state: &AppState, path: &str) -> Result<OpenOutcome, ErrDto> {
 
 pub fn close_file(state: &AppState) {
     *state.0.lock().unwrap() = None;
+}
+
+pub fn apply_mutation(state: &AppState, mutation: &Mutation) -> Result<Node, ErrDto> {
+    let mut guard = state.0.lock().unwrap();
+    let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+        return Err(ErrDto::new("read_only", reason.clone()));
+    }
+    apply(&mut doc.value, mutation).map_err(|e| {
+        // MutateError serializes as {"code": ..., "detail": ...}; flatten it.
+        let v = serde_json::to_value(&e).unwrap_or_default();
+        ErrDto::new(
+            v.get("code").and_then(|c| c.as_str()).unwrap_or("mutate"),
+            format!("{e:?}"),
+        )
+    })?;
+    Ok(project(&doc.value))
+}
+
+pub fn save_document(state: &AppState, force: bool) -> Result<SaveReport, ErrDto> {
+    let mut guard = state.0.lock().unwrap();
+    let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    save(doc, force).map_err(|e| {
+        let v = serde_json::to_value(&e).unwrap_or_default();
+        ErrDto::new(
+            v.get("code").and_then(|c| c.as_str()).unwrap_or("save"),
+            match v.get("detail").and_then(|d| d.as_str()) {
+                Some(d) => d.to_string(),
+                None => format!("{e:?}"),
+            },
+        )
+    })
+}
+
+pub fn list_file_backups(state: &AppState) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
+    let guard = state.0.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    Ok(settings_model::list_backups(&doc.path))
+}
+
+pub fn restore_backup(state: &AppState, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
+    let target = {
+        let guard = state.0.lock().unwrap();
+        let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+        doc.path.clone()
+    };
+    // Small delay to ensure backup timestamp differs from the pre-save backup
+    // (on systems with second-level timestamp precision).
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    settings_model::restore(Path::new(backup_path), &target)
+        .map_err(|e| ErrDto::new("restore", e))?;
+    // Re-open so the UI reflects the restored content and a fresh baseline.
+    open_file(state, &target.to_string_lossy())
 }
 
 /// Hex dump of up to 16 lines x 16 bytes centred on `around` (clamped),
@@ -176,5 +229,90 @@ mod tests {
         let state = AppState::new();
         let err = open_file(&state, "Z:/no/such/file.dat").unwrap_err();
         assert_eq!(err.code, "io");
+    }
+
+    use settings_model::Mutation;
+    use settings_model::path::Step;
+
+    fn open_sample(name: &str) -> (AppState, PathBuf) {
+        let bytes = encode(&Value::Dict(vec![(
+            Value::Bytes(b"list".to_vec()),
+            Value::List(vec![Value::Str("a".into())]),
+        )]))
+        .unwrap();
+        let path = temp_file(name, &bytes);
+        let state = AppState::new();
+        open_file(&state, path.to_str().unwrap()).unwrap();
+        (state, path)
+    }
+
+    #[test]
+    fn mutate_then_save_round_trips_through_disk() {
+        let (state, path) = open_sample("mutsave");
+        let tree = apply_mutation(
+            &state,
+            &Mutation::SetScalar {
+                path: vec![Step::DictValue(0), Step::List(0)],
+                text: "edited".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(tree.children[0].children[0].display, "\"edited\"");
+        let report = save_document(&state, false).unwrap();
+        assert!(report.backup_path.exists());
+        // Re-open from disk in a fresh state: the edit persisted, Editable.
+        let state2 = AppState::new();
+        match open_file(&state2, path.to_str().unwrap()).unwrap() {
+            OpenOutcome::Opened { fidelity, tree, .. } => {
+                assert_eq!(fidelity, Fidelity::Editable);
+                assert_eq!(tree.children[0].children[0].display, "\"edited\"");
+            }
+            _ => panic!("expected Opened"),
+        }
+    }
+
+    #[test]
+    fn save_conflict_surfaces_the_conflict_code() {
+        let (state, path) = open_sample("conflict");
+        fs::write(&path, encode(&Value::Dict(vec![])).unwrap()).unwrap();
+        let err = save_document(&state, false).unwrap_err();
+        assert_eq!(err.code, "conflict");
+        save_document(&state, true).unwrap();
+    }
+
+    #[test]
+    fn backups_list_and_restore_reopen() {
+        let (state, _path) = open_sample("backups");
+        apply_mutation(
+            &state,
+            &Mutation::SetScalar {
+                path: vec![Step::DictValue(0), Step::List(0)],
+                text: "v2".into(),
+            },
+        )
+        .unwrap();
+        save_document(&state, false).unwrap();
+        let backups = list_file_backups(&state).unwrap();
+        assert_eq!(backups.len(), 1, "the pre-save backup");
+        // Restore the original -> the reopened tree shows "a" again.
+        match restore_backup(&state, backups[0].path.to_str().unwrap()).unwrap() {
+            OpenOutcome::Opened { tree, .. } => {
+                assert_eq!(tree.children[0].children[0].display, "\"a\"");
+            }
+            _ => panic!("expected Opened"),
+        }
+        // Restore itself took a pre-restore backup.
+        assert_eq!(list_file_backups(&state).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn mutation_errors_carry_their_code() {
+        let (state, _path) = open_sample("badmut");
+        let err = apply_mutation(
+            &state,
+            &Mutation::SetScalar { path: vec![], text: "5".into() },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "not_scalar");
     }
 }
