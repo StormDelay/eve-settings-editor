@@ -2,6 +2,7 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import TreeNode from "$lib/TreeNode.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
+  import BackupsPanel from "$lib/BackupsPanel.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { ask, message } from "@tauri-apps/plugin-dialog";
@@ -108,6 +109,16 @@
       <pre class="hex">{current.hex_preview}</pre>
     {/if}
   </section>
+  {#if current?.status === "opened"}
+    <BackupsPanel
+      {savedAt}
+      onRestored={(outcome) => {
+        current = outcome;
+        dirty = false;
+        savedAt += 1;
+      }}
+    />
+  {/if}
   {#if insertTarget !== null}
     <div class="overlay" role="none" onclick={() => (insertTarget = null)}>
       <div class="modal" role="none" onclick={(e) => e.stopPropagation()}>
