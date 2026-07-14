@@ -91,7 +91,9 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
 }
 
 /// Copy `target` into `<dir>/eve-settings-editor-backups/<name>.<stamp>.bak`
-/// and verify the copy landed with the same length. Also used by restore.
+/// (or `<name>.<stamp>_2.bak`, `_3`, ... if that name is already taken —
+/// `utc_stamp()` is only second-precision) and verify the copy landed with
+/// the same length. Also used by restore.
 pub(crate) fn backup_current(target: &Path) -> Result<PathBuf, String> {
     let dir = target
         .parent()
@@ -102,7 +104,17 @@ pub(crate) fn backup_current(target: &Path) -> Result<PathBuf, String> {
         .file_name()
         .ok_or_else(|| "target has no file name".to_string())?
         .to_string_lossy();
-    let backup = dir.join(format!("{name}.{}.bak", utc_stamp()));
+    let stamp = utc_stamp();
+    // Two backups within the same second would otherwise collide on this
+    // path and fs::copy would silently clobber the earlier one. Disambiguate
+    // with a _2, _3, ... suffix; "_" sorts above "." in ASCII, so
+    // list_backups' descending file-name sort still puts these newest-first.
+    let mut backup = dir.join(format!("{name}.{stamp}.bak"));
+    let mut n = 2;
+    while backup.exists() {
+        backup = dir.join(format!("{name}.{stamp}_{n}.bak"));
+        n += 1;
+    }
     fs::copy(target, &backup).map_err(|e| format!("copy to backup: {e}"))?;
     let (src, dst) = (
         fs::metadata(target).map_err(|e| e.to_string())?.len(),
@@ -217,5 +229,24 @@ mod tests {
     fn temp_paths_are_unique_within_a_process() {
         let dir = Path::new("x");
         assert_ne!(temp_path(dir, "f.dat"), temp_path(dir, "f.dat"));
+    }
+
+    #[test]
+    fn backup_current_disambiguates_same_second_collisions() {
+        let dir = std::env::temp_dir()
+            .join(format!("settings-model-save-{}-collide", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("core_user_5.dat");
+
+        fs::write(&target, b"v1").unwrap();
+        let first = backup_current(&target).unwrap();
+
+        fs::write(&target, b"v2").unwrap();
+        let second = backup_current(&target).unwrap();
+
+        assert_ne!(first, second, "same-second backups must not collide");
+        assert_eq!(fs::read(&first).unwrap(), b"v1");
+        assert_eq!(fs::read(&second).unwrap(), b"v2");
     }
 }
