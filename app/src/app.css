@@ -44,3 +44,20 @@ button:hover { border-color: var(--accent); }
 .hint { color: var(--fg-dim); padding: 12px; }
 .error { color: var(--danger); padding: 12px; }
 .hex { font-family: Consolas, monospace; padding: 12px; white-space: pre; }
+.node .row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.node .children { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 6px; }
+.twisty { width: 20px; border: none; background: none; padding: 0; display: inline-block; }
+.label { color: var(--accent); white-space: pre; }
+.display { white-space: pre-wrap; word-break: break-all; }
+.display.editable:hover { outline: 1px dashed var(--fg-dim); cursor: text; }
+.kind-int, .kind-float, .kind-long { color: #c8a1e8; }
+.kind-str, .kind-str_ucs2, .kind-str_table { color: #a3c9a5; }
+.kind-bytes { color: #d0b47f; }
+.kind-none, .kind-bool { color: #7fb2d0; }
+.kind-ref, .kind-shared { color: var(--warn); }
+.shared-mark { color: var(--warn); font-weight: bold; }
+.mini { padding: 0 6px; font-size: 0.85em; opacity: 0; }
+.row:hover .mini { opacity: 1; }
+.mini.danger:hover { border-color: var(--danger); color: var(--danger); }
+.edit { background: var(--bg); color: var(--fg); border: 1px solid var(--accent);
+        border-radius: 3px; padding: 1px 4px; min-width: 200px; font: inherit; }
