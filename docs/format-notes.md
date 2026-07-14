@@ -48,7 +48,7 @@ measured on the real files; only the identifying numbers were replaced.
   gated `Document::load` (Editable only when `encode(decode(bytes))` is
   byte-identical — corpus gate `every_corpus_file_loads_editable`, 5022/5022),
   JSON tree projection, guarded mutations, the spec §5 save chain
-  (backup → verify → atomic write, all abort paths integration-tested),
+  (verify → backup → atomic write, all abort paths integration-tested),
   backups/restore, and profile discovery. blue-marshal additions:
   `Value::bits_eq` (NaN-safe verify) and `DuplicateSharedSlot` promoted to a
   hard decode error (measured: 0 duplicates across 4,986 corpus files with

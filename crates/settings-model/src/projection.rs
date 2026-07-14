@@ -33,17 +33,19 @@ fn build(
     in_shared: bool,
 ) -> Node {
     let kind = crate::projection_kind(v);
-    let editable = matches!(
-        v,
+    let editable = match v {
+        // Non-finite floats have no text form that set_scalar can round-trip
+        // without rewriting the payload's NaN bits — shown read-only.
+        Value::Float(f) => f.is_finite(),
         Value::Bool(_)
-            | Value::Int(_)
-            | Value::Long(_)
-            | Value::Float(_)
-            | Value::Bytes(_)
-            | Value::Str(_)
-            | Value::StrUcs2(_)
-            | Value::StrTable(_)
-    );
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Bytes(_)
+        | Value::Str(_)
+        | Value::StrUcs2(_)
+        | Value::StrTable(_) => true,
+        _ => false,
+    };
     let mut children = Vec::new();
     let child = |v: &Value, label: Option<String>, step: Step, removable: bool| {
         let mut p = path.clone();
@@ -121,7 +123,7 @@ fn edit_text(v: &Value) -> Option<String> {
         Value::Bool(true) => "true".into(),
         Value::Bool(false) => "false".into(),
         Value::Int(i) => i.to_string(),
-        Value::Float(f) => format!("{f:?}"),
+        Value::Float(f) if f.is_finite() => format!("{f:?}"),
         Value::Str(s) | Value::StrUcs2(s) => s.clone(),
         Value::Bytes(b) => {
             // Printable bytes edit as plain text — EXCEPT text that itself
@@ -255,6 +257,15 @@ mod tests {
         assert_eq!(json["kind"], "list");
         assert_eq!(json["children"][0]["display"], "\"hi\"");
         assert_eq!(json["children"][0]["path"][0]["s"], "list");
+    }
+
+    #[test]
+    fn non_finite_floats_are_not_editable() {
+        let v = Value::List(vec![Value::Float(f64::NAN), Value::Float(2.5)]);
+        let n = project(&v);
+        assert!(!n.children[0].editable);
+        assert_eq!(n.children[0].edit_text, None);
+        assert!(n.children[1].editable, "finite floats stay editable");
     }
 
     // NOTE: the edit_text ↔ SetScalar round-trip contract is tested in
