@@ -51,6 +51,22 @@ button:hover { border-color: var(--accent); }
 .tree-area { overflow: auto; flex: 1; padding: 8px 12px; }
 .hint { color: var(--fg-dim); padding: 12px; }
 .error { color: var(--danger); padding: 12px; }
+.flash {
+  color: var(--ok); font-size: 0.85em; margin: 0 0 6px;
+  animation: fade-out 2s ease-in forwards;
+}
+.field-error { color: var(--danger); font-size: 0.85em; margin: -4px 0 8px; }
+.searchbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+}
+.searchbar .search {
+  flex: 1; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
+}
+.searchbar .search:focus { outline: 1px solid var(--accent); }
+.searchbar .meta { color: var(--fg-dim); font-size: 0.85em; white-space: nowrap; }
+@keyframes fade-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .hex { font-family: Consolas, monospace; padding: 12px; white-space: pre; }
 .node .row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
 .node .children { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 6px; }

@@ -18,7 +18,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # 24: `node --test` strips the TypeScript itself, so the frontend
+          # tests need no test framework and no extra dependency.
+          node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
       - name: Install frontend dependencies
@@ -27,6 +29,9 @@ jobs:
       - name: Typecheck frontend
         working-directory: app
         run: npm run check
+      - name: Test frontend
+        working-directory: app
+        run: npm test
       - name: Build frontend (generate_context embeds build/)
         working-directory: app
         run: npm run build

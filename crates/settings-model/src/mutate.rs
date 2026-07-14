@@ -31,9 +31,14 @@ use crate::path::{resolve_mut, NodePath, Step};
 
 /// The raw editor's mutation set. Deliberately small for V1:
 /// - scalar edits keep the node's wire kind (no kind changes);
-/// - removal is dict entries and list items only (tuples are fixed wire
-///   shapes) and refuses subtrees containing `Shared` stores;
-/// - inserts go into dicts (appended, wire order) and lists.
+/// - removal is dict entries and sequence (list/tuple) items, and refuses
+///   subtrees containing `Shared` stores;
+/// - inserts go into dicts (appended, wire order) and sequences.
+///
+/// Tuples are mutable as sequences because real settings entries (a chat
+/// channel, an overview tab) ARE tuples: with tuples frozen there is no way
+/// to build one. The wire format encodes any arity, so arity changes are the
+/// user's business — the save chain backs the file up first.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Mutation {
@@ -56,6 +61,7 @@ pub enum NewValue {
     BytesHex(String),
     EmptyDict,
     EmptyList,
+    EmptyTuple,
 }
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
@@ -64,12 +70,35 @@ pub enum MutateError {
     BadPath,
     NotScalar(&'static str),
     Parse(String),
+    /// A `Parse` failure in the *key* half of an insert. Same failure, its own
+    /// code, so the UI can put the message next to the field that caused it.
+    ParseKey(String),
     /// Removal refused: the subtree contains a `Shared` store whose slot
     /// the encoder needs (and Refs elsewhere may point at).
     SharedSubtree,
     NotRemovable,
     NotAContainer(&'static str),
     BadIndex(usize),
+}
+
+/// Human-readable form — this is what the UI shows the user, so it reads as a
+/// sentence rather than as a debug-printed variant.
+impl std::fmt::Display for MutateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MutateError::BadPath => write!(f, "no such node"),
+            MutateError::NotScalar(kind) => write!(f, "not an editable scalar: {kind}"),
+            MutateError::Parse(detail) | MutateError::ParseKey(detail) => write!(f, "{detail}"),
+            MutateError::SharedSubtree => write!(
+                f,
+                "contains a shared object that other entries point at — removing it \
+                 would break them"
+            ),
+            MutateError::NotRemovable => write!(f, "this node cannot be removed"),
+            MutateError::NotAContainer(kind) => write!(f, "not a container: {kind}"),
+            MutateError::BadIndex(i) => write!(f, "index out of range: {i}"),
+        }
+    }
 }
 
 pub fn apply(root: &mut Value, m: &Mutation) -> Result<(), MutateError> {
@@ -80,7 +109,10 @@ pub fn apply(root: &mut Value, m: &Mutation) -> Result<(), MutateError> {
         }
         Mutation::RemoveEntry { path } => remove_entry(root, path),
         Mutation::InsertDictEntry { parent, key, value } => {
-            let key = build_value(key)?;
+            let key = build_value(key).map_err(|e| match e {
+                MutateError::Parse(d) => MutateError::ParseKey(d),
+                other => other,
+            })?;
             let value = build_value(value)?;
             match resolve_mut(root, parent).ok_or(MutateError::BadPath)? {
                 Value::Dict(entries) => {
@@ -93,7 +125,7 @@ pub fn apply(root: &mut Value, m: &Mutation) -> Result<(), MutateError> {
         Mutation::InsertListItem { parent, index, value } => {
             let value = build_value(value)?;
             match resolve_mut(root, parent).ok_or(MutateError::BadPath)? {
-                Value::List(items) => {
+                Value::List(items) | Value::Tuple(items) => {
                     if *index > items.len() {
                         return Err(MutateError::BadIndex(*index));
                     }
@@ -169,9 +201,11 @@ fn remove_entry(root: &mut Value, path: &NodePath) -> Result<(), MutateError> {
             entries.remove(*i);
             Ok(())
         }
-        Step::List(i) => {
+        Step::List(i) | Step::Tuple(i) => {
             let parent = resolve_mut(root, parent_path).ok_or(MutateError::BadPath)?;
-            let Value::List(items) = parent else { return Err(MutateError::BadPath) };
+            let (Value::List(items) | Value::Tuple(items)) = parent else {
+                return Err(MutateError::BadPath);
+            };
             let item = items.get(*i).ok_or(MutateError::BadPath)?;
             if subtree_contains_shared(item) {
                 return Err(MutateError::SharedSubtree);
@@ -203,6 +237,7 @@ fn build_value(nv: &NewValue) -> Result<Value, MutateError> {
         NewValue::BytesHex(h) => Value::Bytes(parse_hex(h).ok_or_else(|| parse_err("bad hex", h))?),
         NewValue::EmptyDict => Value::Dict(vec![]),
         NewValue::EmptyList => Value::List(vec![]),
+        NewValue::EmptyTuple => Value::Tuple(vec![]),
     })
 }
 
@@ -296,17 +331,61 @@ mod tests {
     }
 
     #[test]
-    fn remove_refuses_shared_subtrees_and_tuple_elements() {
+    fn remove_refuses_shared_subtrees() {
         let mut v = doc();
         assert_eq!(
             apply(&mut v, &Mutation::RemoveEntry { path: vec![Step::DictValue(2)] }),
             Err(MutateError::SharedSubtree)
         );
+        // The root itself, and steps into fixed shapes, stay non-removable.
         assert_eq!(
-            apply(&mut v, &Mutation::RemoveEntry {
-                path: vec![Step::DictValue(1), Step::Tuple(0)],
-            }),
+            apply(&mut v, &Mutation::RemoveEntry { path: vec![] }),
             Err(MutateError::NotRemovable)
+        );
+    }
+
+    #[test]
+    fn tuples_are_editable_sequences() {
+        // The chat-channel case: build a tuple in a list, fill it, fix a typo.
+        let mut v = doc();
+        let list = vec![Step::DictValue(0)];
+        apply(&mut v, &Mutation::InsertListItem {
+            parent: list.clone(),
+            index: 2,
+            value: NewValue::EmptyTuple,
+        }).unwrap();
+        let tup = vec![Step::DictValue(0), Step::List(2)];
+        for (i, text) in ["chan", "oops"].iter().enumerate() {
+            apply(&mut v, &Mutation::InsertListItem {
+                parent: tup.clone(),
+                index: i,
+                value: NewValue::Str((*text).into()),
+            }).unwrap();
+        }
+        // …and the typo is removable again (tuple elements were frozen before).
+        apply(&mut v, &Mutation::RemoveEntry {
+            path: vec![Step::DictValue(0), Step::List(2), Step::Tuple(1)],
+        }).unwrap();
+        let Value::Dict(entries) = &v else { unreachable!() };
+        let Value::List(items) = &entries[0].1 else { unreachable!() };
+        assert_eq!(items[2], Value::Tuple(vec![Value::Str("chan".into())]));
+
+        // Guards still hold inside tuples: out-of-range index, Shared subtree.
+        assert_eq!(
+            apply(&mut v, &Mutation::InsertListItem {
+                parent: tup.clone(),
+                index: 9,
+                value: NewValue::None,
+            }),
+            Err(MutateError::BadIndex(9))
+        );
+        let mut shared_tup = Value::Tuple(vec![Value::Shared {
+            slot: 1,
+            value: Box::new(Value::Int(9)),
+        }]);
+        assert_eq!(
+            apply(&mut shared_tup, &Mutation::RemoveEntry { path: vec![Step::Tuple(0)] }),
+            Err(MutateError::SharedSubtree)
         );
     }
 
@@ -343,6 +422,31 @@ mod tests {
             }),
             Err(MutateError::BadIndex(99))
         );
+    }
+
+    #[test]
+    fn insert_parse_errors_name_the_field_that_failed() {
+        // The UI anchors the message to a field by this code, and shows the
+        // Display form — neither may leak the Rust variant name.
+        let mut v = doc();
+        let bad_key = apply(&mut v, &Mutation::InsertDictEntry {
+            parent: vec![],
+            key: NewValue::Int("df".into()),
+            value: NewValue::None,
+        }).unwrap_err();
+        assert!(matches!(bad_key, MutateError::ParseKey(_)));
+        assert_eq!(serde_json::to_value(&bad_key).unwrap()["code"], "parse_key");
+        assert!(bad_key.to_string().contains("df"), "{bad_key}");
+        assert!(!bad_key.to_string().contains("ParseKey"), "{bad_key}");
+
+        let bad_value = apply(&mut v, &Mutation::InsertDictEntry {
+            parent: vec![],
+            key: NewValue::Str("k".into()),
+            value: NewValue::Int("df".into()),
+        }).unwrap_err();
+        assert!(matches!(bad_value, MutateError::Parse(_)));
+        assert_eq!(serde_json::to_value(&bad_value).unwrap()["code"], "parse");
+        assert_eq!(v, doc(), "a rejected insert changes nothing");
     }
 
     #[test]

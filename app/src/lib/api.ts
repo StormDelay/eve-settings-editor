@@ -83,12 +83,14 @@ export type NewValue =
   | { kind: "str_ucs2"; v: string }
   | { kind: "bytes_hex"; v: string }
   | { kind: "empty_dict" }
-  | { kind: "empty_list" };
+  | { kind: "empty_list" }
+  | { kind: "empty_tuple" };
 
 export type Mutation =
   | { op: "set_scalar"; path: NodePath; text: string }
   | { op: "remove_entry"; path: NodePath }
   | { op: "insert_dict_entry"; parent: NodePath; key: NewValue; value: NewValue }
+  // Also inserts into tuples — they are editable sequences (see mutate.rs).
   | { op: "insert_list_item"; parent: NodePath; index: number; value: NewValue };
 
 export const api = {

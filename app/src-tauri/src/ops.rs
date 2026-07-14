@@ -98,10 +98,12 @@ pub fn apply_mutation(state: &AppState, mutation: &Mutation) -> Result<Node, Err
     }
     apply(&mut doc.value, mutation).map_err(|e| {
         // MutateError serializes as {"code": ..., "detail": ...}; flatten it.
+        // The code drives UI behaviour (e.g. parse_key anchors the message to
+        // the key field); the message is its Display form.
         let v = serde_json::to_value(&e).unwrap_or_default();
         ErrDto::new(
             v.get("code").and_then(|c| c.as_str()).unwrap_or("mutate"),
-            format!("{e:?}"),
+            e.to_string(),
         )
     })?;
     Ok(project(&doc.value))

@@ -55,7 +55,8 @@ fn build(
     match v {
         Value::Tuple(items) => {
             for (i, item) in items.iter().enumerate() {
-                children.push(child(item, Some(format!("[{i}]")), Step::Tuple(i), false));
+                let removable = !subtree_contains_shared(item);
+                children.push(child(item, Some(format!("[{i}]")), Step::Tuple(i), removable));
             }
         }
         Value::List(items) => {
@@ -231,7 +232,7 @@ mod tests {
         // tuple child of first entry
         let t = &n.children[0];
         assert_eq!(t.children[0].path, vec![Step::DictValue(0), Step::Tuple(0)]);
-        assert!(!t.children[0].removable, "tuple elements are not removable");
+        assert!(t.children[0].removable, "tuples are editable sequences");
     }
 
     #[test]
