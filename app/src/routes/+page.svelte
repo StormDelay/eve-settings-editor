@@ -1,10 +1,13 @@
 <script lang="ts">
   import Sidebar from "$lib/Sidebar.svelte";
+  import TreeNode from "$lib/TreeNode.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
+  import type { NodePath, TreeNodeData } from "$lib/api";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let current: OpenOutcome | null = $state(null);
   let dirty = $state(false);
+  let insertTarget: TreeNodeData | null = $state(null);
 
   async function openFile(path: string) {
     try {
@@ -14,6 +17,9 @@
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
   }
+
+  async function handleEdit(_path: NodePath, _text: string) {}
+  async function handleRemove(_path: NodePath) {}
 </script>
 
 <main class="layout">
@@ -32,7 +38,12 @@
         {#if dirty}<span class="badge dirty">unsaved changes</span>{/if}
       </header>
       <div class="tree-area">
-        <p class="hint">Tree editor arrives in Task 5.</p>
+        <TreeNode
+          node={current.tree}
+          onEdit={handleEdit}
+          onRemove={handleRemove}
+          onInsertRequest={(n) => (insertTarget = n)}
+        />
       </div>
     {:else}
       <p class="error">Cannot edit: {current.message} (offset {current.offset})</p>
