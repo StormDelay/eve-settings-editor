@@ -53,6 +53,12 @@ measured on the real files; only the identifying numbers were replaced.
   `Value::bits_eq` (NaN-safe verify) and `DuplicateSharedSlot` promoted to a
   hard decode error (measured: 0 duplicates across 4,986 corpus files with
   shared maps), making `Ref(slot)` unambiguous for the mutation layer.
+- **2026-07-15 — M1 manual validation PASSED.** A live `core_user` file was
+  edited through the app's full save chain (backup taken, encode-verified,
+  atomically written), the EVE client accepted the file, and the injected
+  autofill marker appeared in-game with the client otherwise behaving
+  normally. This is the spec §8 exit gate: **M1 (M1a + M1b-1 + M1b-2) is
+  complete** — the format round-trips, and the client reads what we write.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
