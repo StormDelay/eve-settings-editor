@@ -5,12 +5,31 @@
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
+  import { searchTree } from "$lib/search";
   import { ask, message } from "@tauri-apps/plugin-dialog";
 
   let current: OpenOutcome | null = $state(null);
   let dirty = $state(false);
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
+
+  let query = $state("");
+  let searchBox: HTMLInputElement | undefined = $state();
+  const searching = $derived(query.trim() !== "");
+  // Re-runs after every mutation, since the tree is replaced wholesale.
+  const searchIn = (doc: OpenOutcome | null, q: string) =>
+    doc?.status === "opened" ? searchTree(doc.tree, q) : null;
+  const found = $derived(searchIn(current, query));
+
+  function openSearch() {
+    searchBox?.focus();
+    searchBox?.select();
+  }
+
+  function closeSearch() {
+    query = "";
+    searchBox?.blur();
+  }
 
   async function openFile(path: string) {
     if (dirty) {
@@ -29,12 +48,15 @@
     }
   }
 
-  async function runMutation(m: Mutation) {
+  // `rethrow` is for callers with somewhere better to put the error than a
+  // dialog — the insert form shows it inline and stays open on failure.
+  async function runMutation(m: Mutation, rethrow = false) {
     if (current?.status !== "opened") return;
     try {
       current.tree = await api.mutate(m);
       dirty = true;
     } catch (e) {
+      if (rethrow) throw e;
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
     }
   }
@@ -75,12 +97,21 @@
   }
 </script>
 
+<!-- The webview's stock context menu (Back/Reload/…) means nothing here. Tree
+     actions take its place when we add them. -->
 <svelte:window
+  oncontextmenu={(e) => e.preventDefault()}
   onkeydown={(e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
       saveFile();
     }
+    // Take Ctrl+F off the webview: its find-on-page cannot see collapsed nodes.
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      e.preventDefault();
+      openSearch();
+    }
+    if (e.key === "Escape" && searching) closeSearch();
   }}
 />
 
@@ -104,13 +135,31 @@
           disabled={!dirty || current.fidelity.state !== "editable"}
           onclick={() => saveFile()}>Save</button>
       </header>
+      <div class="searchbar">
+        <input
+          class="search"
+          bind:this={searchBox}
+          bind:value={query}
+          placeholder="Search labels and values (Ctrl+F)" />
+        {#if searching}
+          <span class="meta">
+            {found?.count ?? 0} match{found?.count === 1 ? "" : "es"}
+          </span>
+          <button class="mini" title="Clear search (Esc)" onclick={closeSearch}>×</button>
+        {/if}
+      </div>
       <div class="tree-area">
-        <TreeNode
-          node={current.tree}
-          onEdit={handleEdit}
-          onRemove={handleRemove}
-          onInsertRequest={(n) => (insertTarget = n)}
-        />
+        {#if found?.tree}
+          <TreeNode
+            node={found.tree}
+            autoExpand={searching}
+            onEdit={handleEdit}
+            onRemove={handleRemove}
+            onInsertRequest={(n) => (insertTarget = n)}
+          />
+        {:else}
+          <p class="hint">Nothing in this file matches “{query}”.</p>
+        {/if}
       </div>
     {:else}
       <p class="error">Cannot edit: {current.message} (offset {current.offset})</p>
@@ -133,7 +182,7 @@
         <InsertForm
           target={insertTarget}
           onSubmit={async (m) => {
-            await runMutation(m);
+            await runMutation(m, true); // throws => the form keeps itself open
             insertTarget = null;
           }}
           onCancel={() => (insertTarget = null)}

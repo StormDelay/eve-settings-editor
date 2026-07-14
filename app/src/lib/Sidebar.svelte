@@ -6,11 +6,44 @@
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
+  let flash: string | null = $state(null);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
-  async function refresh() {
+  // Two installs can hold the same server and profile name (a SharedCache dir
+  // and a legacy one both with settings_Default) — then, and only then, the
+  // install name is what tells them apart. Full path is on the tooltip.
+  // discover() returns them alphabetically; the profile whose files were
+  // touched most recently is the one actually in use, so it gets pinned on top
+  // and opened. Array.sort is stable, so the rest keep their alphabetical run.
+  const rows = $derived.by(() => {
+    const seen = new Map<string, number>();
+    const key = (p: Profile) => `${p.server} / ${p.profile}`;
+    for (const p of profiles) seen.set(key(p), (seen.get(key(p)) ?? 0) + 1);
+
+    const touched = (p: Profile) =>
+      p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
+    const times = profiles.map(touched);
+    const newest = times.reduce((best, t, i) => (t > times[best] ? i : best), 0);
+
+    return profiles
+      .map((p, i) => ({
+        p,
+        label: seen.get(key(p))! > 1 ? `${key(p)} · ${p.install}` : key(p),
+        primary: i === newest && times[i] > 0,
+      }))
+      .sort((a, b) => Number(b.primary) - Number(a.primary));
+  });
+
+  async function refresh(announce = false) {
     try {
       profiles = await api.discover();
       error = null;
+      if (announce) {
+        const n = profiles.length;
+        flash = `Refreshed — ${n} profile${n === 1 ? "" : "s"}`;
+        clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => (flash = null), 2000);
+      }
     } catch (e) {
       error = errMessage(e);
     }
@@ -30,15 +63,19 @@
 <aside class="sidebar">
   <div class="sidebar-actions">
     <button onclick={pickFile}>Open file…</button>
-    <button onclick={refresh} title="Rescan standard EVE locations">⟳</button>
+    <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
   </div>
+  {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
   {#if profiles.length === 0}
     <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
   {/if}
-  {#each profiles as p (p.dir)}
-    <details open>
-      <summary>{p.server} / {p.profile}</summary>
+  {#each rows as { p, label, primary } (p.dir)}
+    <details open={primary}>
+      <summary title={p.dir}>
+        {label}
+        {#if primary}<span class="meta">most recent</span>{/if}
+      </summary>
       <ul>
         {#each p.files as f (f.path)}
           <li>

@@ -5,23 +5,32 @@
   let {
     node,
     depth = 0,
+    autoExpand = false,
     onEdit,
     onRemove,
     onInsertRequest,
   }: {
     node: TreeNodeData;
     depth?: number;
+    /// Set while a search is filtering the tree: everything still standing is
+    /// on the way to a hit, so open it. The twisty keeps working afterwards.
+    autoExpand?: boolean;
     onEdit: (path: NodePath, text: string) => Promise<void>;
     onRemove: (path: NodePath) => Promise<void>;
     onInsertRequest: (node: TreeNodeData) => void;
   } = $props();
 
   let expanded = $state(depth < 1);
+  $effect(() => {
+    if (autoExpand) expanded = true;
+  });
   let editing = $state(false);
   let draft = $state("");
 
   const hasChildren = $derived(node.children.length > 0);
-  const container = $derived(node.kind === "dict" || node.kind === "list");
+  const container = $derived(
+    node.kind === "dict" || node.kind === "list" || node.kind === "tuple",
+  );
 
   function startEdit() {
     if (!node.editable) return;
@@ -78,7 +87,13 @@
   {#if expanded && hasChildren}
     <div class="children">
       {#each node.children as child (JSON.stringify(child.path))}
-        <TreeNodeSelf node={child} depth={depth + 1} {onEdit} {onRemove} {onInsertRequest} />
+        <TreeNodeSelf
+          node={child}
+          depth={depth + 1}
+          {autoExpand}
+          {onEdit}
+          {onRemove}
+          {onInsertRequest} />
       {/each}
     </div>
   {/if}

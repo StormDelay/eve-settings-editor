@@ -2,6 +2,9 @@
   "extends": "./.svelte-kit/tsconfig.json",
   "compilerOptions": {
     "allowJs": true,
+    // The *.test.ts files run straight through `node --test`, which resolves
+    // real paths — so they import "./search.ts" with the extension.
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
