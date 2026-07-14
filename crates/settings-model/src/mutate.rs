@@ -208,7 +208,7 @@ fn build_value(nv: &NewValue) -> Result<Value, MutateError> {
 
 fn parse_hex(s: &str) -> Option<Vec<u8>> {
     let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if s.len() % 2 != 0 {
+    if !s.is_ascii() || s.len() % 2 != 0 {
         return None;
     }
     (0..s.len())
@@ -383,5 +383,19 @@ mod tests {
                 "key":{"kind":"str","v":"name"},"value":{"kind":"empty_dict"}}"#,
         ).unwrap();
         assert!(matches!(m, Mutation::InsertDictEntry { .. }));
+    }
+
+    #[test]
+    fn parse_hex_rejects_non_ascii_without_panicking() {
+        // Regression: byte-offset slicing used to panic mid-char on
+        // multi-byte UTF-8 reaching set_scalar from raw UI text.
+        let mut v = Value::List(vec![Value::Long(vec![0x2A])]);
+        let err = apply(&mut v, &Mutation::SetScalar {
+            path: vec![Step::List(0)],
+            text: "hex:€€".into(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, MutateError::Parse(_)));
+        assert_eq!(v, Value::List(vec![Value::Long(vec![0x2A])]));
     }
 }

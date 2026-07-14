@@ -729,17 +729,19 @@ fn build(
     in_shared: bool,
 ) -> Node {
     let kind = kind_name(v);
-    let editable = matches!(
-        v,
+    let editable = match v {
+        // Non-finite floats have no text form that set_scalar can round-trip
+        // without rewriting the payload's NaN bits — shown read-only.
+        Value::Float(f) => f.is_finite(),
         Value::Bool(_)
-            | Value::Int(_)
-            | Value::Long(_)
-            | Value::Float(_)
-            | Value::Bytes(_)
-            | Value::Str(_)
-            | Value::StrUcs2(_)
-            | Value::StrTable(_)
-    );
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Bytes(_)
+        | Value::Str(_)
+        | Value::StrUcs2(_)
+        | Value::StrTable(_) => true,
+        _ => false,
+    };
     let mut children = Vec::new();
     let child = |v: &Value, label: Option<String>, step: Step, removable: bool| {
         let mut p = path.clone();
@@ -817,7 +819,7 @@ fn edit_text(v: &Value) -> Option<String> {
         Value::Bool(true) => "true".into(),
         Value::Bool(false) => "false".into(),
         Value::Int(i) => i.to_string(),
-        Value::Float(f) => format!("{f:?}"),
+        Value::Float(f) if f.is_finite() => format!("{f:?}"),
         Value::Str(s) | Value::StrUcs2(s) => s.clone(),
         Value::Bytes(b) => {
             // Printable bytes edit as plain text — EXCEPT text that itself
@@ -1236,7 +1238,7 @@ fn build_value(nv: &NewValue) -> Result<Value, MutateError> {
 
 fn parse_hex(s: &str) -> Option<Vec<u8>> {
     let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if s.len() % 2 != 0 {
+    if !s.is_ascii() || s.len() % 2 != 0 {
         return None;
     }
     (0..s.len())
@@ -2227,7 +2229,7 @@ Append at the end of the `## Status` bullet list in `docs/format-notes.md`:
   gated `Document::load` (Editable only when `encode(decode(bytes))` is
   byte-identical — corpus gate `every_corpus_file_loads_editable`, 5022/5022),
   JSON tree projection, guarded mutations, the spec §5 save chain
-  (backup → verify → atomic write, all abort paths integration-tested),
+  (verify → backup → atomic write, all abort paths integration-tested),
   backups/restore, and profile discovery. blue-marshal additions:
   `Value::bits_eq` (NaN-safe verify) and `DuplicateSharedSlot` promoted to a
   hard decode error (measured: 0 duplicates across 4,986 corpus files with
