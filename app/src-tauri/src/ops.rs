@@ -134,9 +134,6 @@ pub fn restore_backup(state: &AppState, backup_path: &str) -> Result<OpenOutcome
         let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
         doc.path.clone()
     };
-    // Small delay to ensure backup timestamp differs from the pre-save backup
-    // (on systems with second-level timestamp precision).
-    std::thread::sleep(std::time::Duration::from_secs(1));
     settings_model::restore(Path::new(backup_path), &target)
         .map_err(|e| ErrDto::new("restore", e))?;
     // Re-open so the UI reflects the restored content and a fresh baseline.
