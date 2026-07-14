@@ -11,3 +11,6 @@ dist/
 
 # Read-only reference clone of ntt/reverence (Task 4)
 vendor/
+
+# Scratch test logs (subagents sometimes redirect cargo test output)
+test-output.txt
