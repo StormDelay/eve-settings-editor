@@ -61,3 +61,13 @@ button:hover { border-color: var(--accent); }
 .mini.danger:hover { border-color: var(--danger); color: var(--danger); }
 .edit { background: var(--bg); color: var(--fg); border: 1px solid var(--accent);
         border-radius: 3px; padding: 1px 4px; min-width: 200px; font: inherit; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+           display: grid; place-items: center; }
+.modal { background: var(--bg-panel); border: 1px solid var(--border);
+         border-radius: 6px; padding: 16px; min-width: 380px; }
+.insert-form label { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.insert-form input, .insert-form select {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 6px; font: inherit; flex: 1;
+}
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }

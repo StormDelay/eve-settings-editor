@@ -1,8 +1,9 @@
 <script lang="ts">
   import Sidebar from "$lib/Sidebar.svelte";
   import TreeNode from "$lib/TreeNode.svelte";
+  import InsertForm from "$lib/InsertForm.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
-  import type { NodePath, TreeNodeData } from "$lib/api";
+  import type { Mutation, NodePath, TreeNodeData } from "$lib/api";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let current: OpenOutcome | null = $state(null);
@@ -18,8 +19,20 @@
     }
   }
 
-  async function handleEdit(_path: NodePath, _text: string) {}
-  async function handleRemove(_path: NodePath) {}
+  async function runMutation(m: Mutation) {
+    if (current?.status !== "opened") return;
+    try {
+      current.tree = await api.mutate(m);
+      dirty = true;
+    } catch (e) {
+      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+    }
+  }
+
+  const handleEdit = (path: NodePath, text: string) =>
+    runMutation({ op: "set_scalar", path, text });
+  const handleRemove = (path: NodePath) =>
+    runMutation({ op: "remove_entry", path });
 </script>
 
 <main class="layout">
@@ -50,4 +63,18 @@
       <pre class="hex">{current.hex_preview}</pre>
     {/if}
   </section>
+  {#if insertTarget !== null}
+    <div class="overlay" role="none" onclick={() => (insertTarget = null)}>
+      <div class="modal" role="none" onclick={(e) => e.stopPropagation()}>
+        <InsertForm
+          target={insertTarget}
+          onSubmit={async (m) => {
+            await runMutation(m);
+            insertTarget = null;
+          }}
+          onCancel={() => (insertTarget = null)}
+        />
+      </div>
+    </div>
+  {/if}
 </main>
