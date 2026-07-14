@@ -24,7 +24,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
-      - name: Build frontend (generate_context embeds dist/)
+      - name: Typecheck frontend
+        working-directory: app
+        run: npm run check
+      - name: Build frontend (generate_context embeds build/)
         working-directory: app
         run: npm run build
       - name: Test workspace

@@ -13,6 +13,13 @@
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
 
   async function openFile(path: string) {
+    if (dirty) {
+      const discard = await ask(
+        "You have unsaved changes. Discard them and open the other file?",
+        { title: "Unsaved changes", kind: "warning" },
+      );
+      if (!discard) return;
+    }
     try {
       current = await api.open(path);
       dirty = false;
@@ -38,7 +45,7 @@
     runMutation({ op: "remove_entry", path });
 
   async function saveFile(force = false) {
-    if (current?.status !== "opened" || current.fidelity.state !== "editable") return;
+    if (!dirty || current?.status !== "opened" || current.fidelity.state !== "editable") return;
     try {
       const report = await api.save(force);
       dirty = false;
