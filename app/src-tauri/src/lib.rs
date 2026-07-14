@@ -17,13 +17,47 @@ fn close_file(state: tauri::State<'_, AppState>) {
     ops::close_file(&state)
 }
 
+#[tauri::command]
+fn apply_mutation(
+    state: tauri::State<'_, AppState>,
+    mutation: settings_model::Mutation,
+) -> Result<settings_model::Node, ErrDto> {
+    ops::apply_mutation(&state, &mutation)
+}
+
+#[tauri::command]
+fn save_document(
+    state: tauri::State<'_, AppState>,
+    force: bool,
+) -> Result<settings_model::SaveReport, ErrDto> {
+    ops::save_document(&state, force)
+}
+
+#[tauri::command]
+fn list_file_backups(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
+    ops::list_file_backups(&state)
+}
+
+#[tauri::command]
+fn restore_backup(
+    state: tauri::State<'_, AppState>,
+    backup_path: String,
+) -> Result<OpenOutcome, ErrDto> {
+    ops::restore_backup(&state, &backup_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![discover_profiles, open_file, close_file])
+        .invoke_handler(tauri::generate_handler![
+            discover_profiles, open_file, close_file,
+            apply_mutation, save_document, list_file_backups, restore_backup
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
