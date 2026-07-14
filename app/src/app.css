@@ -71,3 +71,6 @@ button:hover { border-color: var(--accent); }
   border-radius: 3px; padding: 3px 6px; font: inherit; flex: 1;
 }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.spacer { flex: 1; }
+.save { border-color: var(--accent); }
+.save:disabled { opacity: 0.4; cursor: default; }

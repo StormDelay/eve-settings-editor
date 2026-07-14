@@ -3,12 +3,13 @@
   import TreeNode from "$lib/TreeNode.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
-  import type { Mutation, NodePath, TreeNodeData } from "$lib/api";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
+  import { ask, message } from "@tauri-apps/plugin-dialog";
 
   let current: OpenOutcome | null = $state(null);
   let dirty = $state(false);
   let insertTarget: TreeNodeData | null = $state(null);
+  let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
 
   async function openFile(path: string) {
     try {
@@ -33,7 +34,46 @@
     runMutation({ op: "set_scalar", path, text });
   const handleRemove = (path: NodePath) =>
     runMutation({ op: "remove_entry", path });
+
+  async function saveFile(force = false) {
+    if (current?.status !== "opened" || current.fidelity.state !== "editable") return;
+    try {
+      const report = await api.save(force);
+      dirty = false;
+      savedAt += 1;
+      let note = `Saved ${report.bytes_written} bytes.\nBackup: ${report.backup_path}`;
+      if (report.recent_sibling_writes.length > 0) {
+        note +=
+          `\n\nWarning: other files in this profile changed in the last 5 minutes` +
+          ` — the EVE client may be running and can overwrite your changes on logout:` +
+          `\n${report.recent_sibling_writes.join("\n")}`;
+      }
+      await message(note, { title: "Saved", kind: "info" });
+    } catch (e) {
+      const err = e as ErrDto;
+      if (err.code === "conflict") {
+        const overwrite = await ask(
+          "The file changed on disk after it was loaded (the EVE client may have " +
+            "written it). Overwrite anyway?\n\nA backup of the current on-disk file " +
+            "is taken first either way, so nothing is lost.",
+          { title: "File changed on disk", kind: "warning" },
+        );
+        if (overwrite) await saveFile(true);
+      } else {
+        await message(errMessage(e), { title: "Save failed — file untouched", kind: "error" });
+      }
+    }
+  }
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      saveFile();
+    }
+  }}
+/>
 
 <main class="layout">
   <Sidebar onOpen={openFile} />
@@ -49,6 +89,11 @@
           <span class="badge editable">editable</span>
         {/if}
         {#if dirty}<span class="badge dirty">unsaved changes</span>{/if}
+        <span class="spacer"></span>
+        <button
+          class="save"
+          disabled={!dirty || current.fidelity.state !== "editable"}
+          onclick={() => saveFile()}>Save</button>
       </header>
       <div class="tree-area">
         <TreeNode
