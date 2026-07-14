@@ -16,6 +16,7 @@
     try {
       current = await api.open(path);
       dirty = false;
+      savedAt += 1;
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
