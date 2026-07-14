@@ -39,3 +39,33 @@ jobs:
           releaseName: "EVE Settings Editor ${{ github.ref_name }}"
           releaseDraft: true
           releaseBody: "See CHANGELOG.md. Unsigned builds — expect OS warnings (spec §11)."
+
+  # The bundler names assets by extension only (.msi/.dmg/.AppImage), so which
+  # OS a file is for isn't obvious in the release list. Prefix each with its OS
+  # once all three builds have uploaded. Idempotent, so re-runs are safe.
+  label-assets:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Prefix release assets with their target OS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          rel=$(gh api "repos/$REPO/releases" --jq \
+            "map(select(.tag_name==\"$TAG\")) | first | .id")
+          gh api "repos/$REPO/releases/$rel/assets" \
+            --jq '.[] | "\(.id) \(.name)"' | while read -r id name; do
+            case "$name" in
+              Windows-*|macOS-*|Linux-*) continue ;;
+              *.exe|*.msi)               os=Windows ;;
+              *.dmg|*.app.tar.gz)        os=macOS ;;
+              *.deb|*.rpm|*.AppImage)    os=Linux ;;
+              *)                         continue ;;
+            esac
+            gh api -X PATCH "repos/$REPO/releases/assets/$id" \
+              -f name="$os-$name" --jq '"renamed -> \(.name)"'
+          done
