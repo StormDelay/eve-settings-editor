@@ -44,6 +44,15 @@ measured on the real files; only the identifying numbers were replaced.
   `Value` model is fidelity-tagged (Str/StrUcs2/StrTable split, explicit
   Shared/Ref slots, Instance/Reduce split); see "Corpus canonicality
   measurements" below.
+- **2026-07-13 — M1b-1 complete.** `settings-model` crate shipped: fidelity-
+  gated `Document::load` (Editable only when `encode(decode(bytes))` is
+  byte-identical — corpus gate `every_corpus_file_loads_editable`, 5022/5022),
+  JSON tree projection, guarded mutations, the spec §5 save chain
+  (backup → verify → atomic write, all abort paths integration-tested),
+  backups/restore, and profile discovery. blue-marshal additions:
+  `Value::bits_eq` (NaN-safe verify) and `DuplicateSharedSlot` promoted to a
+  hard decode error (measured: 0 duplicates across 4,986 corpus files with
+  shared maps), making `Ref(slot)` unambiguous for the mutation layer.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 

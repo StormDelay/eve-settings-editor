@@ -1,0 +1,138 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.02s
+     Running unittests src\lib.rs (target\debug\deps\blue_marshal-2345d0f60f480e8b.exe)
+
+running 50 tests
+test decode::tests::decodes_buffer_and_short_strings ... ok
+test decode::tests::decodes_global_dotted_name ... ok
+test decode::tests::decodes_containers_dict_wire_order_value_then_key ... ok
+test decode::tests::decodes_text_variants_distinctly ... ok
+test decode::tests::duplicate_shared_map_slots_are_rejected ... ok
+test decode::tests::decodes_reduce_with_nonempty_iterator_tail ... ok
+test decode::tests::shared_dict_stored_then_ref ... ok
+test decode::tests::decodes_instance_class_then_state ... ok
+test decode::tests::ref_to_unpopulated_slot_is_bad_ref ... ok
+test decode::tests::rejects_bad_magic ... ok
+test decode::tests::decodes_reduce_ctor_then_double_mark_tail ... ok
+test decode::tests::decodes_scalar_opcodes ... ok
+test decode::tests::shared_buffer_stored_then_ref ... ok
+test decode::tests::shared_global_stored_then_ref ... ok
+test decode::tests::shared_instance_stored_then_ref ... ok
+test decode::tests::shared_slots_assigned_in_encounter_order_not_completion_order ... ok
+test decode::tests::trailing_bytes_after_root_are_a_hard_error ... ok
+test decode::tests::string_0x10_reads_bare_count_no_ff_escape ... ok
+test decode::tests::unconsumed_shared_map_is_a_hard_error ... ok
+test decode::tests::shared_reduce_stored_then_ref ... ok
+test decode::tests::unknown_opcode_reports_offset ... ok
+test encode::tests::encode_rejects_invalid_sharing ... ok
+test encode::tests::encodes_containers_and_dict_value_first ... ok
+test encode::tests::encodes_scalars_canonically ... ok
+test encode::tests::encodes_string_family_by_tag ... ok
+test encode::tests::long_lengths_use_the_ff_escape_minimally ... ok
+test encode::tests::encode_depth_guard_matches_decode ... ok
+test encode::tests::nested_stream_reencodes_recursively ... ok
+test encode::tests::reencodes_shared_fixtures_byte_identically ... ok
+test reader::tests::eof_error_carries_offset ... ok
+test reader::tests::peek_u8_does_not_advance ... ok
+test decode::tests::deep_nesting_errors_instead_of_overflowing_stack ... ok
+test reader::tests::read_bytes_slices_without_copy ... ok
+test reader::tests::read_len_single_byte_and_extended ... ok
+test reader::tests::reads_i64_and_f64_little_endian ... ok
+test reader::tests::reads_scalars_little_endian ... ok
+test value::tests::bits_eq_handles_nan_and_signed_zero ... ok
+test value::tests::dump_bytes_attempts_nested_stream_decode ... ok
+test value::tests::dump_bytes_escapes_quotes_and_backslashes ... ok
+test value::tests::dump_bytes_printable_and_hex ... ok
+test value::tests::dump_dict_sorted_by_key_rendering ... ok
+test value::tests::dump_global_and_instance ... ok
+test value::tests::dump_global_nonprintable_uses_global_hex_prefix ... ok
+test value::tests::dump_nested_containers_indent ... ok
+test value::tests::dump_new_string_variants ... ok
+test value::tests::dump_scalars ... ok
+test value::tests::dump_shared_ref_and_reduce ... ok
+test value::tests::unshared_peels_exactly_one_wrapper ... ok
+test value::tests::dump_bytes_bounds_nested_stream_recursion_depth ... ok
+test value::tests::dump_dict_key_nested_stream_bypasses_depth_guard_via_dump_text ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\bmdump.rs (target\debug\deps\bmdump-ed4b3f00439903ba.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\corpus.rs (target\debug\deps\corpus-73adcff14f132b66.exe)
+
+running 2 tests
+test every_corpus_file_reencodes_byte_identically ... ok
+test every_corpus_file_decodes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.07s
+
+     Running tests\prop_roundtrip.rs (target\debug\deps\prop_roundtrip-c2ac9f2ac5645c52.exe)
+
+running 1 test
+test random_trees_roundtrip_through_encode_decode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\settings_model-f0f3bf1dfefcce43.exe)
+
+running 24 tests
+test discover::tests::missing_roots_yield_empty_not_error ... ok
+test mutate::tests::remove_list_item_and_dict_entry ... ok
+test mutate::tests::inserts_into_dict_and_list ... ok
+test mutate::tests::remove_refuses_shared_subtrees_and_tuple_elements ... ok
+test mutate::tests::set_scalar_per_kind ... ok
+test mutate::tests::mutation_json_shape_is_stable ... ok
+test mutate::tests::edit_text_round_trips_through_set_scalar ... ok
+test path::tests::resolve_mut_reaches_the_same_node ... ok
+test mutate::tests::set_scalar_rejects_bad_input_without_mutating ... ok
+test path::tests::resolve_walks_every_step_kind_used_in_real_files ... ok
+test path::tests::step_serde_shape_is_stable ... ok
+test projection::tests::node_serializes_to_json ... ok
+test projection::tests::projects_dict_with_labels_paths_and_flags ... ok
+test projection::tests::shared_subtree_is_flagged_and_not_removable ... ok
+test save::tests::civil_from_days_known_dates ... ok
+test save::tests::temp_paths_are_unique_within_a_process ... ok
+test save::tests::utc_stamp_shape ... ok
+test document::tests::noncanonical_file_loads_read_only ... ok
+test document::tests::undecodable_file_is_a_decode_error_with_offset ... ok
+test backups::tests::lists_only_matching_backups_newest_first ... ok
+test discover::tests::discovers_the_real_layout_from_a_temp_tree ... ok
+test backups::tests::restore_backs_up_current_then_replaces ... ok
+test document::tests::canonical_file_loads_editable ... ok
+test backups::tests::restore_refuses_undecodable_backup ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\corpus_load.rs (target\debug\deps\corpus_load-4d6ba716e87e6ddd.exe)
+
+running 1 test
+test every_corpus_file_loads_editable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.50s
+
+     Running tests\save_chain.rs (target\debug\deps\save_chain-84164e8d36f0d18e.exe)
+
+running 5 tests
+test read_only_document_refuses_to_save ... ok
+test encode_failure_aborts_before_touching_disk ... ok
+test backup_failure_aborts_with_file_untouched ... ok
+test conflict_detected_and_forcible ... ok
+test save_backs_up_then_writes_atomically ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests blue_marshal
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests settings_model
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
