@@ -46,7 +46,10 @@ fn save_store(dir: &Path, store: &AccountsStore) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec_pretty(store)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    fs::write(store_path(dir), bytes)
+    // Write-then-rename so a crash mid-write can't truncate the live file.
+    let tmp = dir.join("accounts.json.tmp");
+    fs::write(&tmp, bytes)?;
+    fs::rename(&tmp, store_path(dir))
 }
 
 /// Set or clear an account's alias (blank/whitespace clears). Creates the

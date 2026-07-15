@@ -62,17 +62,22 @@
     if (r.detected) {
       const [charId, userId] = r.detected;
       try {
-        await confirmPairing(charId, userId);
+        await confirmPairing(charId, userId); // already refreshes the roster
         captureNote = `Paired ${nameOf(charId)} ↔ account ${userId}.`;
         capturing = false;
       } catch (e) {
         captureNote = errMessage(e);
       }
-    } else if (r.changed_users.length === 0) {
+      return;
+    }
+    if (r.changed_users.length === 0) {
       captureNote =
         "The account file didn't change. Make an account-wide change (so core_user is written), fully log out, then click Done again.";
     } else if (r.changed_users.length > 1) {
       captureNote = `Several account files changed (${r.changed_users.join(", ")}). Log out of just one account and retry.`;
+    } else if (r.changed_chars.length > 1) {
+      captureNote =
+        "Several character files changed — log in as just one character, change something, log out, and retry.";
     } else {
       captureNote = "No matching character file changed — log in as one character, change something, log out, and retry.";
     }
