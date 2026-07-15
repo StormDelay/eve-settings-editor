@@ -33,6 +33,13 @@
     return hit ? hit.name : null;
   });
 
+  // Alias for the loaded user file, if named. `core_user_<id>.dat` -> alias.
+  const openUserAlias = $derived.by(() => {
+    if (current?.status !== "opened") return null;
+    const m = current.file_name.match(/^core_user_(\d+)\.dat$/);
+    return m ? aliasFor(Number(m[1])) : null;
+  });
+
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
     view = "tree";
@@ -163,7 +170,7 @@
     {:else if current.status === "opened"}
       <header class="filebar">
         <span class="filename">
-          {#if openCharName}{openCharName} — {/if}{current.file_name}
+          {#if openCharName}{openCharName} — {/if}{#if openUserAlias}{openUserAlias} — {/if}{current.file_name}
         </span>
         {#if current.fidelity.state === "read_only"}
           <span class="badge read-only" title={current.fidelity.reason}>read-only</span>
