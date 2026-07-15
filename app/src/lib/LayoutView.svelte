@@ -218,7 +218,9 @@
 <style>
   .layout-view {
     display: grid;
-    grid-template-columns: 1fr auto;
+    /* minmax(0,1fr) lets the canvas take the remaining space without being
+       pushed to zero by a wide window list; the panel is bounded. */
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
     height: 100%;
     overflow: hidden;
   }
