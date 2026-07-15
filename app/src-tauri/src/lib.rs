@@ -48,6 +48,13 @@ fn restore_backup(
     ops::restore_backup(&state, &backup_path)
 }
 
+#[tauri::command]
+fn window_layout(
+    state: tauri::State<'_, AppState>,
+) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::window_layout(&state)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -56,7 +63,8 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
-            apply_mutation, save_document, list_file_backups, restore_backup
+            apply_mutation, save_document, list_file_backups, restore_backup,
+            window_layout
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

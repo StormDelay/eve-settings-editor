@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use settings_model::{
-    apply, default_roots, discover, project, save, Document, Fidelity, LoadError, Mutation,
-    Node, Profile, SaveReport,
+    apply, default_roots, discover, project, save, window_layout as project_window_layout,
+    Document, Fidelity, LoadError, Mutation, Node, Profile, SaveReport, WindowLayout,
 };
 
 /// One document open at a time in V1 (spec batch-apply arrives in M4).
@@ -128,6 +128,12 @@ pub fn list_file_backups(state: &AppState) -> Result<Vec<settings_model::BackupI
     let guard = state.0.lock().unwrap();
     let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     Ok(settings_model::list_backups(&doc.path))
+}
+
+pub fn window_layout(state: &AppState) -> Result<WindowLayout, ErrDto> {
+    let guard = state.0.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    Ok(project_window_layout(&doc.value))
 }
 
 pub fn restore_backup(state: &AppState, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
@@ -313,5 +319,50 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.code, "not_scalar");
+    }
+
+    #[test]
+    fn window_layout_reads_the_open_document() {
+        // A minimal char-style file: one open window with geometry.
+        let doc = Value::Dict(vec![(
+            Value::Bytes(b"windows".to_vec()),
+            Value::Dict(vec![
+                (
+                    Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+                    Value::Tuple(vec![
+                        Value::Long(vec![0u8; 8]),
+                        Value::Dict(vec![(
+                            Value::Bytes(b"overview".to_vec()),
+                            Value::Tuple(vec![
+                                Value::Int(1), Value::Int(2), Value::Int(3),
+                                Value::Int(4), Value::Int(2560), Value::Int(1440),
+                            ]),
+                        )]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"openWindows".to_vec()),
+                    Value::Tuple(vec![
+                        Value::Long(vec![0u8; 8]),
+                        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bool(true))]),
+                    ]),
+                ),
+            ]),
+        )]);
+        let path = temp_file("winlayout", &encode(&doc).unwrap());
+        let state = AppState::new();
+        open_file(&state, path.to_str().unwrap()).unwrap();
+
+        let wl = window_layout(&state).unwrap();
+        assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
+        assert_eq!(wl.windows.len(), 1);
+        assert_eq!(wl.windows[0].id, "overview");
+        assert!(wl.windows[0].open);
+    }
+
+    #[test]
+    fn window_layout_without_a_document_errors() {
+        let state = AppState::new();
+        assert_eq!(window_layout(&state).unwrap_err().code, "no_document");
     }
 }

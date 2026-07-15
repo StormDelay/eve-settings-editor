@@ -68,7 +68,8 @@ button:hover { border-color: var(--accent); }
 .searchbar .meta { color: var(--fg-dim); font-size: 0.85em; white-space: nowrap; }
 @keyframes fade-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .hex { font-family: Consolas, monospace; padding: 12px; white-space: pre; }
-.node .row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.node .row { display: flex; align-items: center; gap: 6px; padding: 1px 0; transition: background 0.3s; }
+.node .row.reveal-hit { background: rgba(79, 156, 240, 0.28); border-radius: 3px; }
 .node .children { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 6px; }
 .twisty { width: 20px; border: none; background: none; padding: 0; display: inline-block; }
 .label { color: var(--accent); white-space: pre; }
@@ -98,3 +99,6 @@ button:hover { border-color: var(--accent); }
 .spacer { flex: 1; }
 .save { border-color: var(--accent); }
 .save:disabled { opacity: 0.4; cursor: default; }
+.viewtabs { display: flex; gap: 4px; }
+.viewtabs button { padding: 1px 10px; }
+.viewtabs button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
