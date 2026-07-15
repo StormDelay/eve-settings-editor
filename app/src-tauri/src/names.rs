@@ -41,6 +41,39 @@ fn save_cache(dir: &Path, cache: &Cache) -> std::io::Result<()> {
     fs::write(cache_path(dir), bytes)
 }
 
+/// One entry from ESI `/universe/names`.
+#[derive(Debug, PartialEq, Deserialize)]
+struct EsiName {
+    category: String,
+    id: u64,
+    name: String,
+}
+
+/// The (deduplicated) ids that must be fetched: cache misses, or every id when
+/// `refetch_all` (a manual refresh that ignores existing cache entries).
+fn needed(ids: &[u64], cache: &Cache, refetch_all: bool) -> Vec<u64> {
+    let mut seen = std::collections::HashSet::new();
+    ids.iter()
+        .copied()
+        .filter(|id| seen.insert(*id))
+        .filter(|id| refetch_all || !cache.contains_key(id))
+        .collect()
+}
+
+/// Merge freshly fetched names into the cache (newer wins).
+fn apply_fetch(cache: &mut Cache, fetched: Vec<EsiName>) {
+    for n in fetched {
+        cache.insert(n.id, ResolvedName { name: n.name, category: n.category });
+    }
+}
+
+/// The subset of `ids` the cache can name; ids with no name are omitted.
+fn select(ids: &[u64], cache: &Cache) -> Cache {
+    ids.iter()
+        .filter_map(|id| cache.get(id).map(|n| (*id, n.clone())))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +109,40 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(cache_path(&dir), b"not json").unwrap();
         assert!(load_cache(&dir).is_empty());
+    }
+
+    #[test]
+    fn needed_returns_deduped_misses() {
+        let mut cache = Cache::new();
+        cache.insert(2, ResolvedName { name: "Two".into(), category: "character".into() });
+        // ids has a duplicate (2) and a cached id (2); only 1 and 3 are missing.
+        assert_eq!(needed(&[1, 2, 2, 3], &cache, false), vec![1, 3]);
+    }
+
+    #[test]
+    fn needed_with_refetch_all_returns_every_id_deduped() {
+        let mut cache = Cache::new();
+        cache.insert(2, ResolvedName { name: "Two".into(), category: "character".into() });
+        assert_eq!(needed(&[1, 2, 2, 3], &cache, true), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn apply_fetch_merges_into_cache() {
+        let mut cache = Cache::new();
+        apply_fetch(
+            &mut cache,
+            vec![EsiName { category: "character".into(), id: 90000001, name: "Alpha".into() }],
+        );
+        assert_eq!(cache.get(&90000001).unwrap().name, "Alpha");
+    }
+
+    #[test]
+    fn select_returns_known_ids_only() {
+        let mut cache = Cache::new();
+        cache.insert(1, ResolvedName { name: "One".into(), category: "character".into() });
+        let out = select(&[1, 2], &cache);
+        assert_eq!(out.len(), 1);
+        assert!(out.contains_key(&1));
+        assert!(!out.contains_key(&2), "unknown ids are absent, not blank");
     }
 }
