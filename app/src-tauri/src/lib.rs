@@ -1,3 +1,4 @@
+mod names;
 mod ops;
 
 use ops::{AppState, ErrDto, OpenOutcome};
