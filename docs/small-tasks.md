@@ -18,6 +18,26 @@ Workflow:
   resize handles on all four corners (edges optional) once a window is selected,
   so it can be resized from any corner. _Added 2026-07-15._
 
+- [ ] **Persist the "Hide non-standard files" toggle.** The sidebar toggle
+  defaults to on but resets every launch (the app has no settings store). Give
+  it a small persistent store so the choice is remembered between sessions.
+  _Added 2026-07-15 (M3a)._
+
+- [ ] **Negative-cache invalid character IDs.** ESI 404s any ID it can't
+  resolve; those IDs are never cached, so every launch re-bisects them (extra
+  ESI requests, counting against the error limit). Cache a tombstone for
+  known-invalid IDs so they're skipped until a manual refresh. _Added
+  2026-07-15 (M3a)._
+
+- [ ] **Name dialog-opened char files.** The open-file header only shows a
+  character name for files discovered by the standard scan; a `core_char_<id>.dat`
+  opened via the "Open file…" dialog shows a bare filename. Resolve its name on
+  open too. _Added 2026-07-15 (M3a)._
+
+- [ ] **Extend name display to more surfaces.** Character names currently show
+  in the sidebar and the open-file header only. Add them to the backups panel
+  and the native OS window title. _Added 2026-07-15 (M3a)._
+
 ## Shipped
 
 _(none yet — items move here with the milestone that included them)_
