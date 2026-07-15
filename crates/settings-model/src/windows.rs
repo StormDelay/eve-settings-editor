@@ -124,10 +124,18 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         let rkey = effective(key, &shared);
         let mut id = decode_id(rkey);
         // Safety net: a keyed render crashes on duplicate ids, so guarantee
-        // uniqueness even if two keys still resolve to the same string.
+        // uniqueness even if two keys still resolve to the same string — loop
+        // until the suffixed id is genuinely free (the suffix itself could clash).
         if !used_ids.insert(id.clone()) {
-            id = format!("{id}#{wi}");
-            used_ids.insert(id.clone());
+            let base = id.clone();
+            let mut n = wi;
+            loop {
+                id = format!("{base}#{n}");
+                if used_ids.insert(id.clone()) {
+                    break;
+                }
+                n += 1;
+            }
         }
         let mut entry_path = geom_path.clone();
         entry_path.push(Step::DictValue(wi));
@@ -638,15 +646,16 @@ mod tests {
 
     #[test]
     fn colliding_ids_are_disambiguated_so_a_keyed_render_cannot_crash() {
-        // Two unresolvable Refs both fall back to "ref"; the projection must
+        // Three unresolvable Refs all fall back to "ref"; the projection must
         // still emit unique ids (a keyed each block crashes on duplicates).
         let doc = doc_with(vec![
             (Value::Ref(7), geom(1, 2, 3, 4, 2560, 1440)),
             (Value::Ref(8), geom(5, 6, 7, 8, 2560, 1440)),
+            (Value::Ref(9), geom(9, 9, 9, 9, 2560, 1440)),
         ]);
         let wl = window_layout(&doc);
-        assert_eq!(wl.windows.len(), 2);
+        assert_eq!(wl.windows.len(), 3);
         let ids: HashSet<&String> = wl.windows.iter().map(|w| &w.id).collect();
-        assert_eq!(ids.len(), 2, "ids must be unique even on fallback collision");
+        assert_eq!(ids.len(), 3, "ids must be unique even on fallback collision");
     }
 }
