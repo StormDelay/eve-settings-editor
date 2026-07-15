@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use blue_marshal::Value;
 use serde::{Deserialize, Serialize};
 
 /// EVE has always allowed at most 3 characters per account. Hard cap.
@@ -79,6 +80,52 @@ pub fn confirm(store: &mut AccountsStore, char_id: u64, user_id: u64) -> Result<
 pub fn unpair(store: &mut AccountsStore, char_id: u64) {
     for acct in store.accounts.values_mut() {
         acct.characters.retain(|&c| c != char_id);
+    }
+}
+
+/// Collect human-readable text leaves from a decoded settings value: UTF-8 and
+/// UCS-2 strings, plus printable-ASCII byte strings (EVE stores window ids and
+/// embedded character names as byte strings). Used to scan a user file for a
+/// character's resolved name.
+pub fn collect_strings(v: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_strings(v, &mut out);
+    out
+}
+
+fn walk_strings(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Str(s) | Value::StrUcs2(s) => out.push(s.clone()),
+        Value::Bytes(b) if !b.is_empty() && b.iter().all(|c| (0x20..0x7F).contains(c)) => {
+            out.push(String::from_utf8_lossy(b).into_owned());
+        }
+        Value::Tuple(items) | Value::List(items) => {
+            for it in items {
+                walk_strings(it, out);
+            }
+        }
+        Value::Dict(entries) => {
+            for (k, val) in entries {
+                walk_strings(k, out);
+                walk_strings(val, out);
+            }
+        }
+        Value::Stream(inner) | Value::Shared { value: inner, .. } => walk_strings(inner, out),
+        Value::Instance { class, state } => {
+            walk_strings(class, out);
+            walk_strings(state, out);
+        }
+        Value::Reduce { ctor, items, pairs } => {
+            walk_strings(ctor, out);
+            for it in items {
+                walk_strings(it, out);
+            }
+            for (k, val) in pairs {
+                walk_strings(k, out);
+                walk_strings(val, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -175,5 +222,23 @@ mod tests {
         unpair(&mut s, 90000001);
         assert!(s.accounts[&111].characters.is_empty());
         unpair(&mut s, 90000001); // no-op, no panic
+    }
+
+    #[test]
+    fn collect_strings_gathers_text_and_printable_bytes_recursively() {
+        let v = Value::Dict(vec![
+            (Value::Bytes(b"charName".to_vec()), Value::Str("Jita Trader".into())),
+            (Value::Bytes(b"ucs".to_vec()), Value::StrUcs2("Amarr Alt".into())),
+            (
+                Value::Bytes(b"nested".to_vec()),
+                Value::List(vec![Value::Tuple(vec![Value::Str("Deep Name".into())])]),
+            ),
+            (Value::Bytes(b"binary".to_vec()), Value::Bytes(vec![0x00, 0xFF])), // non-printable, skipped
+        ]);
+        let got = collect_strings(&v);
+        for want in ["Jita Trader", "Amarr Alt", "Deep Name", "charName", "ucs", "nested", "binary"] {
+            assert!(got.contains(&want.to_string()), "missing {want:?} in {got:?}");
+        }
+        assert!(!got.iter().any(|s| s.contains('\u{0}')), "non-printable bytes excluded");
     }
 }
