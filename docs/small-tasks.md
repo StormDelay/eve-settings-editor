@@ -38,6 +38,11 @@ Workflow:
   in the sidebar and the open-file header only. Add them to the backups panel
   and the native OS window title. _Added 2026-07-15 (M3a)._
 
+- [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
+  backups panel) retractable/collapsible so the center pane can grow — useful
+  when editing window placements on the layout canvas, which wants as much
+  horizontal room as possible. _Added 2026-07-15._
+
 ## Shipped
 
 _(none yet — items move here with the milestone that included them)_
