@@ -157,6 +157,18 @@ mod tests {
     }
 
     #[test]
+    fn confirm_rejects_reassignment_to_a_full_account_and_keeps_the_original() {
+        let mut s = AccountsStore::default();
+        confirm(&mut s, 90000001, 222).unwrap(); // starts on 222
+        for c in [1u64, 2, 3] {
+            confirm(&mut s, c, 111).unwrap(); // fill 111 to the cap
+        }
+        assert!(confirm(&mut s, 90000001, 111).is_err());
+        assert_eq!(s.accounts[&222].characters, vec![90000001], "not stripped from its account");
+        assert_eq!(s.accounts[&111].characters, vec![1, 2, 3], "111 untouched by the rejected reassignment");
+    }
+
+    #[test]
     fn unpair_removes_from_whichever_account_holds_it() {
         let mut s = AccountsStore::default();
         confirm(&mut s, 90000001, 111).unwrap();
