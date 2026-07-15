@@ -241,4 +241,29 @@ mod tests {
         }
         assert!(!got.iter().any(|s| s.contains('\u{0}')), "non-printable bytes excluded");
     }
+
+    #[test]
+    fn collect_strings_recurses_all_container_variants_and_skips_empty_bytes() {
+        let v = Value::List(vec![
+            Value::Stream(Box::new(Value::Str("in_stream".into()))),
+            Value::Shared { slot: 1, value: Box::new(Value::Str("in_shared".into())) },
+            Value::Instance {
+                class: Box::new(Value::Str("in_class".into())),
+                state: Box::new(Value::Str("in_state".into())),
+            },
+            Value::Reduce {
+                ctor: Box::new(Value::Str("in_ctor".into())),
+                items: vec![Value::Str("in_item".into())],
+                pairs: vec![(Value::Str("pk".into()), Value::Str("pv".into()))],
+            },
+            Value::Bytes(vec![]),
+        ]);
+        let got = collect_strings(&v);
+        for want in
+            ["in_stream", "in_shared", "in_class", "in_state", "in_ctor", "in_item", "pk", "pv"]
+        {
+            assert!(got.contains(&want.to_string()), "missing {want:?} in {got:?}");
+        }
+        assert!(!got.iter().any(|s| s.is_empty()), "empty bytes contributed nothing: {got:?}");
+    }
 }
