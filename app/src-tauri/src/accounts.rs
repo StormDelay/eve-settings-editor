@@ -222,6 +222,69 @@ pub fn rank(
     out
 }
 
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AccountRoster {
+    pub accounts: Vec<AccountView>,
+    pub unassigned: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AccountView {
+    pub user_id: u64,
+    pub alias: Option<String>,
+    pub characters: Vec<u64>,
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// Assemble the roster the UI renders: one account per user id (discovered ∪
+/// persisted), its alias and confirmed characters, and — only while it has an
+/// empty slot — its suggestions; plus the discovered characters no account
+/// claims. Returns ids only; the frontend maps them to names via the M3a store.
+pub fn build_roster(
+    files: &[FileMeta],
+    store: &AccountsStore,
+    suggestions: &[Suggestion],
+) -> AccountRoster {
+    let mut user_ids: BTreeSet<u64> =
+        files.iter().filter(|f| f.kind == Kind::User).map(|f| f.id).collect();
+    user_ids.extend(store.accounts.keys().copied());
+
+    let confirmed: HashSet<u64> =
+        store.accounts.values().flat_map(|a| a.characters.iter().copied()).collect();
+
+    let accounts = user_ids
+        .iter()
+        .map(|&user_id| {
+            let acct = store.accounts.get(&user_id);
+            let characters = acct.map(|a| a.characters.clone()).unwrap_or_default();
+            let alias = acct.and_then(|a| a.alias.clone());
+            let has_room = characters.len() < MAX_CHARS_PER_ACCOUNT;
+            let suggestions = if has_room {
+                suggestions
+                    .iter()
+                    .filter(|s| s.user_id == user_id && !confirmed.contains(&s.char_id))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            AccountView { user_id, alias, characters, suggestions }
+        })
+        .collect();
+
+    let mut unassigned: Vec<u64> = files
+        .iter()
+        .filter(|f| f.kind == Kind::Char && !confirmed.contains(&f.id))
+        .map(|f| f.id)
+        .collect();
+    unassigned.sort_unstable();
+    unassigned.dedup();
+
+    AccountRoster { accounts, unassigned }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +498,78 @@ mod tests {
     fn rank_no_signal_yields_nothing() {
         let files = vec![char(90000001, 1000, "p1"), user(987654, 99999, "p2")];
         assert!(rank(&files, &HashMap::new(), &HashMap::new(), &AccountsStore::default()).is_empty());
+    }
+
+    #[test]
+    fn build_roster_unions_discovered_and_stored_accounts() {
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 987654).unwrap();
+        set_alias(&mut store, 987654, Some("Main".into()));
+        // Discovery sees account 987654 plus a bare user 555 and an unassigned char 90000002.
+        let files = vec![
+            user(987654, 10, "p"),
+            user(555, 10, "p"),
+            char(90000001, 10, "p"),
+            char(90000002, 10, "p"),
+        ];
+        let sugg = vec![Suggestion {
+            char_id: 90000002,
+            user_id: 555,
+            confidence: Confidence::Low,
+            basis: "recent logout".into(),
+        }];
+        let r = build_roster(&files, &store, &sugg);
+
+        let acct: Vec<u64> = r.accounts.iter().map(|a| a.user_id).collect();
+        assert_eq!(acct, vec![555, 987654], "accounts sorted, union of stored + discovered");
+        let main = r.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        assert_eq!(main.alias.as_deref(), Some("Main"));
+        assert_eq!(main.characters, vec![90000001]);
+        let other = r.accounts.iter().find(|a| a.user_id == 555).unwrap();
+        assert_eq!(other.suggestions.len(), 1, "suggestion attached to the empty account");
+        assert_eq!(r.unassigned, vec![90000002], "confirmed char is not unassigned");
+    }
+
+    #[test]
+    fn build_roster_drops_suggestions_for_full_accounts() {
+        let mut store = AccountsStore::default();
+        for c in [1u64, 2, 3] {
+            confirm(&mut store, c, 987654).unwrap();
+        }
+        let files = vec![user(987654, 10, "p"), char(90000009, 10, "p")];
+        let sugg = vec![Suggestion {
+            char_id: 90000009,
+            user_id: 987654,
+            confidence: Confidence::Low,
+            basis: "recent logout".into(),
+        }];
+        let r = build_roster(&files, &store, &sugg);
+        let full = &r.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        assert!(full.suggestions.is_empty(), "no suggestions once the 3 slots are full");
+    }
+
+    #[test]
+    fn build_roster_includes_store_only_account_with_no_discovered_file() {
+        // Account 42 lives only in the store (e.g. discovered on a prior run,
+        // that file absent this time); it must still appear in the roster.
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 42).unwrap();
+        set_alias(&mut store, 42, Some("Alt".into()));
+        let files: Vec<FileMeta> = vec![];
+        let r = build_roster(&files, &store, &[]);
+        assert_eq!(r.accounts.len(), 1);
+        let acct = &r.accounts[0];
+        assert_eq!(acct.user_id, 42);
+        assert_eq!(acct.alias.as_deref(), Some("Alt"));
+        assert_eq!(acct.characters, vec![90000001]);
+    }
+
+    #[test]
+    fn build_roster_discovered_account_with_no_store_entry_has_empty_characters() {
+        let files = vec![user(555, 10, "p")];
+        let r = build_roster(&files, &AccountsStore::default(), &[]);
+        let acct = r.accounts.iter().find(|a| a.user_id == 555).unwrap();
+        assert!(acct.characters.is_empty(), "no store entry means no confirmed characters");
+        assert!(acct.alias.is_none());
     }
 }
