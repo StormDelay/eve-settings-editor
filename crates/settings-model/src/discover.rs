@@ -120,6 +120,16 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Profile> {
     profiles
 }
 
+/// The character/account id encoded at the start of a `core_(char|user)_<id>`
+/// stem: the leading run of digits. Tolerates trailing suffixes users add to
+/// backup copies (e.g. `core_char_90000001 - old.dat` → `90000001`), and yields
+/// `None` for names with no leading digits — the anomalous `core_char__.dat`
+/// and tuple-keyed files still resolve to `None`.
+fn leading_u64(stem_rest: &str) -> Option<u64> {
+    let digits: String = stem_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u64>().ok()
+}
+
 fn collect_files(dir: &Path) -> Vec<SettingsFile> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else { return out };
@@ -131,9 +141,9 @@ fn collect_files(dir: &Path) -> Vec<SettingsFile> {
         }
         let stem = file_name.trim_end_matches(".dat");
         let (kind, id) = if let Some(rest) = stem.strip_prefix("core_char_") {
-            (FileKind::Char, rest.parse::<u64>().ok())
+            (FileKind::Char, leading_u64(rest))
         } else if let Some(rest) = stem.strip_prefix("core_user_") {
-            (FileKind::User, rest.parse::<u64>().ok())
+            (FileKind::User, leading_u64(rest))
         } else {
             (FileKind::Other, None)
         };
@@ -204,5 +214,18 @@ mod tests {
     fn missing_roots_yield_empty_not_error() {
         let ghost = std::env::temp_dir().join("settings-model-no-such-root");
         assert!(discover(&[ghost]).is_empty());
+    }
+
+    #[test]
+    fn leading_u64_reads_id_before_a_backup_suffix() {
+        // Synthetic ids only (repo rule). Canonical name and user-added backup
+        // suffixes both yield the leading id.
+        assert_eq!(leading_u64("90000001"), Some(90000001));
+        assert_eq!(leading_u64("90000001 - old"), Some(90000001));
+        assert_eq!(leading_u64("90000002_backup"), Some(90000002));
+        // No leading digits → None (preserves the anomalous-file handling).
+        assert_eq!(leading_u64("_"), None);
+        assert_eq!(leading_u64("('char', None, 'dat')"), None);
+        assert_eq!(leading_u64(""), None);
     }
 }
