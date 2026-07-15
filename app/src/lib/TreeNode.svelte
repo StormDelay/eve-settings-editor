@@ -6,6 +6,10 @@
     node,
     depth = 0,
     autoExpand = false,
+    searching = false,
+    revealPath = null,
+    revealNonce = 0,
+    onReveal,
     onEdit,
     onRemove,
     onInsertRequest,
@@ -15,6 +19,11 @@
     /// Set while a search is filtering the tree: everything still standing is
     /// on the way to a hit, so open it. The twisty keeps working afterwards.
     autoExpand?: boolean;
+    searching?: boolean;
+    /// A node path to expand-to and scroll-to; `revealNonce` bumps to re-fire.
+    revealPath?: NodePath | null;
+    revealNonce?: number;
+    onReveal: (path: NodePath) => void;
     onEdit: (path: NodePath, text: string) => Promise<void>;
     onRemove: (path: NodePath) => Promise<void>;
     onInsertRequest: (node: TreeNodeData) => void;
@@ -23,6 +32,26 @@
   let expanded = $state(depth < 1);
   $effect(() => {
     if (autoExpand) expanded = true;
+  });
+
+  // Reveal: expand this node if it is an ancestor of (or is) the target, and
+  // scroll+highlight the target itself. Runs once per reveal request (nonce).
+  let rowEl: HTMLDivElement | undefined = $state();
+  let highlighted = $state(false);
+  let lastReveal = -1;
+  $effect(() => {
+    const nonce = revealNonce;
+    const path = revealPath;
+    if (nonce === lastReveal) return;
+    lastReveal = nonce;
+    if (!path || path.length < node.path.length) return;
+    if (JSON.stringify(path.slice(0, node.path.length)) !== JSON.stringify(node.path)) return;
+    expanded = true;
+    if (path.length === node.path.length) {
+      highlighted = true;
+      setTimeout(() => (highlighted = false), 1500);
+      setTimeout(() => rowEl?.scrollIntoView({ block: "center" }), 0);
+    }
   });
   let editing = $state(false);
   let draft = $state("");
@@ -46,7 +75,7 @@
 </script>
 
 <div class="node">
-  <div class="row">
+  <div class="row" class:reveal-hit={highlighted} bind:this={rowEl}>
     {#if hasChildren}
       <button class="twisty" onclick={() => (expanded = !expanded)}
         >{expanded ? "▾" : "▸"}</button>
@@ -83,6 +112,9 @@
     {#if node.removable}
       <button class="mini danger" title="remove entry" onclick={() => onRemove(node.path)}>×</button>
     {/if}
+    {#if searching}
+      <button class="mini" title="show here in the full tree" onclick={() => onReveal(node.path)}>⌖</button>
+    {/if}
   </div>
   {#if expanded && hasChildren}
     <div class="children">
@@ -91,6 +123,10 @@
           node={child}
           depth={depth + 1}
           {autoExpand}
+          {searching}
+          {revealPath}
+          {revealNonce}
+          {onReveal}
           {onEdit}
           {onRemove}
           {onInsertRequest} />

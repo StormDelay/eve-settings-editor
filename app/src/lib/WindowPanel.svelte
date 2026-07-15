@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WindowRect, BoolFlag } from "$lib/api";
+  import type { WindowRect, BoolFlag, NodePath } from "$lib/api";
 
   let {
     windows,
@@ -10,6 +10,7 @@
     onGeom,
     onFlag,
     onStack,
+    onReveal,
   }: {
     windows: WindowRect[];
     selectedId: string | null;
@@ -19,7 +20,20 @@
     onGeom: (w: WindowRect, field: "x" | "y" | "w" | "h", value: number) => void;
     onFlag: (w: WindowRect, flag: BoolFlag, value: boolean) => void;
     onStack: (w: WindowRect, text: string) => void;
+    onReveal: (path: NodePath) => void;
   } = $props();
+
+  // Right-click a property to reveal the value's node in the raw tree.
+  // TODO(revisit): jump directly for now; a right-click context menu with a
+  // "show in tree" item (and room for more actions) is the intended UX.
+  const reveal = (path: NodePath) => (e: MouseEvent) => {
+    e.preventDefault();
+    onReveal(path);
+  };
+  function geomPath(w: WindowRect, field: "x" | "y" | "w" | "h"): NodePath {
+    const g = w.geom!;
+    return { x: g.x_path, y: g.y_path, w: g.w_path, h: g.h_path }[field];
+  }
 
   // Flags shown in the detail; openWindows lives on the row header instead.
   const detailFlags = (w: WindowRect) => w.flags.filter((f) => f.name !== "openWindows");
@@ -72,7 +86,7 @@
         <div class="detail">
           <div class="coords">
             {#each COORDS as field}
-              <label>
+              <label title="right-click: show in tree" oncontextmenu={reveal(geomPath(w, field))}>
                 {field}
                 <input
                   type="number"
@@ -84,7 +98,14 @@
           </div>
           <div class="flags">
             {#each detailFlags(w) as f (f.name)}
-              <label class="flag" title={f.set.how === "unavailable" ? "Not present in this file" : ""}>
+              <label
+                class="flag"
+                title={f.set.how === "unavailable"
+                  ? "Not present in this file"
+                  : f.set.how === "set"
+                    ? "right-click: show in tree"
+                    : ""}
+                oncontextmenu={f.set.how === "set" ? reveal(f.set.path) : undefined}>
                 <input
                   type="checkbox"
                   checked={f.value}
@@ -95,7 +116,7 @@
             {/each}
           </div>
           {#if w.stacks}
-            <label class="stack">
+            <label class="stack" title="right-click: show in tree" oncontextmenu={reveal(w.stacks.path)}>
               stack id
               <input
                 type="number"
@@ -169,7 +190,9 @@
     font-size: 11px;
     color: var(--fg-dim);
   }
-  .detail input {
+  /* Only the number fields get the boxed styling; a blanket `.detail input`
+     rule also stretched the flag checkboxes to full width and misaligned them. */
+  .detail input[type="number"] {
     width: 100%;
     box-sizing: border-box;
     background: var(--bg);
@@ -179,7 +202,7 @@
     padding: 2px 4px;
     font: inherit;
   }
-  .detail input:focus {
+  .detail input[type="number"]:focus {
     outline: 1px solid var(--accent);
   }
   .flags {
@@ -189,7 +212,12 @@
   .flag {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 0.3rem;
     color: var(--fg);
+  }
+  .flag input {
+    margin: 0;
+    flex: 0 0 auto;
   }
 </style>
