@@ -148,5 +148,8 @@ Malformed or missing dicts are skipped by the projection, never panic.
 
 - Snap-to-grid.
 - Background game-screen reference image.
+- Purpose-built window-stacking UI (group/ungroup, drag-to-stack). M2 exposes
+  `stacksWindows` only as a raw stack-id value input; a real stacking control
+  can come later once the stacking model is mapped.
 - Overview columns and autofill editors (M3).
 - Anything in user files (no geometry there).
