@@ -2,6 +2,8 @@ mod names;
 mod ops;
 
 use ops::{AppState, ErrDto, OpenOutcome};
+use std::collections::HashMap;
+use tauri::Manager;
 
 #[tauri::command]
 fn discover_profiles() -> Vec<settings_model::Profile> {
@@ -56,6 +58,29 @@ fn window_layout(
     ops::window_layout(&state)
 }
 
+#[tauri::command]
+async fn resolve_character_names(
+    app: tauri::AppHandle,
+    ids: Vec<u64>,
+) -> HashMap<u64, names::ResolvedName> {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    // Blocking ESI/file work off the async runtime; empty map on join failure.
+    tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, false))
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn refresh_character_names(
+    app: tauri::AppHandle,
+    ids: Vec<u64>,
+) -> HashMap<u64, names::ResolvedName> {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, true))
+        .await
+        .unwrap_or_default()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -65,7 +90,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
             apply_mutation, save_document, list_file_backups, restore_backup,
-            window_layout
+            window_layout, resolve_character_names, refresh_character_names
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
