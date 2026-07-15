@@ -1,7 +1,7 @@
 //! ESI character-name resolution: a single batched network call plus an
 //! on-disk, cache-forever store. Small sync helpers (this file's lower half)
 //! carry all the logic and are unit-tested without a Tauri runtime or the
-//! network; only `esi_fetch`/`resolve` touch the wire. Failure is always
+//! network; only `esi_fetch` touches the wire. Failure is always
 //! silent — the caller falls back to bare IDs.
 
 use std::collections::HashMap;
@@ -110,7 +110,7 @@ fn esi_fetch(ids: &[u64]) -> Result<Vec<EsiName>, FetchError> {
 /// `refetch_all`), merge and persist on success, and on any fetch failure
 /// return whatever the cache already held. The result contains only ids that
 /// could be named.
-pub fn resolve_with<F>(dir: &Path, ids: &[u64], refetch_all: bool, fetch: F) -> Cache
+fn resolve_with<F>(dir: &Path, ids: &[u64], refetch_all: bool, fetch: F) -> Cache
 where
     F: FnOnce(&[u64]) -> Result<Vec<EsiName>, FetchError>,
 {
