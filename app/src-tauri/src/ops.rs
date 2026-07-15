@@ -191,10 +191,13 @@ pub fn begin_capture(state: &AppState, roots: &[PathBuf]) {
 }
 
 /// Diff the current files against the capture baseline (empty if none set).
+/// Excludes the currently-open document from the "after" snapshot too, so it
+/// never enters the diff (symmetric with `begin_capture`'s baseline exclusion).
 pub fn resolve_capture(state: &AppState, roots: &[PathBuf]) -> accounts::CaptureResult {
+    let open_path = state.0.lock().unwrap().as_ref().map(|d| d.path.clone());
     let baseline = state.1.lock().unwrap().clone().unwrap_or_default();
     let profiles = discover(roots);
-    let after = accounts::snapshot_from_profiles(&profiles, None);
+    let after = accounts::snapshot_from_profiles(&profiles, open_path.as_deref());
     accounts::capture_diff(&baseline, &after)
 }
 
@@ -407,5 +410,37 @@ mod tests {
 
         let r = resolve_capture(&state, &[root]);
         assert_eq!(r.detected, Some((90000001, 987654)));
+    }
+
+    #[test]
+    fn resolve_capture_excludes_the_open_document_even_if_its_mtime_advances() {
+        // A temp discovery tree with one char (to be opened) + one user file.
+        let root = std::env::temp_dir().join(format!("app-cap-open-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        let cf = sdir.join("core_char_90000001.dat");
+        let uf = sdir.join("core_user_987654.dat");
+        fs::write(&cf, encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(&uf, b"x").unwrap();
+
+        let state = AppState::new();
+        open_file(&state, cf.to_str().unwrap()).unwrap();
+        begin_capture(&state, &[root.clone()]);
+
+        // Advance both mtimes (rewrite the files a moment later). The char
+        // file isn't re-opened, so this simulates the app rewriting it while
+        // the user's own file also gets touched.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(&cf, b"y").unwrap();
+        fs::write(&uf, b"xy").unwrap();
+
+        let r = resolve_capture(&state, &[root]);
+        assert!(
+            r.changed_chars.is_empty(),
+            "the open char file is excluded even though its mtime advanced"
+        );
+        assert_eq!(r.changed_users, vec![987654]);
+        assert_eq!(r.detected, None);
     }
 }
