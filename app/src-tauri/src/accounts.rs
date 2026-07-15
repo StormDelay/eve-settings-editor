@@ -408,6 +408,30 @@ mod tests {
     }
 
     #[test]
+    fn rank_excludes_full_accounts() {
+        let mut store = AccountsStore::default();
+        for c in [1u64, 2, 3] {
+            confirm(&mut store, c, 987654).unwrap(); // fill 987654 to the cap
+        }
+        // An unconfirmed char with a matching mtime signal to the now-full account.
+        let files = vec![char(90000009, 1000, "p"), user(987654, 1005, "p")];
+        assert!(
+            rank(&files, &HashMap::new(), &HashMap::new(), &store).is_empty(),
+            "full account suppresses the otherwise-valid mtime suggestion"
+        );
+    }
+
+    #[test]
+    fn rank_mtime_requires_same_profile() {
+        // mtime diff is 3s (within the 10s window) but profiles differ, and there's no name signal.
+        let files = vec![char(90000001, 1000, "p1"), user(987654, 1003, "p2")];
+        assert!(
+            rank(&files, &HashMap::new(), &HashMap::new(), &AccountsStore::default()).is_empty(),
+            "same-profile check, not just the time window, gates the mtime match"
+        );
+    }
+
+    #[test]
     fn rank_no_signal_yields_nothing() {
         let files = vec![char(90000001, 1000, "p1"), user(987654, 99999, "p2")];
         assert!(rank(&files, &HashMap::new(), &HashMap::new(), &AccountsStore::default()).is_empty());
