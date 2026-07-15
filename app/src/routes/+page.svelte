@@ -7,6 +7,7 @@
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
+  import { names } from "$lib/names.svelte";
   import { ask, message } from "@tauri-apps/plugin-dialog";
 
   let current: OpenOutcome | null = $state(null);
@@ -19,6 +20,15 @@
   let selectedWindowId = $state<string | null>(null);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
   let reveal = $state<{ path: NodePath; n: number } | null>(null);
+
+  // Name for the loaded char file, if resolved. `core_char_<id>.dat` -> name.
+  const openCharName = $derived.by(() => {
+    if (current?.status !== "opened") return null;
+    const m = current.file_name.match(/^core_char_(\d+)\.dat$/);
+    if (!m) return null;
+    const hit = names[m[1]];
+    return hit ? hit.name : null;
+  });
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
@@ -145,7 +155,9 @@
       <p class="hint">Open a settings file to begin.</p>
     {:else if current.status === "opened"}
       <header class="filebar">
-        <span class="filename">{current.file_name}</span>
+        <span class="filename">
+          {#if openCharName}{openCharName} — {/if}{current.file_name}
+        </span>
         {#if current.fidelity.state === "read_only"}
           <span class="badge read-only" title={current.fidelity.reason}>read-only</span>
         {:else}
