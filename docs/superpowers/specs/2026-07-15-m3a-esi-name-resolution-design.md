@@ -49,7 +49,13 @@ In scope for M3a:
   effectively never change).
 - Eager resolution: the frontend resolves right after `discover_profiles`, so
   names appear without user action.
-- Sidebar renders `Name (id)` when known, bare `id` otherwise.
+- The resolved `id → name` map is shared app-wide (a small Svelte store, §5), so
+  names show **everywhere a character id appears in V1**:
+  - the **sidebar file list** — `Name (id)` per char file, bare `id` otherwise;
+  - the **open-file header** (the `.filebar` in `+page.svelte`) — the character
+    name alongside `core_char_<id>.dat` for the loaded char file.
+  The backups panel shows no id of its own (it is scoped to the already-labeled
+  open file), so it needs no change. Batch-apply source/target lists are M4.
 - A manual **Refresh names** action re-fetches ignoring the cache (covers the
   rare paid rename).
 
@@ -60,8 +66,8 @@ Explicitly **not** in scope:
   for a personal/corp tool; re-addable before any public release. The network is
   simply always attempted, and failure is silent.
 - Account IDs, aliases, char↔user association — the next sub-milestone.
-- Names anywhere beyond the sidebar (backups panel, window titles) — trivial to
-  extend once the resolver exists; not required to prove the feature.
+- The OS window-title bar (Tauri window title) — the in-app filebar is the
+  visible file identity; setting the native title too is a trivial later add.
 
 ## 4. Architecture — Rust owns the call and the cache
 
@@ -116,14 +122,21 @@ with the real app-data dir and the reqwest fetcher.
 ## 5. Frontend
 
 - `api.ts` gains `resolveCharacterNames(ids)` / `refreshCharacterNames(ids)`.
+- **Shared store `app/src/lib/names.ts`** — a Svelte store holding the
+  `id → name` map plus `resolveNames(ids)` / `refreshNames(ids)` helpers that
+  call the API and update the store. This is the single source both the sidebar
+  and the open-file header read, so no prop-drilling and one resolve per app run.
 - The sidebar (`Sidebar.svelte`), after loading profiles, collects all char
-  `SettingsFile.id`s across profiles, calls `resolveCharacterNames` once, and
-  holds an `id → name` map. Each char row shows `Name (id)` when the map has the
-  id, else the bare id it already shows today. User/other files are unchanged.
+  `SettingsFile.id`s across profiles and calls `resolveNames` once; each char
+  row reads the store, showing `Name (id)` when known, else the bare id it shows
+  today. User/other files are unchanged.
+- The open-file header in `+page.svelte` reads the same store: for a
+  `core_char_<id>.dat` file it prefixes the character name (id parsed from the
+  filename, or carried on `OpenOutcome`); user/other files render as today.
 - A **Refresh names** control (e.g. a small button by the profile list) calls
-  `refreshCharacterNames` with the same ids and replaces the map.
-- No spinner-blocking: names fill in when the promise resolves; the file list is
-  usable immediately with bare ids.
+  `refreshNames` with the same ids; the store update repaints every consumer.
+- No spinner-blocking: names fill in when the promise resolves; the file list
+  and header are usable immediately with bare ids.
 
 ## 6. Error handling & edge cases
 
@@ -150,6 +163,10 @@ with the real app-data dir and the reqwest fetcher.
   - `refresh` ignores cache and re-fetches every id.
   Plus a cache-file round-trip (write then reload) in a temp dir. Synthetic ids
   only (repo rule: no real character ids in fixtures).
+- **Frontend:** display-only glue — the `names.ts` store forwards to the
+  already-tested Rust commands, and the sidebar/header just look ids up and
+  format `Name (id)`. No new pure logic that warrants a `node --test` (YAGNI);
+  the manual smoke below exercises the wiring.
 - **Manual smoke (one-time, live ESI):** run the app against real profiles,
   confirm names appear next to char files, kill the network and confirm bare-id
   fallback with cached names retained. Mirrors M0/M1 live validation.
@@ -170,6 +187,6 @@ with the real app-data dir and the reqwest fetcher.
   in halves only if a real install actually hits mixed valid/invalid batches).
 - Cache TTL / automatic staleness (manual Refresh covers renames; no evidence a
   TTL is worth the machinery).
-- Names beyond the sidebar (backups panel, window titles) — one-line extensions
-  once the resolver ships.
+- OS window-title bar (native Tauri title) — the in-app filebar covers the
+  visible identity; setting the native title is a trivial later add.
 - Account IDs, aliases, char↔user association — next sub-milestone.
