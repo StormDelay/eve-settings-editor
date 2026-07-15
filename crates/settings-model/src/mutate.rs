@@ -25,7 +25,7 @@ pub fn subtree_contains_shared(v: &Value) -> bool {
     }
 }
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::path::{resolve_mut, NodePath, Step};
 
@@ -48,7 +48,7 @@ pub enum Mutation {
     InsertListItem { parent: NodePath, index: usize, value: NewValue },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "v", rename_all = "snake_case")]
 pub enum NewValue {
     None,
