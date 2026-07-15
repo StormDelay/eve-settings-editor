@@ -3,6 +3,7 @@
   import TreeNode from "$lib/TreeNode.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
   import BackupsPanel from "$lib/BackupsPanel.svelte";
+  import LayoutView from "$lib/LayoutView.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
@@ -12,6 +13,8 @@
   let dirty = $state(false);
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
+  let view: "tree" | "layout" = $state("tree");
+  let layoutAvailable = $state(false);
 
   let query = $state("");
   let searchBox: HTMLInputElement | undefined = $state();
@@ -43,6 +46,13 @@
       current = await api.open(path);
       dirty = false;
       savedAt += 1;
+      view = "tree";
+      try {
+        layoutAvailable =
+          current.status === "opened" && (await api.windowLayout()).windows.length > 0;
+      } catch {
+        layoutAvailable = false;
+      }
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
@@ -129,38 +139,52 @@
           <span class="badge editable">editable</span>
         {/if}
         {#if dirty}<span class="badge dirty">unsaved changes</span>{/if}
+        {#if layoutAvailable}
+          <span class="viewtabs">
+            <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
+            <button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>
+          </span>
+        {/if}
         <span class="spacer"></span>
         <button
           class="save"
           disabled={!dirty || current.fidelity.state !== "editable"}
           onclick={() => saveFile()}>Save</button>
       </header>
-      <div class="searchbar">
-        <input
-          class="search"
-          bind:this={searchBox}
-          bind:value={query}
-          placeholder="Search labels and values (Ctrl+F)" />
-        {#if searching}
-          <span class="meta">
-            {found?.count ?? 0} match{found?.count === 1 ? "" : "es"}
-          </span>
-          <button class="mini" title="Clear search (Esc)" onclick={closeSearch}>×</button>
-        {/if}
-      </div>
-      <div class="tree-area">
-        {#if found?.tree}
-          <TreeNode
-            node={found.tree}
-            autoExpand={searching}
-            onEdit={handleEdit}
-            onRemove={handleRemove}
-            onInsertRequest={(n) => (insertTarget = n)}
-          />
-        {:else}
-          <p class="hint">Nothing in this file matches “{query}”.</p>
-        {/if}
-      </div>
+      {#if view === "layout"}
+        <div class="tree-area">
+          <LayoutView
+            {runMutation}
+            readOnly={current.fidelity.state !== "editable"}
+            refreshToken={savedAt} />
+        </div>
+      {:else}
+        <div class="searchbar">
+          <input
+            class="search"
+            bind:this={searchBox}
+            bind:value={query}
+            placeholder="Search labels and values (Ctrl+F)" />
+          {#if searching}
+            <span class="meta">
+              {found?.count ?? 0} match{found?.count === 1 ? "" : "es"}
+            </span>
+            <button class="mini" title="Clear search (Esc)" onclick={closeSearch}>×</button>
+          {/if}
+        </div>
+        <div class="tree-area">
+          {#if found?.tree}
+            <TreeNode
+              node={found.tree}
+              autoExpand={searching}
+              onEdit={handleEdit}
+              onRemove={handleRemove}
+              onInsertRequest={(n) => (insertTarget = n)} />
+          {:else}
+            <p class="hint">Nothing in this file matches “{query}”.</p>
+          {/if}
+        </div>
+      {/if}
     {:else}
       <p class="error">Cannot edit: {current.message} (offset {current.offset})</p>
       <pre class="hex">{current.hex_preview}</pre>
