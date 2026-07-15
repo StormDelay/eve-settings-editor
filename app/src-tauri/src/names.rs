@@ -74,6 +74,63 @@ fn select(ids: &[u64], cache: &Cache) -> Cache {
         .collect()
 }
 
+const ESI_URL: &str = "https://esi.evetech.net/latest/universe/names/";
+
+/// Any resolution failure, collapsed to a message. All failures are handled
+/// identically by the caller (silent fallback), so the detail is only for logs.
+#[derive(Debug)]
+pub struct FetchError(pub String);
+
+/// Parse an ESI `/universe/names` success body (a JSON array). An ESI error
+/// body is a JSON object and fails here — treated as a fetch failure.
+fn parse_names(bytes: &[u8]) -> Result<Vec<EsiName>, FetchError> {
+    serde_json::from_slice(bytes).map_err(|e| FetchError(e.to_string()))
+}
+
+/// The one network call: POST the id array to ESI, batched. Blocking client —
+/// callers run it off the async runtime (see the command's `spawn_blocking`).
+/// Any HTTP, transport, or parse problem becomes `FetchError`.
+fn esi_fetch(ids: &[u64]) -> Result<Vec<EsiName>, FetchError> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(ESI_URL)
+        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
+        .json(&ids)
+        .send()
+        .map_err(|e| FetchError(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(FetchError(format!("ESI status {}", resp.status())));
+    }
+    let bytes = resp.bytes().map_err(|e| FetchError(e.to_string()))?;
+    parse_names(&bytes)
+}
+
+/// Resolve `ids` to names with an injectable fetcher (so tests never hit the
+/// network): return cache hits immediately, fetch the misses (or every id when
+/// `refetch_all`), merge and persist on success, and on any fetch failure
+/// return whatever the cache already held. The result contains only ids that
+/// could be named.
+pub fn resolve_with<F>(dir: &Path, ids: &[u64], refetch_all: bool, fetch: F) -> Cache
+where
+    F: FnOnce(&[u64]) -> Result<Vec<EsiName>, FetchError>,
+{
+    let mut cache = load_cache(dir);
+    let need = needed(ids, &cache, refetch_all);
+    if !need.is_empty() {
+        if let Ok(fetched) = fetch(&need) {
+            apply_fetch(&mut cache, fetched);
+            let _ = save_cache(dir, &cache);
+        }
+    }
+    select(ids, &cache)
+}
+
+/// Production wiring: `resolve_with` driven by the real ESI fetcher. Blocking —
+/// call it from a worker thread.
+pub fn resolve_blocking(dir: &Path, ids: &[u64], refetch_all: bool) -> Cache {
+    resolve_with(dir, ids, refetch_all, esi_fetch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +201,79 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out.contains_key(&1));
         assert!(!out.contains_key(&2), "unknown ids are absent, not blank");
+    }
+
+    #[test]
+    fn parse_names_reads_an_esi_array() {
+        let body = br#"[{"category":"character","id":90000001,"name":"Test Pilot"}]"#;
+        let parsed = parse_names(body).unwrap();
+        assert_eq!(
+            parsed,
+            vec![EsiName {
+                category: "character".into(),
+                id: 90000001,
+                name: "Test Pilot".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_names_rejects_an_esi_error_object() {
+        // ESI returns a JSON object (not an array) on a 404 bad-id batch.
+        let body = br#"{"error":"Ensure all IDs are valid before resolving."}"#;
+        assert!(parse_names(body).is_err());
+    }
+
+    #[test]
+    fn resolve_with_skips_fetch_when_all_ids_cached() {
+        let dir = temp_dir("all-cached");
+        let mut seed = Cache::new();
+        seed.insert(1, ResolvedName { name: "One".into(), category: "character".into() });
+        seed.insert(2, ResolvedName { name: "Two".into(), category: "character".into() });
+        save_cache(&dir, &seed).unwrap();
+        // The fetcher must never be called when nothing is missing.
+        let out = resolve_with(&dir, &[1, 2], false, |_| panic!("must not fetch"));
+        assert_eq!(out, seed);
+    }
+
+    #[test]
+    fn resolve_with_falls_back_to_cache_on_fetch_error() {
+        let dir = temp_dir("fetch-err");
+        let mut seed = Cache::new();
+        seed.insert(1, ResolvedName { name: "One".into(), category: "character".into() });
+        save_cache(&dir, &seed).unwrap();
+        let out = resolve_with(&dir, &[1, 2], false, |_| Err(FetchError("offline".into())));
+        // id 1 from cache; id 2 unresolved and therefore absent.
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(&1).unwrap().name, "One");
+    }
+
+    #[test]
+    fn resolve_with_fetches_only_misses_then_merges_and_persists() {
+        let dir = temp_dir("partial");
+        let mut seed = Cache::new();
+        seed.insert(1, ResolvedName { name: "One".into(), category: "character".into() });
+        save_cache(&dir, &seed).unwrap();
+        let out = resolve_with(&dir, &[1, 2], false, |misses| {
+            assert_eq!(misses, &[2], "only the uncached id is fetched");
+            Ok(vec![EsiName { category: "character".into(), id: 2, name: "Two".into() }])
+        });
+        assert_eq!(out.get(&1).unwrap().name, "One");
+        assert_eq!(out.get(&2).unwrap().name, "Two");
+        // The fetched name was written back to disk.
+        assert_eq!(load_cache(&dir).get(&2).unwrap().name, "Two");
+    }
+
+    #[test]
+    fn resolve_with_refetch_all_ignores_cache() {
+        let dir = temp_dir("refetch");
+        let mut seed = Cache::new();
+        seed.insert(1, ResolvedName { name: "Old".into(), category: "character".into() });
+        save_cache(&dir, &seed).unwrap();
+        let out = resolve_with(&dir, &[1], true, |misses| {
+            assert_eq!(misses, &[1], "refetch_all re-requests cached ids");
+            Ok(vec![EsiName { category: "character".into(), id: 1, name: "New".into() }])
+        });
+        assert_eq!(out.get(&1).unwrap().name, "New");
     }
 }
