@@ -237,7 +237,7 @@ fn mode(it: impl Iterator<Item = (i64, i64)>) -> Option<(i64, i64)> {
 mod tests {
     use super::*;
     use blue_marshal::Value;
-    use crate::path::{resolve, Step};
+    use crate::path::resolve;
 
     fn ts() -> Value {
         // A stand-in FILETIME timestamp — the (timestamp, dict) wrapper.
