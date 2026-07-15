@@ -94,9 +94,12 @@ The resolve logic is split from the network so `cargo test` never hits the wire:
      resolved to nothing are simply **absent** from the returned map.
 - `refresh(ids, cache_dir, fetch)` — same, but treats every id as a miss
   (ignores existing cache entries) so a rename can be picked up.
-- The production fetcher: async `reqwest` (rustls-tls, json) POST to the §2
-  endpoint with the User-Agent header; maps any HTTP/transport/JSON error to
-  `FetchError` (all handled identically — silent fallback).
+- The production fetcher: **blocking** `reqwest` (rustls-tls, json) POST to the
+  §2 endpoint with the User-Agent header; maps any HTTP/transport/JSON error to
+  `FetchError` (all handled identically — silent fallback). Blocking keeps the
+  whole orchestrator (`resolve_with`) synchronous and unit-testable with a fake
+  fetcher; the async Tauri command runs it via `spawn_blocking` so it never
+  blocks the runtime.
 
 `ResolvedName { name: String, category: String }`. Cache file shape:
 `{ "<id>": { "name": ..., "category": ... } }` (serde_json).
@@ -174,9 +177,9 @@ with the real app-data dir and the reqwest fetcher.
 ## 8. Dependencies
 
 - `app` crate gains `reqwest = { version = "0.12", default-features = false,
-  features = ["rustls-tls", "json"] }` (rustls avoids OpenSSL on Windows; async
-  client runs on Tauri's existing tokio runtime). `blue-marshal` and
-  `settings-model` stay dependency-free — the network dependency is confined to
+  features = ["rustls-tls", "json", "blocking"] }` (rustls avoids OpenSSL on
+  Windows; the blocking client runs on a `spawn_blocking` worker thread).
+  `blue-marshal` and `settings-model` stay dependency-free — the network dependency is confined to
   the Tauri binary, matching the architecture's crate boundaries.
 
 ## 9. Out of scope / deferred
