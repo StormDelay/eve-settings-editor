@@ -1,7 +1,7 @@
 # M3c — Overview columns editor (design)
 
 Date: 2026-07-16
-Status: draft, pre-plan
+Status: approved, pre-plan
 Builds on: M1 (codec, raw tree, save chain), M2 (layout canvas — the path-surfacing
 projection pattern this reuses), M3a (ESI names), M3b (char↔user pairing / account
 roster — this milestone consumes it). Design spec §6 "Overview editor".
@@ -135,6 +135,13 @@ unit testing without a Tauri runtime.
 
 **In:** two-slot state; bidirectional roster-driven loading; per-tab show/hide,
 reorder, and width editing; inheritance/materialize; prettified labels.
+
+**Unsaved-changes guard across both slots.** Loading any file — from the
+sidebar, the character selector, or the char→user auto-load — while **either**
+the char or user slot has unsaved edits warns the user that confirming will
+discard those changes, and aborts the load if they decline. This extends the
+existing single-file discard prompt to check both slots (the warning names which
+file(s) would lose changes).
 
 **Deferred / out:**
 - Overview filter presets (raw tree only, per §6/§10).
