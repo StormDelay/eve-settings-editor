@@ -1,11 +1,36 @@
 <script lang="ts">
-  import { api, errMessage } from "./api";
+  import { api, errMessage, type Profile } from "./api";
   import { names } from "./names.svelte";
   import { accountsStore, loadRoster, setAlias, confirmPairing, unpair } from "./accounts.svelte";
+
+  let { openPath }: { openPath: string | null } = $props();
 
   const MAX = 3;
   const roster = $derived(accountsStore.roster);
   let error: string | null = $state(null);
+
+  // Scope the panel to the profile folder the open file lives in: only that
+  // folder's accounts and characters (located via discovery) are shown/offered.
+  let profiles = $state<Profile[]>([]);
+  api.discover().then((p) => (profiles = p)).catch(() => {});
+  const scope = $derived.by(() => {
+    if (!openPath) return null;
+    const p = profiles.find((pr) => pr.files.some((f) => f.path === openPath));
+    if (!p) return null;
+    const users = new Set(
+      p.files.filter((f) => f.kind === "user" && f.id != null).map((f) => f.id as number),
+    );
+    const chars = new Set(
+      p.files.filter((f) => f.kind === "char" && f.id != null).map((f) => f.id as number),
+    );
+    return { users, chars };
+  });
+  const accounts = $derived(
+    scope ? roster.accounts.filter((a) => scope.users.has(a.user_id)) : roster.accounts,
+  );
+  const unassigned = $derived(
+    scope ? roster.unassigned.filter((id) => scope.chars.has(id)) : roster.unassigned,
+  );
 
   // Guided capture state (see Task 11 for the flow body).
   let capturing = $state(false);
@@ -81,12 +106,12 @@
   {#if error}<p class="error">{error}</p>{/if}
   {#if captureNote}<p class="flash" aria-live="polite">{captureNote}</p>{/if}
 
-  {#if roster.accounts.length === 0}
-    <p class="hint">No accounts discovered yet. Open a profile, or run a calibration.</p>
+  {#if accounts.length === 0}
+    <p class="hint">No accounts in this profile yet. Open a profile file, or run a calibration.</p>
   {/if}
 
   <ul class="cards">
-    {#each roster.accounts as acct (acct.user_id)}
+    {#each accounts as acct (acct.user_id)}
       <li class="card">
         <input
           class="alias"
@@ -111,7 +136,7 @@
                     e.currentTarget.selectedIndex = 0;
                   }}>
                   <option value="">＋ add character</option>
-                  {#each roster.unassigned as uid (uid)}
+                  {#each unassigned as uid (uid)}
                     <option value={uid}>{nameOf(uid)}</option>
                   {/each}
                 </select>
@@ -123,11 +148,11 @@
     {/each}
   </ul>
 
-  {#if roster.unassigned.length > 0}
+  {#if unassigned.length > 0}
     <div class="unassigned">
       <h3>Unassigned characters</h3>
       <ul>
-        {#each roster.unassigned as uid (uid)}
+        {#each unassigned as uid (uid)}
           <li>{nameOf(uid)}</li>
         {/each}
       </ul>
