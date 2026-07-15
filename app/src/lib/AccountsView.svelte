@@ -103,27 +103,19 @@
                 <button class="x" title="Unpair" onclick={() => unpair(charId)}>✕</button>
               </span>
             {:else}
-              {@const sugg = acct.suggestions[i - acct.characters.length]}
-              {#if sugg}
-                <span class="chip ghost" title={`${sugg.basis} (${sugg.confidence})`}>
-                  probably {nameOf(sugg.char_id)}?
-                  <button class="ok" onclick={() => onConfirm(sugg.char_id, acct.user_id)}>✓</button>
-                </span>
-              {:else}
-                <span class="chip empty">
-                  <select
-                    onchange={(e) => {
-                      const v = Number(e.currentTarget.value);
-                      if (v) onConfirm(v, acct.user_id);
-                      e.currentTarget.selectedIndex = 0;
-                    }}>
-                    <option value="">＋ add character</option>
-                    {#each roster.unassigned as uid (uid)}
-                      <option value={uid}>{nameOf(uid)}</option>
-                    {/each}
-                  </select>
-                </span>
-              {/if}
+              <span class="chip empty">
+                <select
+                  onchange={(e) => {
+                    const v = Number(e.currentTarget.value);
+                    if (v) onConfirm(v, acct.user_id);
+                    e.currentTarget.selectedIndex = 0;
+                  }}>
+                  <option value="">＋ add character</option>
+                  {#each roster.unassigned as uid (uid)}
+                    <option value={uid}>{nameOf(uid)}</option>
+                  {/each}
+                </select>
+              </span>
             {/if}
           {/each}
         </div>
@@ -152,9 +144,12 @@
   .slots { display: flex; gap: 0.4rem; flex-wrap: wrap; }
   .chip { display: inline-flex; align-items: center; gap: 0.3em; padding: 0.15em 0.5em;
           border-radius: 999px; border: 1px solid var(--line, #3333); font-size: 0.9em; }
-  .chip.ghost { opacity: 0.7; font-style: italic; }
-  .chip.empty select { border: none; background: transparent; }
-  .x, .ok { border: none; background: transparent; cursor: pointer; }
+  .chip.empty select {
+    border: none; font: inherit; cursor: pointer;
+    background: var(--bg-panel); color: var(--fg);
+  }
+  .chip.empty option { background: var(--bg-panel); color: var(--fg); }
+  .x { border: none; background: transparent; cursor: pointer; color: inherit; }
   .error { color: #c0392b; }
   .capture { border: 1px solid var(--line, #3333); border-radius: 8px; padding: 0.75rem;
              margin: 0.75rem 0; background: var(--panel, #0001); }

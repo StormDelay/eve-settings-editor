@@ -1,5 +1,5 @@
-// Shared, app-wide account roster: aliases + confirmed character membership +
-// live suggestions. A Svelte-5 rune module so the sidebar, the open-file header
+// Shared, app-wide account roster: aliases + confirmed character membership.
+// A Svelte-5 rune module so the sidebar, the open-file header
 // and the Accounts view all react to the same state. Mirrors names.svelte.ts.
 import { api, type AccountRoster } from "./api";
 

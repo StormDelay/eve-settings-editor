@@ -147,18 +147,10 @@ export interface WindowLayout {
   windows: WindowRect[];
 }
 
-export type Confidence = "high" | "medium" | "low";
-export interface Suggestion {
-  char_id: number;
-  user_id: number;
-  confidence: Confidence;
-  basis: string;
-}
 export interface AccountView {
   user_id: number;
   alias: string | null;
   characters: number[];
-  suggestions: Suggestion[];
 }
 export interface AccountRoster {
   accounts: AccountView[];
