@@ -87,25 +87,79 @@ fn parse_names(bytes: &[u8]) -> Result<Vec<EsiName>, FetchError> {
     serde_json::from_slice(bytes).map_err(|e| FetchError(e.to_string()))
 }
 
-/// The one network call: POST the id array to ESI, batched. Blocking client —
-/// callers run it off the async runtime (see the command's `spawn_blocking`).
-/// Any HTTP, transport, or parse problem becomes `FetchError`.
+/// Outcome of one POST to ESI `/universe/names`.
+enum PostOutcome {
+    Ok(Vec<EsiName>),
+    /// HTTP 404 — at least one id in the batch is invalid (ESI rejects the
+    /// whole batch). Recoverable by splitting.
+    BatchInvalid,
+    /// Transport error or a non-404 HTTP status — not an id problem.
+    Failed(String),
+}
+
+/// One POST of `ids` to ESI `/universe/names`.
+fn post_names(client: &reqwest::blocking::Client, ids: &[u64]) -> PostOutcome {
+    let resp = match client
+        .post(ESI_URL)
+        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
+        .json(&ids)
+        .send()
+    {
+        Ok(r) => r,
+        Err(e) => return PostOutcome::Failed(e.to_string()),
+    };
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return PostOutcome::BatchInvalid;
+    }
+    if !resp.status().is_success() {
+        return PostOutcome::Failed(format!("ESI status {}", resp.status()));
+    }
+    match resp.bytes() {
+        Ok(bytes) => match parse_names(&bytes) {
+            Ok(names) => PostOutcome::Ok(names),
+            Err(e) => PostOutcome::Failed(e.0),
+        },
+        Err(e) => PostOutcome::Failed(e.to_string()),
+    }
+}
+
+/// Resolve the subset of `ids` ESI can name. ESI 404s the whole batch when ANY
+/// id is invalid, so on a 404 we split and recurse; a lone invalid id resolves
+/// to nothing (dropped). A transport/other failure aborts with `Err` so the
+/// caller falls back to the cache. `post` is injected so this unit-tests
+/// without the network.
+fn salvage_resolve<P>(ids: &[u64], post: &P) -> Result<Vec<EsiName>, FetchError>
+where
+    P: Fn(&[u64]) -> PostOutcome,
+{
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    match post(ids) {
+        PostOutcome::Ok(names) => Ok(names),
+        PostOutcome::Failed(e) => Err(FetchError(e)),
+        PostOutcome::BatchInvalid => {
+            if ids.len() == 1 {
+                Ok(Vec::new()) // the single id is invalid — drop it
+            } else {
+                let mid = ids.len() / 2;
+                let mut names = salvage_resolve(&ids[..mid], post)?;
+                names.extend(salvage_resolve(&ids[mid..], post)?);
+                Ok(names)
+            }
+        }
+    }
+}
+
+/// The network call: resolve `ids` to names, salvaging valid ids when the batch
+/// contains invalid ones. Blocking client (run off the async runtime via the
+/// command's `spawn_blocking`), built once and reused across any sub-requests.
 fn esi_fetch(ids: &[u64]) -> Result<Vec<EsiName>, FetchError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| FetchError(e.to_string()))?;
-    let resp = client
-        .post(ESI_URL)
-        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
-        .json(&ids)
-        .send()
-        .map_err(|e| FetchError(e.to_string()))?;
-    if !resp.status().is_success() {
-        return Err(FetchError(format!("ESI status {}", resp.status())));
-    }
-    let bytes = resp.bytes().map_err(|e| FetchError(e.to_string()))?;
-    parse_names(&bytes)
+    salvage_resolve(ids, &|batch| post_names(&client, batch))
 }
 
 /// Resolve `ids` to names with an injectable fetcher (so tests never hit the
@@ -283,5 +337,50 @@ mod tests {
             Ok(vec![EsiName { category: "character".into(), id: 1, name: "New".into() }])
         });
         assert_eq!(out.get(&1).unwrap().name, "New");
+    }
+
+    #[test]
+    fn salvage_returns_all_when_batch_valid() {
+        let post = |ids: &[u64]| {
+            PostOutcome::Ok(
+                ids.iter()
+                    .map(|&id| EsiName { category: "character".into(), id, name: format!("Name{id}") })
+                    .collect(),
+            )
+        };
+        let out = salvage_resolve(&[1, 2, 3], &post).unwrap();
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn salvage_drops_invalid_id_and_keeps_the_rest() {
+        // id 2 is "invalid": any batch containing it 404s (BatchInvalid).
+        let post = |ids: &[u64]| {
+            if ids.contains(&2) {
+                PostOutcome::BatchInvalid
+            } else {
+                PostOutcome::Ok(
+                    ids.iter()
+                        .map(|&id| EsiName { category: "character".into(), id, name: format!("Name{id}") })
+                        .collect(),
+                )
+            }
+        };
+        let mut out = salvage_resolve(&[1, 2, 3], &post).unwrap();
+        out.sort_by_key(|n| n.id);
+        assert_eq!(out.iter().map(|n| n.id).collect::<Vec<_>>(), vec![1, 3]);
+    }
+
+    #[test]
+    fn salvage_single_invalid_id_yields_empty() {
+        let post = |_: &[u64]| PostOutcome::BatchInvalid;
+        assert!(salvage_resolve(&[2], &post).unwrap().is_empty());
+    }
+
+    #[test]
+    fn salvage_propagates_transport_failure() {
+        // A non-404 failure (transport/other) must abort → caller falls back to cache.
+        let post = |_: &[u64]| PostOutcome::Failed("offline".into());
+        assert!(salvage_resolve(&[1, 2], &post).is_err());
     }
 }
