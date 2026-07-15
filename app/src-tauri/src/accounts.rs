@@ -549,6 +549,25 @@ mod tests {
     }
 
     #[test]
+    fn build_roster_excludes_confirmed_char_from_a_roomy_accounts_suggestions() {
+        // 90000002 is confirmed to account 111, but a stale suggestion still
+        // points it at the roomy (empty) account 555. Without the
+        // `!confirmed.contains(...)` filter this would show up on 555 too.
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000002, 111).unwrap();
+        let files = vec![user(111, 10, "p"), user(555, 10, "p"), char(90000002, 10, "p")];
+        let sugg = vec![Suggestion {
+            char_id: 90000002,
+            user_id: 555,
+            confidence: Confidence::Low,
+            basis: "recent logout".into(),
+        }];
+        let r = build_roster(&files, &store, &sugg);
+        let roomy = r.accounts.iter().find(|a| a.user_id == 555).unwrap();
+        assert!(roomy.suggestions.is_empty(), "confirmed-elsewhere char excluded despite room");
+    }
+
+    #[test]
     fn build_roster_includes_store_only_account_with_no_discovered_file() {
         // Account 42 lives only in the store (e.g. discovered on a prior run,
         // that file absent this time); it must still appear in the roster.
