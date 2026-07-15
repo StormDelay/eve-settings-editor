@@ -5,11 +5,21 @@
 //! window ids, tuple element order) lives here so the UI never reconstructs a
 //! path from format details. Nothing in this module mutates.
 
+use std::collections::{HashMap, HashSet};
+
 use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
+
+/// Shared-object slot table: slot number -> the value it stores. EVE files
+/// store a repeated window-id string once as a `Shared` and reference it
+/// elsewhere as `Ref(slot)`, so the same window id appears as `Shared` in one
+/// dict and `Ref` in another. Resolving them is what makes ids real and unique
+/// (an unresolved `Ref` would collapse every reference to the "ref" kind name,
+/// producing duplicate ids that crash a keyed render).
+type Shared<'a> = HashMap<u32, &'a Value>;
 
 /// The seven boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
@@ -102,9 +112,23 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         .collect();
     let stacks_dict = timestamped_dict(windows_dict, &windows_path, b"stacksWindows");
 
+    // Shared-slot table for resolving `Ref`/`Shared` window-id keys.
+    let mut shared = Shared::new();
+    collect_shared(root, &mut shared);
+
     let mut windows = Vec::new();
+    let mut used_ids: HashSet<String> = HashSet::new();
     for (wi, (key, val)) in geom_dict.iter().enumerate() {
-        let id = decode_id(key);
+        // Resolve the key through Ref/Shared so the id is the real string and
+        // flag lookups compare like against like.
+        let rkey = effective(key, &shared);
+        let mut id = decode_id(rkey);
+        // Safety net: a keyed render crashes on duplicate ids, so guarantee
+        // uniqueness even if two keys still resolve to the same string.
+        if !used_ids.insert(id.clone()) {
+            id = format!("{id}#{wi}");
+            used_ids.insert(id.clone());
+        }
         let mut entry_path = geom_path.clone();
         entry_path.push(Step::DictValue(wi));
         let geom = extract_geom(val, &entry_path);
@@ -113,7 +137,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         let mut open = false;
         for (name, dict) in BOOL_FLAGS.iter().zip(&bool_dicts) {
             let (value, set) = match dict {
-                Some((entries, dpath)) => bool_flag(entries, dpath, key),
+                Some((entries, dpath)) => bool_flag(entries, dpath, rkey, &shared),
                 None => (false, SetTarget::Unavailable),
             };
             if *name == "openWindows" {
@@ -123,7 +147,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         }
         let stacks = stacks_dict
             .as_ref()
-            .and_then(|(entries, dpath)| stack_field(entries, dpath, key));
+            .and_then(|(entries, dpath)| stack_field(entries, dpath, rkey, &shared));
 
         windows.push(WindowRect {
             id: id.clone(),
@@ -198,6 +222,54 @@ fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
+/// Gather every `Shared { slot, value }` in the tree into a slot table.
+fn collect_shared<'a>(v: &'a Value, out: &mut Shared<'a>) {
+    match v {
+        Value::Shared { slot, value } => {
+            out.insert(*slot, value);
+            collect_shared(value, out);
+        }
+        Value::Tuple(items) | Value::List(items) => {
+            items.iter().for_each(|i| collect_shared(i, out));
+        }
+        Value::Dict(entries) => entries.iter().for_each(|(k, val)| {
+            collect_shared(k, out);
+            collect_shared(val, out);
+        }),
+        Value::Stream(inner) => collect_shared(inner, out),
+        Value::Instance { class, state } => {
+            collect_shared(class, out);
+            collect_shared(state, out);
+        }
+        Value::Reduce { ctor, items, pairs } => {
+            collect_shared(ctor, out);
+            items.iter().for_each(|i| collect_shared(i, out));
+            pairs.iter().for_each(|(k, val)| {
+                collect_shared(k, out);
+                collect_shared(val, out);
+            });
+        }
+        _ => {}
+    }
+}
+
+/// Follow `Ref`/`Shared` indirection to the underlying value (bounded against a
+/// pathological chain; real files reference backwards so this terminates fast).
+fn effective<'a>(v: &'a Value, shared: &Shared<'a>) -> &'a Value {
+    let mut cur = v;
+    for _ in 0..64 {
+        cur = match cur {
+            Value::Shared { value, .. } => value,
+            Value::Ref(slot) => match shared.get(slot).copied() {
+                Some(target) => target,
+                None => return cur,
+            },
+            _ => return cur,
+        };
+    }
+    cur
+}
+
 fn decode_id(key: &Value) -> String {
     match key {
         Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
@@ -239,22 +311,24 @@ fn extract_geom(val: &Value, entry_path: &NodePath) -> Option<Geom> {
     })
 }
 
-fn bool_flag(entries: &Entries, dpath: &NodePath, key: &Value) -> (bool, SetTarget) {
-    match entries.iter().enumerate().find(|(_, (k, _))| k == key) {
+/// `rkey` is the geometry key already resolved through `Ref`/`Shared`; flag
+/// keys are resolved the same way so like compares against like.
+fn bool_flag(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &Shared) -> (bool, SetTarget) {
+    match entries.iter().enumerate().find(|(_, (k, _))| effective(k, shared) == rkey) {
         Some((i, (_, v))) => {
             let mut p = dpath.clone();
             p.push(Step::DictValue(i));
             (matches!(v, Value::Bool(true)), SetTarget::Set { path: p })
         }
-        None => match key_as_new_value(key) {
+        None => match key_as_new_value(rkey) {
             Some(nv) => (false, SetTarget::Insert { parent: dpath.clone(), key: nv }),
             None => (false, SetTarget::Unavailable),
         },
     }
 }
 
-fn stack_field(entries: &Entries, dpath: &NodePath, key: &Value) -> Option<StackField> {
-    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| k == key)?;
+fn stack_field(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &Shared) -> Option<StackField> {
+    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| effective(k, shared) == rkey)?;
     // Editable only when the stack id is a plain integer; anything else stays
     // raw-tree-only rather than exposing a control that cannot round-trip.
     let Value::Int(n) = v else { return None };
@@ -263,8 +337,8 @@ fn stack_field(entries: &Entries, dpath: &NodePath, key: &Value) -> Option<Stack
     Some(StackField { text: n.to_string(), path: p })
 }
 
-/// Reconstruct a dict key as the `NewValue` an insert mutation needs. Window
-/// ids are byte-strings or (parameterized) strings.
+/// Reconstruct a resolved dict key as the `NewValue` an insert mutation needs.
+/// Window ids are byte-strings or (parameterized) strings.
 fn key_as_new_value(key: &Value) -> Option<NewValue> {
     match key {
         Value::Bytes(b) => Some(NewValue::BytesHex(hex(b))),
@@ -514,5 +588,65 @@ mod tests {
         )]);
         let wl = window_layout(&doc);
         assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
+    }
+
+    #[test]
+    fn ref_keyed_windows_resolve_to_real_unique_ids_and_match_flags() {
+        // Real files store each window-id string once as a `Shared` and key
+        // other dicts by `Ref`. Here geometry keys are Refs to id strings
+        // defined (as Shared) in openWindows. Without resolution both ids
+        // collapse to "ref" (duplicate) and flag lookups miss.
+        let doc = Value::Dict(vec![(
+            Value::Bytes(b"windows".to_vec()),
+            Value::Dict(vec![
+                (
+                    Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![
+                            (Value::Ref(1), geom(1, 2, 3, 4, 2560, 1440)),
+                            (Value::Ref(2), geom(5, 6, 7, 8, 2560, 1440)),
+                        ]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"openWindows".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![
+                            (
+                                Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"overview".to_vec())) },
+                                Value::Bool(true),
+                            ),
+                            (
+                                Value::Shared { slot: 2, value: Box::new(Value::Bytes(b"market".to_vec())) },
+                                Value::Bool(false),
+                            ),
+                        ]),
+                    ]),
+                ),
+            ]),
+        )]);
+        let wl = window_layout(&doc);
+        assert_eq!(wl.windows.len(), 2);
+        assert_eq!(wl.windows[0].id, "overview", "Ref key resolves to the real id");
+        assert_eq!(wl.windows[1].id, "market");
+        // Flag matching works across the Ref (geometry) / Shared (openWindows) split.
+        assert!(wl.windows[0].open);
+        assert!(!wl.windows[1].open);
+    }
+
+    #[test]
+    fn colliding_ids_are_disambiguated_so_a_keyed_render_cannot_crash() {
+        // Two unresolvable Refs both fall back to "ref"; the projection must
+        // still emit unique ids (a keyed each block crashes on duplicates).
+        let doc = doc_with(vec![
+            (Value::Ref(7), geom(1, 2, 3, 4, 2560, 1440)),
+            (Value::Ref(8), geom(5, 6, 7, 8, 2560, 1440)),
+        ]);
+        let wl = window_layout(&doc);
+        assert_eq!(wl.windows.len(), 2);
+        let ids: HashSet<&String> = wl.windows.iter().map(|w| &w.id).collect();
+        assert_eq!(ids.len(), 2, "ids must be unique even on fallback collision");
     }
 }
