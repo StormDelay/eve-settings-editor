@@ -93,6 +93,54 @@ export type Mutation =
   // Also inserts into tuples — they are editable sequences (see mutate.rs).
   | { op: "insert_list_item"; parent: NodePath; index: number; value: NewValue };
 
+export interface Geom {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  screen_w: number;
+  screen_h: number;
+  x_path: NodePath;
+  y_path: NodePath;
+  w_path: NodePath;
+  h_path: NodePath;
+  screen_w_path: NodePath;
+  screen_h_path: NodePath;
+}
+
+export type SetTarget =
+  | { how: "set"; path: NodePath }
+  | { how: "insert"; parent: NodePath; key: NewValue }
+  | { how: "unavailable" };
+
+export interface BoolFlag {
+  name: string;
+  value: boolean;
+  set: SetTarget;
+}
+
+export interface StackField {
+  text: string;
+  path: NodePath;
+}
+
+export interface WindowRect {
+  id: string;
+  label: string;
+  open: boolean;
+  renderable: boolean;
+  resolution_matches: boolean;
+  geom: Geom | null;
+  flags: BoolFlag[];
+  stacks: StackField | null;
+}
+
+export interface WindowLayout {
+  reference_w: number;
+  reference_h: number;
+  windows: WindowRect[];
+}
+
 export const api = {
   discover: () => invoke<Profile[]>("discover_profiles"),
   open: (path: string) => invoke<OpenOutcome>("open_file", { path }),
@@ -102,6 +150,7 @@ export const api = {
   listBackups: () => invoke<BackupInfo[]>("list_file_backups"),
   restoreBackup: (backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { backupPath }),
+  windowLayout: () => invoke<WindowLayout>("window_layout"),
 };
 
 export function errMessage(e: unknown): string {
