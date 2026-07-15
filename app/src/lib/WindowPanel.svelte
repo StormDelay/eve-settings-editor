@@ -42,6 +42,7 @@
           checked={w.open}
           disabled={readOnly || openFlag?.set.how === "unavailable"}
           title="Open (shown on the canvas)"
+          aria-label="Open (shown on the canvas)"
           onchange={() => onToggleOpen(w)} />
         <button class="name" onclick={() => onSelect(w.id)}>
           {w.label}
