@@ -91,7 +91,10 @@ fn parse_names(bytes: &[u8]) -> Result<Vec<EsiName>, FetchError> {
 /// callers run it off the async runtime (see the command's `spawn_blocking`).
 /// Any HTTP, transport, or parse problem becomes `FetchError`.
 fn esi_fetch(ids: &[u64]) -> Result<Vec<EsiName>, FetchError> {
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| FetchError(e.to_string()))?;
     let resp = client
         .post(ESI_URL)
         .header(reqwest::header::USER_AGENT, "eve-settings-editor")
@@ -117,9 +120,14 @@ where
     let mut cache = load_cache(dir);
     let need = needed(ids, &cache, refetch_all);
     if !need.is_empty() {
-        if let Ok(fetched) = fetch(&need) {
-            apply_fetch(&mut cache, fetched);
-            let _ = save_cache(dir, &cache);
+        match fetch(&need) {
+            Ok(fetched) => {
+                apply_fetch(&mut cache, fetched);
+                let _ = save_cache(dir, &cache);
+            }
+            // Read the detail (silences the never-read warning) and leave a
+            // stderr breadcrumb; the user still just sees bare ids (silent).
+            Err(e) => eprintln!("name resolution: fetch failed ({})", e.0),
         }
     }
     select(ids, &cache)
