@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-15
+
+Milestone 2: a visual window-layout editor for character files.
+
+### Added
+- Layout view, reached by a Tree / Layout switch on character files: a scaled
+  mock of the game screen with one draggable, resizable rectangle per open
+  window.
+- Window list panel — every window with an open/closed toggle; selecting one
+  shows its exact geometry (x, y, width, height), its stored flags (locked,
+  collapsed, minimized, compact, …), and its stack id.
+- Two-way editing: drag or resize on the canvas, or type exact numbers in the
+  panel — both edit the same document and save through the existing
+  backup → verify → atomic-write chain.
+- Reveal in tree: right-click a value in the properties panel, or use the
+  locate button on a search result, to jump to that value in the raw tree.
+
+### Fixed
+- Window ids stored as shared-object references now resolve to their real
+  names; previously several could collapse to the same placeholder.
+
 ## [0.1.0] - 2026-07-15
 
 First usable build (Milestone 1). Validated against the live client: a real
