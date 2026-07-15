@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, errMessage, type Profile } from "./api";
+  import { names, resolveNames, refreshNames } from "./names.svelte";
 
   let { onOpen }: { onOpen: (path: string) => void } = $props();
 
@@ -34,9 +35,16 @@
       .sort((a, b) => Number(b.primary) - Number(a.primary));
   });
 
+  const charIds = (ps: Profile[]) =>
+    ps
+      .flatMap((p) => p.files)
+      .filter((f) => f.kind === "char" && f.id != null)
+      .map((f) => f.id as number);
+
   async function refresh(announce = false) {
     try {
       profiles = await api.discover();
+      void resolveNames(charIds(profiles));
       error = null;
       if (announce) {
         const n = profiles.length;
@@ -64,6 +72,9 @@
   <div class="sidebar-actions">
     <button onclick={pickFile}>Open file…</button>
     <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
+    <button
+      onclick={() => refreshNames(charIds(profiles))}
+      title="Re-fetch character names from ESI">Refresh names</button>
   </div>
   {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
@@ -78,9 +89,10 @@
       </summary>
       <ul>
         {#each p.files as f (f.path)}
+          {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
           <li>
-            <button class="file" onclick={() => onOpen(f.path)}>
-              {f.file_name}
+            <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+              {hit ? hit.name : f.file_name}
               <span class="meta">{Math.round(f.size / 1024)} KB</span>
             </button>
           </li>
