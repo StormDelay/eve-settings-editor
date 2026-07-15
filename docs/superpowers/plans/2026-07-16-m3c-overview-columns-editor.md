@@ -23,13 +23,15 @@
 ## File Structure
 
 **Created:**
+- `crates/settings-model/src/treewalk.rs` — shared dict tree-walk helpers (extracted from `windows.rs`; reused by `overview.rs`).
 - `crates/settings-model/src/overview.rs` — overview projection + edit functions (all format knowledge).
 - `app/src/lib/OverviewView.svelte` — the editor UI.
 - `app/src/lib/overview.ts` — pure frontend helpers (roster/profile lookups for loading).
 - `app/src/lib/overview.test.ts` — tests for `overview.ts`.
 
 **Modified:**
-- `crates/settings-model/src/lib.rs` — export the overview module’s public items.
+- `crates/settings-model/src/windows.rs` — import the tree-walk helpers from `treewalk` instead of defining them privately.
+- `crates/settings-model/src/lib.rs` — register `treewalk`; export the overview module’s public items.
 - `app/src-tauri/src/ops.rs` — two-slot `AppState`, `Slot` enum, slot-param command fns, overview command fns.
 - `app/src-tauri/src/lib.rs` — command wrappers gain `slot`; register overview commands.
 - `app/src/lib/api.ts` — `slot` arg on doc commands; overview command bindings + types.
@@ -40,6 +42,131 @@
 ## Phase A — Overview model (pure, `settings-model`)
 
 No app wiring in this phase; the app is unaffected and keeps working.
+
+### Task A0: Extract shared tree-walk helpers
+
+Pure refactor: lift the four dict-traversal helpers out of `windows.rs` into a
+crate-internal `treewalk` module so `overview.rs` reuses them instead of
+duplicating. Behavior is unchanged; `windows.rs`'s existing tests are the safety
+net (no new test).
+
+**Files:**
+- Create: `crates/settings-model/src/treewalk.rs`
+- Modify: `crates/settings-model/src/windows.rs` (delete the private copies, import from `treewalk`)
+- Modify: `crates/settings-model/src/lib.rs` (add `mod treewalk;`)
+
+**Interfaces:**
+- Produces (all `pub(crate)`):
+  - `type Entries = Vec<(blue_marshal::Value, blue_marshal::Value)>`
+  - `fn is_bytes(v: &Value, name: &[u8]) -> bool`
+  - `fn unwrap_shared(v: &Value, path: NodePath) -> (&Value, NodePath)`
+  - `fn unwrap_shared_ref(v: &Value) -> &Value`
+  - `fn child_dict<'a>(parent: &'a Value, name: &[u8], base: NodePath) -> Option<(&'a Entries, NodePath)>`
+  - `fn timestamped_dict<'a>(parent: &'a Entries, base: &NodePath, name: &[u8]) -> Option<(&'a Entries, NodePath)>`
+
+- [ ] **Step 1: Create `treewalk.rs`**
+
+```rust
+//! Shared dict-traversal helpers for the typed category projections
+//! (windows.rs, overview.rs): find a byte-keyed child dict, unwrap the
+//! `(timestamp, dict)` wrappers and `Shared` indirection, all threading the
+//! `NodePath` a later mutation targets.
+
+use blue_marshal::Value;
+
+use crate::path::{NodePath, Step};
+
+pub(crate) type Entries = Vec<(Value, Value)>;
+
+pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
+    matches!(v, Value::Bytes(b) if b.as_slice() == name)
+}
+
+pub(crate) fn unwrap_shared(v: &Value, mut path: NodePath) -> (&Value, NodePath) {
+    if let Value::Shared { value, .. } = v {
+        path.push(Step::SharedInner);
+        return (value, path);
+    }
+    (v, path)
+}
+
+pub(crate) fn unwrap_shared_ref(v: &Value) -> &Value {
+    match v {
+        Value::Shared { value, .. } => value,
+        other => other,
+    }
+}
+
+/// `parent` must be a dict; find the entry keyed by the byte-string `name` and
+/// return its value as a dict, threading the path (unwrapping one `Shared`).
+pub(crate) fn child_dict<'a>(parent: &'a Value, name: &[u8], base: NodePath) -> Option<(&'a Entries, NodePath)> {
+    let (parent, base) = unwrap_shared(parent, base);
+    let Value::Dict(entries) = parent else { return None };
+    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| is_bytes(k, name))?;
+    let mut p = base;
+    p.push(Step::DictValue(i));
+    let (v, p) = unwrap_shared(v, p);
+    match v {
+        Value::Dict(d) => Some((d, p)),
+        _ => None,
+    }
+}
+
+/// Find `name` inside `parent` where the value is the `(timestamp, dict)`
+/// wrapper (or, defensively, a bare dict or a `Shared` of either). Returns the
+/// inner dict and the path to it.
+pub(crate) fn timestamped_dict<'a>(
+    parent: &'a Entries,
+    base: &NodePath,
+    name: &[u8],
+) -> Option<(&'a Entries, NodePath)> {
+    let (i, (_, v)) = parent.iter().enumerate().find(|(_, (k, _))| is_bytes(k, name))?;
+    let mut p = base.clone();
+    p.push(Step::DictValue(i));
+    let (v, p) = unwrap_shared(v, p);
+    match v {
+        Value::Dict(d) => Some((d, p)),
+        Value::Tuple(items) => {
+            let (ti, inner) = items.iter().enumerate().find(|(_, e)| matches!(e, Value::Dict(_)))?;
+            let Value::Dict(d) = inner else { return None };
+            let mut p2 = p;
+            p2.push(Step::Tuple(ti));
+            Some((d, p2))
+        }
+        _ => None,
+    }
+}
+```
+
+- [ ] **Step 2: Migrate `windows.rs`**
+
+In `windows.rs`: delete the private `type Entries`, `child_dict`, `timestamped_dict`, `unwrap_shared`, and `is_bytes` definitions. Add near the top:
+
+```rust
+use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared, Entries};
+```
+
+Leave everything else (the `Shared`/`Ref` slot resolution, `collect_shared`, `effective`, geom/flag extraction) untouched — those are windows-specific and stay.
+
+- [ ] **Step 3: Register the module**
+
+In `lib.rs`, add with the other `pub mod` lines:
+
+```rust
+mod treewalk;
+```
+
+- [ ] **Step 4: Verify no regression**
+
+Run: `cargo test --manifest-path crates/settings-model/Cargo.toml windows::`
+Expected: PASS — every existing `windows::` test still green (the traversal behavior is identical; only its home moved).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/settings-model/src/treewalk.rs crates/settings-model/src/windows.rs crates/settings-model/src/lib.rs
+git commit -m "Extract shared dict tree-walk helpers into a treewalk module"
+```
 
 ### Task A1: Overview read projection
 
@@ -147,15 +274,13 @@ Prepend to `crates/settings-model/src/overview.rs` (above the test module):
 //! inheritance); widths live in the `core_char` file (per tab). All EVE format
 //! knowledge (the `(timestamp, dict)` wrappers, the `(overviewScroll2, tab)`
 //! width key, column tokens as Bytes) lives here so the UI stays format-blind.
-//!
-//! ponytail: the small tree-walk helpers below (child_dict / timestamped_dict /
-//! unwrap_shared / is_bytes) mirror windows.rs; unify into a shared module if a
-//! third category needs them.
+//! Dict traversal reuses the shared `crate::treewalk` helpers.
 
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::path::{NodePath, Step};
+use crate::path::NodePath;
+use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared_ref, Entries};
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewColumns {
@@ -177,8 +302,6 @@ pub struct OverviewColumn {
     pub visible: bool,
     pub width: Option<i64>,
 }
-
-type Entries = Vec<(Value, Value)>;
 
 pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColumns {
     let tabs = tab_settings(user)
@@ -258,47 +381,6 @@ fn prettify(token: &str) -> String {
         Some(f) => f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase(),
         None => String::new(),
     }
-}
-
-// --- tree-walk helpers (mirror windows.rs; see module note) ---
-
-fn child_dict<'a>(parent: &'a Value, name: &[u8], base: NodePath) -> Option<(&'a Entries, NodePath)> {
-    let parent = unwrap_shared_ref(parent);
-    let Value::Dict(entries) = parent else { return None };
-    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| is_bytes(k, name))?;
-    let mut p = base;
-    p.push(Step::DictValue(i));
-    match unwrap_shared_ref(v) {
-        Value::Dict(d) => Some((d, p)),
-        _ => None,
-    }
-}
-
-fn timestamped_dict<'a>(parent: &'a Entries, base: &NodePath, name: &[u8]) -> Option<(&'a Entries, NodePath)> {
-    let (i, (_, v)) = parent.iter().enumerate().find(|(_, (k, _))| is_bytes(k, name))?;
-    let mut p = base.clone();
-    p.push(Step::DictValue(i));
-    match unwrap_shared_ref(v) {
-        Value::Dict(d) => Some((d, p)),
-        Value::Tuple(items) => {
-            let (ti, inner) = items.iter().enumerate().find(|(_, e)| matches!(e, Value::Dict(_)))?;
-            let Value::Dict(d) = inner else { return None };
-            p.push(Step::Tuple(ti));
-            Some((d, p))
-        }
-        _ => None,
-    }
-}
-
-fn unwrap_shared_ref(v: &Value) -> &Value {
-    match v {
-        Value::Shared { value, .. } => value,
-        other => other,
-    }
-}
-
-fn is_bytes(v: &Value, name: &[u8]) -> bool {
-    matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
 fn as_int(v: &Value) -> Option<i64> {
@@ -447,7 +529,7 @@ Expected: FAIL (`set_column_visible`/`set_column_order`/`OverviewError` not defi
 Add to `overview.rs` (implementation area, above tests). These functions locate the tab dict mutably, materialize its lists if absent, then edit:
 
 ```rust
-use crate::path::resolve_mut;
+use crate::path::{resolve_mut, Step};
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -1603,6 +1685,6 @@ Note M3c complete in the milestone-state memory (and that M3 — a/b/c — is do
 - §7 scope + cross-slot unsaved-changes guard → B2 (guard), C4 (widths in, per-tab, prettify), presets untouched. ✓
 - §8 testing (unit + two-slot + corpus) → A/B/C tests, D1. ✓
 
-**Placeholder scan:** no TBD/TODO; every code step shows code. The one deliberate simplification (naive prettify) is marked `ponytail:` in A1. ✓
+**Placeholder scan:** no TBD/TODO; every code step shows code. The one deliberate simplification (naive prettify) is marked `ponytail:` in A1. Shared tree-walk helpers are extracted (A0) rather than duplicated. ✓
 
 **Type consistency:** `Slot`/`slot` arg names match between api.ts and lib.rs commands; `OverviewColumns`/`OverviewTab`/`OverviewColumn` field names match across A1, C1, and api.ts; `set_column_visible/order/width` signatures match their callers in C1; `set_overview_*` command arg names (`tabIndex`, `column`, `visible`, `order`, `width`) match api.ts. ✓
