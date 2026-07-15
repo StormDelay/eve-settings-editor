@@ -30,12 +30,22 @@
     const v = parseInt((e.target as HTMLInputElement).value, 10);
     if (!Number.isNaN(v)) onGeom(w, field, v);
   };
+
+  // Bring a row into view when it becomes selected — a canvas click can select
+  // a window whose row is scrolled far out of a long list.
+  function scrollOnSelect(node: HTMLElement, selected: boolean) {
+    const run = (sel: boolean) => {
+      if (sel) node.scrollIntoView({ block: "nearest" });
+    };
+    run(selected);
+    return { update: run };
+  }
 </script>
 
 <div class="window-panel">
   {#each windows as w (w.id)}
     {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
-    <div class="row" class:selected={w.id === selectedId}>
+    <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
       <div class="row-head">
         <input
           type="checkbox"
@@ -104,14 +114,15 @@
   .window-panel {
     overflow-y: auto;
     font-size: 13px;
-    border-left: 1px solid #ddd;
-    min-width: 16rem;
+    border-left: 1px solid var(--border);
+    background: var(--bg-panel);
+    color: var(--fg);
   }
   .row {
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
   }
   .row.selected {
-    background: #eef4ff;
+    background: rgba(79, 156, 240, 0.18);
   }
   .row-head {
     display: flex;
@@ -121,18 +132,25 @@
   }
   .name {
     flex: 1;
+    min-width: 0; /* allow truncation instead of forcing the row wider */
     text-align: left;
     background: none;
     border: none;
+    color: var(--fg);
     cursor: pointer;
     font: inherit;
     padding: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .badge.warn {
-    background: #fde68a;
+    background: var(--warn);
+    color: #33260a;
     border-radius: 3px;
     padding: 0 0.3rem;
     font-size: 11px;
+    white-space: nowrap;
   }
   .detail {
     padding: 0.4rem 0.6rem 0.6rem;
@@ -149,10 +167,20 @@
     display: grid;
     gap: 0.1rem;
     font-size: 11px;
+    color: var(--fg-dim);
   }
-  .coords input {
+  .detail input {
     width: 100%;
     box-sizing: border-box;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 4px;
+    font: inherit;
+  }
+  .detail input:focus {
+    outline: 1px solid var(--accent);
   }
   .flags {
     display: grid;
@@ -162,5 +190,6 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
+    color: var(--fg);
   }
 </style>
