@@ -11,6 +11,11 @@ const check = (name: string, ok: boolean) => {
 check("scale maps reference width onto the container", canvasScale(2560, 1280) === 0.5);
 check("scale is 1 when the reference has no width", canvasScale(0, 1280) === 1);
 
+// Absolute direction check: toCanvas multiplies by scale (a round-trip test
+// alone can't tell a correct pair from a consistently-swapped one).
+check("toCanvas scales data px up to canvas px", toCanvas(2560, 0.5) === 1280);
+check("toData scales canvas px back down to data px", toData(1280, 0.5) === 2560);
+
 // The drag round-trip: a data value converted to canvas px and back is itself.
 for (const scale of [0.5, 0.37, 1, 2]) {
   for (const v of [0, 1, 16, 424, 2559]) {
