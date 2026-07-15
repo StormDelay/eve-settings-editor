@@ -69,6 +69,12 @@ export interface BackupInfo {
   size: number;
 }
 
+export interface ResolvedName {
+  name: string;
+  category: string;
+}
+export type NameMap = Record<string, ResolvedName>;
+
 export interface ErrDto {
   code: string;
   message: string;
@@ -151,6 +157,10 @@ export const api = {
   restoreBackup: (backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { backupPath }),
   windowLayout: () => invoke<WindowLayout>("window_layout"),
+  resolveCharacterNames: (ids: number[]) =>
+    invoke<NameMap>("resolve_character_names", { ids }),
+  refreshCharacterNames: (ids: number[]) =>
+    invoke<NameMap>("refresh_character_names", { ids }),
 };
 
 export function errMessage(e: unknown): string {
