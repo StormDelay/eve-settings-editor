@@ -2,8 +2,10 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, errMessage, type Profile } from "./api";
   import { names, resolveNames, refreshNames } from "./names.svelte";
+  import { aliasFor, loadRoster } from "./accounts.svelte";
 
-  let { onOpen }: { onOpen: (path: string) => void } = $props();
+  let { onOpen, onShowAccounts }: { onOpen: (path: string) => void; onShowAccounts: () => void } =
+    $props();
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
@@ -50,6 +52,7 @@
     try {
       profiles = await api.discover();
       void resolveNames(charIds(profiles));
+      void loadRoster();
       error = null;
       if (announce) {
         const n = profiles.length;
@@ -94,6 +97,8 @@
       onclick={refreshNamesClick}
       disabled={namesBusy}
       title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
+    <button onclick={onShowAccounts} title="Manage account names and character associations"
+      >Accounts</button>
   </div>
   <label class="toggle" title="Show only EVE's own core_char_<id>.dat / core_user_<id>.dat files">
     <input type="checkbox" bind:checked={hideNonStandard} />
@@ -113,9 +118,15 @@
       <ul>
         {#each p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name)) as f (f.path)}
           {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
+          {@const label =
+            hit
+              ? hit.name
+              : f.kind === "user" && f.id != null && aliasFor(f.id)
+                ? aliasFor(f.id)
+                : f.file_name}
           <li>
             <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-              {hit ? hit.name : f.file_name}
+              {label}
               <span class="meta">{Math.round(f.size / 1024)} KB</span>
             </button>
           </li>
