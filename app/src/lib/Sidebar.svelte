@@ -9,6 +9,7 @@
   let error: string | null = $state(null);
   let flash: string | null = $state(null);
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let namesBusy = $state(false);
 
   // Two installs can hold the same server and profile name (a SharedCache dir
   // and a legacy one both with settings_Default) — then, and only then, the
@@ -57,6 +58,19 @@
     }
   }
 
+  async function refreshNamesClick() {
+    if (namesBusy) return;
+    namesBusy = true;
+    try {
+      await refreshNames(charIds(profiles));
+    } finally {
+      namesBusy = false;
+    }
+    flash = "Names refreshed";
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (flash = null), 2000);
+  }
+
   async function pickFile() {
     const picked = await openDialog({
       multiple: false,
@@ -73,8 +87,9 @@
     <button onclick={pickFile}>Open file…</button>
     <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
     <button
-      onclick={() => refreshNames(charIds(profiles))}
-      title="Re-fetch character names from ESI">Refresh names</button>
+      onclick={refreshNamesClick}
+      disabled={namesBusy}
+      title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
   </div>
   {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
