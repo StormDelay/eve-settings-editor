@@ -147,6 +147,29 @@ export interface WindowLayout {
   windows: WindowRect[];
 }
 
+export type Confidence = "high" | "medium" | "low";
+export interface Suggestion {
+  char_id: number;
+  user_id: number;
+  confidence: Confidence;
+  basis: string;
+}
+export interface AccountView {
+  user_id: number;
+  alias: string | null;
+  characters: number[];
+  suggestions: Suggestion[];
+}
+export interface AccountRoster {
+  accounts: AccountView[];
+  unassigned: number[];
+}
+export interface CaptureResult {
+  changed_chars: number[];
+  changed_users: number[];
+  detected: [number, number] | null;
+}
+
 export const api = {
   discover: () => invoke<Profile[]>("discover_profiles"),
   open: (path: string) => invoke<OpenOutcome>("open_file", { path }),
@@ -161,6 +184,15 @@ export const api = {
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
     invoke<NameMap>("refresh_character_names", { ids }),
+  accountRoster: () => invoke<AccountRoster>("account_roster"),
+  setAccountAlias: (userId: number, alias: string | null) =>
+    invoke<AccountRoster>("set_account_alias", { userId, alias }),
+  confirmPairing: (charId: number, userId: number) =>
+    invoke<AccountRoster>("confirm_pairing", { charId, userId }),
+  unpairCharacter: (charId: number) =>
+    invoke<AccountRoster>("unpair_character", { charId }),
+  beginCapture: () => invoke<void>("begin_capture"),
+  resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
 };
 
 export function errMessage(e: unknown): string {
