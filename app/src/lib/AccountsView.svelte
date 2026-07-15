@@ -69,7 +69,7 @@
   {#if capturing}
     <div class="capture" role="dialog" aria-label="Calibrate an account">
       <p>1. Launch EVE and log in as the character whose account you want to identify.</p>
-      <p>2. Change an account-wide setting so the account file is written.</p>
+      <p>2. Change an account-wide setting (e.g. toggle Camera Shake under Settings → Display &amp; Graphics) so the account file is written.</p>
       <p>3. Fully log out / close the client, then click Done.</p>
       <div class="capture-actions">
         <button onclick={finishCapture}>Done</button>
