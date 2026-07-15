@@ -4,12 +4,15 @@
   import InsertForm from "$lib/InsertForm.svelte";
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
+  import AccountsView from "$lib/AccountsView.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names } from "$lib/names.svelte";
+  import { aliasFor } from "$lib/accounts.svelte";
   import { ask, message } from "@tauri-apps/plugin-dialog";
 
+  let mainView: "file" | "accounts" = $state("file");
   let current: OpenOutcome | null = $state(null);
   let dirty = $state(false);
   let insertTarget: TreeNodeData | null = $state(null);
@@ -68,6 +71,7 @@
       dirty = false;
       savedAt += 1;
       view = "tree";
+      mainView = "file";
       selectedWindowId = null;
       reveal = null;
       try {
@@ -149,7 +153,10 @@
 />
 
 <main class="layout">
-  <Sidebar onOpen={openFile} />
+  <Sidebar onOpen={openFile} onShowAccounts={() => (mainView = "accounts")} />
+  {#if mainView === "accounts"}
+    <AccountsView />
+  {:else}
   <section class="editor">
     {#if current === null}
       <p class="hint">Open a settings file to begin.</p>
@@ -244,5 +251,6 @@
         />
       </div>
     </div>
+  {/if}
   {/if}
 </main>

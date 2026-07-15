@@ -3,7 +3,8 @@
   import { api, errMessage, type Profile } from "./api";
   import { names, resolveNames, refreshNames } from "./names.svelte";
 
-  let { onOpen }: { onOpen: (path: string) => void } = $props();
+  let { onOpen, onShowAccounts }: { onOpen: (path: string) => void; onShowAccounts: () => void } =
+    $props();
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
@@ -94,6 +95,8 @@
       onclick={refreshNamesClick}
       disabled={namesBusy}
       title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
+    <button onclick={onShowAccounts} title="Manage account names and character associations"
+      >Accounts</button>
   </div>
   <label class="toggle" title="Show only EVE's own core_char_<id>.dat / core_user_<id>.dat files">
     <input type="checkbox" bind:checked={hideNonStandard} />
