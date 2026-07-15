@@ -162,7 +162,7 @@
 <main class="layout">
   <Sidebar onOpen={openFile} onShowAccounts={() => (mainView = "accounts")} />
   {#if mainView === "accounts"}
-    <AccountsView />
+    <AccountsView openPath={current?.status === "opened" ? current.path : null} />
   {:else}
   <section class="editor">
     {#if current === null}
