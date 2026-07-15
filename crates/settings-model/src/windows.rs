@@ -95,21 +95,45 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         return empty;
     };
 
+    // Optional sibling flag dicts, resolved once (each may be absent).
+    let bool_dicts: Vec<Option<(&Entries, NodePath)>> = BOOL_FLAGS
+        .iter()
+        .map(|name| timestamped_dict(windows_dict, &windows_path, name.as_bytes()))
+        .collect();
+    let stacks_dict = timestamped_dict(windows_dict, &windows_path, b"stacksWindows");
+
     let mut windows = Vec::new();
     for (wi, (key, val)) in geom_dict.iter().enumerate() {
         let id = decode_id(key);
         let mut entry_path = geom_path.clone();
         entry_path.push(Step::DictValue(wi));
         let geom = extract_geom(val, &entry_path);
+
+        let mut flags = Vec::with_capacity(BOOL_FLAGS.len());
+        let mut open = false;
+        for (name, dict) in BOOL_FLAGS.iter().zip(&bool_dicts) {
+            let (value, set) = match dict {
+                Some((entries, dpath)) => bool_flag(entries, dpath, key),
+                None => (false, SetTarget::Unavailable),
+            };
+            if *name == "openWindows" {
+                open = value;
+            }
+            flags.push(BoolFlag { name: (*name).to_string(), value, set });
+        }
+        let stacks = stacks_dict
+            .as_ref()
+            .and_then(|(entries, dpath)| stack_field(entries, dpath, key));
+
         windows.push(WindowRect {
             id: id.clone(),
             label: id,
-            open: false,          // filled in Task 2
+            open,
             renderable: geom.is_some(),
             resolution_matches: true, // fixed up below
             geom,
-            flags: Vec::new(),    // filled in Task 2
-            stacks: None,         // filled in Task 2
+            flags,
+            stacks,
         });
     }
 
@@ -215,10 +239,51 @@ fn extract_geom(val: &Value, entry_path: &NodePath) -> Option<Geom> {
     })
 }
 
-/// The resolution the most windows agree on. Task 2 refines this to prefer open
-/// windows; here it is the mode across all renderable windows.
+fn bool_flag(entries: &Entries, dpath: &NodePath, key: &Value) -> (bool, SetTarget) {
+    match entries.iter().enumerate().find(|(_, (k, _))| k == key) {
+        Some((i, (_, v))) => {
+            let mut p = dpath.clone();
+            p.push(Step::DictValue(i));
+            (matches!(v, Value::Bool(true)), SetTarget::Set { path: p })
+        }
+        None => match key_as_new_value(key) {
+            Some(nv) => (false, SetTarget::Insert { parent: dpath.clone(), key: nv }),
+            None => (false, SetTarget::Unavailable),
+        },
+    }
+}
+
+fn stack_field(entries: &Entries, dpath: &NodePath, key: &Value) -> Option<StackField> {
+    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| k == key)?;
+    // Editable only when the stack id is a plain integer; anything else stays
+    // raw-tree-only rather than exposing a control that cannot round-trip.
+    let Value::Int(n) = v else { return None };
+    let mut p = dpath.clone();
+    p.push(Step::DictValue(i));
+    Some(StackField { text: n.to_string(), path: p })
+}
+
+/// Reconstruct a dict key as the `NewValue` an insert mutation needs. Window
+/// ids are byte-strings or (parameterized) strings.
+fn key_as_new_value(key: &Value) -> Option<NewValue> {
+    match key {
+        Value::Bytes(b) => Some(NewValue::BytesHex(hex(b))),
+        Value::Str(s) => Some(NewValue::Str(s.clone())),
+        Value::StrUcs2(s) => Some(NewValue::StrUcs2(s.clone())),
+        _ => None,
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The resolution the most windows agree on. Prefers open windows (what the
+/// canvas actually draws); falls back to all renderable windows, then (0, 0).
 fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
-    mode(windows.iter().filter_map(|w| w.geom.as_ref().map(|g| (g.screen_w, g.screen_h))))
+    let res = |w: &WindowRect| w.geom.as_ref().map(|g| (g.screen_w, g.screen_h));
+    mode(windows.iter().filter(|w| w.open).filter_map(res))
+        .or_else(|| mode(windows.iter().filter_map(res)))
         .unwrap_or((0, 0))
 }
 
@@ -318,5 +383,136 @@ mod tests {
         let doc = Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), Value::Dict(vec![]))]);
         let wl = window_layout(&doc);
         assert!(wl.windows.is_empty());
+    }
+
+    /// Build root -> b"windows" -> { geometry, openWindows, lockedWindows, stacksWindows }.
+    fn doc_with_flags() -> Value {
+        Value::Dict(vec![(
+            Value::Bytes(b"windows".to_vec()),
+            Value::Dict(vec![
+                (
+                    Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![
+                            (Value::Bytes(b"overview".to_vec()), geom(1, 2, 3, 4, 2560, 1440)),
+                            (Value::Bytes(b"market".to_vec()), geom(5, 6, 7, 8, 2560, 1440)),
+                        ]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"openWindows".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![
+                            (Value::Bytes(b"overview".to_vec()), Value::Bool(true)),
+                            (Value::Bytes(b"market".to_vec()), Value::Bool(false)),
+                        ]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"lockedWindows".to_vec()),
+                    // Only overview has an entry; market's locked flag is absent.
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bool(true))]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"stacksWindows".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Int(42))]),
+                    ]),
+                ),
+            ]),
+        )])
+    }
+
+    fn flag<'a>(w: &'a WindowRect, name: &str) -> &'a BoolFlag {
+        w.flags.iter().find(|f| f.name == name).expect("flag present")
+    }
+
+    #[test]
+    fn open_and_present_flags_carry_set_targets() {
+        let doc = doc_with_flags();
+        let wl = window_layout(&doc);
+        let ov = &wl.windows[0];
+        assert!(ov.open, "overview is open");
+        assert_eq!(ov.flags.len(), 7);
+        let locked = flag(ov, "lockedWindows");
+        assert!(locked.value);
+        // A present flag resolves to a set path over the real Bool(true).
+        match &locked.set {
+            SetTarget::Set { path } => assert_eq!(resolve(&doc, path), Some(&Value::Bool(true))),
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_absent_flag_carries_insert_params() {
+        let doc = doc_with_flags();
+        let wl = window_layout(&doc);
+        let market = &wl.windows[1];
+        assert!(!market.open, "market is closed");
+        let locked = flag(market, "lockedWindows");
+        assert!(!locked.value);
+        // market has no lockedWindows entry -> insert with its byte-string key.
+        match &locked.set {
+            SetTarget::Insert { key, .. } => {
+                assert!(matches!(key, NewValue::BytesHex(h) if h == "6d61726b6574")); // b"market"
+            }
+            other => panic!("expected Insert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_flag_dict_is_unavailable() {
+        // doc_with (Task 1) has geometry but no flag dicts at all.
+        let doc = doc_with(vec![(Value::Bytes(b"overview".to_vec()), geom(1, 2, 3, 4, 2560, 1440))]);
+        let wl = window_layout(&doc);
+        assert!(matches!(flag(&wl.windows[0], "openWindows").set, SetTarget::Unavailable));
+    }
+
+    #[test]
+    fn stacks_is_an_editable_value_when_numeric() {
+        let doc = doc_with_flags();
+        let wl = window_layout(&doc);
+        let ov = &wl.windows[0];
+        let s = ov.stacks.as_ref().expect("overview has a stack id");
+        assert_eq!(s.text, "42");
+        assert_eq!(resolve(&doc, &s.path), Some(&Value::Int(42)));
+        // market has no stacks entry.
+        assert!(wl.windows[1].stacks.is_none());
+    }
+
+    #[test]
+    fn reference_prefers_open_windows() {
+        // Two closed windows at 1920x1080, one open at 2560x1440: the open one wins.
+        let doc = Value::Dict(vec![(
+            Value::Bytes(b"windows".to_vec()),
+            Value::Dict(vec![
+                (
+                    Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![
+                            (Value::Bytes(b"a".to_vec()), geom(0, 0, 1, 1, 1920, 1080)),
+                            (Value::Bytes(b"b".to_vec()), geom(0, 0, 1, 1, 1920, 1080)),
+                            (Value::Bytes(b"c".to_vec()), geom(0, 0, 1, 1, 2560, 1440)),
+                        ]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"openWindows".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![(Value::Bytes(b"c".to_vec()), Value::Bool(true))]),
+                    ]),
+                ),
+            ]),
+        )]);
+        let wl = window_layout(&doc);
+        assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
     }
 }
