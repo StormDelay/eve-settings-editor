@@ -4,12 +4,15 @@
   import InsertForm from "$lib/InsertForm.svelte";
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
+  import AccountsView from "$lib/AccountsView.svelte";
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names } from "$lib/names.svelte";
+  import { aliasFor } from "$lib/accounts.svelte";
   import { ask, message } from "@tauri-apps/plugin-dialog";
 
+  let mainView: "file" | "accounts" = $state("file");
   let current: OpenOutcome | null = $state(null);
   let dirty = $state(false);
   let insertTarget: TreeNodeData | null = $state(null);
@@ -28,6 +31,13 @@
     if (!m) return null;
     const hit = names[m[1]];
     return hit ? hit.name : null;
+  });
+
+  // Alias for the loaded user file, if named. `core_user_<id>.dat` -> alias.
+  const openUserAlias = $derived.by(() => {
+    if (current?.status !== "opened") return null;
+    const m = current.file_name.match(/^core_user_(\d+)\.dat$/);
+    return m ? aliasFor(Number(m[1])) : null;
   });
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
@@ -68,6 +78,7 @@
       dirty = false;
       savedAt += 1;
       view = "tree";
+      mainView = "file";
       selectedWindowId = null;
       reveal = null;
       try {
@@ -149,14 +160,17 @@
 />
 
 <main class="layout">
-  <Sidebar onOpen={openFile} />
+  <Sidebar onOpen={openFile} onShowAccounts={() => (mainView = "accounts")} />
+  {#if mainView === "accounts"}
+    <AccountsView openPath={current?.status === "opened" ? current.path : null} />
+  {:else}
   <section class="editor">
     {#if current === null}
       <p class="hint">Open a settings file to begin.</p>
     {:else if current.status === "opened"}
       <header class="filebar">
         <span class="filename">
-          {#if openCharName}{openCharName} — {/if}{current.file_name}
+          {#if openCharName}{openCharName} — {/if}{#if openUserAlias}{openUserAlias} — {/if}{current.file_name}
         </span>
         {#if current.fidelity.state === "read_only"}
           <span class="badge read-only" title={current.fidelity.reason}>read-only</span>
@@ -244,5 +258,6 @@
         />
       </div>
     </div>
+  {/if}
   {/if}
 </main>

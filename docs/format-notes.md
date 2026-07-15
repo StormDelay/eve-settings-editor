@@ -652,3 +652,17 @@ seconds of each other (observed 3 s apart), so mtime clustering is a solid
 the user file's capsule container-window ids embed the account's own
 characters' names (unreliable — capsules can be renamed; suggestion only,
 per spec §6's confirm-into-alias flow).
+
+**Guided-capture account-write trigger (M3b live smoke, 2026-07-15):** the
+controlled-logout capture needs an *account-level* change so `core_user`
+advances (the played character's `core_char` mtime advances on logout
+regardless, which identifies the character). Confirmed reliable trigger:
+toggling **Camera Shake** (Settings → Display & Graphics), an account-scoped
+graphics setting — this is the example the app's capture dialog names. Other
+account-level writers per the mappings above: any Display/Graphics or Audio
+setting; an overview column add/remove/reorder (`overview → tabsettings_new`;
+the char file only timestamp-bumps); an overview filter-preset edit
+(`overview → overviewProfilePresets`); or appending to `ui → editHistory` by
+typing into an autocompleting field. (M3b dropped the passive name-match
+suggestion tier — parsing every user file froze the UI — so manual pairing +
+this capture are the association paths that shipped.)
