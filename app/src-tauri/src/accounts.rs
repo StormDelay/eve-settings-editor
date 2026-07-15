@@ -327,6 +327,105 @@ pub fn capture_diff(baseline: &Snapshot, after: &Snapshot) -> CaptureResult {
     CaptureResult { changed_chars, changed_users, detected }
 }
 
+use settings_model::FileKind;
+
+/// A point-in-time snapshot of discovered char/user files (those with an id),
+/// optionally excluding one path (the currently-open document, which the app
+/// itself might write during a capture).
+pub fn snapshot_from_profiles(
+    profiles: &[settings_model::Profile],
+    exclude: Option<&Path>,
+) -> Snapshot {
+    let mut snap = Snapshot::new();
+    for p in profiles {
+        for f in &p.files {
+            let (Some(id), Some(mtime)) = (f.id, f.modified_unix) else { continue };
+            if exclude == Some(f.path.as_path()) {
+                continue;
+            }
+            let kind = match f.kind {
+                FileKind::Char => Kind::Char,
+                FileKind::User => Kind::User,
+                FileKind::Other => continue,
+            };
+            snap.insert(f.path.clone(), FileMeta { id, kind, mtime, profile: p.dir.clone() });
+        }
+    }
+    snap
+}
+
+fn files_from_profiles(profiles: &[settings_model::Profile]) -> Vec<FileMeta> {
+    snapshot_from_profiles(profiles, None).into_values().collect()
+}
+
+/// Parse each discovered user file and collect its text leaves, for name
+/// matching. A file that fails to parse simply contributes nothing.
+fn load_user_texts(profiles: &[settings_model::Profile]) -> HashMap<u64, Vec<String>> {
+    let mut out = HashMap::new();
+    for p in profiles {
+        for f in &p.files {
+            if f.kind != FileKind::User {
+                continue;
+            }
+            let Some(id) = f.id else { continue };
+            if let Ok(doc) = settings_model::Document::load(&f.path) {
+                out.insert(id, collect_strings(&doc.value));
+            }
+        }
+    }
+    out
+}
+
+/// Character id → name, from the M3a on-disk names cache.
+fn names_map(dir: &Path) -> HashMap<u64, String> {
+    crate::names::load_cache(dir).into_iter().map(|(id, r)| (id, r.name)).collect()
+}
+
+/// Build the full roster: discover, scan user files, load names + store, rank.
+pub fn load_roster(roots: &[PathBuf], dir: &Path) -> AccountRoster {
+    let profiles = settings_model::discover(roots);
+    let files = files_from_profiles(&profiles);
+    let user_texts = load_user_texts(&profiles);
+    let names = names_map(dir);
+    let store = load_store(dir);
+    let suggestions = rank(&files, &user_texts, &names, &store);
+    build_roster(&files, &store, &suggestions)
+}
+
+// ponytail: each mutation reloads the whole roster (re-discovers + re-parses
+// user files). Fine for a handful of local files and user-initiated edits; if
+// it ever drags, cache the parsed texts in AppState.
+pub fn set_account_alias(
+    roots: &[PathBuf],
+    dir: &Path,
+    user_id: u64,
+    alias: Option<String>,
+) -> AccountRoster {
+    let mut store = load_store(dir);
+    set_alias(&mut store, user_id, alias);
+    let _ = save_store(dir, &store);
+    load_roster(roots, dir)
+}
+
+pub fn confirm_pairing(
+    roots: &[PathBuf],
+    dir: &Path,
+    char_id: u64,
+    user_id: u64,
+) -> Result<AccountRoster, String> {
+    let mut store = load_store(dir);
+    confirm(&mut store, char_id, user_id)?;
+    let _ = save_store(dir, &store);
+    Ok(load_roster(roots, dir))
+}
+
+pub fn unpair_character(roots: &[PathBuf], dir: &Path, char_id: u64) -> AccountRoster {
+    let mut store = load_store(dir);
+    unpair(&mut store, char_id);
+    let _ = save_store(dir, &store);
+    load_roster(roots, dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,5 +813,109 @@ mod tests {
         let r = capture_diff(&base, &after);
         assert!(r.changed_chars.is_empty(), "unchanged mtime not reported");
         assert_eq!(r.changed_users, vec![987654]);
+    }
+
+    use blue_marshal::encode;
+
+    /// Write a real settings tree whose text embeds `name` so the name-scan can find it.
+    fn write_user_file(path: &Path, name: &str) {
+        let v = Value::Dict(vec![(
+            Value::Bytes(b"capsuleWindow".to_vec()),
+            Value::Str(format!("cap_{name}_window")),
+        )]);
+        fs::write(path, encode(&v).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn load_roster_end_to_end_from_a_temp_tree() {
+        // Discovery root: <root>/<install>_<server>/settings_Default/core_(char|user)_<id>.dat
+        let root = temp_dir("roster-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        write_user_file(&sdir.join("core_user_987654.dat"), "Jita Trader");
+        // A minimal char file (contents don't matter for the char side).
+        fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+
+        // Seed the M3a names cache so the char id resolves to the embedded name.
+        let appdir = temp_dir("roster-appdata");
+        fs::create_dir_all(&appdir).unwrap();
+        fs::write(
+            appdir.join("names-cache.json"),
+            br#"{"90000001":{"name":"Jita Trader","category":"character"}}"#,
+        )
+        .unwrap();
+
+        let roster = load_roster(&[root], &appdir);
+        let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        // Name match present → at least Medium; empty account → suggestion attached.
+        assert!(acct.suggestions.iter().any(|s| s.char_id == 90000001));
+        assert_eq!(roster.unassigned, vec![90000001]);
+    }
+
+    #[test]
+    fn confirm_pairing_persists_and_reflects_in_the_roster() {
+        let root = temp_dir("confirm-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_987654.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("confirm-appdata");
+
+        let roster = confirm_pairing(&[root.clone()], &appdir, 90000001, 987654).unwrap();
+        let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        assert_eq!(acct.characters, vec![90000001]);
+        assert!(roster.unassigned.is_empty());
+        // Persisted across a reload.
+        assert_eq!(load_store(&appdir).accounts[&987654].characters, vec![90000001]);
+    }
+
+    #[test]
+    fn set_account_alias_persists_and_appears_on_the_roster() {
+        let root = temp_dir("alias-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_987654.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("alias-appdata");
+
+        let roster = set_account_alias(&[root.clone()], &appdir, 987654, Some("Main".into()));
+        let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        assert_eq!(acct.alias.as_deref(), Some("Main"));
+        // Persisted across a reload.
+        assert_eq!(load_store(&appdir).accounts[&987654].alias.as_deref(), Some("Main"));
+    }
+
+    #[test]
+    fn unpair_character_removes_it_and_returns_it_to_unassigned() {
+        let root = temp_dir("unpair-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_987654.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("unpair-appdata");
+
+        confirm_pairing(&[root.clone()], &appdir, 90000001, 987654).unwrap();
+        let roster = unpair_character(&[root.clone()], &appdir, 90000001);
+        let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
+        assert!(acct.characters.is_empty(), "char removed from the account");
+        assert_eq!(roster.unassigned, vec![90000001], "char back in unassigned");
+        // Persisted across a reload.
+        assert!(load_store(&appdir).accounts[&987654].characters.is_empty());
+    }
+
+    #[test]
+    fn snapshot_from_profiles_exclude_omits_exactly_that_file() {
+        let root = temp_dir("snapshot-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        let user_path = sdir.join("core_user_987654.dat");
+        let char_path = sdir.join("core_char_90000001.dat");
+        fs::write(&user_path, encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(&char_path, encode(&Value::Int(1)).unwrap()).unwrap();
+
+        let profiles = settings_model::discover(&[root]);
+        let snap = snapshot_from_profiles(&profiles, Some(user_path.as_path()));
+        assert_eq!(snap.len(), 1, "only the excluded file is omitted");
+        assert!(!snap.contains_key(&user_path), "excluded file omitted");
+        assert!(snap.contains_key(&char_path), "other file still present");
     }
 }
