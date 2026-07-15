@@ -129,6 +129,99 @@ fn walk_strings(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+use std::collections::HashSet;
+
+/// Only char/user files participate in correlation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Char,
+    User,
+}
+
+/// A discovered settings file reduced to what correlation needs. `profile` is
+/// the settings dir, so mtime clustering stays within one profile.
+#[derive(Debug, Clone)]
+pub struct FileMeta {
+    pub id: u64,
+    pub kind: Kind,
+    pub mtime: u64,
+    pub profile: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Confidence {
+    High,
+    Medium,
+    Low,
+}
+
+/// A labelled guess that `char_id` belongs to `user_id`. Never authoritative.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Suggestion {
+    pub char_id: u64,
+    pub user_id: u64,
+    pub confidence: Confidence,
+    pub basis: String,
+}
+
+// ponytail: 10s clustering window eyeballed from logout write spacing; widen
+// once real captures show how far apart the char/user writes actually land.
+const MTIME_WINDOW_SECS: u64 = 10;
+
+/// Rank correlation guesses. In-file name match is the primary, durable signal
+/// (a user file's text keeps its characters' names regardless of when they last
+/// played); mtime proximity within a profile is a recency corroborator. Confirmed
+/// characters and full accounts are excluded.
+pub fn rank(
+    files: &[FileMeta],
+    user_texts: &HashMap<u64, Vec<String>>,
+    names: &HashMap<u64, String>,
+    store: &AccountsStore,
+) -> Vec<Suggestion> {
+    let confirmed: HashSet<u64> =
+        store.accounts.values().flat_map(|a| a.characters.iter().copied()).collect();
+    let full: HashSet<u64> = store
+        .accounts
+        .iter()
+        .filter(|(_, a)| a.characters.len() >= MAX_CHARS_PER_ACCOUNT)
+        .map(|(&u, _)| u)
+        .collect();
+
+    let chars = files.iter().filter(|f| f.kind == Kind::Char);
+    let users: Vec<&FileMeta> = files.iter().filter(|f| f.kind == Kind::User).collect();
+
+    let mut out = Vec::new();
+    for c in chars {
+        if confirmed.contains(&c.id) {
+            continue;
+        }
+        let name = names.get(&c.id).map(|n| n.to_lowercase());
+        for u in &users {
+            if full.contains(&u.id) {
+                continue;
+            }
+            let name_match = match &name {
+                Some(n) => user_texts
+                    .get(&u.id)
+                    .is_some_and(|texts| texts.iter().any(|t| t.to_lowercase().contains(n.as_str()))),
+                None => false,
+            };
+            let mtime_match =
+                c.profile == u.profile && c.mtime.abs_diff(u.mtime) <= MTIME_WINDOW_SECS;
+            let (confidence, basis) = match (name_match, mtime_match) {
+                (true, true) => (Confidence::High, "name match + recent logout"),
+                (true, false) => (Confidence::Medium, "name match"),
+                (false, true) => (Confidence::Low, "recent logout"),
+                (false, false) => continue,
+            };
+            out.push(Suggestion { char_id: c.id, user_id: u.id, confidence, basis: basis.into() });
+        }
+    }
+    out.sort_by(|a, b| (a.char_id, a.user_id).cmp(&(b.char_id, b.user_id)));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +358,58 @@ mod tests {
             assert!(got.contains(&want.to_string()), "missing {want:?} in {got:?}");
         }
         assert!(!got.iter().any(|s| s.is_empty()), "empty bytes contributed nothing: {got:?}");
+    }
+
+    fn char(id: u64, mtime: u64, profile: &str) -> FileMeta {
+        FileMeta { id, kind: Kind::Char, mtime, profile: PathBuf::from(profile) }
+    }
+    fn user(id: u64, mtime: u64, profile: &str) -> FileMeta {
+        FileMeta { id, kind: Kind::User, mtime, profile: PathBuf::from(profile) }
+    }
+
+    #[test]
+    fn rank_name_and_mtime_agree_is_high() {
+        let files = vec![char(90000001, 1000, "p"), user(987654, 1005, "p")];
+        let texts = HashMap::from([(987654u64, vec!["capsule Jita Trader window".to_string()])]);
+        let names = HashMap::from([(90000001u64, "Jita Trader".to_string())]);
+        let s = rank(&files, &texts, &names, &AccountsStore::default());
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].char_id, 90000001);
+        assert_eq!(s[0].user_id, 987654);
+        assert_eq!(s[0].confidence, Confidence::High);
+    }
+
+    #[test]
+    fn rank_name_only_is_medium_across_profiles() {
+        // mtimes far apart AND different profiles → no mtime signal.
+        let files = vec![char(90000001, 1000, "p1"), user(987654, 99999, "p2")];
+        let texts = HashMap::from([(987654u64, vec!["Jita Trader".to_string()])]);
+        let names = HashMap::from([(90000001u64, "Jita Trader".to_string())]);
+        let s = rank(&files, &texts, &names, &AccountsStore::default());
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].confidence, Confidence::Medium);
+    }
+
+    #[test]
+    fn rank_mtime_only_is_low() {
+        let files = vec![char(90000001, 1000, "p"), user(987654, 1003, "p")];
+        let s = rank(&files, &HashMap::new(), &HashMap::new(), &AccountsStore::default());
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].confidence, Confidence::Low);
+    }
+
+    #[test]
+    fn rank_excludes_confirmed_characters_and_full_accounts() {
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 987654).unwrap(); // already assigned
+        let files = vec![char(90000001, 1000, "p"), user(987654, 1002, "p")];
+        // No suggestion for an already-confirmed char.
+        assert!(rank(&files, &HashMap::new(), &HashMap::new(), &store).is_empty());
+    }
+
+    #[test]
+    fn rank_no_signal_yields_nothing() {
+        let files = vec![char(90000001, 1000, "p1"), user(987654, 99999, "p2")];
+        assert!(rank(&files, &HashMap::new(), &HashMap::new(), &AccountsStore::default()).is_empty());
     }
 }
