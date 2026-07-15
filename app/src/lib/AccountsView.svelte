@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage, type Suggestion } from "./api";
+  import { api, errMessage } from "./api";
   import { names } from "./names.svelte";
   import { accountsStore, loadRoster, setAlias, confirmPairing, unpair } from "./accounts.svelte";
 
@@ -26,6 +26,34 @@
     await setAlias(userId, value.trim() === "" ? null : value);
   }
 
+  async function startCapture() {
+    captureNote = null;
+    await api.beginCapture();
+    capturing = true;
+  }
+
+  async function finishCapture() {
+    const r = await api.resolveCapture();
+    if (r.detected) {
+      const [charId, userId] = r.detected;
+      try {
+        await confirmPairing(charId, userId);
+        captureNote = `Paired ${nameOf(charId)} ↔ account ${userId}.`;
+        capturing = false;
+      } catch (e) {
+        captureNote = errMessage(e);
+      }
+    } else if (r.changed_users.length === 0) {
+      captureNote =
+        "The account file didn't change. Make an account-wide change (so core_user is written), fully log out, then click Done again.";
+    } else if (r.changed_users.length > 1) {
+      captureNote = `Several account files changed (${r.changed_users.join(", ")}). Log out of just one account and retry.`;
+    } else {
+      captureNote = "No matching character file changed — log in as one character, change something, log out, and retry.";
+    }
+    await loadRoster();
+  }
+
   loadRoster();
 </script>
 
@@ -34,9 +62,21 @@
     <h2>Accounts</h2>
     <div class="head-actions">
       <button onclick={() => loadRoster()}>Refresh</button>
-      <button onclick={() => (capturing = true)}>Calibrate an account…</button>
+      <button onclick={startCapture}>Calibrate an account…</button>
     </div>
   </header>
+
+  {#if capturing}
+    <div class="capture" role="dialog" aria-label="Calibrate an account">
+      <p>1. Launch EVE and log in as the character whose account you want to identify.</p>
+      <p>2. Change an account-wide setting so the account file is written.</p>
+      <p>3. Fully log out / close the client, then click Done.</p>
+      <div class="capture-actions">
+        <button onclick={finishCapture}>Done</button>
+        <button onclick={() => (capturing = false)}>Cancel</button>
+      </div>
+    </div>
+  {/if}
 
   {#if error}<p class="error">{error}</p>{/if}
   {#if captureNote}<p class="flash" aria-live="polite">{captureNote}</p>{/if}
@@ -116,5 +156,8 @@
   .chip.empty select { border: none; background: transparent; }
   .x, .ok { border: none; background: transparent; cursor: pointer; }
   .error { color: #c0392b; }
+  .capture { border: 1px solid var(--line, #3333); border-radius: 8px; padding: 0.75rem;
+             margin: 0.75rem 0; background: var(--panel, #0001); }
+  .capture-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .unassigned h3 { margin: 1rem 0 0.3rem; font-size: 0.9em; opacity: 0.7; }
 </style>
