@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
-  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue } from "$lib/api";
+  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath } from "$lib/api";
   import { canvasScale, toCanvas, toData, openWindows } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -9,14 +9,17 @@
     runMutation,
     readOnly,
     refreshToken,
+    selectedId = $bindable(null),
+    onReveal,
   }: {
     runMutation: (m: Mutation, rethrow?: boolean) => Promise<void>;
     readOnly: boolean;
     refreshToken: number;
+    selectedId?: string | null;
+    onReveal: (path: NodePath) => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
-  let selectedId: string | null = $state(null);
   let containerWidth = $state(0);
   let canvasEl: HTMLDivElement | undefined = $state();
   // Live drag/resize preview by window id (data px); absent when not dragging.
@@ -160,17 +163,26 @@
     }
   }
 
-  function onPointerUp() {
+  function clearPreview(id: string) {
+    const rest = { ...preview };
+    delete rest[id];
+    preview = rest;
+  }
+
+  async function onPointerUp() {
     if (!drag) return;
     const w = drag.w;
     const p = preview[w.id];
     const d = drag;
     drag = null;
-    const rest = { ...preview };
-    delete rest[w.id];
-    preview = rest;
-    if (!p) return;
-    commit(geomMutations(w, d.kind === "move" ? { x: p.x, y: p.y } : { w: p.w, h: p.h }));
+    if (!p) {
+      clearPreview(w.id);
+      return;
+    }
+    // Keep the preview showing the dropped position through the commit + refetch,
+    // then clear it — by then `layout` holds the same value, so no snap-back blink.
+    await commit(geomMutations(w, d.kind === "move" ? { x: p.x, y: p.y } : { w: p.w, h: p.h }));
+    clearPreview(w.id);
   }
 </script>
 
@@ -211,7 +223,8 @@
       {onToggleOpen}
       {onGeom}
       {onFlag}
-      {onStack} />
+      {onStack}
+      {onReveal} />
   </div>
 {/if}
 

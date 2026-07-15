@@ -15,6 +15,17 @@
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
   let view: "tree" | "layout" = $state("tree");
   let layoutAvailable = $state(false);
+  // Selected canvas window, lifted here so it survives Tree/Layout switches.
+  let selectedWindowId = $state<string | null>(null);
+  // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
+  let reveal = $state<{ path: NodePath; n: number } | null>(null);
+
+  // Jump to a value in the full tree: leave search, expand and scroll to it.
+  function revealInTree(path: NodePath) {
+    view = "tree";
+    query = "";
+    reveal = { path, n: (reveal?.n ?? 0) + 1 };
+  }
 
   let query = $state("");
   let searchBox: HTMLInputElement | undefined = $state();
@@ -47,6 +58,8 @@
       dirty = false;
       savedAt += 1;
       view = "tree";
+      selectedWindowId = null;
+      reveal = null;
       try {
         layoutAvailable =
           current.status === "opened" && (await api.windowLayout()).windows.length > 0;
@@ -156,7 +169,9 @@
           <LayoutView
             {runMutation}
             readOnly={current.fidelity.state !== "editable"}
-            refreshToken={savedAt} />
+            refreshToken={savedAt}
+            bind:selectedId={selectedWindowId}
+            onReveal={revealInTree} />
         </div>
       {:else}
         <div class="searchbar">
@@ -177,6 +192,10 @@
             <TreeNode
               node={found.tree}
               autoExpand={searching}
+              {searching}
+              revealPath={reveal?.path ?? null}
+              revealNonce={reveal?.n ?? 0}
+              onReveal={revealInTree}
               onEdit={handleEdit}
               onRemove={handleRemove}
               onInsertRequest={(n) => (insertTarget = n)} />

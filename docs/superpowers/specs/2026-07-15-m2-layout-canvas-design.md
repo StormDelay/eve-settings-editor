@@ -151,5 +151,8 @@ Malformed or missing dicts are skipped by the projection, never panic.
 - Purpose-built window-stacking UI (group/ungroup, drag-to-stack). M2 exposes
   `stacksWindows` only as a raw stack-id value input; a real stacking control
   can come later once the stacking model is mapped.
+- Right-click on a properties-panel value jumps straight to the raw tree. A
+  right-click **context menu** with a "show in tree" item (and room for more
+  actions) is the intended UX — revisit later (user request, 2026-07-15).
 - Overview columns and autofill editors (M3).
 - Anything in user files (no geometry there).
