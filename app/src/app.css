@@ -98,3 +98,6 @@ button:hover { border-color: var(--accent); }
 .spacer { flex: 1; }
 .save { border-color: var(--accent); }
 .save:disabled { opacity: 0.4; cursor: default; }
+.viewtabs { display: flex; gap: 4px; }
+.viewtabs button { padding: 1px 10px; }
+.viewtabs button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
