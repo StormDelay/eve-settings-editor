@@ -285,6 +285,48 @@ pub fn build_roster(
     AccountRoster { accounts, unassigned }
 }
 
+/// A point-in-time view of discovered char/user files keyed by path.
+pub type Snapshot = HashMap<PathBuf, FileMeta>;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CaptureResult {
+    pub changed_chars: Vec<u64>,
+    pub changed_users: Vec<u64>,
+    /// `(char_id, user_id)` when exactly one char file and one user file
+    /// advanced — the clean, confirmable pairing.
+    pub detected: Option<(u64, u64)>,
+}
+
+/// Which char/user files advanced (or appeared) between two snapshots. A single
+/// char + single user change yields a `detected` pairing; anything else is left
+/// for the user to disambiguate.
+pub fn capture_diff(baseline: &Snapshot, after: &Snapshot) -> CaptureResult {
+    let mut changed_chars = Vec::new();
+    let mut changed_users = Vec::new();
+    for (path, meta) in after {
+        let advanced = match baseline.get(path) {
+            Some(old) => meta.mtime > old.mtime,
+            None => true, // appeared since baseline
+        };
+        if !advanced {
+            continue;
+        }
+        match meta.kind {
+            Kind::Char => changed_chars.push(meta.id),
+            Kind::User => changed_users.push(meta.id),
+        }
+    }
+    changed_chars.sort_unstable();
+    changed_chars.dedup();
+    changed_users.sort_unstable();
+    changed_users.dedup();
+    let detected = match (changed_chars.as_slice(), changed_users.as_slice()) {
+        ([c], [u]) => Some((*c, *u)),
+        _ => None,
+    };
+    CaptureResult { changed_chars, changed_users, detected }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,5 +632,87 @@ mod tests {
         let acct = r.accounts.iter().find(|a| a.user_id == 555).unwrap();
         assert!(acct.characters.is_empty(), "no store entry means no confirmed characters");
         assert!(acct.alias.is_none());
+    }
+
+    fn snap(entries: &[(&str, FileMeta)]) -> Snapshot {
+        entries.iter().map(|(p, m)| (PathBuf::from(p), m.clone())).collect()
+    }
+
+    #[test]
+    fn capture_diff_detects_the_single_changed_pair() {
+        let base = snap(&[
+            ("a.dat", char(90000001, 100, "p")),
+            ("u.dat", user(987654, 100, "p")),
+        ]);
+        let after = snap(&[
+            ("a.dat", char(90000001, 200, "p")), // char advanced
+            ("u.dat", user(987654, 200, "p")),   // user advanced
+        ]);
+        let r = capture_diff(&base, &after);
+        assert_eq!(r.detected, Some((90000001, 987654)));
+    }
+
+    #[test]
+    fn capture_diff_user_only_is_not_detected() {
+        let base = snap(&[("u.dat", user(987654, 100, "p"))]);
+        let after = snap(&[("u.dat", user(987654, 200, "p"))]);
+        let r = capture_diff(&base, &after);
+        assert_eq!(r.changed_users, vec![987654]);
+        assert!(r.changed_chars.is_empty());
+        assert_eq!(r.detected, None);
+    }
+
+    #[test]
+    fn capture_diff_char_only_is_not_detected() {
+        let base = snap(&[("a.dat", char(90000001, 100, "p"))]);
+        let after = snap(&[("a.dat", char(90000001, 200, "p"))]);
+        let r = capture_diff(&base, &after);
+        assert_eq!(r.changed_chars, vec![90000001]);
+        assert!(r.changed_users.is_empty());
+        assert_eq!(r.detected, None);
+    }
+
+    #[test]
+    fn capture_diff_new_file_counts_as_changed() {
+        let base = snap(&[]);
+        let after = snap(&[("u.dat", user(987654, 200, "p")), ("a.dat", char(90000001, 200, "p"))]);
+        assert_eq!(capture_diff(&base, &after).detected, Some((90000001, 987654)));
+    }
+
+    #[test]
+    fn capture_diff_multiple_users_is_ambiguous() {
+        let base = snap(&[("u1.dat", user(111, 100, "p")), ("u2.dat", user(222, 100, "p"))]);
+        let after = snap(&[("u1.dat", user(111, 200, "p")), ("u2.dat", user(222, 200, "p"))]);
+        let r = capture_diff(&base, &after);
+        assert_eq!(r.detected, None);
+        assert_eq!(r.changed_users, vec![111, 222]);
+    }
+
+    #[test]
+    fn capture_diff_nothing_changed_yields_empty_result() {
+        let base = snap(&[
+            ("a.dat", char(90000001, 100, "p")),
+            ("u.dat", user(987654, 100, "p")),
+        ]);
+        let after = base.clone();
+        let r = capture_diff(&base, &after);
+        assert!(r.changed_chars.is_empty());
+        assert!(r.changed_users.is_empty());
+        assert_eq!(r.detected, None);
+    }
+
+    #[test]
+    fn capture_diff_unchanged_mtime_is_not_reported() {
+        let base = snap(&[
+            ("a.dat", char(90000001, 100, "p")), // stays put
+            ("u.dat", user(987654, 100, "p")),   // advances
+        ]);
+        let after = snap(&[
+            ("a.dat", char(90000001, 100, "p")), // same mtime, not reported
+            ("u.dat", user(987654, 200, "p")),
+        ]);
+        let r = capture_diff(&base, &after);
+        assert!(r.changed_chars.is_empty(), "unchanged mtime not reported");
+        assert_eq!(r.changed_users, vec![987654]);
     }
 }
