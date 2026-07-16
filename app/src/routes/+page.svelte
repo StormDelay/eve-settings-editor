@@ -281,12 +281,7 @@
         const report = await api.save(slot, force);
         dirtySlots[slot] = false;
         savedAt += 1;
-        let note = `Saved ${report.bytes_written} bytes to ${o.file_name}.\nBackup: ${report.backup_path}`;
-        if (report.recent_sibling_writes.length > 0) {
-          note +=
-            `\n\nWarning: other files in this profile changed recently — the EVE` +
-            ` client may overwrite your changes on logout:\n${report.recent_sibling_writes.join("\n")}`;
-        }
+        const note = `Saved ${report.bytes_written} bytes to ${o.file_name}.\nBackup: ${report.backup_path}`;
         await message(note, { title: "Saved", kind: "info" });
       } catch (e) {
         const err = e as ErrDto;
