@@ -255,9 +255,11 @@ mod tests {
     #[test]
     fn clear_all_history_empties_every_list() {
         let mut user = user_with_history();
+        let widgets_before: Vec<String> = project_edit_history(&user).into_iter().map(|l| l.widget).collect();
         clear_all_history(&mut user).unwrap();
         let lists = project_edit_history(&user);
         assert_eq!(lists.len(), 2, "widget keys are kept");
+        assert_eq!(lists.iter().map(|l| l.widget.clone()).collect::<Vec<_>>(), widgets_before, "widget paths unchanged");
         assert!(lists.iter().all(|l| l.entries.is_empty()), "every list emptied");
     }
 
@@ -268,16 +270,28 @@ mod tests {
 
     #[test]
     fn clear_all_history_survives_shared_entries() {
+        // The Shared DEFINITION lives inside editHistory (which clear_all_history
+        // clears); the Ref to it lives OUTSIDE editHistory, as a sibling of it
+        // under "ui" — a spot clear_all_history never touches. So this only
+        // encodes after clearing if inline_all resolved that outside Ref to an
+        // owned copy first: without it, clearing drops the Shared def, the
+        // outside Ref dangles, and encode fails RefBeforeStore. Shared payload
+        // must be Bytes (marshal never shares Str — see the sibling test above).
         use blue_marshal::encode;
-        let jita = Value::Shared { slot: 1, value: Box::new(Value::Str("Jita".into())) };
+        let jita = Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"Jita".to_vec())) };
         let hist = Value::Dict(vec![
             (b("/a/box"), Value::List(vec![jita, Value::Str("Amarr".into())])),
-            (b("/b/box"), Value::List(vec![Value::Ref(1)])),
         ]);
-        let ui = Value::Dict(vec![(b("editHistory"), Value::Tuple(vec![ts(), hist]))]);
+        let ui = Value::Dict(vec![
+            (b("editHistory"), Value::Tuple(vec![ts(), hist])), // def, encoded first
+            (b("otherWidgetRef"), Value::List(vec![Value::Ref(1)])), // outside editHistory
+        ]);
         let mut user = Value::Dict(vec![(b("ui"), ui)]);
+        encode(&user).expect("fixture must encode before the edit (def precedes ref)");
+
         clear_all_history(&mut user).unwrap();
-        encode(&user).expect("cleared tree must still encode");
+
+        encode(&user).expect("cleared tree must still encode (outside Ref was inlined, not dangled)");
         assert!(project_edit_history(&user).iter().all(|l| l.entries.is_empty()));
     }
 }
