@@ -182,6 +182,11 @@ export interface OverviewColumns {
   windows: OverviewWindow[];
 }
 
+export interface RememberedList {
+  widget: string;
+  entries: string[];
+}
+
 export type Slot = "char" | "user";
 
 export const api = {
@@ -215,6 +220,10 @@ export const api = {
     invoke<OverviewColumns>("set_overview_order", { tabIndex, order }),
   setOverviewWidth: (tabIndex: number, column: string, width: number) =>
     invoke<OverviewColumns>("set_overview_width", { tabIndex, column, width }),
+  autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
+  setAutofillList: (widget: string, entries: string[]) =>
+    invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
+  clearAllAutofill: () => invoke<RememberedList[]>("clear_all_autofill"),
 };
 
 export function errMessage(e: unknown): string {
