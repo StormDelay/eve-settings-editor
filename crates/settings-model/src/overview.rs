@@ -127,27 +127,61 @@ fn as_int(v: &Value) -> Option<i64> {
 }
 
 fn token(v: &Value) -> Option<String> {
-    match v {
+    // Column tokens are Bytes, sometimes Shared-wrapped (real account lists).
+    match unwrap_shared_ref(v) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
         _ => None,
     }
 }
 
 fn str_field(fields: &Entries, name: &str) -> Option<String> {
-    fields.iter().find_map(|(k, v)| match k {
-        Value::Str(s) | Value::StrUcs2(s) if s == name => match v {
+    fields.iter().find_map(|(k, v)| {
+        if !key_is(k, name) {
+            return None;
+        }
+        // The value can be Str, UCS2, or Bytes (real tab names use all three),
+        // and may be Shared-wrapped.
+        match unwrap_shared_ref(v) {
             Value::Str(t) | Value::StrUcs2(t) => Some(t.clone()),
+            Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
             _ => None,
-        },
-        _ => None,
+        }
     })
 }
 
-/// A list-of-Bytes field (tabColumns / tabColumnOrder / overviewColumns…) as tokens.
+/// True if the dict key is the string `name`, whether stored plainly or as a
+/// string-table reference — real files store the `"name"` key as `t52`.
+fn key_is(k: &Value, name: &str) -> bool {
+    match k {
+        Value::Str(s) | Value::StrUcs2(s) => s == name,
+        Value::StrTable(i) => blue_marshal::string_table::STRING_TABLE
+            .get(*i as usize)
+            .map(|s| *s == name)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// A list-of-tokens field (tabColumns / tabColumnOrder / overviewColumns…).
+/// Accepts a bare `List` or the `(timestamp, list)` wrapper real files use for
+/// the account-level lists; items may be Shared-wrapped.
 fn list_field(fields: &Entries, name: &[u8]) -> Option<Vec<String>> {
     let (_, v) = fields.iter().find(|(k, _)| is_bytes(k, name))?;
-    let Value::List(items) = unwrap_shared_ref(v) else { return None };
+    let items = as_list(unwrap_shared_ref(v))?;
     Some(items.iter().filter_map(token).collect())
+}
+
+/// The `List` inside a value: a bare list, or the list element of a
+/// `(timestamp, list)` wrapper tuple.
+fn as_list(v: &Value) -> Option<&Vec<Value>> {
+    match v {
+        Value::List(items) => Some(items),
+        Value::Tuple(items) => items.iter().find_map(|e| match unwrap_shared_ref(e) {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize)]
