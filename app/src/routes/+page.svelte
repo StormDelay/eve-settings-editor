@@ -225,32 +225,40 @@
     runMutation({ op: "remove_entry", path });
 
   async function saveFile(force = false) {
-    if (!dirtySlots[active] || current?.status !== "opened" || current.fidelity.state !== "editable")
-      return;
-    try {
-      const report = await api.save(active, force);
-      dirtySlots[active] = false;
-      savedAt += 1;
-      let note = `Saved ${report.bytes_written} bytes.\nBackup: ${report.backup_path}`;
-      if (report.recent_sibling_writes.length > 0) {
-        note +=
-          `\n\nWarning: other files in this profile changed in the last 5 minutes` +
-          ` — the EVE client may be running and can overwrite your changes on logout:` +
-          `\n${report.recent_sibling_writes.join("\n")}`;
-      }
-      await message(note, { title: "Saved", kind: "info" });
-    } catch (e) {
-      const err = e as ErrDto;
-      if (err.code === "conflict") {
-        const overwrite = await ask(
-          "The file changed on disk after it was loaded (the EVE client may have " +
-            "written it). Overwrite anyway?\n\nA backup of the current on-disk file " +
-            "is taken first either way, so nothing is lost.",
-          { title: "File changed on disk", kind: "warning" },
-        );
-        if (overwrite) await saveFile(true);
-      } else {
-        await message(errMessage(e), { title: "Save failed — file untouched", kind: "error" });
+    for (const slot of ["char", "user"] as const) {
+      const o = slots[slot];
+      if (!dirtySlots[slot] || o?.status !== "opened" || o.fidelity.state !== "editable") continue;
+      try {
+        const report = await api.save(slot, force);
+        dirtySlots[slot] = false;
+        savedAt += 1;
+        let note = `Saved ${report.bytes_written} bytes to ${o.file_name}.\nBackup: ${report.backup_path}`;
+        if (report.recent_sibling_writes.length > 0) {
+          note +=
+            `\n\nWarning: other files in this profile changed recently — the EVE` +
+            ` client may overwrite your changes on logout:\n${report.recent_sibling_writes.join("\n")}`;
+        }
+        await message(note, { title: "Saved", kind: "info" });
+      } catch (e) {
+        const err = e as ErrDto;
+        if (err.code === "conflict") {
+          const overwrite = await ask(
+            `${o.file_name} changed on disk after it was loaded (the EVE client may have ` +
+              `written it). Overwrite anyway?\n\nA backup of the on-disk file is taken first either way.`,
+            { title: "File changed on disk", kind: "warning" },
+          );
+          if (overwrite) {
+            try {
+              await api.save(slot, true);
+              dirtySlots[slot] = false;
+              savedAt += 1;
+            } catch (e2) {
+              await message(errMessage(e2), { title: "Save failed", kind: "error" });
+            }
+          }
+        } else {
+          await message(errMessage(e), { title: `Save failed — ${o.file_name} untouched`, kind: "error" });
+        }
       }
     }
   }
@@ -292,7 +300,8 @@
         {:else}
           <span class="badge editable">editable</span>
         {/if}
-        {#if dirtySlots[active]}<span class="badge dirty">unsaved changes</span>{/if}
+        {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
+        {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
         {#if slots.char && slots.user}
           <span class="viewtabs">
             <button class:active={active === "char"} onclick={() => (active = "char")}>Character</button>
