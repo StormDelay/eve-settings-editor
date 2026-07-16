@@ -11,6 +11,7 @@ use settings_model::{
     apply, default_roots, discover, project, project_overview, save,
     set_column_order, set_column_visible, set_column_width,
     window_layout as project_window_layout,
+    clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
     Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
 };
@@ -278,6 +279,36 @@ pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width:
             .map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
     }
     overview_columns(state)
+}
+
+pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
+    let user = state.user.lock().unwrap();
+    let udoc = user.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    Ok(project_edit_history(&udoc.value))
+}
+
+/// Edit the user slot's editHistory, then re-project.
+fn edit_user_autofill<F>(state: &AppState, edit: F) -> Result<Vec<RememberedList>, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), AutofillError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(|e| ErrDto::new("autofill", format!("{e:?}")))?;
+    }
+    autofill_lists(state)
+}
+
+pub fn set_autofill_list(state: &AppState, widget: &str, entries: Vec<String>) -> Result<Vec<RememberedList>, ErrDto> {
+    edit_user_autofill(state, |v| set_list_entries(v, widget, &entries))
+}
+
+pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
+    edit_user_autofill(state, |v| clear_all_history(v))
 }
 
 #[cfg(test)]
@@ -581,5 +612,41 @@ mod tests {
     fn overview_without_a_user_slot_errors() {
         let state = AppState::new();
         assert_eq!(overview_columns(&state).unwrap_err().code, "no_document");
+    }
+
+    fn autofill_user_bytes() -> Vec<u8> {
+        // root -> b"ui" -> b"editHistory" -> (ts, { "/a/box": ["Jita", "Amarr"] })
+        let hist = Value::Dict(vec![(
+            Value::Bytes(b"/a/box".to_vec()),
+            Value::List(vec![Value::Str("Jita".into()), Value::Str("Amarr".into())]),
+        )]);
+        let ui = Value::Dict(vec![(
+            Value::Bytes(b"editHistory".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), hist]),
+        )]);
+        encode(&Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), ui)])).unwrap()
+    }
+
+    #[test]
+    fn autofill_reads_edits_and_clears_the_user_slot() {
+        let path = temp_file("af-user", &autofill_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let lists = autofill_lists(&state).unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].entries, vec!["Jita", "Amarr"]);
+
+        let lists = set_autofill_list(&state, "/a/box", vec!["Dodixie".into()]).unwrap();
+        assert_eq!(lists[0].entries, vec!["Dodixie"]);
+
+        let lists = clear_all_autofill(&state).unwrap();
+        assert!(lists[0].entries.is_empty(), "list emptied, widget kept");
+    }
+
+    #[test]
+    fn autofill_without_a_user_slot_errors() {
+        let state = AppState::new();
+        assert_eq!(autofill_lists(&state).unwrap_err().code, "no_document");
     }
 }
