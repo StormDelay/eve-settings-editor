@@ -14,6 +14,7 @@
 
   async function reload() {
     if (!userOpen) { data = null; return; }
+    error = null;
     try {
       data = await api.overviewColumns();
       if (tabIndex === null && data.tabs.length > 0) tabIndex = data.tabs[0].index;
@@ -64,6 +65,8 @@
     <label>Tab
       <select bind:value={tabIndex}>
         {#if data.windows.length > 0}
+          {@const grouped = new Set(data.windows.flatMap((w) => w.tab_indices))}
+          {@const orphans = data.tabs.filter((t) => !grouped.has(t.index))}
           {#each data.windows as w (w.index)}
             <optgroup label="Overview {w.index + 1}">
               {#each w.tab_indices as idx (idx)}
@@ -71,6 +74,11 @@
               {/each}
             </optgroup>
           {/each}
+          {#if orphans.length > 0}
+            <optgroup label="Other">
+              {#each orphans as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+            </optgroup>
+          {/if}
         {:else}
           {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
         {/if}
@@ -105,7 +113,7 @@
         </li>
       {/each}
     </ul>
-    {#if tab.inherits}<p class="meta">This tab inherits the account default columns; editing it will give it its own copy.</p>{/if}
+    {#if tab.inherits}<p class="meta">This tab inherits its preset's columns; editing it will give it its own copy.</p>{/if}
   {/if}
 {/if}
 
