@@ -139,6 +139,20 @@ fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
     }
 }
 
+/// Empty every remembered-string list in the file (widget keys kept). A no-op
+/// success when the file has no editHistory. Inlines sharing first, like
+/// `set_list_entries`, so a Shared entry never leaves a dangling Ref.
+pub fn clear_all_history(user: &mut Value) -> Result<(), AutofillError> {
+    inline_all(user);
+    let Some(eh) = edit_history_mut(user) else { return Ok(()) };
+    for (_, v) in eh.iter_mut() {
+        if let Some(list) = list_inner_mut(v) {
+            list.clear();
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +250,34 @@ mod tests {
         assert!(lists.iter().find(|l| l.widget == "/a/box").unwrap().entries.is_empty());
         assert_eq!(lists.iter().find(|l| l.widget == "/b/box").unwrap().entries, vec!["Jita"],
             "widget B keeps its formerly-Ref'd value, now inlined");
+    }
+
+    #[test]
+    fn clear_all_history_empties_every_list() {
+        let mut user = user_with_history();
+        clear_all_history(&mut user).unwrap();
+        let lists = project_edit_history(&user);
+        assert_eq!(lists.len(), 2, "widget keys are kept");
+        assert!(lists.iter().all(|l| l.entries.is_empty()), "every list emptied");
+    }
+
+    #[test]
+    fn clear_all_history_is_a_noop_without_edit_history() {
+        assert_eq!(clear_all_history(&mut Value::Dict(vec![])), Ok(()));
+    }
+
+    #[test]
+    fn clear_all_history_survives_shared_entries() {
+        use blue_marshal::encode;
+        let jita = Value::Shared { slot: 1, value: Box::new(Value::Str("Jita".into())) };
+        let hist = Value::Dict(vec![
+            (b("/a/box"), Value::List(vec![jita, Value::Str("Amarr".into())])),
+            (b("/b/box"), Value::List(vec![Value::Ref(1)])),
+        ]);
+        let ui = Value::Dict(vec![(b("editHistory"), Value::Tuple(vec![ts(), hist]))]);
+        let mut user = Value::Dict(vec![(b("ui"), ui)]);
+        clear_all_history(&mut user).unwrap();
+        encode(&user).expect("cleared tree must still encode");
+        assert!(project_edit_history(&user).iter().all(|l| l.entries.is_empty()));
     }
 }
