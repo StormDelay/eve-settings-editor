@@ -13,6 +13,12 @@ Workflow:
 
 ## Open
 
+- [ ] **Drop the recent-sibling-writes save warning.** On save, when other files
+  in the same profile were modified in the last 5 minutes, the "Saved" dialog
+  appends a warning that the EVE client may be running and could overwrite the
+  changes on logout (`recent_sibling_writes`). Remove that warning from the save
+  flow (the backup already protects against loss). _Added 2026-07-16 (M3c)._
+
 - [ ] **Resize layout windows from any corner.** In the layout canvas, a
   selected window can only be resized from the bottom-right handle today. Add
   resize handles on all four corners (edges optional) once a window is selected,
