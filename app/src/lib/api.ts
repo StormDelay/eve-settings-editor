@@ -162,6 +162,22 @@ export interface CaptureResult {
   detected: [number, number] | null;
 }
 
+export interface OverviewColumn {
+  name: string;
+  label: string;
+  visible: boolean;
+  width: number | null;
+}
+export interface OverviewTab {
+  index: number;
+  name: string;
+  inherits: boolean;
+  columns: OverviewColumn[];
+}
+export interface OverviewColumns {
+  tabs: OverviewTab[];
+}
+
 export type Slot = "char" | "user";
 
 export const api = {
@@ -188,6 +204,13 @@ export const api = {
     invoke<AccountRoster>("unpair_character", { charId }),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
+  overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
+  setOverviewVisible: (tabIndex: number, column: string, visible: boolean) =>
+    invoke<OverviewColumns>("set_overview_visible", { tabIndex, column, visible }),
+  setOverviewOrder: (tabIndex: number, order: string[]) =>
+    invoke<OverviewColumns>("set_overview_order", { tabIndex, order }),
+  setOverviewWidth: (tabIndex: number, column: string, width: number) =>
+    invoke<OverviewColumns>("set_overview_width", { tabIndex, column, width }),
 };
 
 export function errMessage(e: unknown): string {

@@ -5,12 +5,13 @@
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
+  import OverviewView from "$lib/OverviewView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
   import { aliasFor, accountsStore } from "$lib/accounts.svelte";
-  import { accountOf, pairedFilePath } from "$lib/overview";
+  import { accountOf, pairedFilePath, associatedCharacters } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -38,7 +39,7 @@
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
-  let view: "tree" | "layout" = $state("tree");
+  let view: "tree" | "layout" | "overview" = $state("tree");
   let layoutAvailable = $state(false);
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
@@ -74,6 +75,26 @@
       openDisplay ? `${openDisplay} — ${APP_TITLE}` : APP_TITLE,
     );
   });
+
+  // Overview editor inputs: the ids of the open char/user files, and the roster's
+  // characters for the open account (the width selector loads one of these).
+  const openCharId = $derived.by(() => {
+    const o = slots.char;
+    if (o?.status !== "opened") return null;
+    const m = o.file_name.match(/^core_char_(\d+)\.dat$/);
+    return m ? Number(m[1]) : null;
+  });
+  const openUserId = $derived.by(() => {
+    const o = slots.user;
+    if (o?.status !== "opened") return null;
+    const m = o.file_name.match(/^core_user_(\d+)\.dat$/);
+    return m ? Number(m[1]) : null;
+  });
+  const openAccountCharacters = $derived(
+    openUserId === null ? [] : associatedCharacters(openUserId, accountsStore.roster),
+  );
+  // Resolve names so the width selector shows character names, not bare ids.
+  $effect(() => { if (openAccountCharacters.length) void resolveNames(openAccountCharacters); });
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
@@ -278,10 +299,11 @@
             <button class:active={active === "user"} onclick={() => (active = "user")}>Account</button>
           </span>
         {/if}
-        {#if layoutAvailable}
+        {#if layoutAvailable || slots.user?.status === "opened"}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
-            <button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>
+            {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
+            {#if slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -299,6 +321,16 @@
             refreshToken={savedAt}
             bind:selectedId={selectedWindowId}
             onReveal={revealInTree} />
+        </div>
+      {:else if view === "overview"}
+        <div class="tree-area">
+          <OverviewView
+            userOpen={slots.user?.status === "opened"}
+            charId={openCharId}
+            characters={openAccountCharacters}
+            onLoadCharacter={loadCharacter}
+            onUserDirty={() => (dirtySlots.user = true)}
+            onCharDirty={() => (dirtySlots.char = true)} />
         </div>
       {:else}
         <div class="searchbar">
