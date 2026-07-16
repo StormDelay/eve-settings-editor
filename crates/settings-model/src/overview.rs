@@ -9,7 +9,14 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::{resolve_mut, NodePath, Step};
-use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref, Entries};
+use crate::treewalk::{
+    child_dict, effective, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
+};
+// ponytail: collect_shared has no non-test caller yet (R3 wires find_child et al.
+// into project_overview); scoped to tests so the plain lib build the integration
+// tests link against doesn't warn on an unused import.
+#[cfg(test)]
+use crate::treewalk::collect_shared;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewColumns {
@@ -182,6 +189,59 @@ fn as_list(v: &Value) -> Option<&Vec<Value>> {
         }),
         _ => None,
     }
+}
+
+// ponytail: the five helpers below have no non-test caller yet — R3 switches
+// project_overview over to them and deletes the superseded v1 helpers above,
+// at which point these `allow(dead_code)` come off.
+
+/// Value of the entry whose resolved key is `Bytes(name)`, itself resolved.
+#[allow(dead_code)]
+fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
+    dict.iter()
+        .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
+        .map(|(_, v)| effective(v, sh))
+}
+
+/// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper.
+#[allow(dead_code)]
+fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    match effective(v, sh) {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// Resolve to a list, unwrapping a `(timestamp, list)` wrapper.
+#[allow(dead_code)]
+fn as_list_r<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
+    match effective(v, sh) {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+#[allow(dead_code)]
+fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
+    match effective(v, sh) {
+        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        _ => None,
+    }
+}
+
+/// Resolved list-of-tokens for a byte-named field within `dict`.
+#[allow(dead_code)]
+fn token_list(dict: &Entries, name: &[u8], sh: &SharedTable) -> Option<Vec<String>> {
+    let v = find_child(dict, name, sh)?;
+    Some(as_list_r(v, sh)?.iter().filter_map(|t| token_r(t, sh)).collect())
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -549,5 +609,56 @@ mod tests {
         set_column_visible(&mut user, 0, "TYPE", true).unwrap();
         let t = project_overview(&user, None).tabs.into_iter().find(|t| t.index == 0).unwrap();
         assert!(t.columns.iter().find(|c| c.name == "TYPE").unwrap().visible);
+    }
+
+    #[test]
+    fn find_child_resolves_ref_and_shared_keys() {
+        use blue_marshal::Value;
+        // A dict whose "overview" key is a Ref to a Shared("overview") elsewhere.
+        let doc = Value::Dict(vec![
+            (Value::Shared { slot: 5, value: Box::new(Value::Bytes(b"overview".to_vec())) },
+             Value::Dict(vec![(Value::Bytes(b"x".to_vec()), Value::Int(1))])),
+            (Value::Ref(5), Value::Dict(vec![(Value::Bytes(b"y".to_vec()), Value::Int(2))])),
+        ]);
+        let mut sh = SharedTable::new();
+        collect_shared(&doc, &mut sh);
+        let Value::Dict(entries) = &doc else { unreachable!() };
+        // Both entries resolve to key "overview"; find_child returns the FIRST.
+        let got = find_child(entries, b"overview", &sh).and_then(|v| as_dict(v, &sh));
+        assert!(got.is_some(), "a Shared-keyed child is found");
+    }
+
+    #[test]
+    fn token_r_resolves_ref_tokens() {
+        use blue_marshal::Value;
+        let doc = Value::List(vec![
+            Value::Shared { slot: 9, value: Box::new(Value::Bytes(b"NAME".to_vec())) },
+            Value::Ref(9),
+        ]);
+        let mut sh = SharedTable::new();
+        collect_shared(&doc, &mut sh);
+        let Value::List(items) = &doc else { unreachable!() };
+        assert_eq!(token_r(&items[0], &sh).as_deref(), Some("NAME"));
+        assert_eq!(token_r(&items[1], &sh).as_deref(), Some("NAME"), "a Ref token resolves");
+    }
+
+    #[test]
+    fn token_list_reads_ts_wrapped_ref_list() {
+        use blue_marshal::Value;
+        // A (timestamp, list) field whose items are Ref/Shared tokens.
+        let doc = Value::Dict(vec![(
+            Value::Bytes(b"cols".to_vec()),
+            Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::List(vec![
+                    Value::Shared { slot: 7, value: Box::new(Value::Bytes(b"NAME".to_vec())) },
+                    Value::Ref(7),
+                ]),
+            ]),
+        )]);
+        let mut sh = SharedTable::new();
+        collect_shared(&doc, &mut sh);
+        let Value::Dict(entries) = &doc else { unreachable!() };
+        assert_eq!(token_list(entries, b"cols", &sh), Some(vec!["NAME".to_string(), "NAME".to_string()]));
     }
 }
