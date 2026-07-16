@@ -9,6 +9,7 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::NodePath;
+use crate::path::{resolve_mut, Step};
 use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared_ref, Entries};
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -150,6 +151,80 @@ fn list_field(fields: &Entries, name: &[u8]) -> Option<Vec<String>> {
     Some(items.iter().filter_map(token).collect())
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum OverviewError {
+    NoTab,
+}
+
+pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
+    let (def_order, def_visible) = account_defaults(user);
+    with_tab(user, tab_index, |tab| {
+        materialize_from(tab, &def_order, &def_visible);
+        let tok = Value::Bytes(column.as_bytes().to_vec());
+        let vis = list_mut(tab, b"tabColumns");
+        let present = vis.iter().any(|v| v == &tok);
+        if visible && !present {
+            vis.push(tok.clone());
+        } else if !visible && present {
+            vis.retain(|v| v != &tok);
+        }
+        // A newly-shown column must also exist in the order list.
+        let order = list_mut(tab, b"tabColumnOrder");
+        if visible && !order.iter().any(|v| v == &tok) {
+            order.push(tok);
+        }
+    })
+}
+
+pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
+    let (def_order, def_visible) = account_defaults(user);
+    with_tab(user, tab_index, |tab| {
+        materialize_from(tab, &def_order, &def_visible);
+        *list_mut(tab, b"tabColumnOrder") = order.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect();
+    })
+}
+
+/// Resolve the mutable tab dict by its Int index and run `edit` on it.
+fn with_tab<F: FnOnce(&mut Vec<(Value, Value)>)>(user: &mut Value, tab_index: i64, edit: F) -> Result<(), OverviewError> {
+    let path = tab_dict_path(user, tab_index).ok_or(OverviewError::NoTab)?;
+    let node = resolve_mut(user, &path).ok_or(OverviewError::NoTab)?;
+    let Value::Dict(fields) = node else { return Err(OverviewError::NoTab) };
+    edit(fields);
+    Ok(())
+}
+
+/// Path to the mutable tab dict, resolving the account defaults for materialize
+/// eagerly (read them before taking the &mut borrow).
+fn tab_dict_path(user: &Value, tab_index: i64) -> Option<NodePath> {
+    let (dict, base) = tab_settings(user)?;
+    let (i, _) = dict.iter().enumerate().find(|(_, (k, _))| as_int(k) == Some(tab_index))?;
+    let mut p = base;
+    p.push(Step::DictValue(i));
+    Some(p)
+}
+
+/// Create the tab's own lists from the account defaults when absent (mirrors the
+/// client materializing an inheriting tab on first edit). No-op if already owned.
+fn materialize_from(tab: &mut Vec<(Value, Value)>, def_order: &[String], def_visible: &[String]) {
+    if !tab.iter().any(|(k, _)| is_bytes(k, b"tabColumnOrder")) {
+        tab.push((Value::Bytes(b"tabColumnOrder".to_vec()), toks(def_order)));
+    }
+    if !tab.iter().any(|(k, _)| is_bytes(k, b"tabColumns")) {
+        tab.push((Value::Bytes(b"tabColumns".to_vec()), toks(def_visible)));
+    }
+}
+
+fn toks(tokens: &[String]) -> Value {
+    Value::List(tokens.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect())
+}
+
+fn list_mut<'a>(tab: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec<Value> {
+    let (_, v) = tab.iter_mut().find(|(k, _)| is_bytes(k, name)).expect("materialized by materialize_from");
+    let Value::List(items) = v else { panic!("overview column list is not a List") };
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +333,68 @@ mod tests {
         let type_col = t.columns.iter().find(|c| c.name == "TYPE").unwrap();
         let name_col = t.columns.iter().find(|c| c.name == "NAME").unwrap();
         assert!(type_col.visible && !name_col.visible, "default visibility applied; nothing silently hidden");
+    }
+
+    fn tab_lists(user: &Value, index: i64) -> (Vec<String>, Vec<String>) {
+        let t = project_overview(user, None).tabs.into_iter().find(|t| t.index == index).unwrap();
+        let order: Vec<String> = t.columns.iter().map(|c| c.name.clone()).collect();
+        let visible: Vec<String> = t.columns.iter().filter(|c| c.visible).map(|c| c.name.clone()).collect();
+        (order, visible)
+    }
+
+    #[test]
+    fn toggle_visibility_on_an_owning_tab() {
+        let mut user = user_with_tab();
+        // TYPE starts hidden; show it.
+        set_column_visible(&mut user, 0, "TYPE", true).unwrap();
+        let (_, visible) = tab_lists(&user, 0);
+        assert!(visible.contains(&"TYPE".to_string()));
+        // Hide NAME again.
+        set_column_visible(&mut user, 0, "NAME", false).unwrap();
+        let (_, visible) = tab_lists(&user, 0);
+        assert!(!visible.contains(&"NAME".to_string()));
+    }
+
+    #[test]
+    fn reorder_sets_the_full_order() {
+        let mut user = user_with_tab();
+        set_column_order(&mut user, 0, &["DISTANCE".into(), "NAME".into(), "TYPE".into()]).unwrap();
+        let (order, _) = tab_lists(&user, 0);
+        assert_eq!(order, vec!["DISTANCE", "NAME", "TYPE"]);
+    }
+
+    /// A tab that inherits (no own lists) materializes from the account defaults
+    /// on first edit, then applies the edit.
+    fn user_inheriting_tab() -> Value {
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::Str("General".into()))]);
+        Value::Dict(vec![(
+            bytes("overview"),
+            Value::Dict(vec![
+                (bytes("overviewColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
+                (bytes("overviewColumns"), Value::List(vec![bytes("NAME")])),
+                (
+                    bytes("tabsettings_new"),
+                    Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(1), tab)])]),
+                ),
+            ]),
+        )])
+    }
+
+    #[test]
+    fn editing_an_inheriting_tab_materializes_its_lists() {
+        let mut user = user_inheriting_tab();
+        assert!(project_overview(&user, None).tabs[0].inherits);
+        // Show TYPE on the inheriting tab.
+        set_column_visible(&mut user, 1, "TYPE", true).unwrap();
+        let t = project_overview(&user, None).tabs.into_iter().find(|t| t.index == 1).unwrap();
+        assert!(!t.inherits, "tab now owns its lists");
+        assert_eq!(t.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
+        assert!(t.columns.iter().find(|c| c.name == "TYPE").unwrap().visible);
+    }
+
+    #[test]
+    fn editing_a_missing_tab_errors() {
+        let mut user = user_with_tab();
+        assert_eq!(set_column_visible(&mut user, 99, "NAME", true), Err(OverviewError::NoTab));
     }
 }
