@@ -18,6 +18,7 @@
 - Tab indices are **global sequential** — never infer the window from the index; use `tabsByWindowInstanceID`.
 - Commit convention: sentence-case subject, **no** attribution/`Co-Authored-By` trailers.
 - **Merge is gated on live smoke** against a real char/user pair (both formats). Unit tests use `Value` trees that mirror **real idioms** (`Ref`/`Shared` keys+values, string-table `name` keys, `(ts,list)` master list, preset fallback, `tabsByWindowInstanceID`), never the old clean synthetic shapes.
+- **No personal data in the repo.** Fixtures are hand-authored and **fully synthetic** — no real character or account ids, no real preset names, and no field values copied verbatim from the user's live files. Use invented ids (e.g. `1`, `123`, `90000001`) and generic EVE column tokens (`NAME`, `TYPE`, `DISTANCE`) / placeholder preset names (`"P"`). Never read a real `.dat` file from a committed test.
 
 ---
 
@@ -401,9 +402,11 @@ git commit -m "Materialize a tab's columns from its preset on first edit"
 
 Add a test that decodes a **committed, non-personal** fixture mirroring a real file (both a `tabsettings_new` and a `tabsettings` shape, with `Ref`/`Shared` keys) and asserts `project_overview` returns non-empty tabs with resolved names and preset-filled columns — so a real-idiom regression fails CI, not just live smoke.
 
-**Files:** Create `crates/settings-model/tests/overview_realshape.rs`; create small hand-authored fixture bytes via `blue_marshal::encode` in the test itself (no personal data on disk).
+**Files:** Create `crates/settings-model/tests/overview_realshape.rs`; create small hand-authored fixture bytes via `blue_marshal::encode` in the test itself.
 
-- [ ] **Step 1: Write the test** encoding two user-shaped `Value` trees (modern + legacy tab-key) with `Ref`/`Shared` keys and a preset, then `decode` + `project_overview`, asserting: container found through the `Ref` key, tabs present, names resolved, an inheriting tab filled from its preset, window groups from `tabsByWindowInstanceID`.
+**No real data:** the fixture is **fully synthetic** (Global Constraints) — invented tab/preset ids and names (`"P"`, `"Tab A"`), generic column tokens (`NAME`/`TYPE`/`DISTANCE`), and **must not** read or embed any bytes/ids/names from the user's live `.dat` files. It reproduces the real *structure/idioms* (Ref/Shared keys, string-table `name`, `(ts,list)` wrappers, both tab-keys), not real content.
+
+- [ ] **Step 1: Write the test** encoding two user-shaped `Value` trees (modern + legacy tab-key) with `Ref`/`Shared` keys and a preset — all values invented, no real ids/names — then `decode` + `project_overview`, asserting: container found through the `Ref` key, tabs present, names resolved, an inheriting tab filled from its preset, window groups from `tabsByWindowInstanceID`.
 - [ ] **Step 2: Run — PASS.** `cargo test --manifest-path crates/settings-model/Cargo.toml --test overview_realshape`
 - [ ] **Step 3: Commit** `git commit -m "Guard overview projection against real-file idioms (both tab-keys)"`
 
