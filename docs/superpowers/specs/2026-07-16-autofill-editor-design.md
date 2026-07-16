@@ -53,9 +53,10 @@ edit_history(doc) -> Vec<RememberedList>
 Each `RememberedList` carries:
 
 - the **raw** widget path (a `String` of the `Bytes` key),
-- the resolved string entries (in stored order),
-- the `NodePath` to the list and to each entry, so the frontend can edit
-  through the existing mutation API.
+- the resolved string entries (in stored order).
+
+Writes are keyed by the widget path (see §5), so the projection needs no
+`NodePath`s — just the widget string and its entries.
 
 The projection resolves `Ref`/`Shared` in **keys and values** using the
 shared-slot table already lifted into `treewalk` for the overview editor —
@@ -66,27 +67,28 @@ structural and returns raw widget paths.
 If the file has no `editHistory` (fresh account), the projection returns an
 empty vector.
 
-## 5. Writes — reuse `apply_mutation`, no new write path
+## 5. Writes — dedicated inline-first edit functions (the `overview.rs` pattern)
 
-Editing a list of strings is CRUD the raw-tree mutation API already supports
-(M1b-2 made dict/list entries insert/remove/edit-able). The frontend issues
-the same `Mutation` ops the tree editor uses, addressed by the `NodePath`s the
-projection returned:
+The original plan here was to reuse the raw `apply_mutation`. That does **not**
+work: `mutate.rs::apply` refuses to remove any subtree containing a `Shared`
+store (`MutateError::SharedSubtree`), and real files dedup repeated/empty
+editHistory entries into `Shared`s — so a remove/clear would fail exactly when a
+list holds a deduped entry, breaking the cleanup use case. Instead the editor
+uses dedicated `settings-model` functions, mirroring the overview editor:
 
-- **add** = append an entry to the list,
-- **remove** = delete an entry,
-- **edit** = edit a scalar entry,
-- **reorder** = remove + insert at the target index.
+- `set_list_entries(user, widget, entries)` — replaces one widget's list with
+  the given strings (empty slice = clear). Covers **add / edit / remove /
+  reorder / per-list clear**: the frontend holds the list and always sends the
+  new full contents, so one primitive serves every per-list operation.
+- `clear_all_history(user)` — empties every list in one pass (the privacy nuke),
+  one atomic save with one backup rather than ~40 round-trips. Clearing keeps
+  each widget key, mapping it to `[]`.
 
-This is the layout-canvas pattern: a typed projection for reading, the
-existing write path for writing (no dedicated per-op backend like the overview
-editor needed — this data is simpler, with no per-tab materialization logic).
-
-**Clear** (one list) and **Clear all** (every list) get one dedicated
-`Mutation` that empties the target list(s) in a single apply, so a bulk clear
-is one atomic save with one backup rather than ~40 round-trips. "Empty" means
-set the list to `[]` and keep its widget key — not remove the key; the client
-re-populates as it always would, and this matches per-list-clear semantics.
+Both **inline all sharing first** (`treewalk::inline_all`, dropping every
+`Shared`/`Ref`) so a wholesale list replacement can never dangle a `Ref`
+(`RefBeforeStore` on encode). Same accepted trade-off as the overview editor:
+the saved file is larger (dedup gone) but valid, and EVE re-dedups it on next
+logout (the existing small-tasks re-share item).
 
 Saves go through the **user slot's** existing backup → verify → atomic-write
 chain; any edit marks the user slot dirty, and Save persists it. Same as the
