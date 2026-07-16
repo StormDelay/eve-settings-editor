@@ -8,9 +8,8 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::path::NodePath;
-use crate::path::{resolve_mut, Step};
-use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared_ref, Entries};
+use crate::path::{resolve_mut, NodePath, Step};
+use crate::treewalk::{child_dict, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref, Entries};
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewColumns {
@@ -198,9 +197,12 @@ fn with_tab<F: FnOnce(&mut Vec<(Value, Value)>)>(user: &mut Value, tab_index: i6
 /// eagerly (read them before taking the &mut borrow).
 fn tab_dict_path(user: &Value, tab_index: i64) -> Option<NodePath> {
     let (dict, base) = tab_settings(user)?;
-    let (i, _) = dict.iter().enumerate().find(|(_, (k, _))| as_int(k) == Some(tab_index))?;
+    let (i, (_, v)) = dict.iter().enumerate().find(|(_, (k, _))| as_int(k) == Some(tab_index))?;
     let mut p = base;
     p.push(Step::DictValue(i));
+    // The tab value may be Shared-wrapped (marshal dedup); thread SharedInner so
+    // resolve_mut lands on the Dict, mirroring project_tab's read-side unwrap.
+    let (_, p) = unwrap_shared(v, p);
     Some(p)
 }
 
@@ -396,5 +398,29 @@ mod tests {
     fn editing_a_missing_tab_errors() {
         let mut user = user_with_tab();
         assert_eq!(set_column_visible(&mut user, 99, "NAME", true), Err(OverviewError::NoTab));
+    }
+
+    #[test]
+    fn editing_a_shared_wrapped_tab_resolves_and_edits_it() {
+        // A tab value deduplicated into a Shared must still be found and edited,
+        // not misreported as NoTab.
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("P".into())),
+            (bytes("tabColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
+            (bytes("tabColumns"), Value::List(vec![bytes("NAME")])),
+        ]);
+        let mut user = Value::Dict(vec![(
+            bytes("overview"),
+            Value::Dict(vec![(
+                bytes("tabsettings_new"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![(
+                    Value::Int(0),
+                    Value::Shared { slot: 1, value: Box::new(tab) },
+                )])]),
+            )]),
+        )]);
+        set_column_visible(&mut user, 0, "TYPE", true).unwrap();
+        let t = project_overview(&user, None).tabs.into_iter().find(|t| t.index == 0).unwrap();
+        assert!(t.columns.iter().find(|c| c.name == "TYPE").unwrap().visible);
     }
 }
