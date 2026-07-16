@@ -8,7 +8,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::path::{resolve_mut, NodePath, Step};
+use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
     child_dict, collect_shared, effective, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref,
     Entries, SharedTable,
@@ -146,12 +146,20 @@ fn str_field_r(fields: &Entries, name: &str, sh: &SharedTable) -> Option<String>
     })
 }
 
-/// Account-level defaults: (overviewColumnOrder, overviewColumns) as token lists.
-fn account_defaults(user: &Value) -> (Vec<String>, Vec<String>) {
-    let Some((ov, _)) = child_dict(user, b"overview", Vec::new()) else { return (vec![], vec![]) };
-    let order = list_field(ov, b"overviewColumnOrder").unwrap_or_default();
-    let visible = list_field(ov, b"overviewColumns").unwrap_or_default();
-    (order, visible)
+/// The materialize source for a tab's own lists: the effective `(order, visible)`
+/// from that tab's PRESET (the same fallback the read uses), resolved through the
+/// shared table so it works on real Ref/Shared-keyed files.
+fn preset_columns_for_tab(user: &Value, tab_index: i64) -> (Vec<String>, Vec<String>) {
+    let mut sh = SharedTable::new();
+    collect_shared(user, &mut sh);
+    let empty = (vec![], vec![]);
+    let Some(overview) = overview_container(user, &sh) else { return empty };
+    let Some(tabs) = tab_dict(overview, &sh) else { return empty };
+    let Some((_, tab)) = tabs.iter().find(|(k, _)| as_int(effective(k, &sh)) == Some(tab_index)) else {
+        return empty;
+    };
+    let Some(fields) = as_dict(tab, &sh) else { return empty };
+    preset_columns(fields, overview, &sh)
 }
 
 /// Widths for a tab: column token -> px, from char root -> ui -> SortHeadersSizes,
@@ -164,7 +172,7 @@ fn tab_widths(char_tree: &Value, tab_index: i64) -> Option<std::collections::Has
     let Value::Dict(root) = effective(char_tree, &sh) else { return None };
     let ui = find_child(root, b"ui", &sh).and_then(|v| as_dict(v, &sh))?;
     let sizes = find_child(ui, b"SortHeadersSizes", &sh).and_then(|v| as_dict(v, &sh))?;
-    let (_, cols) = sizes.iter().find(|(k, _)| is_width_key(effective(k, &sh), tab_index))?;
+    let (_, cols) = sizes.iter().find(|(k, _)| is_width_key(k, tab_index, &sh))?;
     let entries = as_dict(cols, &sh)?;
     Some(
         entries
@@ -174,16 +182,13 @@ fn tab_widths(char_tree: &Value, tab_index: i64) -> Option<std::collections::Has
     )
 }
 
-fn is_width_key(k: &Value, tab_index: i64) -> bool {
-    matches!(k, Value::Tuple(items) if items.len() == 2
-        && matches!(&items[0], Value::Bytes(b) if b.as_slice() == b"overviewScroll2")
-        && as_int(&items[1]) == Some(tab_index))
-}
-
-/// root -> b"overview" -> b"tabsettings_new" -> (ts, dict), returning that dict.
-fn tab_settings(user: &Value) -> Option<(&Entries, NodePath)> {
-    let (ov, ov_path) = child_dict(user, b"overview", Vec::new())?;
-    timestamped_dict(ov, &ov_path, b"tabsettings_new")
+/// The width-dict key is `(overviewScroll2, tabIndex)`; on real files the tuple
+/// or its elements can be Ref/Shared-wrapped, so resolve each through the table.
+fn is_width_key(k: &Value, tab_index: i64, sh: &SharedTable) -> bool {
+    let Value::Tuple(items) = effective(k, sh) else { return false };
+    items.len() == 2
+        && is_bytes(effective(&items[0], sh), b"overviewScroll2")
+        && as_int(effective(&items[1], sh)) == Some(tab_index)
 }
 
 fn prettify(token: &str) -> String {
@@ -203,14 +208,6 @@ fn as_int(v: &Value) -> Option<i64> {
     }
 }
 
-fn token(v: &Value) -> Option<String> {
-    // Column tokens are Bytes, sometimes Shared-wrapped (real account lists).
-    match unwrap_shared_ref(v) {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        _ => None,
-    }
-}
-
 /// True if the dict key is the string `name`, whether stored plainly or as a
 /// string-table reference — real files store the `"name"` key as `t52`.
 fn key_is(k: &Value, name: &str) -> bool {
@@ -221,28 +218,6 @@ fn key_is(k: &Value, name: &str) -> bool {
             .map(|s| *s == name)
             .unwrap_or(false),
         _ => false,
-    }
-}
-
-/// A list-of-tokens field (tabColumns / tabColumnOrder / overviewColumns…).
-/// Accepts a bare `List` or the `(timestamp, list)` wrapper real files use for
-/// the account-level lists; items may be Shared-wrapped.
-fn list_field(fields: &Entries, name: &[u8]) -> Option<Vec<String>> {
-    let (_, v) = fields.iter().find(|(k, _)| is_bytes(k, name))?;
-    let items = as_list(unwrap_shared_ref(v))?;
-    Some(items.iter().filter_map(token).collect())
-}
-
-/// The `List` inside a value: a bare list, or the list element of a
-/// `(timestamp, list)` wrapper tuple.
-fn as_list(v: &Value) -> Option<&Vec<Value>> {
-    match v {
-        Value::List(items) => Some(items),
-        Value::Tuple(items) => items.iter().find_map(|e| match unwrap_shared_ref(e) {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
     }
 }
 
@@ -297,7 +272,7 @@ pub enum OverviewError {
 }
 
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
-    let (def_order, def_visible) = account_defaults(user);
+    let (def_order, def_visible) = preset_columns_for_tab(user, tab_index);
     with_tab(user, tab_index, |tab| {
         materialize_from(tab, &def_order, &def_visible);
         let tok = Value::Bytes(column.as_bytes().to_vec());
@@ -317,7 +292,7 @@ pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visibl
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
-    let (def_order, def_visible) = account_defaults(user);
+    let (def_order, def_visible) = preset_columns_for_tab(user, tab_index);
     with_tab(user, tab_index, |tab| {
         materialize_from(tab, &def_order, &def_visible);
         *list_mut(tab, b"tabColumnOrder") = order.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect();
@@ -333,17 +308,62 @@ fn with_tab<F: FnOnce(&mut Vec<(Value, Value)>)>(user: &mut Value, tab_index: i6
     Ok(())
 }
 
-/// Path to the mutable tab dict, resolving the account defaults for materialize
-/// eagerly (read them before taking the &mut borrow).
+/// Path to the mutable tab dict. Every hop (overview container, tabsettings_new/
+/// tabsettings, the tab entry) is located by its RESOLVED key, so a Ref/Shared
+/// key on a real file matches; `resolve_mut` then walks by concrete indices, with
+/// `SharedInner` threaded wherever a value was deduped into a `Shared`.
 fn tab_dict_path(user: &Value, tab_index: i64) -> Option<NodePath> {
-    let (dict, base) = tab_settings(user)?;
-    let (i, (_, v)) = dict.iter().enumerate().find(|(_, (k, _))| as_int(k) == Some(tab_index))?;
+    let mut sh = SharedTable::new();
+    collect_shared(user, &mut sh);
+    let (root, base) = unwrap_shared(user, Vec::new());
+    let Value::Dict(root) = root else { return None };
+    // user -> overview container
+    let (ci, cv) = find_child_entry(root, b"overview", &sh)?;
     let mut p = base;
+    p.push(Step::DictValue(ci));
+    let (cv, p) = unwrap_shared(cv, p);
+    let Value::Dict(ov) = cv else { return None };
+    // -> tabsettings_new (modern) or tabsettings (legacy), a (ts, dict) wrapper
+    let (ti, tv) = [b"tabsettings_new".as_slice(), b"tabsettings"]
+        .into_iter()
+        .find_map(|n| find_child_entry(ov, n, &sh))?;
+    let mut p = p;
+    p.push(Step::DictValue(ti));
+    let (tabs, p) = dict_at(tv, p)?;
+    // -> the tab entry by resolved Int index
+    let (i, (_, v)) = tabs.iter().enumerate().find(|(_, (k, _))| as_int(effective(k, &sh)) == Some(tab_index))?;
+    let mut p = p;
     p.push(Step::DictValue(i));
-    // The tab value may be Shared-wrapped (marshal dedup); thread SharedInner so
-    // resolve_mut lands on the Dict, mirroring project_tab's read-side unwrap.
+    // The tab value may itself be Shared-wrapped; thread SharedInner to the Dict.
     let (_, p) = unwrap_shared(v, p);
     Some(p)
+}
+
+/// Entry index within `dict` whose RESOLVED key is `Bytes(name)`, with its raw
+/// (unresolved) value so a path built from the index stays walkable.
+fn find_child_entry<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable) -> Option<(usize, &'a Value)> {
+    dict.iter()
+        .enumerate()
+        .find(|(_, (k, _))| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
+        .map(|(i, (_, v))| (i, v))
+}
+
+/// Descend a value that is a dict or a `(ts, dict)` wrapper (either possibly
+/// `Shared`) to its inner dict, threading the path steps taken.
+fn dict_at(v: &Value, p: NodePath) -> Option<(&Entries, NodePath)> {
+    let (v, p) = unwrap_shared(v, p);
+    match v {
+        Value::Dict(d) => Some((d, p)),
+        Value::Tuple(items) => {
+            let (i, _) = items.iter().enumerate().find(|(_, e)| matches!(unwrap_shared_ref(e), Value::Dict(_)))?;
+            let mut p2 = p;
+            p2.push(Step::Tuple(i));
+            let (e, p2) = unwrap_shared(&items[i], p2);
+            let Value::Dict(d) = e else { return None };
+            Some((d, p2))
+        }
+        _ => None,
+    }
 }
 
 /// Create the tab's own lists from the account defaults when absent (mirrors the
@@ -369,11 +389,19 @@ fn list_mut<'a>(tab: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec<Va
 
 pub fn set_column_width(char_tree: &mut Value, tab_index: i64, column: &str, width: i64) -> Result<(), OverviewError> {
     let sizes_path = sort_headers_sizes_path(char_tree).ok_or(OverviewError::NoTab)?;
+    // Locate the tab's width entry by RESOLVED key (real keys are Ref/Shared) while
+    // the borrow is immutable, then drop the table before taking the &mut path.
+    let mut sh = SharedTable::new();
+    collect_shared(char_tree, &mut sh);
+    let pos = match resolve(char_tree, &sizes_path) {
+        Some(Value::Dict(sizes)) => sizes.iter().position(|(k, _)| is_width_key(k, tab_index, &sh)),
+        _ => None,
+    };
+    drop(sh);
     let Some(Value::Dict(sizes)) = resolve_mut(char_tree, &sizes_path) else {
         return Err(OverviewError::NoTab);
     };
     // Find or create the tab's width dict, keyed by (overviewScroll2, tabIndex).
-    let pos = sizes.iter().position(|(k, _)| is_width_key(k, tab_index));
     let cols = match pos {
         Some(i) => &mut sizes[i].1,
         None => {
@@ -583,6 +611,66 @@ mod tests {
         assert!(!t.inherits, "tab now owns its lists");
         assert_eq!(t.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
         assert!(t.columns.iter().find(|c| c.name == "TYPE").unwrap().visible);
+    }
+
+    #[test]
+    fn editing_inheriting_tab_materializes_from_preset_not_account() {
+        use blue_marshal::Value;
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
+        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]);
+        let overview = Value::Dict(vec![
+            (b("overviewProfilePresets"), Value::Dict(vec![(b("P"), preset)])),
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])])),
+        ]);
+        let mut user = Value::Dict(vec![(b("overview"), overview)]);
+
+        set_column_visible(&mut user, 0, "DISTANCE", true).unwrap();
+
+        let oc = project_overview(&user, None);
+        let t0 = oc.tabs.iter().find(|t| t.index == 0).unwrap();
+        assert!(!t0.inherits, "tab now owns its lists (materialized)");
+        let visible: Vec<_> = t0.columns.iter().filter(|c| c.visible).map(|c| c.name.clone()).collect();
+        assert!(visible.contains(&"DISTANCE".to_string()));
+        assert!(visible.contains(&"NAME".to_string()) && visible.contains(&"TYPE".to_string()),
+            "preset's visible columns carried into the materialized tab");
+        // preset untouched
+        let oc2 = project_overview(&user, None);
+        assert_eq!(oc2.tabs.iter().find(|t| t.index==0).map(|t| t.columns.len()), t0.columns.len().into());
+    }
+
+    #[test]
+    fn edits_a_tab_in_a_shared_keyed_overview_container() {
+        // Mirrors a real file: the `overview` container key and the
+        // `tabsettings_new` key are both marshal-deduped into `Shared`s. A bare
+        // `is_bytes` key match would miss them and report NoTab; the resolved-key
+        // path must find the tab and land the edit.
+        use blue_marshal::Value;
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
+        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]);
+        let overview = Value::Dict(vec![
+            (b("overviewProfilePresets"), Value::Dict(vec![(b("P"), preset)])),
+            (
+                Value::Shared { slot: 2, value: Box::new(b("tabsettings_new")) },
+                Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])]),
+            ),
+        ]);
+        let mut user = Value::Dict(vec![
+            (Value::Shared { slot: 1, value: Box::new(b("overview")) }, overview),
+        ]);
+
+        set_column_visible(&mut user, 0, "DISTANCE", true).unwrap();
+
+        let oc = project_overview(&user, None);
+        let t0 = oc.tabs.iter().find(|t| t.index == 0).unwrap();
+        assert!(!t0.inherits, "the edit materialized the tab despite Shared keys");
+        assert!(t0.columns.iter().any(|c| c.visible && c.name == "DISTANCE"),
+            "the edit landed on the real tab, not a phantom");
+        assert!(t0.columns.iter().any(|c| c.name == "NAME") && t0.columns.iter().any(|c| c.name == "TYPE"),
+            "materialized from the preset");
     }
 
     #[test]
