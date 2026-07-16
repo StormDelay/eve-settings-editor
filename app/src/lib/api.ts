@@ -174,8 +174,13 @@ export interface OverviewTab {
   inherits: boolean;
   columns: OverviewColumn[];
 }
+export interface OverviewWindow {
+  index: number;
+  tab_indices: number[];
+}
 export interface OverviewColumns {
   tabs: OverviewTab[];
+  windows: OverviewWindow[];
 }
 
 export type Slot = "char" | "user";
