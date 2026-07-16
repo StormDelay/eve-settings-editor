@@ -1,6 +1,12 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts and search.test.ts.
-import { associatedCharacters, accountOf, pairedFilePath } from "./overview.ts";
+import {
+  associatedCharacters,
+  accountOf,
+  pairedFilePath,
+  userSlotFor,
+  charSlotFor,
+} from "./overview.ts";
 import type { AccountRoster, Profile } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -64,6 +70,39 @@ check(
 check(
   "pairedFilePath returns null when there is no match in the folder",
   pairedFilePath(profiles, anchor, 777, "user") === null,
+);
+
+// --- slot reconciliation: the other slot becomes the correct pair or is emptied ---
+const userFile = "/eve/settings_Default/core_user_456.dat";
+
+check(
+  "userSlotFor loads the paired account file when opening a paired character",
+  JSON.stringify(userSlotFor(anchor, 123, null, roster, profiles)) ===
+    JSON.stringify({ kind: "load", path: userFile }),
+);
+check(
+  "userSlotFor keeps the account file when it is already the right one",
+  userSlotFor(anchor, 123, userFile, roster, profiles).kind === "keep",
+);
+check(
+  "userSlotFor clears a stale account file when the character is unpaired",
+  userSlotFor(anchor, 999, userFile, roster, profiles).kind === "clear",
+);
+check(
+  "userSlotFor keeps (nothing to do) when unpaired and the user slot is empty",
+  userSlotFor(anchor, 999, null, roster, profiles).kind === "keep",
+);
+check(
+  "charSlotFor keeps a character that belongs to the opened account",
+  charSlotFor(456, 123, roster).kind === "keep",
+);
+check(
+  "charSlotFor clears a character that does not belong to the opened account",
+  charSlotFor(789, 123, roster).kind === "clear",
+);
+check(
+  "charSlotFor keeps (nothing to do) when the char slot is empty",
+  charSlotFor(456, null, roster).kind === "keep",
 );
 
 console.log("overview: all checks passed");

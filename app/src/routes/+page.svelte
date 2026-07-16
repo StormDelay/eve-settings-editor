@@ -11,7 +11,12 @@
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
   import { aliasFor, accountsStore } from "$lib/accounts.svelte";
-  import { accountOf, pairedFilePath, associatedCharacters } from "$lib/overview";
+  import {
+    pairedFilePath,
+    associatedCharacters,
+    userSlotFor,
+    charSlotFor,
+  } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -167,30 +172,69 @@
       } catch {
         layoutAvailable = false;
       }
-      if (slot === "char") await autoLoadPairedUser(outcome);
+      // Reconcile the *other* slot so the two are always a matching char/user
+      // pair (or one empty) — never a stale, unrelated file the Overview editor
+      // would misread.
+      if (slot === "char") await reconcileUserSlot(outcome);
+      else await reconcileCharSlot(outcome);
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
   }
 
-  // After a char file lands in the char slot, auto-load its paired user file
-  // (if the character is paired to an account and that account's file can be
-  // found in the same profile folder). Leaves the user slot alone otherwise —
-  // the Overview view shows the Accounts nudge for the unpaired/unfound case.
-  async function autoLoadPairedUser(charOutcome: OpenOutcome) {
-    if (charOutcome.status !== "opened") return;
-    const m = charOutcome.file_name.match(/^core_char_(\d+)\.dat$/);
-    if (!m) return;
-    const charId = Number(m[1]);
-    const userId = accountOf(charId, accountsStore.roster);
-    if (userId === null) return; // unpaired: the Overview view shows the Accounts nudge
-    const userPath = pairedFilePath(profiles, charOutcome.path, userId, "user");
-    if (!userPath) return;
-    if (slots.user?.status === "opened" && slots.user.path === userPath) return; // already the right file
+  // Empty a slot: close its backend document and clear the frontend state.
+  async function clearSlot(slot: Slot) {
+    if (slots[slot] === null) return;
     try {
-      slots.user = await api.open("user", userPath);
+      await api.close(slot);
+    } catch { /* best-effort */ }
+    slots[slot] = null;
+    dirtySlots[slot] = false;
+  }
+
+  // After a character lands in the char slot, make the user slot its paired
+  // account file — or empty it. Never keep a stale, unrelated account file (the
+  // Overview view shows the Accounts nudge when the user slot is empty).
+  async function reconcileUserSlot(charOutcome: OpenOutcome) {
+    const charId =
+      charOutcome.status === "opened"
+        ? charOutcome.file_name.match(/^core_char_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const action = userSlotFor(
+      charOutcome.status === "opened" ? charOutcome.path : "",
+      charId === null ? null : Number(charId),
+      slots.user?.status === "opened" ? slots.user.path : null,
+      accountsStore.roster,
+      profiles,
+    );
+    if (action.kind === "keep") return;
+    if (action.kind === "clear") return clearSlot("user");
+    try {
+      slots.user = await api.open("user", action.path);
       dirtySlots.user = false;
-    } catch { /* leave the user slot as-is; the nudge is shown */ }
+    } catch {
+      await clearSlot("user"); // couldn't load the pair -> don't keep a stale one
+    }
+  }
+
+  // After an account file lands in the user slot, keep the char slot only if it
+  // holds one of this account's characters — otherwise empty it (the character
+  // selector picks which of the account's characters to load).
+  async function reconcileCharSlot(userOutcome: OpenOutcome) {
+    const userId =
+      userOutcome.status === "opened"
+        ? userOutcome.file_name.match(/^core_user_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const currentCharId =
+      slots.char?.status === "opened"
+        ? slots.char.file_name.match(/^core_char_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const action = charSlotFor(
+      userId === null ? null : Number(userId),
+      currentCharId === null ? null : Number(currentCharId),
+      accountsStore.roster,
+    );
+    if (action.kind === "clear") await clearSlot("char");
   }
 
   // Load a selected character into the char slot (from the OverviewView selector).

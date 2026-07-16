@@ -29,3 +29,38 @@ export function pairedFilePath(
   }
   return null;
 }
+
+// What to do with the *other* slot when a file is opened: leave it, swap in the
+// correct pair, or empty it. The two slots must always be a matching char/user
+// pair (or one empty) — never a stale, unrelated file that the Overview editor
+// would then misread.
+export type SlotAction = { kind: "keep" } | { kind: "load"; path: string } | { kind: "clear" };
+
+// On opening a CHARACTER, decide what the USER slot becomes: the character's
+// paired account file (unique — a character belongs to one account), else empty.
+export function userSlotFor(
+  charPath: string,
+  charId: number | null,
+  currentUserPath: string | null,
+  roster: AccountRoster,
+  profiles: Profile[],
+): SlotAction {
+  const userId = charId === null ? null : accountOf(charId, roster);
+  const userPath = userId === null ? null : pairedFilePath(profiles, charPath, userId, "user");
+  if (userPath === null) return currentUserPath === null ? { kind: "keep" } : { kind: "clear" };
+  if (userPath === currentUserPath) return { kind: "keep" };
+  return { kind: "load", path: userPath };
+}
+
+// On opening an ACCOUNT file, decide what the CHAR slot becomes: keep it only if
+// it holds one of this account's characters, else empty it. There is no single
+// character to auto-load (an account has several); the selector picks one.
+export function charSlotFor(
+  userId: number | null,
+  currentCharId: number | null,
+  roster: AccountRoster,
+): SlotAction {
+  if (currentCharId === null) return { kind: "keep" };
+  const belongs = userId !== null && accountOf(currentCharId, roster) === userId;
+  return belongs ? { kind: "keep" } : { kind: "clear" };
+}
