@@ -8,24 +8,17 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use blue_marshal::{decode, encode};
 use serde::Serialize;
 
 use crate::document::{Document, Fidelity};
 
-/// Sibling files modified within this window trigger the "client may be
-/// running" standing warning (spec §5.3).
-const RECENT_WRITE_WINDOW: Duration = Duration::from_secs(300);
-
 #[derive(Debug, Serialize)]
 pub struct SaveReport {
     pub backup_path: PathBuf,
     pub bytes_written: usize,
-    /// File names in the same settings folder modified within the last
-    /// 5 minutes (the client is likely running) — a warning, not an error.
-    pub recent_sibling_writes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,7 +60,6 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
     if changed && !force_conflict {
         return Err(SaveError::Conflict);
     }
-    let recent_sibling_writes = recent_writes(&doc.path);
     // 4. Backup — hard requirement.
     let backup_path = backup_current(&doc.path).map_err(SaveError::Backup)?;
     // 5. Atomic write.
@@ -87,7 +79,7 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
             doc.loaded_len = encoded.len() as u64;
         }
     }
-    Ok(SaveReport { backup_path, bytes_written: encoded.len(), recent_sibling_writes })
+    Ok(SaveReport { backup_path, bytes_written: encoded.len() })
 }
 
 /// Copy `target` into `<dir>/eve-settings-editor-backups/<name>.<stamp>.bak`
@@ -145,29 +137,6 @@ fn temp_path(dir: &Path, name: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     dir.join(format!(".{name}.tmp-{}-{n}", std::process::id()))
-}
-
-fn recent_writes(target: &Path) -> Vec<String> {
-    let Some(dir) = target.parent() else { return vec![] };
-    let now = SystemTime::now();
-    let mut out = Vec::new();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p == target || p.extension().is_none_or(|e| e != "dat") {
-                continue;
-            }
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(modified) = meta.modified() {
-                    if now.duration_since(modified).unwrap_or_default() < RECENT_WRITE_WINDOW {
-                        out.push(entry.file_name().to_string_lossy().into_owned());
-                    }
-                }
-            }
-        }
-    }
-    out.sort();
-    out
 }
 
 /// UTC timestamp `YYYY-MM-DDTHHMMSSZ` — ISO-8601 with basic (colon-free)

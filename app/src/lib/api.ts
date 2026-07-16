@@ -60,7 +60,6 @@ export interface Profile {
 export interface SaveReport {
   backup_path: string;
   bytes_written: number;
-  recent_sibling_writes: string[];
 }
 
 export interface BackupInfo {
