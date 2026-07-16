@@ -13,6 +13,13 @@ Workflow:
 
 ## Open
 
+- [ ] **Add a short public-facing README.** The repo root has no README and
+  `app/README.md` is still the stock Tauri template. Write a brief one: what the
+  tool is, that it edits local EVE settings files (with backups), where to
+  download the installers, and a note that builds are unsigned so expect OS
+  warnings. A design §11 "go public" item; low effort, high value once anyone
+  outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
+
 - [ ] **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
   refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
