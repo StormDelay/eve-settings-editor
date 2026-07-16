@@ -22,7 +22,7 @@ pub use path::{resolve, resolve_mut, NodePath, Step};
 pub use projection::{project, Node}; // enabled in Task 4
 pub use save::{save, SaveError, SaveReport}; // enabled in Task 6
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, StackField, WindowLayout, WindowRect};
-pub use overview::{project_overview, set_column_order, set_column_visible, OverviewColumn, OverviewColumns, OverviewError, OverviewTab};
+pub use overview::{project_overview, set_column_order, set_column_visible, set_column_width, OverviewColumn, OverviewColumns, OverviewError, OverviewTab};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
