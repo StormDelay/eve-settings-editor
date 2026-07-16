@@ -8,8 +8,11 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use settings_model::{
-    apply, default_roots, discover, project, save, window_layout as project_window_layout,
-    Document, Fidelity, LoadError, Mutation, Node, Profile, SaveReport, WindowLayout,
+    apply, default_roots, discover, project, project_overview, save,
+    set_column_order, set_column_visible, set_column_width,
+    window_layout as project_window_layout,
+    Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
+    WindowLayout,
 };
 
 use crate::accounts;
@@ -230,6 +233,51 @@ fn open_paths(state: &AppState) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(|s| state.doc(s).lock().unwrap().as_ref().map(|d| d.path.clone()))
         .collect()
+}
+
+pub fn overview_columns(state: &AppState) -> Result<OverviewColumns, ErrDto> {
+    let user = state.user.lock().unwrap();
+    let udoc = user.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    let char_guard = state.char.lock().unwrap();
+    let char_val = char_guard.as_ref().map(|d| &d.value);
+    Ok(project_overview(&udoc.value, char_val))
+}
+
+/// Edit the user slot (visibility/order), then re-project including char widths.
+fn edit_user_overview<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), settings_model::OverviewError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+    }
+    overview_columns(state)
+}
+
+pub fn set_overview_visible(state: &AppState, tab_index: i64, column: &str, visible: bool) -> Result<OverviewColumns, ErrDto> {
+    edit_user_overview(state, |v| set_column_visible(v, tab_index, column, visible))
+}
+
+pub fn set_overview_order(state: &AppState, tab_index: i64, order: Vec<String>) -> Result<OverviewColumns, ErrDto> {
+    edit_user_overview(state, |v| set_column_order(v, tab_index, &order))
+}
+
+pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width: i64) -> Result<OverviewColumns, ErrDto> {
+    {
+        let mut guard = state.char.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        set_column_width(&mut doc.value, tab_index, column, width)
+            .map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+    }
+    overview_columns(state)
 }
 
 #[cfg(test)]
@@ -493,5 +541,45 @@ mod tests {
         close_file(&state, Slot::User);
         assert!(state.user.lock().unwrap().is_none());
         assert!(state.char.lock().unwrap().is_some());
+    }
+
+    fn overview_user_bytes() -> Vec<u8> {
+        // root -> b"overview" -> b"tabsettings_new" -> (ts, { 0: {name, order, visible} })
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("PvP".into())),
+            (Value::Bytes(b"tabColumnOrder".to_vec()),
+             Value::List(vec![Value::Bytes(b"NAME".to_vec()), Value::Bytes(b"TYPE".to_vec())])),
+            (Value::Bytes(b"tabColumns".to_vec()), Value::List(vec![Value::Bytes(b"NAME".to_vec())])),
+        ]);
+        encode(&Value::Dict(vec![(
+            Value::Bytes(b"overview".to_vec()),
+            Value::Dict(vec![(
+                Value::Bytes(b"tabsettings_new".to_vec()),
+                Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(vec![(Value::Int(0), tab)])]),
+            )]),
+        )])).unwrap()
+    }
+
+    #[test]
+    fn overview_reads_and_edits_the_user_slot() {
+        let path = temp_file("ov-user", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let oc = overview_columns(&state).unwrap();
+        assert_eq!(oc.tabs.len(), 1);
+        assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 1);
+
+        // Show TYPE, then reorder.
+        let oc = set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 2);
+        let oc = set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+        assert_eq!(oc.tabs[0].columns[0].name, "TYPE");
+    }
+
+    #[test]
+    fn overview_without_a_user_slot_errors() {
+        let state = AppState::new();
+        assert_eq!(overview_columns(&state).unwrap_err().code, "no_document");
     }
 }
