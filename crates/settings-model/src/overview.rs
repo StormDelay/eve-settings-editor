@@ -227,6 +227,43 @@ fn list_mut<'a>(tab: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec<Va
     items
 }
 
+pub fn set_column_width(char_tree: &mut Value, tab_index: i64, column: &str, width: i64) -> Result<(), OverviewError> {
+    let sizes_path = sort_headers_sizes_path(char_tree).ok_or(OverviewError::NoTab)?;
+    let Some(Value::Dict(sizes)) = resolve_mut(char_tree, &sizes_path) else {
+        return Err(OverviewError::NoTab);
+    };
+    // Find or create the tab's width dict, keyed by (overviewScroll2, tabIndex).
+    let pos = sizes.iter().position(|(k, _)| is_width_key(k, tab_index));
+    let cols = match pos {
+        Some(i) => &mut sizes[i].1,
+        None => {
+            let key = Value::Tuple(vec![Value::Bytes(b"overviewScroll2".to_vec()), Value::Int(tab_index)]);
+            sizes.push((key, Value::Dict(vec![])));
+            &mut sizes.last_mut().unwrap().1
+        }
+    };
+    // An existing per-tab width dict may be Shared-wrapped (marshal dedup); the
+    // read side (tab_widths) already unwraps it, so the write side must too.
+    let cols = match cols {
+        Value::Shared { value, .. } => value.as_mut(),
+        other => other,
+    };
+    let Value::Dict(entries) = cols else { return Err(OverviewError::NoTab) };
+    let tok = column.as_bytes();
+    match entries.iter_mut().find(|(k, _)| is_bytes(k, tok)) {
+        Some((_, v)) => *v = Value::Int(width),
+        None => entries.push((Value::Bytes(tok.to_vec()), Value::Int(width))),
+    }
+    Ok(())
+}
+
+/// Path to the inner dict of char root -> ui -> SortHeadersSizes -> (ts, dict).
+fn sort_headers_sizes_path(char_tree: &Value) -> Option<NodePath> {
+    let (ui, ui_path) = child_dict(char_tree, b"ui", Vec::new())?;
+    let (_, path) = timestamped_dict(ui, &ui_path, b"SortHeadersSizes")?;
+    Some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +435,62 @@ mod tests {
     fn editing_a_missing_tab_errors() {
         let mut user = user_with_tab();
         assert_eq!(set_column_visible(&mut user, 99, "NAME", true), Err(OverviewError::NoTab));
+    }
+
+    fn width_of(char_tree: &Value, tab: i64, col: &str) -> Option<i64> {
+        let user = user_with_tab(); // provides the order so the column appears
+        project_overview(&user, Some(char_tree))
+            .tabs.into_iter().find(|t| t.index == tab)?
+            .columns.into_iter().find(|c| c.name == col)?.width
+    }
+
+    #[test]
+    fn set_width_overwrites_existing() {
+        let mut c = char_with_widths();
+        set_column_width(&mut c, 0, "NAME", 200).unwrap();
+        assert_eq!(width_of(&c, 0, "NAME"), Some(200));
+    }
+
+    #[test]
+    fn set_width_inserts_a_new_column_entry() {
+        let mut c = char_with_widths();
+        set_column_width(&mut c, 0, "TYPE", 88).unwrap();
+        assert_eq!(width_of(&c, 0, "TYPE"), Some(88));
+        assert_eq!(width_of(&c, 0, "NAME"), Some(120), "existing width untouched");
+    }
+
+    #[test]
+    fn set_width_creates_the_tab_width_dict_when_absent() {
+        // char_with_widths only has tab 0; write tab 1.
+        let mut c = char_with_widths();
+        set_column_width(&mut c, 1, "NAME", 77).unwrap();
+        // Re-project a user that has tab 1 to read it back.
+        let user = user_inheriting_tab();
+        let w = project_overview(&user, Some(&c)).tabs.into_iter()
+            .find(|t| t.index == 1).unwrap()
+            .columns.into_iter().find(|col| col.name == "NAME").unwrap().width;
+        assert_eq!(w, Some(77));
+    }
+
+    #[test]
+    fn set_width_unwraps_a_shared_width_dict() {
+        // An existing per-tab width dict deduped into a Shared must still be editable.
+        let widths = Value::Shared {
+            slot: 1,
+            value: Box::new(Value::Dict(vec![(bytes("NAME"), Value::Int(120))])),
+        };
+        let mut c = Value::Dict(vec![(
+            bytes("ui"),
+            Value::Dict(vec![(
+                bytes("SortHeadersSizes"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![(
+                    Value::Tuple(vec![bytes("overviewScroll2"), Value::Int(0)]),
+                    widths,
+                )])]),
+            )]),
+        )]);
+        set_column_width(&mut c, 0, "NAME", 200).unwrap();
+        assert_eq!(width_of(&c, 0, "NAME"), Some(200));
     }
 
     #[test]
