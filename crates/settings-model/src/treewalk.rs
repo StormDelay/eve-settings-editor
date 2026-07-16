@@ -9,6 +9,62 @@ use crate::path::{NodePath, Step};
 
 pub(crate) type Entries = Vec<(Value, Value)>;
 
+/// Shared-object slot table: slot number -> the value it stores. EVE files
+/// store a repeated window-id string once as a `Shared` and reference it
+/// elsewhere as `Ref(slot)`, so the same window id appears as `Shared` in one
+/// dict and `Ref` in another. Resolving them is what makes ids real and unique
+/// (an unresolved `Ref` would collapse every reference to the "ref" kind name,
+/// producing duplicate ids that crash a keyed render).
+pub(crate) type SharedTable<'a> = std::collections::HashMap<u32, &'a Value>;
+
+/// Gather every `Shared { slot, value }` in the tree into a slot table.
+pub(crate) fn collect_shared<'a>(v: &'a Value, out: &mut SharedTable<'a>) {
+    match v {
+        Value::Shared { slot, value } => {
+            out.insert(*slot, value);
+            collect_shared(value, out);
+        }
+        Value::Tuple(items) | Value::List(items) => {
+            items.iter().for_each(|i| collect_shared(i, out));
+        }
+        Value::Dict(entries) => entries.iter().for_each(|(k, val)| {
+            collect_shared(k, out);
+            collect_shared(val, out);
+        }),
+        Value::Stream(inner) => collect_shared(inner, out),
+        Value::Instance { class, state } => {
+            collect_shared(class, out);
+            collect_shared(state, out);
+        }
+        Value::Reduce { ctor, items, pairs } => {
+            collect_shared(ctor, out);
+            items.iter().for_each(|i| collect_shared(i, out));
+            pairs.iter().for_each(|(k, val)| {
+                collect_shared(k, out);
+                collect_shared(val, out);
+            });
+        }
+        _ => {}
+    }
+}
+
+/// Follow `Ref`/`Shared` indirection to the underlying value (bounded against a
+/// pathological chain; real files reference backwards so this terminates fast).
+pub(crate) fn effective<'a>(v: &'a Value, shared: &SharedTable<'a>) -> &'a Value {
+    let mut cur = v;
+    for _ in 0..64 {
+        cur = match cur {
+            Value::Shared { value, .. } => value,
+            Value::Ref(slot) => match shared.get(slot).copied() {
+                Some(target) => target,
+                None => return cur,
+            },
+            _ => return cur,
+        };
+    }
+    cur
+}
+
 pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
