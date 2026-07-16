@@ -1,174 +1,171 @@
-# M3c — Overview columns editor (design)
+# M3c — Overview columns editor (design, v2 — real-file model)
 
-Date: 2026-07-16
+Date: 2026-07-16 (v2 after live-smoke findings)
 Status: approved, pre-plan
-Builds on: M1 (codec, raw tree, save chain), M2 (layout canvas — the path-surfacing
-projection pattern this reuses), M3a (ESI names), M3b (char↔user pairing / account
-roster — this milestone consumes it). Design spec §6 "Overview editor".
+Builds on: M1 (codec, raw tree, save chain), M2 (layout canvas — the shared-slot
+`Ref`/`Shared` resolution this reuses), M3a (ESI names), M3b (char↔user pairing /
+account roster). Design spec §6 "Overview editor".
 
-Final of the three M3 sub-milestones: **M3a — ESI names** (done) → **M3b —
-char/user association** (done) → **M3c — overview columns editor** (this doc).
-Packaging and the autofill editor are their own later milestones.
+> **v2 note.** The v1 model in this file was built on hand-made `Value` fixtures
+> and a "does-not-panic" corpus check; **no test ever read a real file's
+> structure.** Live smoke showed the model was wrong. This revision re-grounds
+> the format model on the user's actual on-disk files (dumped and verified),
+> and supports both the **modern** (`tabsettings_new`) and **legacy / imported
+> preset-pack** (`tabsettings`) formats. See §10 for the lessons.
 
 ## 1. Goal
 
-Give the overview window's columns a purpose-built editor: **show/hide**,
-**drag-to-reorder**, and **per-column width**, per overview tab — instead of
-hand-editing the raw tree. This is the first **two-file** category: it reads and
-writes both `core_user` (visibility + order, account-scoped) and `core_char`
-(widths, per character), so it also introduces the **two-slot** app state the
-M3b design anticipated (approach A).
+A per-overview-tab columns editor — **show/hide**, **drag-to-reorder**, and
+**per-column width** — instead of hand-editing the raw tree. It is the first
+**two-file** category (visibility/order in `core_user`, widths in `core_char`),
+so it also introduces the **two-slot** app state.
 
-Overview *filter presets* (tab contents) remain raw-tree-only per design spec
-§6 and §10 — out of scope.
+## 2. Format model (evidence-based)
 
-## 2. Format mappings (from `docs/format-notes.md`, experiments 3a–3b)
+Everything below was read from real files, not assumed. `Ref`/`Shared`
+indirection is pervasive; the read path resolves it via a shared-slot table
+(the `windows.rs` technique: `collect_shared` + `effective`).
 
-Overview column config spans both files:
+**In the `core_user` (account) file**, under the overview container
+(`root → b"overview"` on modern files; the legacy container is pinned
+programmatically at implementation, §9):
 
-- **Visibility + order — `core_user`, per overview tab.**
-  `root → b"overview" → b"tabsettings_new" → (FILETIME, dict)` keyed by **tab
-  index** (`Int`). Each tab dict holds `"name"` (Str label), `b"tabColumnOrder"`
-  (list of column-name `Bytes`, the full ordering) and `b"tabColumns"` (list of
-  column-name `Bytes`, the **visible** subset), alongside bracket/color/overview
-  preset/showAll/showNone/showSpecials keys the editor leaves alone.
-- **Account defaults — `core_user`.** `root → b"overview" → b"overviewColumns"`
-  (visible) + `b"overviewColumnOrder"` (order). Applied to any tab that has no
-  own `tabColumns`/`tabColumnOrder`.
-- **Widths — `core_char`, per character, per tab.**
-  `root → b"ui" → b"SortHeadersSizes" → (FILETIME, dict)` keyed by the tuple
-  `(b"overviewScroll2", tabIndex)` → dict of column-name `Bytes` → width px
-  (`Int`). Sibling `b"SortHeadersSettings2"` (per-tab sort state) is left alone.
+- **Tabs** — `b"tabsettings_new"` (modern) *or* `b"tabsettings"` (legacy) →
+  `(FILETIME, dict)` keyed by a **global tab index** (`Int`, sequentially
+  allocated — **not** derivable from the window). Each tab dict holds:
+  - `"name"` — the tab label. **The key is a string-table ref (`t52`)**, not a
+    plain string; the value is `Str`/`StrUcs2`/`Bytes`.
+  - `b"overview"` — the **preset name** the tab references (its default columns).
+  - `b"bracket"`, `b"color"` — left untouched.
+  - Optionally `b"tabColumnOrder"` (full ordered column list) + `b"tabColumns"`
+    (visible subset) — the tab's **own column override**, present only after the
+    tab has been column-customized. Bare lists; items are column tokens (`Bytes`),
+    frequently `Ref`/`Shared`.
+- **Presets** — `b"overviewProfilePresets"` → dict keyed by preset name → each
+  preset has `b"overviewColumns"` (its ordered visible set; `Ref`s to shared
+  column tokens). **This is the default a tab inherits when it has no own lists.**
+- **Master column list** — `b"overviewColumnOrder"` = `(FILETIME, list)` of all
+  available column tokens (the "add column" source). Wrapped in a
+  `(timestamp, list)` tuple; items bare `Bytes` (modern) or `Shared` (legacy).
+- **Window→tab mapping** — `b"tabsByWindowInstanceID"` = a **list of lists**;
+  outer index = overview window instance, inner list = that window's tab indices
+  in display order. Observed: `[[0,1,…,9,12,13],[10,11,14]]` — window 0 owns the
+  first list, window 1 the second.
 
-**Inheritance (experiment 3b).** Per-tab column lists are sparse: a tab without
-its own `tabColumnOrder`/`tabColumns` inherits the account defaults. The client
-**materializes** a tab's own full lists on the first edit (observed: first drag
-on an inheriting tab wrote the complete 14-column `tabColumnOrder`). The editor
-mirrors this — see §5.
+**In the `core_char` file:**
 
-**Leaf wrappers.** Values live inside `(FILETIME, value)` tuples at the
-`tabsettings_new` / `SortHeadersSizes` level; the existing M1 mutate/save layer
-already preserves and updates these, so edits reuse it.
+- **Widths** — `root → b"ui" → b"SortHeadersSizes" → (FILETIME, dict)` keyed by
+  the tuple `(b"overviewScroll2", tabIndex)` → dict of column token → width px.
+  **Per tab** (by the same global tab index). `Ref`/`Shared` keys and tokens.
+  (The v1 width mapping was already correct.)
 
-## 3. Two-slot app state
+**Legacy vs modern** differ only in the tab-container key (`tabsettings` vs
+`tabsettings_new`) and container nesting; presets, master list, window map, and
+widths are structurally identical.
 
-`AppState` moves from one open document to **two typed slots** — a **char slot**
-and a **user slot** — plus the existing capture snapshot. Both can hold a
-document at once.
+## 3. A tab's effective columns (core semantics)
 
-- **Save chains are unchanged and independent.** Each slot saves through the
-  exact M1 path (pre-save backup, on-disk conflict check, atomic write). There
-  is **no** coordinated/transactional two-file write; the char file and user
-  file are saved as two separate operations.
-- Doc-scoped commands (`apply_mutation`, `save_document`, `list_file_backups`,
-  `window_layout`, `restore_backup`) take a `slot: "char" | "user"` argument
-  identifying which document to act on. `begin_capture` / `resolve_capture`
-  exclude **both** open documents from their mtime diff (today they exclude one).
-- The frontend tracks which slot is active for the Tree/Layout views (a small
-  header switcher when both slots are filled); the Overview view spans both.
+For a tab:
+1. If it has its own `tabColumns`/`tabColumnOrder` → those *are* its columns
+   (visible set + order).
+2. Otherwise → its **preset's** `overviewColumns` (resolve the tab's `overview`
+   field → `overviewProfilePresets[name]`). **The fallback is the preset — not
+   any account-level column set. That fallback target was v1's core bug.**
 
-## 4. Loading flow (bidirectional, via the M3b roster)
+**Editing a tab's columns MATERIALIZES the tab's own `tabColumnOrder`/`tabColumns`**
+(copied from the effective preset set on first edit), then applies the edit —
+exactly what the EVE client does. **Column edits are strictly per-tab: the preset
+and all other tabs are untouched.** (So there is no "editing a shared preset"
+behavior; a standalone preset editor is deferred, §7.)
 
-A character belongs to exactly one account, so char → user is a unique
-auto-load; an account has many characters and widths are per-character, so
-user → char is a pick. Both anchors are supported:
+## 4. Two-slot app state + loading (already built, validated, kept)
 
-- **Open a character** (`core_char`) → char slot. Look up its account in the
-  roster → **auto-load the paired `core_user`** into the user slot. If the
-  character has no account association, the Overview view shows a nudge:
-  "Associate this character's account to edit overview columns → Accounts".
-- **Open a user file** (`core_user`) → user slot. The Overview view shows a
-  **character selector** listing the account's associated characters (roster);
-  picking one loads its `core_char` into the char slot. If the account has no
-  associated characters yet, the same nudge to Accounts.
+Unchanged from v1 and confirmed correct in smoke:
 
-Either path ends with both slots filled and an identical editor. Widths are
-shown/edited for the character currently in the char slot; switching the
-selected character reloads the char slot.
+- `AppState` has typed `char` + `user` document slots (+ capture); every
+  doc-scoped command takes a `slot`; each slot saves through its own M1 chain.
+- **Loading reconciles the other slot** so the two are always a matching
+  char/user pair or one is empty: opening a character loads its paired account
+  file (M3b roster) or clears the user slot; opening an account file clears the
+  char slot unless it holds one of that account's characters. The character
+  selector loads a specific character for widths. The cross-slot unsaved-changes
+  guard covers every load path.
 
-## 5. The editor
+## 5. The editor (tab-anchored)
 
-A new **Overview** view, offered next to Tree (and Layout, when applicable),
-available once the loading flow above has produced the files it needs.
+- **Tab selector** — the account's overview tabs, **grouped by window** via
+  `tabsByWindowInstanceID`, shown by name.
+- **Character selector** — whose per-tab widths to edit (char file), from the
+  M3b roster. (This is the char selector's real purpose.)
+- **Column rows** for the selected tab, in the tab's effective order:
+  - **checkbox** = visible; toggling **materializes** the tab's own lists (from
+    its preset) then edits — per-tab, preset untouched.
+  - **drag** = reorder the tab's `tabColumnOrder` (materialize if needed).
+  - **width** = the selected character's width for this tab
+    (`(overviewScroll2, tabIndex)`, char file).
+- A small **"inherits from preset «name»"** note while the tab has no own lists
+  (first edit gives it its own).
+- **Save** writes each dirty slot (user = column overrides, char = widths)
+  through its own chain.
 
-- **Tab selector** — the account's overview tabs by stored `name` (falling back
-  to the tab index). Selecting a tab drives both the column list and the widths.
-- **Column rows** for the selected tab, in `tabColumnOrder`:
-  - **Visibility** — a checkbox toggling membership of `tabColumns` (user slot).
-  - **Reorder** — drag to rearrange `tabColumnOrder` (user slot), matching the
-    layout canvas's existing drag interaction.
-  - **Width** — a number input writing the `(overviewScroll2, tabIndex)` →
-    column entry (char slot). Blank when the char file has no stored width for
-    that column/tab yet; setting it creates the entry.
-- **Inheritance made explicit.** An inheriting tab shows its effective
-  (account-default) columns with an "inherits account defaults" note; the first
-  edit **materializes** the tab's own `tabColumnOrder` + `tabColumns` from the
-  effective set, then applies the edit — mirroring the client.
-- **Column labels** — the stored token lightly prettified for display
-  (`TRANSVERSALVELOCITY` → "Transversal Velocity"); the raw token is available
-  on hover. A curated friendly-name map is deferred.
-- **Save** — one Save action writes **every dirty slot** (each through its own
-  save chain); the header shows per-slot dirty state. Read-only fidelity on
-  either file disables edits to that file's fields only.
+## 6. Backend — `settings-model::overview` (rebuild)
 
-## 6. Backend — `settings-model::overview`
+Rebuild the visibility/order half around §2/§3; keep the width half.
 
-A new module beside `windows.rs`, following M2's pattern: a JSON-serializable
-projection that also **surfaces the `NodePath` to each editable field**, so
-width edits reuse the generic `set_scalar` mutation the raw editor already has.
-
-- `project_overview(user: &Value, char: Option<&Value>) -> OverviewColumns`
-  — tabs (index, name, `inherits` flag), each with ordered columns (name,
-  prettified label, `visible`, `width`), plus the `NodePath`s the edits target.
-- Visibility toggle and reorder need list-membership / ordering semantics and
-  the materialize-on-first-edit behavior, so they get **dedicated model
-  functions** (unit-tested) rather than being expressed as generic mutations;
-  width reuses `set_scalar`. Exact command surface (one `apply_overview_edit`
-  command vs. extending `Mutation`) is a plan decision.
-
-Commands added in `lib.rs`/`ops.rs`: `overview_columns(slots)` (read), the
-overview edit command(s) above, and `open_overview_character(char_id)` /
-paired-user auto-load wiring. All delegate to plain functions in `ops.rs` for
-unit testing without a Tauri runtime.
+- **Ref/Shared resolution** via a shared-slot table (reuse/extend the
+  `windows.rs` approach; likely lift it into `treewalk` or a shared helper).
+- **Read**: tabs from `tabsettings_new`|`tabsettings`; per tab, own columns else
+  preset fallback; window grouping from `tabsByWindowInstanceID`; widths from
+  char `SortHeadersSizes`. Robust to string-table `name` keys, `(ts, list)`
+  master list, and `Shared`-wrapped tokens (fixes already in the working tree).
+- **Edit**: materialize-from-preset, then toggle/reorder the tab's own lists;
+  set width. Column tokens written as `Bytes`.
+- All EVE format knowledge stays in this module.
 
 ## 7. Scope
 
-**In:** two-slot state; bidirectional roster-driven loading; per-tab show/hide,
-reorder, and width editing; inheritance/materialize; prettified labels.
+**In:** tab-anchored per-tab column editing (own-or-preset-fallback + materialize),
+window grouping, per-tab widths, both formats, `Ref`/`Shared` resolution, the
+two-slot state + loading + save (kept).
 
-**Unsaved-changes guard across both slots.** Loading any file — from the
-sidebar, the character selector, or the char→user auto-load — while **either**
-the char or user slot has unsaved edits warns the user that confirming will
-discard those changes, and aborts the load if they decline. This extends the
-existing single-file discard prompt to check both slots (the warning names which
-file(s) would lose changes).
-
-**Deferred / out:**
-- Overview filter presets (raw tree only, per §6/§10).
-- Editing the account-level defaults directly (raw-tree editable; per-tab
-  editing with materialize covers the real use).
-- A curated column friendly-name map (prettify heuristic for V1).
-- Cross-account validation that the two loaded slots actually pair (the loader
-  fills them from the roster, so mismatches only arise from manual raw opens).
+**Deferred:** a standalone **preset editor** (edit `overviewProfilePresets`
+directly — the shared base); editing the account master column list; multi-window
+width edge cases (the rare non-tuple `overviewScroll2` key).
 
 ## 8. Testing
 
-`overview.rs` gets pure unit tests over hand-built `Value` trees (zero network,
-no Tauri), same as `windows.rs`/`names.rs`: read projection (tab names, order,
-visible set, widths joined from the char tree), visibility toggle, reorder,
-width set, and the inheritance→materialize case (editing an inheriting tab
-writes its own full lists from the account defaults). `ops.rs` gets a two-slot
-open/save test. A corpus check that `project_overview` runs without panic across
-the historical `core_user` corpus, where present.
+**Unit tests over `Value` trees that match REAL idioms** (not v1's clean
+synthetic shapes): string-table `name` keys; `Ref`/`Shared` column tokens;
+`(ts, list)` master list; **preset fallback**; **materialize-from-preset**;
+`tabsByWindowInstanceID` grouping; both tab-keys; per-tab widths.
+**Plus a real-file check** — a committed non-personal fixture whose structure
+mirrors a real file, and the live-smoke gate (§10) — because synthetic tests are
+exactly what missed this the first time.
 
-## 9. Risks
+## 9. Risks / implementation notes
 
-- **Two-slot command refactor** touches every doc-scoped command (adds a `slot`
-  arg). Mechanical but broad; the plan sequences it before the editor so the
-  existing single-file views keep working throughout.
-- **Materialize correctness** — writing a tab's own lists from defaults must
-  reproduce what the client writes (full ordering, correct visible subset) or a
-  later in-client edit could look inconsistent. Covered by the corpus and the
-  experiment-3b observations; verified against a fresh file in live smoke.
-- **Tab-index keys are `Int`** and sparse; the projection must not assume a
-  contiguous 0..n range.
+- **Locate the overview container for both formats.** Modern nests the pieces
+  under `root → b"overview"`; the legacy/pack file's container was not a
+  depth-1 `b"overview"` in the dump — verify programmatically at implementation
+  (decode a real legacy file, inspect the root keys) rather than trusting dumps.
+- **Global tab indices are sequential, not window-derived** — never infer the
+  window from the index; use `tabsByWindowInstanceID`.
+- **Write-side Ref handling.** Materializing a tab's own lists writes column
+  tokens as `Bytes`; the re-encode will differ from the original bytes (inline
+  vs `Ref`). That is expected — fidelity's "editable" gate is about round-trip of
+  the *unedited* file; edits legitimately change bytes. The client reads
+  materialized bare-`Bytes` lists (it writes them itself); **confirm in live
+  smoke.**
+- **Re-validate against real files.** The whole feature must pass live smoke on
+  a real char/user pair (both formats) — the gate that caught the v1 miss.
+
+## 10. Lessons (why v1 was wrong)
+
+v1 was built and tested entirely on hand-made `Value` trees plus a corpus test
+that only asserted "does not panic"; empty-tabs-on-a-real-file passed it. Every
+real idiom — preset indirection, string-table keys, `(ts, list)` wrappers,
+`Ref`/`Shared`, sequential global tab indices, the `tabsByWindowInstanceID`
+window map — was absent from the fixtures, so nothing exercised them. The
+correctness gate for this milestone is **reading and editing real files**, not
+fixture shape. Every task's tests must reflect real structure, and merge is
+gated on live smoke.
