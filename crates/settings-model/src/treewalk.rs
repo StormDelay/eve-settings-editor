@@ -69,6 +69,35 @@ pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
+/// Deep-resolve every `Shared`/`Ref` into an owned, fully-inlined tree (no
+/// sharing left). An edit can drop a `Shared` token DEFINITION that the rest of
+/// the file still `Ref`s, which then fails to encode (`RefBeforeStore`); running
+/// this over the tree before encode removes that hazard by construction — the
+/// output has no `Ref`, so the encoder's store-before-ref invariant is trivially
+/// met. Marshal sharing of immutable settings data is a size optimization, not
+/// semantics, so inlining is value-preserving. Decoded trees are acyclic (the
+/// encoder rejects cycles), so this terminates.
+pub(crate) fn inline_shares(v: &Value, sh: &SharedTable) -> Value {
+    match effective(v, sh) {
+        Value::List(items) => Value::List(items.iter().map(|c| inline_shares(c, sh)).collect()),
+        Value::Tuple(items) => Value::Tuple(items.iter().map(|c| inline_shares(c, sh)).collect()),
+        Value::Dict(entries) => Value::Dict(
+            entries.iter().map(|(k, val)| (inline_shares(k, sh), inline_shares(val, sh))).collect(),
+        ),
+        Value::Stream(inner) => Value::Stream(Box::new(inline_shares(inner, sh))),
+        Value::Instance { class, state } => Value::Instance {
+            class: Box::new(inline_shares(class, sh)),
+            state: Box::new(inline_shares(state, sh)),
+        },
+        Value::Reduce { ctor, items, pairs } => Value::Reduce {
+            ctor: Box::new(inline_shares(ctor, sh)),
+            items: items.iter().map(|c| inline_shares(c, sh)).collect(),
+            pairs: pairs.iter().map(|(k, val)| (inline_shares(k, sh), inline_shares(val, sh))).collect(),
+        },
+        scalar => scalar.clone(),
+    }
+}
+
 pub(crate) fn unwrap_shared(v: &Value, mut path: NodePath) -> (&Value, NodePath) {
     if let Value::Shared { value, .. } = v {
         path.push(Step::SharedInner);
