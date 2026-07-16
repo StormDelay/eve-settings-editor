@@ -12,6 +12,7 @@ pub mod projection;
 pub mod save;
 mod treewalk;
 pub mod windows;
+pub mod overview;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -21,6 +22,7 @@ pub use path::{resolve, resolve_mut, NodePath, Step};
 pub use projection::{project, Node}; // enabled in Task 4
 pub use save::{save, SaveError, SaveReport}; // enabled in Task 6
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, StackField, WindowLayout, WindowRect};
+pub use overview::{project_overview, OverviewColumn, OverviewColumns, OverviewTab};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
