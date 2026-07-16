@@ -16,51 +16,56 @@ fn discover_profiles() -> Vec<settings_model::Profile> {
 }
 
 #[tauri::command]
-fn open_file(state: tauri::State<'_, AppState>, path: String) -> Result<OpenOutcome, ErrDto> {
-    ops::open_file(&state, &path)
+fn open_file(state: tauri::State<'_, AppState>, slot: ops::Slot, path: String) -> Result<OpenOutcome, ErrDto> {
+    ops::open_file(&state, slot, &path)
 }
 
 #[tauri::command]
-fn close_file(state: tauri::State<'_, AppState>) {
-    ops::close_file(&state)
+fn close_file(state: tauri::State<'_, AppState>, slot: ops::Slot) {
+    ops::close_file(&state, slot)
 }
 
 #[tauri::command]
 fn apply_mutation(
     state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
     mutation: settings_model::Mutation,
 ) -> Result<settings_model::Node, ErrDto> {
-    ops::apply_mutation(&state, &mutation)
+    ops::apply_mutation(&state, slot, &mutation)
 }
 
 #[tauri::command]
 fn save_document(
     state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
     force: bool,
 ) -> Result<settings_model::SaveReport, ErrDto> {
-    ops::save_document(&state, force)
+    ops::save_document(&state, slot, force)
 }
 
 #[tauri::command]
 fn list_file_backups(
     state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
 ) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
-    ops::list_file_backups(&state)
+    ops::list_file_backups(&state, slot)
 }
 
 #[tauri::command]
 fn restore_backup(
     state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
     backup_path: String,
 ) -> Result<OpenOutcome, ErrDto> {
-    ops::restore_backup(&state, &backup_path)
+    ops::restore_backup(&state, slot, &backup_path)
 }
 
 #[tauri::command]
 fn window_layout(
     state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
 ) -> Result<settings_model::WindowLayout, ErrDto> {
-    ops::window_layout(&state)
+    ops::window_layout(&state, slot)
 }
 
 #[tauri::command]
