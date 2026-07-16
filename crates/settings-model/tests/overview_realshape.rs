@@ -43,7 +43,7 @@ fn modern_ref_keyed_tree() -> Value {
 
     // tab 0: owns both lists (full ownership). tabColumnOrder is wrapped in a
     // (timestamp, list) tuple, and its first item is the Shared("NAME") def;
-    // tabColumns then references it back via Ref(10) — exercises token_r and
+    // tabColumns then references it back via Ref(2) — exercises token_r and
     // as_list_r's (ts, list) unwrap through the public projection.
     let tab0 = Value::Dict(vec![
         (Value::StrTable(52), Value::Str("Alpha".into())),
@@ -102,8 +102,8 @@ fn modern_ref_keyed_tree() -> Value {
     ]);
 
     // NOTE on encode ordering: `tabsettings_new` (which defines Shared slot
-    // 10 inside tab0) must be emitted before `overviewProfilePresets` (which
-    // Refs slot 10) — blue-marshal's encoder requires a Ref's Shared to have
+    // 2 inside tab0) must be emitted before `overviewProfilePresets` (which
+    // Refs slot 2) — blue-marshal's encoder requires a Ref's Shared to have
     // already been stored, and Dict entries encode in vector order.
     let overview_container = Value::Dict(vec![
         (b("tabsettings_new"), tabs),
@@ -165,7 +165,7 @@ fn modern_ref_keyed_tree_round_trips_and_projects() {
     assert!(!t0.inherits, "tab 0 owns both lists");
     let names0: Vec<&str> = t0.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names0, vec!["NAME", "TYPE", "DISTANCE"], "order from the (ts,list)-wrapped list");
-    assert!(t0.columns[0].visible, "NAME visible (resolved through Ref(10) -> Shared(\"NAME\"))");
+    assert!(t0.columns[0].visible, "NAME visible (resolved through Ref(2) -> Shared(\"NAME\"))");
     assert!(!t0.columns[1].visible, "TYPE not in tabColumns");
     assert!(t0.columns[2].visible, "DISTANCE visible");
 
