@@ -3,9 +3,10 @@
   import { message } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, onLoadCharacter, onUserDirty, onCharDirty }:
+  let { userOpen, charId, characters, onLoadCharacter, onUserDirty, onCharDirty, onShowAccounts }:
     { userOpen: boolean; charId: number | null; characters: number[];
-      onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void } = $props();
+      onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
+      onShowAccounts: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -46,8 +47,14 @@
   }
 </script>
 
-{#if !userOpen}
-  <p class="hint">Open an account (core_user) file to edit overview columns.</p>
+{#if !userOpen && charId !== null}
+  <div class="hint">
+    <p>This character isn't linked to an account yet. Overview columns live in the account
+      file — associate it to edit them.</p>
+    <button onclick={onShowAccounts}>Open Accounts</button>
+  </div>
+{:else if !userOpen}
+  <p class="hint">Open a character or account file to edit overview columns.</p>
 {:else if error}
   <p class="error">{error}</p>
 {:else if data && data.tabs.length === 0}
