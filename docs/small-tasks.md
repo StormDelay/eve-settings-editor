@@ -33,6 +33,13 @@ Workflow:
   resize handles on all four corners (edges optional) once a window is selected,
   so it can be resized from any corner. _Added 2026-07-15._
 
+- [ ] **Understand and integrate window stacks in the layout editor.** The
+  layout editor surfaces a window's stack id but doesn't model stacking. Work out
+  how EVE window stacks actually work (windows tabbed/grouped together, sharing a
+  position) and integrate them into the layout canvas — e.g. represent a stack as
+  a group and let the editor move/edit stacked windows coherently rather than as
+  independent rectangles. _Added 2026-07-17._
+
 - [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
   backups panel) retractable/collapsible so the center pane can grow — useful
   when editing window placements on the layout canvas, which wants as much
