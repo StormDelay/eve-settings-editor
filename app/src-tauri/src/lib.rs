@@ -147,6 +147,19 @@ fn set_overview_width(state: tauri::State<'_, AppState>, tab_index: i64, column:
     ops::set_overview_width(&state, tab_index, &column, width)
 }
 
+#[tauri::command]
+fn autofill_lists(state: tauri::State<'_, AppState>) -> Result<Vec<settings_model::RememberedList>, ErrDto> {
+    ops::autofill_lists(&state)
+}
+#[tauri::command]
+fn set_autofill_list(state: tauri::State<'_, AppState>, widget: String, entries: Vec<String>) -> Result<Vec<settings_model::RememberedList>, ErrDto> {
+    ops::set_autofill_list(&state, &widget, entries)
+}
+#[tauri::command]
+fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_model::RememberedList>, ErrDto> {
+    ops::clear_all_autofill(&state)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -159,7 +172,8 @@ pub fn run() {
             window_layout, resolve_character_names, refresh_character_names,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
-            overview_columns, set_overview_visible, set_overview_order, set_overview_width
+            overview_columns, set_overview_visible, set_overview_order, set_overview_width,
+            autofill_lists, set_autofill_list, clear_all_autofill
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
