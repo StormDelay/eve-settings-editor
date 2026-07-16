@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-17
+
+Autofill editor: edit the client's remembered text-input history.
+
+### Added
+- Autofill view — a Tree / Layout / Overview / Autofill switch on account files —
+  edits the text the client autocompletes in search boxes, filters, and name
+  fields. Per list, add an entry, edit one in place, remove, drag to reorder, or
+  clear the list; a "Clear all remembered text" button wipes every list at once.
+  Each list is labelled by a friendly name with its raw widget path shown
+  alongside. Edits go through the usual backup → verify → atomic-write chain.
+
 ## [0.3.0] - 2026-07-16
 
 Milestone 3: character names, character↔account association, and an
