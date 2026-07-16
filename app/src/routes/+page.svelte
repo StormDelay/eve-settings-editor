@@ -101,8 +101,9 @@
       const which = [dirtySlots.char && "character", dirtySlots.user && "account"]
         .filter(Boolean)
         .join(" and ");
+      const noun = dirtySlots.char && dirtySlots.user ? "files" : "file";
       const discard = await ask(
-        `You have unsaved changes to the ${which} file. Discard them and open another file?`,
+        `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
         { title: "Unsaved changes", kind: "warning" },
       );
       if (!discard) return;
