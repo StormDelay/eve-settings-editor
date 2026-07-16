@@ -10,8 +10,7 @@ use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    child_dict, collect_shared, effective, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref,
-    Entries, SharedTable,
+    collect_shared, effective, is_bytes, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -366,8 +365,9 @@ fn dict_at(v: &Value, p: NodePath) -> Option<(&Entries, NodePath)> {
     }
 }
 
-/// Create the tab's own lists from the account defaults when absent (mirrors the
-/// client materializing an inheriting tab on first edit). No-op if already owned.
+/// Create the tab's own lists from the tab's preset (the effective columns) when
+/// absent (mirrors the client materializing an inheriting tab on first edit).
+/// No-op if already owned.
 fn materialize_from(tab: &mut Vec<(Value, Value)>, def_order: &[String], def_visible: &[String]) {
     if !tab.iter().any(|(k, _)| is_bytes(k, b"tabColumnOrder")) {
         tab.push((Value::Bytes(b"tabColumnOrder".to_vec()), toks(def_order)));
@@ -426,10 +426,27 @@ pub fn set_column_width(char_tree: &mut Value, tab_index: i64, column: &str, wid
 }
 
 /// Path to the inner dict of char root -> ui -> SortHeadersSizes -> (ts, dict).
+/// Every hop is located by its RESOLVED key (exactly as `tab_widths` reads it),
+/// so a Ref/Shared-deduped `ui` or `SortHeadersSizes` key on a real char file
+/// matches and width writes land instead of returning NoTab. Reuses the same
+/// resolved-key machinery as `tab_dict_path` (`find_child_entry`/`dict_at`).
 fn sort_headers_sizes_path(char_tree: &Value) -> Option<NodePath> {
-    let (ui, ui_path) = child_dict(char_tree, b"ui", Vec::new())?;
-    let (_, path) = timestamped_dict(ui, &ui_path, b"SortHeadersSizes")?;
-    Some(path)
+    let mut sh = SharedTable::new();
+    collect_shared(char_tree, &mut sh);
+    let (root, base) = unwrap_shared(char_tree, Vec::new());
+    let Value::Dict(root) = root else { return None };
+    // char -> ui
+    let (ui_i, ui_v) = find_child_entry(root, b"ui", &sh)?;
+    let mut p = base;
+    p.push(Step::DictValue(ui_i));
+    let (ui_v, p) = unwrap_shared(ui_v, p);
+    let Value::Dict(ui) = ui_v else { return None };
+    // -> SortHeadersSizes, a (ts, dict) wrapper
+    let (si, sv) = find_child_entry(ui, b"SortHeadersSizes", &sh)?;
+    let mut p = p;
+    p.push(Step::DictValue(si));
+    let (_, p) = dict_at(sv, p)?;
+    Some(p)
 }
 
 #[cfg(test)]
@@ -635,9 +652,16 @@ mod tests {
         assert!(visible.contains(&"DISTANCE".to_string()));
         assert!(visible.contains(&"NAME".to_string()) && visible.contains(&"TYPE".to_string()),
             "preset's visible columns carried into the materialized tab");
-        // preset untouched
-        let oc2 = project_overview(&user, None);
-        assert_eq!(oc2.tabs.iter().find(|t| t.index==0).map(|t| t.columns.len()), t0.columns.len().into());
+        // preset untouched: overviewProfilePresets["P"].overviewColumns is still
+        // [NAME, TYPE] — materialize copies from it, it must not mutate it.
+        let mut sh = SharedTable::new();
+        collect_shared(&user, &mut sh);
+        let Value::Dict(root) = &user else { unreachable!() };
+        let overview = find_child(root, b"overview", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let presets = find_child(overview, b"overviewProfilePresets", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let preset = find_child(presets, b"P", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        assert_eq!(token_list(preset, b"overviewColumns", &sh), Some(vec!["NAME".into(), "TYPE".into()]),
+            "the preset's own column list was not mutated by materialize");
     }
 
     #[test]
@@ -733,6 +757,28 @@ mod tests {
         )]);
         set_column_width(&mut c, 0, "NAME", 200).unwrap();
         assert_eq!(width_of(&c, 0, "NAME"), Some(200));
+    }
+
+    #[test]
+    fn set_width_resolves_a_shared_container_key() {
+        // Mirrors a real deduped char file: the `ui` and `SortHeadersSizes`
+        // CONTAINER keys are marshal-deduped into `Shared`s. A bare `is_bytes`
+        // key match misses them and reports NoTab even though `tab_widths`
+        // (which resolves keys) reads the widths fine — the write-can't/read-can
+        // asymmetry this milestone exists to eliminate.
+        let widths = Value::Dict(vec![(bytes("NAME"), Value::Int(120))]);
+        let mut c = Value::Dict(vec![(
+            Value::Shared { slot: 1, value: Box::new(bytes("ui")) },
+            Value::Dict(vec![(
+                Value::Shared { slot: 2, value: Box::new(bytes("SortHeadersSizes")) },
+                Value::Tuple(vec![ts(), Value::Dict(vec![(
+                    Value::Tuple(vec![bytes("overviewScroll2"), Value::Int(0)]),
+                    widths,
+                )])]),
+            )]),
+        )]);
+        set_column_width(&mut c, 0, "NAME", 200).unwrap();
+        assert_eq!(width_of(&c, 0, "NAME"), Some(200), "the width write landed despite Shared container keys");
     }
 
     #[test]
