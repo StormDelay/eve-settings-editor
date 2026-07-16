@@ -16,7 +16,7 @@ const CURATED: [needle: string, label: string][] = [
 ];
 
 // Path segments that carry no meaning for a human — dropped before deriving.
-const BOILERPLATE = new Set(["content", "main", "container", "singlelineedittext", "editText"]);
+const BOILERPLATE = new Set(["content", "main", "container", "singlelineedittext", "edittext"]);
 
 export function labelFor(widget: string): string {
   const lower = widget.toLowerCase();
