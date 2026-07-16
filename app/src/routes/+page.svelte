@@ -8,9 +8,10 @@
   import { api, errMessage, type OpenOutcome } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
-  import { names } from "$lib/names.svelte";
+  import { names, resolveNames } from "$lib/names.svelte";
   import { aliasFor } from "$lib/accounts.svelte";
   import { ask, message } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let mainView: "file" | "accounts" = $state("file");
   let current: OpenOutcome | null = $state(null);
@@ -38,6 +39,20 @@
     if (current?.status !== "opened") return null;
     const m = current.file_name.match(/^core_user_(\d+)\.dat$/);
     return m ? aliasFor(Number(m[1])) : null;
+  });
+
+  // Best single label for the open file — character name, else user alias, else
+  // the bare filename. Feeds the OS window title and the backups panel.
+  const openDisplay = $derived.by(() => {
+    if (current?.status !== "opened") return null;
+    return openCharName ?? openUserAlias ?? current.file_name;
+  });
+
+  const APP_TITLE = "EVE Settings Editor";
+  $effect(() => {
+    void getCurrentWindow().setTitle(
+      openDisplay ? `${openDisplay} — ${APP_TITLE}` : APP_TITLE,
+    );
   });
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
@@ -75,6 +90,13 @@
     }
     try {
       current = await api.open(path);
+      // A file opened via the dialog isn't in the sidebar scan, so its name was
+      // never resolved — resolve it here so the header names it too. (A no-op if
+      // it was scanned: the id is already cached.)
+      if (current.status === "opened") {
+        const m = current.file_name.match(/^core_char_(\d+)\.dat$/);
+        if (m) void resolveNames([Number(m[1])]);
+      }
       dirty = false;
       savedAt += 1;
       view = "tree";
@@ -238,6 +260,7 @@
   {#if current?.status === "opened"}
     <BackupsPanel
       {savedAt}
+      subtitle={openDisplay}
       onRestored={(outcome) => {
         current = outcome;
         dirty = false;

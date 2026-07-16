@@ -4,9 +4,11 @@
 
   let {
     savedAt,
+    subtitle,
     onRestored,
   }: {
     savedAt: number;
+    subtitle: string | null;
     onRestored: (outcome: OpenOutcome) => void;
   } = $props();
 
@@ -42,6 +44,7 @@
 
 <aside class="backups">
   <h3>Backups</h3>
+  {#if subtitle}<p class="subtitle" title={subtitle}>{subtitle}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
   {#if backups.length === 0}
     <p class="hint">No backups yet. Every save creates one.</p>
@@ -56,3 +59,14 @@
     {/each}
   </ul>
 </aside>
+
+<style>
+  .subtitle {
+    margin: -0.25rem 0 0.5rem;
+    font-size: 0.85em;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>
