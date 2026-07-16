@@ -162,16 +162,19 @@ export interface CaptureResult {
   detected: [number, number] | null;
 }
 
+export type Slot = "char" | "user";
+
 export const api = {
   discover: () => invoke<Profile[]>("discover_profiles"),
-  open: (path: string) => invoke<OpenOutcome>("open_file", { path }),
-  close: () => invoke<void>("close_file"),
-  mutate: (mutation: Mutation) => invoke<TreeNodeData>("apply_mutation", { mutation }),
-  save: (force: boolean) => invoke<SaveReport>("save_document", { force }),
-  listBackups: () => invoke<BackupInfo[]>("list_file_backups"),
-  restoreBackup: (backupPath: string) =>
-    invoke<OpenOutcome>("restore_backup", { backupPath }),
-  windowLayout: () => invoke<WindowLayout>("window_layout"),
+  open: (slot: Slot, path: string) => invoke<OpenOutcome>("open_file", { slot, path }),
+  close: (slot: Slot) => invoke<void>("close_file", { slot }),
+  mutate: (slot: Slot, mutation: Mutation) =>
+    invoke<TreeNodeData>("apply_mutation", { slot, mutation }),
+  save: (slot: Slot, force: boolean) => invoke<SaveReport>("save_document", { slot, force }),
+  listBackups: (slot: Slot) => invoke<BackupInfo[]>("list_file_backups", { slot }),
+  restoreBackup: (slot: Slot, backupPath: string) =>
+    invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
+  windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
   resolveCharacterNames: (ids: number[]) =>
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
