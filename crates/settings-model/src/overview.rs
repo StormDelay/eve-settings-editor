@@ -319,8 +319,41 @@ fn inline_user(user: &mut Value) {
     *user = new;
 }
 
+/// Upgrade a legacy overview to the modern shape on edit: if the container has
+/// only the legacy `tabsettings` tab dict (no `tabsettings_new`), rename the key
+/// to `tabsettings_new`. The two formats are structurally identical (validated
+/// on real files — same account-default lists, `tabsByWindowInstanceID`, and
+/// per-tab `tabColumns`/`tabColumnOrder`), so this is a pure key rename; EVE
+/// reads `tabsettings_new`, and a new-only file is a state EVE itself produces.
+/// Run AFTER `inline_user`, so the overview container and its keys are plain.
+fn migrate_legacy_overview(user: &mut Value) {
+    let Some(entries) = overview_entries_mut(user) else { return };
+    if entries.iter().any(|(k, _)| is_bytes(k, b"tabsettings_new")) {
+        return;
+    }
+    if let Some((k, _)) = entries.iter_mut().find(|(k, _)| is_bytes(k, b"tabsettings")) {
+        *k = Value::Bytes(b"tabsettings_new".to_vec());
+    }
+}
+
+/// Mutable entries of the `root → overview` container (unwrapping a
+/// `(timestamp, dict)` value). Assumes a plain tree (post-`inline_user`).
+fn overview_entries_mut(user: &mut Value) -> Option<&mut Entries> {
+    let Value::Dict(root) = user else { return None };
+    let (_, ov) = root.iter_mut().find(|(k, _)| is_bytes(k, b"overview"))?;
+    match ov {
+        Value::Dict(e) => Some(e),
+        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
     inline_user(user);
+    migrate_legacy_overview(user);
     let prep = tab_edit_prep(user, tab_index);
     // Immutable phase: resolve the target column's position WITHIN each owned
     // list through Ref/Shared (real files store a customized tab's tabColumns/
@@ -375,6 +408,7 @@ fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
     inline_user(user);
+    migrate_legacy_overview(user);
     let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
         materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
@@ -786,6 +820,38 @@ mod tests {
         set_column_visible(&mut user, 0, "NAME", false).unwrap();
 
         encode(&user).expect("hiding a Shared-defining column must still encode");
+    }
+
+    #[test]
+    fn editing_a_legacy_overview_migrates_it_to_modern() {
+        use blue_marshal::Value;
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        // Legacy: the tab container is `tabsettings` (no `tabsettings_new`).
+        let tab0 = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("PvP".into())),
+            (b("tabColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
+            (b("tabColumns"), Value::List(vec![b("NAME")])),
+        ]);
+        let overview = Value::Dict(vec![
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME")])),
+            (b("tabsettings"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])])),
+        ]);
+        let mut user = Value::Dict(vec![(b("overview"), overview)]);
+
+        set_column_visible(&mut user, 0, "TYPE", true).unwrap();
+
+        // Container now has tabsettings_new and no tabsettings.
+        let mut sh = SharedTable::new();
+        collect_shared(&user, &mut sh);
+        let Value::Dict(root) = &user else { unreachable!() };
+        let ov = find_child(root, b"overview", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        assert!(find_child(ov, b"tabsettings_new", &sh).is_some(), "migrated to tabsettings_new");
+        assert!(find_child(ov, b"tabsettings", &sh).is_none(), "legacy key renamed away");
+        // And the edit landed on the (now modern) tab.
+        let t = project_overview(&user, None).tabs.into_iter().find(|t| t.index == 0).unwrap();
+        assert!(t.columns.iter().find(|c| c.name == "TYPE").unwrap().visible);
     }
 
     /// A tab that inherits (no own lists) materializes from the account defaults
