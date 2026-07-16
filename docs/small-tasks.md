@@ -13,6 +13,13 @@ Workflow:
 
 ## Open
 
+- [ ] **Add a short public-facing README.** The repo root has no README and
+  `app/README.md` is still the stock Tauri template. Write a brief one: what the
+  tool is, that it edits local EVE settings files (with backups), where to
+  download the installers, and a note that builds are unsigned so expect OS
+  warnings. A design §11 "go public" item; low effort, high value once anyone
+  outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
+
 - [ ] **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
   refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
@@ -30,6 +37,22 @@ Workflow:
   backups panel) retractable/collapsible so the center pane can grow — useful
   when editing window placements on the layout canvas, which wants as much
   horizontal room as possible. _Added 2026-07-15._
+
+- [ ] **Collapsible character/account categories.** Make the sidebar file-list
+  group headers (Characters / Accounts / Other) collapsible so a long list is
+  easier to navigate — click a category header to fold its files away. _Added
+  2026-07-17._
+
+- [ ] **Sort files alphabetically within each category.** Within each sidebar
+  category (Characters / Accounts), sort files alphabetically by their resolved
+  character name or account alias. Files still showing a bare numerical id (name
+  unresolved / no alias) sort below the named ones. _Added 2026-07-17._
+
+- [ ] **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
+  added `treewalk::inline_all` (drop all `Shared`/`Ref` sharing); `overview.rs`'s
+  private `inline_user` is now functionally identical. Delete the private copy and
+  have `overview.rs` call the shared helper. Do it as its own change gated by the
+  overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
 
 ## Shipped
 

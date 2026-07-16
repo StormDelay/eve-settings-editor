@@ -98,6 +98,16 @@ pub(crate) fn inline_shares(v: &Value, sh: &SharedTable) -> Value {
     }
 }
 
+/// Drop ALL Shared/Ref sharing from a tree in place (inline every Shared to its
+/// value, resolve every Ref). Used before a structural list edit so replacing a
+/// list can never destroy a Shared definition that a Ref elsewhere still needs.
+/// The re-saved file is larger (dedup gone) but valid; EVE re-dedups on logout.
+pub(crate) fn inline_all(v: &mut Value) {
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    *v = inline_shares(v, &sh);
+}
+
 pub(crate) fn unwrap_shared(v: &Value, mut path: NodePath) -> (&Value, NodePath) {
     if let Value::Shared { value, .. } = v {
         path.push(Step::SharedInner);
