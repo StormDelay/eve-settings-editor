@@ -6,10 +6,11 @@
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
-  import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
+  import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
-  import { aliasFor } from "$lib/accounts.svelte";
+  import { aliasFor, accountsStore } from "$lib/accounts.svelte";
+  import { accountOf, pairedFilePath } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -29,6 +30,11 @@
   function slotForName(name: string): Slot {
     return /^core_user_\d+\.dat$/.test(name) ? "user" : "char";
   }
+
+  // Discovered profiles, for resolving a char/user id to its file path within
+  // the same profile folder as an already-open file (see pairedFilePath).
+  let profiles = $state<Profile[]>([]);
+  api.discover().then((p) => (profiles = p)).catch(() => {});
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
@@ -94,20 +100,24 @@
     searchBox?.blur();
   }
 
+  // Shared unsaved-changes prompt for anything that swaps out an open file:
+  // the Open-file dialog/sidebar and the (Task C4) character selector alike.
+  async function confirmDiscardIfDirty(): Promise<boolean> {
+    if (!dirtySlots.char && !dirtySlots.user) return true;
+    const which = [dirtySlots.char && "character", dirtySlots.user && "account"]
+      .filter(Boolean)
+      .join(" and ");
+    const noun = dirtySlots.char && dirtySlots.user ? "files" : "file";
+    return ask(
+      `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
+      { title: "Unsaved changes", kind: "warning" },
+    );
+  }
+
   async function openFile(path: string) {
     const name = path.split(/[\\/]/).pop() ?? "";
     const slot = slotForName(name);
-    if (dirtySlots.char || dirtySlots.user) {
-      const which = [dirtySlots.char && "character", dirtySlots.user && "account"]
-        .filter(Boolean)
-        .join(" and ");
-      const noun = dirtySlots.char && dirtySlots.user ? "files" : "file";
-      const discard = await ask(
-        `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
-        { title: "Unsaved changes", kind: "warning" },
-      );
-      if (!discard) return;
-    }
+    if (!(await confirmDiscardIfDirty())) return;
     try {
       const outcome = await api.open(slot, path);
       slots[slot] = outcome;
@@ -131,6 +141,42 @@
       } catch {
         layoutAvailable = false;
       }
+      if (slot === "char") await autoLoadPairedUser(outcome);
+    } catch (e) {
+      await message(errMessage(e), { title: "Open failed", kind: "error" });
+    }
+  }
+
+  // After a char file lands in the char slot, auto-load its paired user file
+  // (if the character is paired to an account and that account's file can be
+  // found in the same profile folder). Leaves the user slot alone otherwise —
+  // the Overview view shows the Accounts nudge for the unpaired/unfound case.
+  async function autoLoadPairedUser(charOutcome: OpenOutcome) {
+    if (charOutcome.status !== "opened") return;
+    const m = charOutcome.file_name.match(/^core_char_(\d+)\.dat$/);
+    if (!m) return;
+    const charId = Number(m[1]);
+    const userId = accountOf(charId, accountsStore.roster);
+    if (userId === null) return; // unpaired: the Overview view shows the Accounts nudge
+    const userPath = pairedFilePath(profiles, charOutcome.path, userId, "user");
+    if (!userPath) return;
+    if (slots.user?.status === "opened" && slots.user.path === userPath) return; // already the right file
+    try {
+      slots.user = await api.open("user", userPath);
+      dirtySlots.user = false;
+    } catch { /* leave the user slot as-is; the nudge is shown */ }
+  }
+
+  // Load a selected character into the char slot (from the OverviewView selector).
+  async function loadCharacter(charId: number) {
+    if (!(await confirmDiscardIfDirty())) return;
+    const anchor = slots.user?.status === "opened" ? slots.user.path : "";
+    const charPath = pairedFilePath(profiles, anchor, charId, "char");
+    if (!charPath) return;
+    try {
+      slots.char = await api.open("char", charPath);
+      dirtySlots.char = false;
+      await resolveNames([charId]);
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
