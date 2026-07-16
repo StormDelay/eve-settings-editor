@@ -2,12 +2,13 @@
 //!
 //! Fully synthetic `Value` trees that reproduce the STRUCTURE real EVE
 //! `core_user` files use for the overview category — Ref/Shared-keyed
-//! containers, string-table `name` keys, preset-fallback columns, partial
-//! tab ownership, window grouping, and `(timestamp, list)` wrappers with
-//! deduped column tokens — encoded, decoded, and projected through the
-//! public API only. No bytes/ids/names here were read from a real file;
-//! every id and token is invented (`0..3`, `"P"`, `"Alpha"`, `NAME`/`TYPE`/
-//! `DISTANCE`/`ICON`).
+//! containers, string-table `name` keys, account-default-fallback columns
+//! (`overviewColumnOrder` / `overviewColumns` in the container, NOT the FILTER
+//! presets), independent per-axis ownership, window grouping, and
+//! `(timestamp, list)` wrappers with deduped column tokens — encoded, decoded,
+//! and projected through the public API only. No bytes/ids/names here were read
+//! from a real file; every id and token is invented (`0..3`, `"Alpha"`,
+//! `NAME`/`TYPE`/`DISTANCE`/`ICON`).
 
 use blue_marshal::{decode, encode, Value};
 use settings_model::project_overview;
@@ -28,16 +29,17 @@ fn b(s: &str) -> Value {
 /// - item 1 (Ref-keyed container, the Shared("overview") defined elsewhere)
 /// - item 2 (tabsettings_new)
 /// - item 3 (StrTable(52) "name" key, both Str and Bytes values)
-/// - item 4 (preset fallback, with a Ref item in the preset's columns)
-/// - item 5 (partial ownership: order-only and visible-only tabs)
+/// - item 4 (account-default fallback: `overviewColumnOrder`/`overviewColumns`,
+///   with a Ref item resolved through the shared table)
+/// - item 5 (independent per-axis ownership: order-only and visible-only tabs)
 /// - item 6 (window grouping)
 /// - item 7 ((timestamp, list) master list + Shared column tokens)
 fn modern_ref_keyed_tree() -> Value {
     // Column token "NAME" is deduped once (slot 2 — blue-marshal's tail-map
     // slots are 1-based and dense over the whole stream's Shared count, not
-    // arbitrary numbers) and referenced from three places below (tab0's own
-    // order list defines it; tab0's own visible list and the preset's columns
-    // both reference it by Ref) — the real-file idiom of a repeated column
+    // arbitrary numbers) and referenced from several places below (tab0's own
+    // order list defines it; tab0's own visible list and the account-default
+    // lists reference it by Ref) — the real-file idiom of a repeated column
     // token being stored once and Ref'd elsewhere.
     let name_tok_shared = Value::Shared { slot: 2, value: Box::new(b("NAME")) };
 
@@ -54,15 +56,16 @@ fn modern_ref_keyed_tree() -> Value {
         (b("tabColumns"), Value::List(vec![Value::Ref(2), b("DISTANCE")])),
     ]);
 
-    // tab 1: fully inherits (no own lists), names preset "P" — name value is
-    // Bytes here (the other half of item 3's Str/Bytes coverage).
+    // tab 1: fully inherits (no own lists), names FILTER preset "P" (irrelevant
+    // to columns) — name value is Bytes here (the other half of item 3's
+    // Str/Bytes coverage).
     let tab1 = Value::Dict(vec![
         (Value::StrTable(52), b("Beta")),
         (b("overview"), b("P")),
     ]);
 
-    // tab 2: owns ONLY tabColumnOrder — the visible half must fall back to
-    // the preset (item 5, order-only half missing).
+    // tab 2: owns ONLY tabColumnOrder — the visible half must fall back to the
+    // account default (item 5, order-only half missing).
     let tab2 = Value::Dict(vec![
         (Value::Str("name".into()), Value::Str("Gamma".into())),
         (b("overview"), b("P")),
@@ -70,7 +73,7 @@ fn modern_ref_keyed_tree() -> Value {
     ]);
 
     // tab 3: owns ONLY tabColumns — the order half must fall back to the
-    // preset (item 5, visible-only half missing).
+    // account default (item 5, visible-only half missing).
     let tab3 = Value::Dict(vec![
         (Value::Str("name".into()), Value::Str("Delta".into())),
         (b("overview"), b("P")),
@@ -87,13 +90,12 @@ fn modern_ref_keyed_tree() -> Value {
         ]),
     ]);
 
-    // Preset "P": its columns list contains a Ref item (Ref(2) -> "NAME"),
-    // plus a plain literal token — item 4's "with Ref items" requirement.
-    let preset_p = Value::Dict(vec![(
-        b("overviewColumns"),
-        Value::List(vec![Value::Ref(2), b("ICON")]),
-    )]);
-    let presets = Value::Dict(vec![(b("P"), preset_p)]);
+    // Account-default columns (what an inheriting tab uses): the master order
+    // and the visible subset, both in the `overview` container. Each opens with
+    // a Ref item (Ref(2) -> "NAME") — item 4's "with Ref items" requirement,
+    // exercising Ref resolution on the fallback path.
+    let overview_column_order = Value::List(vec![Value::Ref(2), b("TYPE"), b("DISTANCE"), b("ICON")]);
+    let overview_columns = Value::List(vec![Value::Ref(2), b("ICON")]);
 
     // Two windows grouping four tabs: [[0,1],[2,3]].
     let windows = Value::List(vec![
@@ -101,13 +103,14 @@ fn modern_ref_keyed_tree() -> Value {
         Value::List(vec![Value::Int(2), Value::Int(3)]),
     ]);
 
-    // NOTE on encode ordering: `tabsettings_new` (which defines Shared slot
-    // 2 inside tab0) must be emitted before `overviewProfilePresets` (which
-    // Refs slot 2) — blue-marshal's encoder requires a Ref's Shared to have
-    // already been stored, and Dict entries encode in vector order.
+    // NOTE on encode ordering: `tabsettings_new` (which defines Shared slot 2
+    // inside tab0) must be emitted before the account-default lists (which Ref
+    // slot 2) — blue-marshal's encoder requires a Ref's Shared to have already
+    // been stored, and Dict entries encode in vector order.
     let overview_container = Value::Dict(vec![
         (b("tabsettings_new"), tabs),
-        (b("overviewProfilePresets"), presets),
+        (b("overviewColumnOrder"), overview_column_order),
+        (b("overviewColumns"), overview_columns),
         (b("tabsByWindowInstanceID"), windows),
     ]);
 
@@ -170,39 +173,42 @@ fn modern_ref_keyed_tree_round_trips_and_projects() {
     assert!(t0.columns[2].visible, "DISTANCE visible");
 
     // tab 1: fully inherits; name via StrTable(52)+Bytes (item 3 Bytes-value
-    // half); columns entirely from preset P (item 4, with a Ref item).
+    // half); columns entirely from the account default (item 4, NAME via a Ref
+    // item in overviewColumnOrder/overviewColumns).
     let t1 = oc.tabs.iter().find(|t| t.index == 1).unwrap();
     assert_eq!(t1.name, "Beta");
     assert!(t1.inherits, "tab 1 has no own lists");
     let names1: Vec<&str> = t1.columns.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names1, vec!["NAME", "ICON"], "preset's columns, NAME resolved through a Ref item");
-    assert!(t1.columns.iter().all(|c| c.visible), "preset columns are all visible");
+    assert_eq!(names1, vec!["NAME", "TYPE", "DISTANCE", "ICON"], "account order, NAME resolved through a Ref item");
+    let vis1 = |n: &str| t1.columns.iter().find(|c| c.name == n).unwrap().visible;
+    assert!(vis1("NAME") && !vis1("TYPE") && !vis1("DISTANCE") && vis1("ICON"),
+        "visible set is the account default overviewColumns [NAME, ICON]");
 
     // tab 2: owns ONLY tabColumnOrder — the visible half falls back to the
-    // preset; the owned order columns are never dropped, just unvisible if
-    // the preset doesn't list them (item 5, order-only).
+    // account default; the owned order columns are never dropped, just unvisible
+    // if the account default doesn't list them (item 5, order-only).
     let t2 = oc.tabs.iter().find(|t| t.index == 2).unwrap();
     assert_eq!(t2.name, "Gamma");
     assert!(t2.inherits, "missing tabColumns half still counts as inheriting");
     let names2: Vec<&str> = t2.columns.iter().map(|c| c.name.as_str()).collect();
     assert!(names2.contains(&"NAME") && names2.contains(&"TYPE") && names2.contains(&"DISTANCE"),
         "owned order columns are present, not dropped: {names2:?}");
-    assert!(names2.contains(&"ICON"), "preset-only visible column ICON still appears: {names2:?}");
+    assert!(names2.contains(&"ICON"), "account-default-only visible column ICON still appears: {names2:?}");
     let vis2 = |n: &str| t2.columns.iter().find(|c| c.name == n).unwrap().visible;
     assert!(vis2("NAME") && !vis2("TYPE") && !vis2("DISTANCE") && vis2("ICON"),
-        "visible set came from the preset fallback, not the owned order list");
+        "visible set came from the account default, not the owned order list");
 
-    // tab 3: owns ONLY tabColumns — the order half falls back to the preset;
-    // the owned visible column is never silently hidden (item 5, visible-only).
+    // tab 3: owns ONLY tabColumns — the order half falls back to the account
+    // default; the owned visible column is never silently hidden (item 5,
+    // visible-only).
     let t3 = oc.tabs.iter().find(|t| t.index == 3).unwrap();
     assert_eq!(t3.name, "Delta");
     assert!(t3.inherits, "missing tabColumnOrder half still counts as inheriting");
     let names3: Vec<&str> = t3.columns.iter().map(|c| c.name.as_str()).collect();
-    assert!(names3.contains(&"NAME") && names3.contains(&"ICON"), "preset order columns present: {names3:?}");
-    assert!(names3.contains(&"TYPE"), "owned visible column TYPE still appears: {names3:?}");
+    assert_eq!(names3, vec!["NAME", "TYPE", "DISTANCE", "ICON"], "order from the account default: {names3:?}");
     let vis3 = |n: &str| t3.columns.iter().find(|c| c.name == n).unwrap().visible;
-    assert!(vis3("TYPE") && !vis3("NAME") && !vis3("ICON"),
-        "TYPE (owned tabColumns) stayed visible; preset-only columns did not become visible");
+    assert!(vis3("TYPE") && !vis3("NAME") && !vis3("DISTANCE") && !vis3("ICON"),
+        "TYPE (owned tabColumns) stayed visible; account-default-only columns did not become visible");
 }
 
 #[test]
