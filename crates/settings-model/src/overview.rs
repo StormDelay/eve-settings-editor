@@ -145,20 +145,37 @@ fn str_field_r(fields: &Entries, name: &str, sh: &SharedTable) -> Option<String>
     })
 }
 
-/// The materialize source for a tab's own lists: the effective `(order, visible)`
-/// from that tab's PRESET (the same fallback the read uses), resolved through the
-/// shared table so it works on real Ref/Shared-keyed files.
-fn preset_columns_for_tab(user: &Value, tab_index: i64) -> (Vec<String>, Vec<String>) {
+/// Immutable prep for a tab edit, in ONE shared-table pass: the preset-fallback
+/// `(order, visible)` columns to seed a materialized list, plus the tab's own
+/// `tabColumnOrder` / `tabColumns` entry indices resolved through Ref/Shared
+/// keys (`None` = the tab does not own that list). The mutable phase mutates by
+/// these indices, so a list owned under a Ref/Shared field-name key is edited in
+/// place instead of being masked by a pushed duplicate. Indices address the same
+/// `fields` Vec `with_tab` reaches (both descend to the tab's inner dict).
+struct TabEdit {
+    def_order: Vec<String>,
+    def_visible: Vec<String>,
+    order_idx: Option<usize>,
+    visible_idx: Option<usize>,
+}
+
+fn tab_edit_prep(user: &Value, tab_index: i64) -> TabEdit {
     let mut sh = SharedTable::new();
     collect_shared(user, &mut sh);
-    let empty = (vec![], vec![]);
+    let empty = TabEdit { def_order: vec![], def_visible: vec![], order_idx: None, visible_idx: None };
     let Some(overview) = overview_container(user, &sh) else { return empty };
     let Some(tabs) = tab_dict(overview, &sh) else { return empty };
     let Some((_, tab)) = tabs.iter().find(|(k, _)| as_int(effective(k, &sh)) == Some(tab_index)) else {
         return empty;
     };
     let Some(fields) = as_dict(tab, &sh) else { return empty };
-    preset_columns(fields, overview, &sh)
+    let (def_order, def_visible) = preset_columns(fields, overview, &sh);
+    TabEdit {
+        def_order,
+        def_visible,
+        order_idx: find_child_entry(fields, b"tabColumnOrder", &sh).map(|(i, _)| i),
+        visible_idx: find_child_entry(fields, b"tabColumns", &sh).map(|(i, _)| i),
+    }
 }
 
 /// Widths for a tab: column token -> px, from char root -> ui -> SortHeadersSizes,
@@ -271,11 +288,12 @@ pub enum OverviewError {
 }
 
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
-    let (def_order, def_visible) = preset_columns_for_tab(user, tab_index);
+    let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
-        materialize_from(tab, &def_order, &def_visible);
+        let order_i = materialize_list(tab, b"tabColumnOrder", prep.order_idx, &prep.def_order);
+        let visible_i = materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
         let tok = Value::Bytes(column.as_bytes().to_vec());
-        let vis = list_mut(tab, b"tabColumns");
+        let vis = list_at(tab, visible_i);
         let present = vis.iter().any(|v| v == &tok);
         if visible && !present {
             vis.push(tok.clone());
@@ -283,7 +301,7 @@ pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visibl
             vis.retain(|v| v != &tok);
         }
         // A newly-shown column must also exist in the order list.
-        let order = list_mut(tab, b"tabColumnOrder");
+        let order = list_at(tab, order_i);
         if visible && !order.iter().any(|v| v == &tok) {
             order.push(tok);
         }
@@ -291,10 +309,11 @@ pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visibl
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
-    let (def_order, def_visible) = preset_columns_for_tab(user, tab_index);
+    let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
-        materialize_from(tab, &def_order, &def_visible);
-        *list_mut(tab, b"tabColumnOrder") = order.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect();
+        materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
+        let order_i = materialize_list(tab, b"tabColumnOrder", prep.order_idx, &prep.def_order);
+        *list_at(tab, order_i) = order.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect();
     })
 }
 
@@ -365,15 +384,19 @@ fn dict_at(v: &Value, p: NodePath) -> Option<(&Entries, NodePath)> {
     }
 }
 
-/// Create the tab's own lists from the tab's preset (the effective columns) when
-/// absent (mirrors the client materializing an inheriting tab on first edit).
-/// No-op if already owned.
-fn materialize_from(tab: &mut Vec<(Value, Value)>, def_order: &[String], def_visible: &[String]) {
-    if !tab.iter().any(|(k, _)| is_bytes(k, b"tabColumnOrder")) {
-        tab.push((Value::Bytes(b"tabColumnOrder".to_vec()), toks(def_order)));
-    }
-    if !tab.iter().any(|(k, _)| is_bytes(k, b"tabColumns")) {
-        tab.push((Value::Bytes(b"tabColumns".to_vec()), toks(def_visible)));
+/// Ensure the tab owns the named list and return its entry index. `idx` is the
+/// pre-resolved (Ref/Shared-key-aware) index of an already-owned list, or `None`
+/// when the tab genuinely lacks it — only then do we push a preset-seeded list
+/// (mirrors the client materializing an inheriting tab on first edit). Resolving
+/// the key first is what stops a duplicate `Bytes` key being pushed over a list
+/// the tab already owns under a Ref/Shared field-name key.
+fn materialize_list(tab: &mut Entries, name: &[u8], idx: Option<usize>, defaults: &[String]) -> usize {
+    match idx {
+        Some(i) => i,
+        None => {
+            tab.push((Value::Bytes(name.to_vec()), toks(defaults)));
+            tab.len() - 1
+        }
     }
 }
 
@@ -381,21 +404,36 @@ fn toks(tokens: &[String]) -> Value {
     Value::List(tokens.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect())
 }
 
-fn list_mut<'a>(tab: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec<Value> {
-    let (_, v) = tab.iter_mut().find(|(k, _)| is_bytes(k, name)).expect("materialized by materialize_from");
-    let Value::List(items) = v else { panic!("overview column list is not a List") };
+/// The List value at entry `i` (materialized/owned column list). Value handling
+/// is unchanged from the old `list_mut` — a `(ts, list)`-wrapped column list
+/// stays out of scope here; the fix is purely key resolution at the call site.
+fn list_at(tab: &mut Entries, i: usize) -> &mut Vec<Value> {
+    let Value::List(items) = &mut tab[i].1 else { panic!("overview column list is not a List") };
     items
 }
 
 pub fn set_column_width(char_tree: &mut Value, tab_index: i64, column: &str, width: i64) -> Result<(), OverviewError> {
     let sizes_path = sort_headers_sizes_path(char_tree).ok_or(OverviewError::NoTab)?;
-    // Locate the tab's width entry by RESOLVED key (real keys are Ref/Shared) while
-    // the borrow is immutable, then drop the table before taking the &mut path.
+    // Immutable phase: locate the tab's width entry AND, within it, the column's
+    // entry — both by RESOLVED key — as owned indices, then drop the table before
+    // taking the &mut path. The column token (e.g. NAME) recurs across every tab's
+    // width dict, so real files Ref/Shared-dedup it; a bare `is_bytes` match would
+    // miss the existing entry and PUSH A DUPLICATE key. `unwrap_shared_ref` mirrors
+    // the mutable phase's Shared unwrap so the resolved index stays aligned.
     let mut sh = SharedTable::new();
     collect_shared(char_tree, &mut sh);
-    let pos = match resolve(char_tree, &sizes_path) {
-        Some(Value::Dict(sizes)) => sizes.iter().position(|(k, _)| is_width_key(k, tab_index, &sh)),
-        _ => None,
+    let (pos, col_pos) = match resolve(char_tree, &sizes_path) {
+        Some(Value::Dict(sizes)) => {
+            let pos = sizes.iter().position(|(k, _)| is_width_key(k, tab_index, &sh));
+            let col_pos = pos.and_then(|i| match unwrap_shared_ref(&sizes[i].1) {
+                Value::Dict(entries) => {
+                    entries.iter().position(|(k, _)| is_bytes(effective(k, &sh), column.as_bytes()))
+                }
+                _ => None,
+            });
+            (pos, col_pos)
+        }
+        _ => (None, None),
     };
     drop(sh);
     let Some(Value::Dict(sizes)) = resolve_mut(char_tree, &sizes_path) else {
@@ -417,10 +455,12 @@ pub fn set_column_width(char_tree: &mut Value, tab_index: i64, column: &str, wid
         other => other,
     };
     let Value::Dict(entries) = cols else { return Err(OverviewError::NoTab) };
-    let tok = column.as_bytes();
-    match entries.iter_mut().find(|(k, _)| is_bytes(k, tok)) {
-        Some((_, v)) => *v = Value::Int(width),
-        None => entries.push((Value::Bytes(tok.to_vec()), Value::Int(width))),
+    // `Some(i)`: the column already resolves — update in place, NO new key.
+    // `None`: genuinely absent — push. (When `pos` was None the dict was just
+    // created empty, so `col_pos` is None and we push into it.)
+    match col_pos {
+        Some(i) => entries[i].1 = Value::Int(width),
+        None => entries.push((Value::Bytes(column.as_bytes().to_vec()), Value::Int(width))),
     }
     Ok(())
 }
@@ -854,5 +894,127 @@ mod tests {
         collect_shared(&doc, &mut sh);
         let Value::Dict(entries) = &doc else { unreachable!() };
         assert_eq!(token_list(entries, b"cols", &sh), Some(vec!["NAME".to_string(), "NAME".to_string()]));
+    }
+
+    // --- Ref/Shared-key innermost write paths: no duplicate keys ---------------
+    // These assert on the RESULTING TREE, not the projection: the read resolves
+    // keys and (for widths) collapses duplicates via HashMap last-wins, so a
+    // projection readback MASKS a duplicate malformed key. Only a tree inspection
+    // catches the append-instead-of-update-in-place bug on real deduped files.
+
+    /// The recurring column token (NAME) is deduped: the width key is a `Shared`
+    /// (first occurrence). A bare `is_bytes` match misses it and appends a
+    /// duplicate `Bytes("NAME")`; the resolved-key write must update in place.
+    #[test]
+    fn set_width_resolves_a_shared_column_key_no_duplicate() {
+        let widths = Value::Dict(vec![(
+            Value::Shared { slot: 5, value: Box::new(bytes("NAME")) },
+            Value::Int(80),
+        )]);
+        let mut c = Value::Dict(vec![(
+            bytes("ui"),
+            Value::Dict(vec![(
+                bytes("SortHeadersSizes"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![(
+                    Value::Tuple(vec![bytes("overviewScroll2"), Value::Int(0)]),
+                    widths,
+                )])]),
+            )]),
+        )]);
+        set_column_width(&mut c, 0, "NAME", 120).unwrap();
+
+        let mut sh = SharedTable::new();
+        collect_shared(&c, &mut sh);
+        let Value::Dict(root) = &c else { unreachable!() };
+        let ui = find_child(root, b"ui", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let sizes = find_child(ui, b"SortHeadersSizes", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let (_, cols) = sizes.iter().find(|(k, _)| is_width_key(k, 0, &sh)).unwrap();
+        let entries = as_dict(cols, &sh).unwrap();
+        let name_entries: Vec<_> =
+            entries.iter().filter(|(k, _)| is_bytes(effective(k, &sh), b"NAME")).collect();
+        assert_eq!(name_entries.len(), 1, "exactly one NAME entry — no duplicate key");
+        assert_eq!(entries.len(), 1, "no phantom entry pushed");
+        assert_eq!(as_int(effective(&name_entries[0].1, &sh)), Some(120), "updated in place");
+    }
+
+    /// A later tab stores the recurring NAME token as `Ref(slot)` back to a
+    /// `Shared("NAME")` defined in an earlier tab's width dict. The write must
+    /// resolve the Ref and update in place, not append a duplicate.
+    #[test]
+    fn set_width_resolves_a_ref_column_key_no_duplicate() {
+        let tab0_widths = Value::Dict(vec![(
+            Value::Shared { slot: 6, value: Box::new(bytes("NAME")) },
+            Value::Int(80),
+        )]);
+        let tab1_widths = Value::Dict(vec![(Value::Ref(6), Value::Int(90))]);
+        let mut c = Value::Dict(vec![(
+            bytes("ui"),
+            Value::Dict(vec![(
+                bytes("SortHeadersSizes"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![
+                    (Value::Tuple(vec![bytes("overviewScroll2"), Value::Int(0)]), tab0_widths),
+                    (Value::Tuple(vec![bytes("overviewScroll2"), Value::Int(1)]), tab1_widths),
+                ])]),
+            )]),
+        )]);
+        set_column_width(&mut c, 1, "NAME", 150).unwrap();
+
+        let mut sh = SharedTable::new();
+        collect_shared(&c, &mut sh);
+        let Value::Dict(root) = &c else { unreachable!() };
+        let ui = find_child(root, b"ui", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let sizes = find_child(ui, b"SortHeadersSizes", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let (_, cols1) = sizes.iter().find(|(k, _)| is_width_key(k, 1, &sh)).unwrap();
+        let entries1 = as_dict(cols1, &sh).unwrap();
+        assert_eq!(entries1.len(), 1, "tab 1 width dict: exactly one entry, no duplicate NAME");
+        assert_eq!(as_int(effective(&entries1[0].1, &sh)), Some(150), "Ref key updated in place");
+        // The Shared definition in tab 0 is untouched.
+        let (_, cols0) = sizes.iter().find(|(k, _)| is_width_key(k, 0, &sh)).unwrap();
+        assert_eq!(as_int(effective(&as_dict(cols0, &sh).unwrap()[0].1, &sh)), Some(80));
+    }
+
+    /// A tab owns `tabColumnOrder` / `tabColumns` under Ref/Shared-deduped
+    /// field-name keys. A bare `is_bytes` match misses them, so `materialize_from`
+    /// pushed a preset-seeded DUPLICATE list and the edit landed on the phantom
+    /// while the read saw the original. The resolved-key path must edit in place.
+    #[test]
+    fn edit_resolves_a_shared_field_name_key_no_duplicate() {
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("PvP".into())),
+            (
+                Value::Shared { slot: 3, value: Box::new(bytes("tabColumnOrder")) },
+                Value::List(vec![bytes("NAME"), bytes("TYPE")]),
+            ),
+            (
+                Value::Shared { slot: 4, value: Box::new(bytes("tabColumns")) },
+                Value::List(vec![bytes("NAME")]),
+            ),
+        ]);
+        let mut user = Value::Dict(vec![(
+            bytes("overview"),
+            Value::Dict(vec![(
+                bytes("tabsettings_new"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])]),
+            )]),
+        )]);
+
+        set_column_order(&mut user, 0, &["TYPE".into(), "NAME".into()]).unwrap();
+
+        let mut sh = SharedTable::new();
+        collect_shared(&user, &mut sh);
+        let Value::Dict(root) = &user else { unreachable!() };
+        let overview = find_child(root, b"overview", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
+        let tabs = tab_dict(overview, &sh).unwrap();
+        let (_, tabv) = tabs.iter().find(|(k, _)| as_int(effective(k, &sh)) == Some(0)).unwrap();
+        let fields = as_dict(tabv, &sh).unwrap();
+        let count = |name: &[u8]| fields.iter().filter(|(k, _)| is_bytes(effective(k, &sh), name)).count();
+        assert_eq!(count(b"tabColumnOrder"), 1, "exactly one tabColumnOrder key — no duplicate");
+        assert_eq!(count(b"tabColumns"), 1, "exactly one tabColumns key — no duplicate");
+        // The edit landed on the owned (Shared-keyed) list.
+        assert_eq!(
+            token_list(fields, b"tabColumnOrder", &sh),
+            Some(vec!["TYPE".into(), "NAME".into()]),
+            "reorder edited the owned list in place",
+        );
     }
 }
