@@ -98,9 +98,13 @@
     <ul class="ov-cols">
       {#each tab.columns as col, i (col.name)}
         <li draggable="true"
-            ondragstart={() => (dragFrom = i)}
-            ondragover={(e) => e.preventDefault()}
-            ondrop={() => drop(i)}
+            ondragstart={(e) => { dragFrom = i;
+              // WebView2/Chromium won't fire `drop` unless dragstart sets data.
+              e.dataTransfer?.setData("text/plain", String(i));
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
+            ondragover={(e) => { e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+            ondrop={(e) => { e.preventDefault(); drop(i); }}
             ondragend={() => (dragFrom = null)}>
           <span class="grip" title="Drag to reorder">⠿</span>
           <label title={col.name}>
@@ -113,7 +117,9 @@
         </li>
       {/each}
     </ul>
-    {#if tab.inherits}<p class="meta">This tab inherits its preset's columns; editing it will give it its own copy.</p>{/if}
+    {#if tab.inherits}<p class="meta">This tab uses the account-default columns. EVE doesn't save an
+      inheriting tab's exact column order, so the order shown here is the account default — editing
+      gives the tab its own copy.</p>{/if}
   {/if}
 {/if}
 
