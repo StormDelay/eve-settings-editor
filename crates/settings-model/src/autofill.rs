@@ -253,6 +253,41 @@ mod tests {
     }
 
     #[test]
+    fn set_list_entries_preserves_the_timestamp_list_wrapper() {
+        // Widget value itself is (ts, list)-wrapped, not a bare List — mirrors
+        // the real idiom where a widget can carry its own timestamp alongside
+        // the dict-level one. Only write-tested against bare Lists before this;
+        // this locks that the wrapper survives a wholesale-replace edit.
+        let wrapped = Value::Tuple(vec![ts(), Value::List(vec![Value::Str("old".into())])]);
+        let hist = Value::Dict(vec![(b("/widget/box"), wrapped)]);
+        let ui = Value::Dict(vec![(b("editHistory"), Value::Tuple(vec![ts(), hist]))]);
+        let mut user = Value::Dict(vec![(b("ui"), ui)]);
+
+        set_list_entries(&mut user, "/widget/box", &["new1".into(), "new2".into()]).unwrap();
+
+        // (a) the projection sees the new entries.
+        let lists = project_edit_history(&user);
+        assert_eq!(lists[0].entries, vec!["new1", "new2"]);
+
+        // (b) the raw widget value is STILL a (ts, list) tuple — the wrapper and
+        // original timestamp were preserved, not flattened to a bare list. A
+        // projection-only check couldn't tell a preserved wrapper from a
+        // replaced one, so navigate the tree directly.
+        let Value::Dict(root) = &user else { panic!("root not a dict") };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).unwrap();
+        let Value::Dict(ui) = ui else { panic!("ui not a dict") };
+        let (_, eh) = ui.iter().find(|(k, _)| is_bytes(k, b"editHistory")).unwrap();
+        let Value::Tuple(eh_items) = eh else { panic!("editHistory not a tuple") };
+        let Value::Dict(hist) = &eh_items[1] else { panic!("editHistory dict missing") };
+        let (_, widget_val) = hist.iter().find(|(k, _)| is_bytes(k, b"/widget/box")).unwrap();
+        let Value::Tuple(widget_items) = widget_val else {
+            panic!("widget value should still be a (ts, list) tuple wrapper")
+        };
+        assert_eq!(widget_items[0], ts(), "original timestamp preserved, not dropped");
+        assert!(matches!(&widget_items[1], Value::List(l) if l.len() == 2), "list replaced in place under the wrapper");
+    }
+
+    #[test]
     fn clear_all_history_empties_every_list() {
         let mut user = user_with_history();
         let widgets_before: Vec<String> = project_edit_history(&user).into_iter().map(|l| l.widget).collect();
