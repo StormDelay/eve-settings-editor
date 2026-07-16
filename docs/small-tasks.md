@@ -43,6 +43,11 @@ Workflow:
   easier to navigate — click a category header to fold its files away. _Added
   2026-07-17._
 
+- [ ] **Sort files alphabetically within each category.** Within each sidebar
+  category (Characters / Accounts), sort files alphabetically by their resolved
+  character name or account alias. Files still showing a bare numerical id (name
+  unresolved / no alias) sort below the named ones. _Added 2026-07-17._
+
 - [ ] **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
   added `treewalk::inline_all` (drop all `Shared`/`Ref` sharing); `overview.rs`'s
   private `inline_user` is now functionally identical. Delete the private copy and
