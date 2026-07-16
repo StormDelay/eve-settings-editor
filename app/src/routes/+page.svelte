@@ -6,6 +6,7 @@
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
   import OverviewView from "$lib/OverviewView.svelte";
+  import AutofillView from "$lib/AutofillView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
   import { searchTree } from "$lib/search";
@@ -49,7 +50,7 @@
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
-  let view: "tree" | "layout" | "overview" = $state("tree");
+  let view: "tree" | "layout" | "overview" | "autofill" = $state("tree");
   let layoutAvailable = $state(false);
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
@@ -357,6 +358,7 @@
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
             {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
+            {#if slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -385,6 +387,12 @@
             onUserDirty={() => (dirtySlots.user = true)}
             onCharDirty={() => (dirtySlots.char = true)}
             onShowAccounts={() => (mainView = "accounts")} />
+        </div>
+      {:else if view === "autofill"}
+        <div class="tree-area">
+          <AutofillView
+            userOpen={slots.user?.status === "opened"}
+            onUserDirty={() => (dirtySlots.user = true)} />
         </div>
       {:else}
         <div class="searchbar">
