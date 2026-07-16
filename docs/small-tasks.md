@@ -13,6 +13,28 @@ Workflow:
 
 ## Open
 
+- [ ] **Wrap controls so the Save button stays visible when the window is small.**
+  When the app window isn't wide/tall enough, the Save button scrolls out of view
+  and can't be reached. Let the toolbar/controls wrap (or otherwise keep Save
+  reachable) at small window sizes. _Added 2026-07-16 (M3c)._
+
+- [ ] **Re-share correctly instead of inlining on overview save.** Overview column
+  edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
+  refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
+  longer matches what the EVE client would write. Revisit: re-derive a correct
+  canonical `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
+  structurally-equal values in emit order) so the saved file matches the client's
+  dedup. _Added 2026-07-16 (M3c)._
+
+- [ ] **Group the file list by type (character vs account).** Split the sidebar
+  file list into Character and Account (user) sections. Disambiguates the case
+  where an account alias and a character name are identical. _Added 2026-07-16 (M3c)._
+
+- [ ] **Verify (or migrate) legacy overview editing.** The legacy `tabsettings`
+  overview format was never live-tested by the developer. Confirm editing works on
+  a real legacy file; simplest safe option may be to upgrade a legacy file to the
+  modern `tabsettings_new` shape when it's edited. _Added 2026-07-16 (M3c)._
+
 - [ ] **Drop the recent-sibling-writes save warning.** On save, when other files
   in the same profile were modified in the last 5 minutes, the "Saved" dialog
   appends a warning that the EVE client may be running and could overwrite the
