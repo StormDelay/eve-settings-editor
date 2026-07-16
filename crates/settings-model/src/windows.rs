@@ -5,22 +5,14 @@
 //! window ids, tuple element order) lives here so the UI never reconstructs a
 //! path from format details. Nothing in this module mutates.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
-use crate::treewalk::{child_dict, timestamped_dict, Entries};
-
-/// Shared-object slot table: slot number -> the value it stores. EVE files
-/// store a repeated window-id string once as a `Shared` and reference it
-/// elsewhere as `Ref(slot)`, so the same window id appears as `Shared` in one
-/// dict and `Ref` in another. Resolving them is what makes ids real and unique
-/// (an unresolved `Ref` would collapse every reference to the "ref" kind name,
-/// producing duplicate ids that crash a keyed render).
-type Shared<'a> = HashMap<u32, &'a Value>;
+use crate::treewalk::{child_dict, collect_shared, effective, timestamped_dict, Entries, SharedTable};
 
 /// The seven boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
@@ -112,7 +104,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
     let stacks_dict = timestamped_dict(windows_dict, &windows_path, b"stacksWindows");
 
     // Shared-slot table for resolving `Ref`/`Shared` window-id keys.
-    let mut shared = Shared::new();
+    let mut shared = SharedTable::new();
     collect_shared(root, &mut shared);
 
     let mut windows = Vec::new();
@@ -177,54 +169,6 @@ pub fn window_layout(root: &Value) -> WindowLayout {
     WindowLayout { reference_w, reference_h, windows }
 }
 
-/// Gather every `Shared { slot, value }` in the tree into a slot table.
-fn collect_shared<'a>(v: &'a Value, out: &mut Shared<'a>) {
-    match v {
-        Value::Shared { slot, value } => {
-            out.insert(*slot, value);
-            collect_shared(value, out);
-        }
-        Value::Tuple(items) | Value::List(items) => {
-            items.iter().for_each(|i| collect_shared(i, out));
-        }
-        Value::Dict(entries) => entries.iter().for_each(|(k, val)| {
-            collect_shared(k, out);
-            collect_shared(val, out);
-        }),
-        Value::Stream(inner) => collect_shared(inner, out),
-        Value::Instance { class, state } => {
-            collect_shared(class, out);
-            collect_shared(state, out);
-        }
-        Value::Reduce { ctor, items, pairs } => {
-            collect_shared(ctor, out);
-            items.iter().for_each(|i| collect_shared(i, out));
-            pairs.iter().for_each(|(k, val)| {
-                collect_shared(k, out);
-                collect_shared(val, out);
-            });
-        }
-        _ => {}
-    }
-}
-
-/// Follow `Ref`/`Shared` indirection to the underlying value (bounded against a
-/// pathological chain; real files reference backwards so this terminates fast).
-fn effective<'a>(v: &'a Value, shared: &Shared<'a>) -> &'a Value {
-    let mut cur = v;
-    for _ in 0..64 {
-        cur = match cur {
-            Value::Shared { value, .. } => value,
-            Value::Ref(slot) => match shared.get(slot).copied() {
-                Some(target) => target,
-                None => return cur,
-            },
-            _ => return cur,
-        };
-    }
-    cur
-}
-
 fn decode_id(key: &Value) -> String {
     match key {
         Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
@@ -268,7 +212,7 @@ fn extract_geom(val: &Value, entry_path: &NodePath) -> Option<Geom> {
 
 /// `rkey` is the geometry key already resolved through `Ref`/`Shared`; flag
 /// keys are resolved the same way so like compares against like.
-fn bool_flag(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &Shared) -> (bool, SetTarget) {
+fn bool_flag(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &SharedTable) -> (bool, SetTarget) {
     match entries.iter().enumerate().find(|(_, (k, _))| effective(k, shared) == rkey) {
         Some((i, (_, v))) => {
             let mut p = dpath.clone();
@@ -282,7 +226,7 @@ fn bool_flag(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &Shared)
     }
 }
 
-fn stack_field(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &Shared) -> Option<StackField> {
+fn stack_field(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &SharedTable) -> Option<StackField> {
     let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| effective(k, shared) == rkey)?;
     // Editable only when the stack id is a plain integer; anything else stays
     // raw-tree-only rather than exposing a control that cannot round-trip.
