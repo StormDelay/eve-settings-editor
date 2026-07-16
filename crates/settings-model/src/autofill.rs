@@ -8,7 +8,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, Entries, SharedTable};
+use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, Entries, SharedTable};
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct RememberedList {
@@ -83,6 +83,62 @@ fn entry_str(v: &Value) -> String {
     }
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum AutofillError {
+    /// The file has no `ui -> editHistory` structure at all.
+    NoHistory,
+    /// No remembered-string list for that widget path.
+    NoList,
+}
+
+/// Replace one widget's remembered-string list with `entries` (written as Str).
+/// An empty slice clears the list. Inlines all sharing first so the wholesale
+/// replacement cannot dangle a Ref (see `inline_all`).
+pub fn set_list_entries(user: &mut Value, widget: &str, entries: &[String]) -> Result<(), AutofillError> {
+    inline_all(user);
+    let eh = edit_history_mut(user).ok_or(AutofillError::NoHistory)?;
+    let (_, v) = eh.iter_mut().find(|(k, _)| is_bytes(k, widget.as_bytes())).ok_or(AutofillError::NoList)?;
+    let list = list_inner_mut(v).ok_or(AutofillError::NoList)?;
+    *list = entries.iter().map(|s| Value::Str(s.clone())).collect();
+    Ok(())
+}
+
+/// Mutable inner dict of root -> ui -> editHistory -> (ts, dict). Assumes a plain
+/// tree (post-`inline_all`), so keys are plain Bytes and values plain wrappers.
+fn edit_history_mut(user: &mut Value) -> Option<&mut Entries> {
+    let Value::Dict(root) = user else { return None };
+    let ui = child_dict_mut(root, b"ui")?;
+    child_dict_mut(ui, b"editHistory")
+}
+
+fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
+    let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
+    dict_inner_mut(v)
+}
+
+fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
+    match v {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +186,55 @@ mod tests {
         let lists = project_edit_history(&user);
         assert_eq!(lists[0].entries, vec!["Jita", ""], "Shared resolved, empty Bytes -> \"\"");
         assert_eq!(lists[1].entries, vec!["Jita"], "Ref resolved to the Shared value");
+    }
+
+    #[test]
+    fn set_list_entries_replaces_a_widget_list() {
+        let mut user = user_with_history();
+        set_list_entries(&mut user, "/inventory/.../quickFilter", &["scordite".into(), "pyroxeres".into()]).unwrap();
+        let lists = project_edit_history(&user);
+        let l = lists.iter().find(|l| l.widget == "/inventory/.../quickFilter").unwrap();
+        assert_eq!(l.entries, vec!["scordite", "pyroxeres"]);
+    }
+
+    #[test]
+    fn set_list_entries_can_clear_and_reports_missing() {
+        let mut user = user_with_history();
+        set_list_entries(&mut user, "/inventory/.../quickFilter", &[]).unwrap();
+        let l = project_edit_history(&user).into_iter().find(|l| l.widget == "/inventory/.../quickFilter").unwrap();
+        assert!(l.entries.is_empty());
+        assert_eq!(set_list_entries(&mut user, "/nope", &["x".into()]), Err(AutofillError::NoList));
+        assert_eq!(set_list_entries(&mut Value::Dict(vec![]), "/a", &[]), Err(AutofillError::NoHistory));
+    }
+
+    #[test]
+    fn clearing_a_list_with_a_shared_entry_still_encodes() {
+        // Real idiom: an identical remembered string in two widget lists is
+        // deduped into one Shared, Ref'd from the other list. Replacing the list
+        // that holds the Shared DEFINITION would dangle the Ref (RefBeforeStore on
+        // encode) — inline_all before the edit prevents it. This is exactly the
+        // case the raw apply_mutation refuses (SharedSubtree), which is why this
+        // milestone uses a dedicated inline-first write.
+        use blue_marshal::{decode, encode};
+        // Shared payload must be Bytes: the encoder's storable_with_flag only
+        // allows Bytes/Long/List/Dict/Tuple/etc under a Shared flag, never Str
+        // (matches the Bytes-only convention windows.rs/overview.rs already use
+        // for their Shared fixtures) — Str there is EncodeErrorKind::NotStorable.
+        let jita = Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"Jita".to_vec())) };
+        let hist = Value::Dict(vec![
+            (b("/a/box"), Value::List(vec![jita, Value::Str("Amarr".into())])),
+            (b("/b/box"), Value::List(vec![Value::Ref(1)])),
+        ]);
+        let ui = Value::Dict(vec![(b("editHistory"), Value::Tuple(vec![ts(), hist]))]);
+        let mut user = Value::Dict(vec![(b("ui"), ui)]);
+        encode(&user).expect("fixture must encode before the edit");
+
+        set_list_entries(&mut user, "/a/box", &[]).unwrap(); // clears the Shared def holder
+
+        let bytes = encode(&user).expect("edited tree must still encode (no dangling Ref)");
+        let lists = project_edit_history(&decode(&bytes).unwrap());
+        assert!(lists.iter().find(|l| l.widget == "/a/box").unwrap().entries.is_empty());
+        assert_eq!(lists.iter().find(|l| l.widget == "/b/box").unwrap().entries, vec!["Jita"],
+            "widget B keeps its formerly-Ref'd value, now inlined");
     }
 }
