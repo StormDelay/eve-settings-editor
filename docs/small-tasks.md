@@ -21,11 +21,6 @@ Workflow:
   structurally-equal values in emit order) so the saved file matches the client's
   dedup. _Added 2026-07-16 (M3c)._
 
-- [ ] **Verify (or migrate) legacy overview editing.** The legacy `tabsettings`
-  overview format was never live-tested by the developer. Confirm editing works on
-  a real legacy file; simplest safe option may be to upgrade a legacy file to the
-  modern `tabsettings_new` shape when it's edited. _Added 2026-07-16 (M3c)._
-
 - [ ] **Resize layout windows from any corner.** In the layout canvas, a
   selected window can only be resized from the bottom-right handle today. Add
   resize handles on all four corners (edges optional) once a window is selected,
@@ -39,6 +34,11 @@ Workflow:
 ## Shipped
 
 ### M3
+
+- [x] **Migrate legacy overview editing to modern on edit.** Editing an overview
+  column in a legacy (`tabsettings`) account renames the tab container to modern
+  (`tabsettings_new`) — the two are structurally identical. Validated on a real
+  legacy corpus file and live in-game. _Added 2026-07-16 (M3c)._
 
 - [x] **Keep the Save button reachable on small windows.** The filebar now wraps
   and the filename ellipsises, so a narrow/short window no longer pushes Save out
