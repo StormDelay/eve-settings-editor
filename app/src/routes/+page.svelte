@@ -5,7 +5,7 @@
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
-  import { api, errMessage, type OpenOutcome } from "$lib/api";
+  import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
@@ -14,8 +14,22 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let mainView: "file" | "accounts" = $state("file");
-  let current: OpenOutcome | null = $state(null);
-  let dirty = $state(false);
+  // Two independent editing slots: a character file and an account (user) file,
+  // each with its own dirty flag. `active` picks which one the UI shows/edits.
+  const slots = $state<{ char: OpenOutcome | null; user: OpenOutcome | null }>({
+    char: null,
+    user: null,
+  });
+  const dirtySlots = $state<{ char: boolean; user: boolean }>({ char: false, user: false });
+  let active = $state<Slot>("char");
+  const current = $derived(slots[active]);
+
+  // Route a settings file to its slot by filename kind. Non-standard/other files
+  // use the char slot (the generic editing slot).
+  function slotForName(name: string): Slot {
+    return /^core_user_\d+\.dat$/.test(name) ? "user" : "char";
+  }
+
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
   let view: "tree" | "layout" = $state("tree");
@@ -81,23 +95,30 @@
   }
 
   async function openFile(path: string) {
-    if (dirty) {
+    const name = path.split(/[\\/]/).pop() ?? "";
+    const slot = slotForName(name);
+    if (dirtySlots.char || dirtySlots.user) {
+      const which = [dirtySlots.char && "character", dirtySlots.user && "account"]
+        .filter(Boolean)
+        .join(" and ");
       const discard = await ask(
-        "You have unsaved changes. Discard them and open the other file?",
+        `You have unsaved changes to the ${which} file. Discard them and open another file?`,
         { title: "Unsaved changes", kind: "warning" },
       );
       if (!discard) return;
     }
     try {
-      current = await api.open(path);
+      const outcome = await api.open(slot, path);
+      slots[slot] = outcome;
       // A file opened via the dialog isn't in the sidebar scan, so its name was
       // never resolved — resolve it here so the header names it too. (A no-op if
       // it was scanned: the id is already cached.)
-      if (current.status === "opened") {
-        const m = current.file_name.match(/^core_char_(\d+)\.dat$/);
+      if (outcome.status === "opened") {
+        const m = outcome.file_name.match(/^core_char_(\d+)\.dat$/);
         if (m) void resolveNames([Number(m[1])]);
       }
-      dirty = false;
+      dirtySlots[slot] = false;
+      active = slot;
       savedAt += 1;
       view = "tree";
       mainView = "file";
@@ -105,7 +126,7 @@
       reveal = null;
       try {
         layoutAvailable =
-          current.status === "opened" && (await api.windowLayout()).windows.length > 0;
+          outcome.status === "opened" && (await api.windowLayout(slot)).windows.length > 0;
       } catch {
         layoutAvailable = false;
       }
@@ -117,10 +138,13 @@
   // `rethrow` is for callers with somewhere better to put the error than a
   // dialog — the insert form shows it inline and stays open on failure.
   async function runMutation(m: Mutation, rethrow = false) {
-    if (current?.status !== "opened") return;
+    const doc = slots[active];
+    if (doc?.status !== "opened") return;
     try {
-      current.tree = await api.mutate(m);
-      dirty = true;
+      const tree = await api.mutate(active, m);
+      // Reassign (not mutate-in-place) so the derived `current` refires.
+      slots[active] = { ...doc, tree };
+      dirtySlots[active] = true;
     } catch (e) {
       if (rethrow) throw e;
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
@@ -133,10 +157,11 @@
     runMutation({ op: "remove_entry", path });
 
   async function saveFile(force = false) {
-    if (!dirty || current?.status !== "opened" || current.fidelity.state !== "editable") return;
+    if (!dirtySlots[active] || current?.status !== "opened" || current.fidelity.state !== "editable")
+      return;
     try {
-      const report = await api.save(force);
-      dirty = false;
+      const report = await api.save(active, force);
+      dirtySlots[active] = false;
       savedAt += 1;
       let note = `Saved ${report.bytes_written} bytes.\nBackup: ${report.backup_path}`;
       if (report.recent_sibling_writes.length > 0) {
@@ -199,7 +224,13 @@
         {:else}
           <span class="badge editable">editable</span>
         {/if}
-        {#if dirty}<span class="badge dirty">unsaved changes</span>{/if}
+        {#if dirtySlots[active]}<span class="badge dirty">unsaved changes</span>{/if}
+        {#if slots.char && slots.user}
+          <span class="viewtabs">
+            <button class:active={active === "char"} onclick={() => (active = "char")}>Character</button>
+            <button class:active={active === "user"} onclick={() => (active = "user")}>Account</button>
+          </span>
+        {/if}
         {#if layoutAvailable}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
@@ -209,12 +240,13 @@
         <span class="spacer"></span>
         <button
           class="save"
-          disabled={!dirty || current.fidelity.state !== "editable"}
+          disabled={!(dirtySlots.char || dirtySlots.user) || current.fidelity.state !== "editable"}
           onclick={() => saveFile()}>Save</button>
       </header>
       {#if view === "layout"}
         <div class="tree-area">
           <LayoutView
+            slot={active}
             {runMutation}
             readOnly={current.fidelity.state !== "editable"}
             refreshToken={savedAt}
@@ -259,11 +291,12 @@
   </section>
   {#if current?.status === "opened"}
     <BackupsPanel
+      slot={active}
       {savedAt}
       subtitle={openDisplay}
       onRestored={(outcome) => {
-        current = outcome;
-        dirty = false;
+        slots[active] = outcome;
+        dirtySlots[active] = false;
         savedAt += 1;
       }}
     />

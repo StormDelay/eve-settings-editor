@@ -1,12 +1,14 @@
 <script lang="ts">
   import { ask, message } from "@tauri-apps/plugin-dialog";
-  import { api, errMessage, type BackupInfo, type OpenOutcome } from "./api";
+  import { api, errMessage, type BackupInfo, type OpenOutcome, type Slot } from "./api";
 
   let {
+    slot,
     savedAt,
     subtitle,
     onRestored,
   }: {
+    slot: Slot;
     savedAt: number;
     subtitle: string | null;
     onRestored: (outcome: OpenOutcome) => void;
@@ -15,10 +17,11 @@
   let backups: BackupInfo[] = $state([]);
   let error: string | null = $state(null);
 
-  // Refetch whenever a save happens (savedAt bumps) and on mount.
+  // Refetch on save (savedAt bumps), on active-slot switch, and on mount.
   $effect(() => {
     void savedAt;
-    api.listBackups().then(
+    void slot;
+    api.listBackups(slot).then(
       (b) => {
         backups = b;
         error = null;
@@ -35,7 +38,7 @@
     );
     if (!yes) return;
     try {
-      onRestored(await api.restoreBackup(b.path));
+      onRestored(await api.restoreBackup(slot, b.path));
     } catch (e) {
       await message(errMessage(e), { title: "Restore failed", kind: "error" });
     }
