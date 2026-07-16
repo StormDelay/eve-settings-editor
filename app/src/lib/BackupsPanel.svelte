@@ -1,22 +1,27 @@
 <script lang="ts">
   import { ask, message } from "@tauri-apps/plugin-dialog";
-  import { api, errMessage, type BackupInfo, type OpenOutcome } from "./api";
+  import { api, errMessage, type BackupInfo, type OpenOutcome, type Slot } from "./api";
 
   let {
+    slot,
     savedAt,
+    subtitle,
     onRestored,
   }: {
+    slot: Slot;
     savedAt: number;
+    subtitle: string | null;
     onRestored: (outcome: OpenOutcome) => void;
   } = $props();
 
   let backups: BackupInfo[] = $state([]);
   let error: string | null = $state(null);
 
-  // Refetch whenever a save happens (savedAt bumps) and on mount.
+  // Refetch on save (savedAt bumps), on active-slot switch, and on mount.
   $effect(() => {
     void savedAt;
-    api.listBackups().then(
+    void slot;
+    api.listBackups(slot).then(
       (b) => {
         backups = b;
         error = null;
@@ -33,7 +38,7 @@
     );
     if (!yes) return;
     try {
-      onRestored(await api.restoreBackup(b.path));
+      onRestored(await api.restoreBackup(slot, b.path));
     } catch (e) {
       await message(errMessage(e), { title: "Restore failed", kind: "error" });
     }
@@ -42,6 +47,7 @@
 
 <aside class="backups">
   <h3>Backups</h3>
+  {#if subtitle}<p class="subtitle" title={subtitle}>{subtitle}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
   {#if backups.length === 0}
     <p class="hint">No backups yet. Every save creates one.</p>
@@ -56,3 +62,14 @@
     {/each}
   </ul>
 </aside>
+
+<style>
+  .subtitle {
+    margin: -0.25rem 0 0.5rem;
+    font-size: 0.85em;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

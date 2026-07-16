@@ -8,19 +8,40 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use settings_model::{
-    apply, default_roots, discover, project, save, window_layout as project_window_layout,
-    Document, Fidelity, LoadError, Mutation, Node, Profile, SaveReport, WindowLayout,
+    apply, default_roots, discover, project, project_overview, save,
+    set_column_order, set_column_visible, set_column_width,
+    window_layout as project_window_layout,
+    Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
+    WindowLayout,
 };
 
 use crate::accounts;
 
-/// One document open at a time (V1), plus a transient guided-capture baseline.
-pub struct AppState(pub Mutex<Option<Document>>, pub Mutex<Option<accounts::Snapshot>>);
+/// Two open documents (char + user, for the two-file overview category) plus a
+/// transient guided-capture baseline. Each document keeps its own save chain.
+pub struct AppState {
+    pub char: Mutex<Option<Document>>,
+    pub user: Mutex<Option<Document>>,
+    pub capture: Mutex<Option<accounts::Snapshot>>,
+}
 
 impl AppState {
     pub fn new() -> Self {
-        AppState(Mutex::new(None), Mutex::new(None))
+        AppState { char: Mutex::new(None), user: Mutex::new(None), capture: Mutex::new(None) }
     }
+    fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
+        match slot {
+            Slot::Char => &self.char,
+            Slot::User => &self.user,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Slot {
+    Char,
+    User,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,7 +79,7 @@ pub fn discover_profiles() -> Vec<Profile> {
     discover(&default_roots())
 }
 
-pub fn open_file(state: &AppState, path: &str) -> Result<OpenOutcome, ErrDto> {
+pub fn open_file(state: &AppState, slot: Slot, path: &str) -> Result<OpenOutcome, ErrDto> {
     let p = Path::new(path);
     match Document::load(p) {
         Ok(doc) => {
@@ -71,12 +92,12 @@ pub fn open_file(state: &AppState, path: &str) -> Result<OpenOutcome, ErrDto> {
                 fidelity: doc.fidelity.clone(),
                 tree: project(&doc.value),
             };
-            *state.0.lock().unwrap() = Some(doc);
+            *state.doc(slot).lock().unwrap() = Some(doc);
             Ok(outcome)
         }
         Err(LoadError::Decode { offset, message }) => {
             let bytes = fs::read(p).map_err(|e| ErrDto::new("io", e.to_string()))?;
-            *state.0.lock().unwrap() = None;
+            *state.doc(slot).lock().unwrap() = None;
             Ok(OpenOutcome::ParseFailed {
                 path: path.to_string(),
                 offset,
@@ -88,12 +109,12 @@ pub fn open_file(state: &AppState, path: &str) -> Result<OpenOutcome, ErrDto> {
     }
 }
 
-pub fn close_file(state: &AppState) {
-    *state.0.lock().unwrap() = None;
+pub fn close_file(state: &AppState, slot: Slot) {
+    *state.doc(slot).lock().unwrap() = None;
 }
 
-pub fn apply_mutation(state: &AppState, mutation: &Mutation) -> Result<Node, ErrDto> {
-    let mut guard = state.0.lock().unwrap();
+pub fn apply_mutation(state: &AppState, slot: Slot, mutation: &Mutation) -> Result<Node, ErrDto> {
+    let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     if let Fidelity::ReadOnly { reason } = &doc.fidelity {
         return Err(ErrDto::new("read_only", reason.clone()));
@@ -111,8 +132,8 @@ pub fn apply_mutation(state: &AppState, mutation: &Mutation) -> Result<Node, Err
     Ok(project(&doc.value))
 }
 
-pub fn save_document(state: &AppState, force: bool) -> Result<SaveReport, ErrDto> {
-    let mut guard = state.0.lock().unwrap();
+pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveReport, ErrDto> {
+    let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     save(doc, force).map_err(|e| {
         let v = serde_json::to_value(&e).unwrap_or_default();
@@ -126,28 +147,28 @@ pub fn save_document(state: &AppState, force: bool) -> Result<SaveReport, ErrDto
     })
 }
 
-pub fn list_file_backups(state: &AppState) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
-    let guard = state.0.lock().unwrap();
+pub fn list_file_backups(state: &AppState, slot: Slot) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
+    let guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     Ok(settings_model::list_backups(&doc.path))
 }
 
-pub fn window_layout(state: &AppState) -> Result<WindowLayout, ErrDto> {
-    let guard = state.0.lock().unwrap();
+pub fn window_layout(state: &AppState, slot: Slot) -> Result<WindowLayout, ErrDto> {
+    let guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     Ok(project_window_layout(&doc.value))
 }
 
-pub fn restore_backup(state: &AppState, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
+pub fn restore_backup(state: &AppState, slot: Slot, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
     let target = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.doc(slot).lock().unwrap();
         let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
         doc.path.clone()
     };
     settings_model::restore(Path::new(backup_path), &target)
         .map_err(|e| ErrDto::new("restore", e))?;
     // Re-open so the UI reflects the restored content and a fresh baseline.
-    open_file(state, &target.to_string_lossy())
+    open_file(state, slot, &target.to_string_lossy())
 }
 
 /// Hex dump of up to 16 lines x 16 bytes centred on `around` (clamped),
@@ -181,24 +202,82 @@ fn hex_preview(bytes: &[u8], around: usize) -> String {
 
 use std::path::PathBuf;
 
-/// Snapshot current file mtimes as the guided-capture baseline, excluding the
-/// currently-open document (the app itself may write it).
+/// Snapshot current file mtimes as the guided-capture baseline, excluding
+/// both open documents (the app itself may write them).
 pub fn begin_capture(state: &AppState, roots: &[PathBuf]) {
-    let open_path = state.0.lock().unwrap().as_ref().map(|d| d.path.clone());
     let profiles = discover(roots);
-    let snap = accounts::snapshot_from_profiles(&profiles, open_path.as_deref());
-    *state.1.lock().unwrap() = Some(snap);
+    let mut snap = accounts::snapshot_from_profiles(&profiles, None);
+    for p in open_paths(state) {
+        snap.remove(&p);
+    }
+    *state.capture.lock().unwrap() = Some(snap);
 }
 
 /// Diff the current files against the capture baseline (empty if none set).
-/// Excludes the currently-open document from the "after" snapshot too, so it
-/// never enters the diff (symmetric with `begin_capture`'s baseline exclusion).
+/// Excludes both open documents from the "after" snapshot too, so they never
+/// enter the diff (symmetric with `begin_capture`'s baseline exclusion).
 pub fn resolve_capture(state: &AppState, roots: &[PathBuf]) -> accounts::CaptureResult {
-    let open_path = state.0.lock().unwrap().as_ref().map(|d| d.path.clone());
-    let baseline = state.1.lock().unwrap().clone().unwrap_or_default();
+    let baseline = state.capture.lock().unwrap().clone().unwrap_or_default();
     let profiles = discover(roots);
-    let after = accounts::snapshot_from_profiles(&profiles, open_path.as_deref());
+    let mut after = accounts::snapshot_from_profiles(&profiles, None);
+    for p in open_paths(state) {
+        after.remove(&p);
+    }
     accounts::capture_diff(&baseline, &after)
+}
+
+/// Paths of whatever documents are open (either slot) — excluded from capture
+/// diffs since the app itself may write them.
+fn open_paths(state: &AppState) -> Vec<PathBuf> {
+    [Slot::Char, Slot::User]
+        .into_iter()
+        .filter_map(|s| state.doc(s).lock().unwrap().as_ref().map(|d| d.path.clone()))
+        .collect()
+}
+
+pub fn overview_columns(state: &AppState) -> Result<OverviewColumns, ErrDto> {
+    let user = state.user.lock().unwrap();
+    let udoc = user.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    let char_guard = state.char.lock().unwrap();
+    let char_val = char_guard.as_ref().map(|d| &d.value);
+    Ok(project_overview(&udoc.value, char_val))
+}
+
+/// Edit the user slot (visibility/order), then re-project including char widths.
+fn edit_user_overview<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), settings_model::OverviewError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+    }
+    overview_columns(state)
+}
+
+pub fn set_overview_visible(state: &AppState, tab_index: i64, column: &str, visible: bool) -> Result<OverviewColumns, ErrDto> {
+    edit_user_overview(state, |v| set_column_visible(v, tab_index, column, visible))
+}
+
+pub fn set_overview_order(state: &AppState, tab_index: i64, order: Vec<String>) -> Result<OverviewColumns, ErrDto> {
+    edit_user_overview(state, |v| set_column_order(v, tab_index, &order))
+}
+
+pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width: i64) -> Result<OverviewColumns, ErrDto> {
+    {
+        let mut guard = state.char.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        set_column_width(&mut doc.value, tab_index, column, width)
+            .map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+    }
+    overview_columns(state)
 }
 
 #[cfg(test)]
@@ -224,7 +303,7 @@ mod tests {
         .unwrap();
         let path = temp_file("open", &bytes);
         let state = AppState::new();
-        let outcome = open_file(&state, path.to_str().unwrap()).unwrap();
+        let outcome = open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
         match outcome {
             OpenOutcome::Opened { fidelity, tree, file_name, .. } => {
                 assert_eq!(fidelity, Fidelity::Editable);
@@ -233,29 +312,29 @@ mod tests {
             }
             _ => panic!("expected Opened"),
         }
-        assert!(state.0.lock().unwrap().is_some());
-        close_file(&state);
-        assert!(state.0.lock().unwrap().is_none());
+        assert!(state.char.lock().unwrap().is_some());
+        close_file(&state, Slot::Char);
+        assert!(state.char.lock().unwrap().is_none());
     }
 
     #[test]
     fn open_undecodable_file_returns_hex_preview() {
         let path = temp_file("bad", &[0x7E, 0, 0, 0, 0, 0x3D]);
         let state = AppState::new();
-        match open_file(&state, path.to_str().unwrap()).unwrap() {
+        match open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap() {
             OpenOutcome::ParseFailed { offset, hex_preview, .. } => {
                 assert_eq!(offset, 5);
                 assert!(hex_preview.starts_with("00000000  7e 00 00 00 00 3d"));
             }
             _ => panic!("expected ParseFailed"),
         }
-        assert!(state.0.lock().unwrap().is_none());
+        assert!(state.char.lock().unwrap().is_none());
     }
 
     #[test]
     fn open_missing_file_is_an_io_error() {
         let state = AppState::new();
-        let err = open_file(&state, "Z:/no/such/file.dat").unwrap_err();
+        let err = open_file(&state, Slot::Char, "Z:/no/such/file.dat").unwrap_err();
         assert_eq!(err.code, "io");
     }
 
@@ -270,7 +349,7 @@ mod tests {
         .unwrap();
         let path = temp_file(name, &bytes);
         let state = AppState::new();
-        open_file(&state, path.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
         (state, path)
     }
 
@@ -279,6 +358,7 @@ mod tests {
         let (state, path) = open_sample("mutsave");
         let tree = apply_mutation(
             &state,
+            Slot::Char,
             &Mutation::SetScalar {
                 path: vec![Step::DictValue(0), Step::List(0)],
                 text: "edited".into(),
@@ -286,11 +366,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tree.children[0].children[0].display, "\"edited\"");
-        let report = save_document(&state, false).unwrap();
+        let report = save_document(&state, Slot::Char, false).unwrap();
         assert!(report.backup_path.exists());
         // Re-open from disk in a fresh state: the edit persisted, Editable.
         let state2 = AppState::new();
-        match open_file(&state2, path.to_str().unwrap()).unwrap() {
+        match open_file(&state2, Slot::Char, path.to_str().unwrap()).unwrap() {
             OpenOutcome::Opened { fidelity, tree, .. } => {
                 assert_eq!(fidelity, Fidelity::Editable);
                 assert_eq!(tree.children[0].children[0].display, "\"edited\"");
@@ -303,9 +383,9 @@ mod tests {
     fn save_conflict_surfaces_the_conflict_code() {
         let (state, path) = open_sample("conflict");
         fs::write(&path, encode(&Value::Dict(vec![])).unwrap()).unwrap();
-        let err = save_document(&state, false).unwrap_err();
+        let err = save_document(&state, Slot::Char, false).unwrap_err();
         assert_eq!(err.code, "conflict");
-        save_document(&state, true).unwrap();
+        save_document(&state, Slot::Char, true).unwrap();
     }
 
     #[test]
@@ -313,24 +393,25 @@ mod tests {
         let (state, _path) = open_sample("backups");
         apply_mutation(
             &state,
+            Slot::Char,
             &Mutation::SetScalar {
                 path: vec![Step::DictValue(0), Step::List(0)],
                 text: "v2".into(),
             },
         )
         .unwrap();
-        save_document(&state, false).unwrap();
-        let backups = list_file_backups(&state).unwrap();
+        save_document(&state, Slot::Char, false).unwrap();
+        let backups = list_file_backups(&state, Slot::Char).unwrap();
         assert_eq!(backups.len(), 1, "the pre-save backup");
         // Restore the original -> the reopened tree shows "a" again.
-        match restore_backup(&state, backups[0].path.to_str().unwrap()).unwrap() {
+        match restore_backup(&state, Slot::Char, backups[0].path.to_str().unwrap()).unwrap() {
             OpenOutcome::Opened { tree, .. } => {
                 assert_eq!(tree.children[0].children[0].display, "\"a\"");
             }
             _ => panic!("expected Opened"),
         }
         // Restore itself took a pre-restore backup.
-        assert_eq!(list_file_backups(&state).unwrap().len(), 2);
+        assert_eq!(list_file_backups(&state, Slot::Char).unwrap().len(), 2);
     }
 
     #[test]
@@ -338,6 +419,7 @@ mod tests {
         let (state, _path) = open_sample("badmut");
         let err = apply_mutation(
             &state,
+            Slot::Char,
             &Mutation::SetScalar { path: vec![], text: "5".into() },
         )
         .unwrap_err();
@@ -374,9 +456,9 @@ mod tests {
         )]);
         let path = temp_file("winlayout", &encode(&doc).unwrap());
         let state = AppState::new();
-        open_file(&state, path.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
 
-        let wl = window_layout(&state).unwrap();
+        let wl = window_layout(&state, Slot::Char).unwrap();
         assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
         assert_eq!(wl.windows.len(), 1);
         assert_eq!(wl.windows[0].id, "overview");
@@ -386,7 +468,7 @@ mod tests {
     #[test]
     fn window_layout_without_a_document_errors() {
         let state = AppState::new();
-        assert_eq!(window_layout(&state).unwrap_err().code, "no_document");
+        assert_eq!(window_layout(&state, Slot::Char).unwrap_err().code, "no_document");
     }
 
     #[test]
@@ -425,7 +507,7 @@ mod tests {
         fs::write(&uf, b"x").unwrap();
 
         let state = AppState::new();
-        open_file(&state, cf.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, cf.to_str().unwrap()).unwrap();
         begin_capture(&state, &[root.clone()]);
 
         // Advance both mtimes (rewrite the files a moment later). The char
@@ -442,5 +524,62 @@ mod tests {
         );
         assert_eq!(r.changed_users, vec![987654]);
         assert_eq!(r.detected, None);
+    }
+
+    #[test]
+    fn two_slots_hold_independent_documents() {
+        let ubytes = encode(&Value::Dict(vec![(Value::Bytes(b"u".to_vec()), Value::Int(1))])).unwrap();
+        let cbytes = encode(&Value::Dict(vec![(Value::Bytes(b"c".to_vec()), Value::Int(2))])).unwrap();
+        let upath = temp_file("slot-user", &ubytes);
+        let cpath = temp_file("slot-char", &cbytes);
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        assert!(state.user.lock().unwrap().is_some());
+        assert!(state.char.lock().unwrap().is_some());
+        // Closing one leaves the other.
+        close_file(&state, Slot::User);
+        assert!(state.user.lock().unwrap().is_none());
+        assert!(state.char.lock().unwrap().is_some());
+    }
+
+    fn overview_user_bytes() -> Vec<u8> {
+        // root -> b"overview" -> b"tabsettings_new" -> (ts, { 0: {name, order, visible} })
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("PvP".into())),
+            (Value::Bytes(b"tabColumnOrder".to_vec()),
+             Value::List(vec![Value::Bytes(b"NAME".to_vec()), Value::Bytes(b"TYPE".to_vec())])),
+            (Value::Bytes(b"tabColumns".to_vec()), Value::List(vec![Value::Bytes(b"NAME".to_vec())])),
+        ]);
+        encode(&Value::Dict(vec![(
+            Value::Bytes(b"overview".to_vec()),
+            Value::Dict(vec![(
+                Value::Bytes(b"tabsettings_new".to_vec()),
+                Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(vec![(Value::Int(0), tab)])]),
+            )]),
+        )])).unwrap()
+    }
+
+    #[test]
+    fn overview_reads_and_edits_the_user_slot() {
+        let path = temp_file("ov-user", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let oc = overview_columns(&state).unwrap();
+        assert_eq!(oc.tabs.len(), 1);
+        assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 1);
+
+        // Show TYPE, then reorder.
+        let oc = set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 2);
+        let oc = set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+        assert_eq!(oc.tabs[0].columns[0].name, "TYPE");
+    }
+
+    #[test]
+    fn overview_without_a_user_slot_errors() {
+        let state = AppState::new();
+        assert_eq!(overview_columns(&state).unwrap_err().code, "no_document");
     }
 }
