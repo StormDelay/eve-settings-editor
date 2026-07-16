@@ -12,6 +12,25 @@ account roster). Design spec §6 "Overview editor".
 > the format model on the user's actual on-disk files (dumped and verified),
 > and supports both the **modern** (`tabsettings_new`) and **legacy / imported
 > preset-pack** (`tabsettings`) formats. See §10 for the lessons.
+>
+> **v3 correction (2026-07-16, after full live guided-diff validation).** v2's
+> "inherit from the tab's `overviewProfilePresets` preset" fallback (§2 Presets,
+> §3) is **wrong** — `overviewProfilePresets` are **FILTER** presets (which ships/
+> states to show, integer id lists) and carry **no columns**. The real model,
+> pinned by in-game-change→dump diffs:
+> - **Visibility** = per-tab `tabColumns` (a set, stored alphabetically),
+>   materialized on a visibility change; else account-global `overviewColumns`.
+> - **Order** = per-tab `tabColumnOrder`, materialized only on a reorder; else
+>   account-global `overviewColumnOrder`. **Ceiling:** an inheriting tab's *exact*
+>   on-screen order is EVE runtime state, not saved anywhere — the account-global
+>   order is only an approximation until the tab is reordered (which pins it).
+> - `tabColumns` and `tabColumnOrder` inherit **independently**.
+> - **Encode safety:** a column edit rebuilds/shrinks a token list, which can
+>   destroy a `Shared` token definition the file still `Ref`s → `RefBeforeStore`
+>   on save. The write path inlines all `Shared`/`Ref` first (see the built code:
+>   `treewalk::inline_shares` + `overview::inline_user`).
+>
+> Read the bullets below through this correction; §2 Presets and §3 are superseded.
 
 ## 1. Goal
 
@@ -35,18 +54,19 @@ programmatically at implementation, §9):
   allocated — **not** derivable from the window). Each tab dict holds:
   - `"name"` — the tab label. **The key is a string-table ref (`t52`)**, not a
     plain string; the value is `Str`/`StrUcs2`/`Bytes`.
-  - `b"overview"` — the **preset name** the tab references (its default columns).
+  - `b"overview"` — the **FILTER preset name** the tab references (which ships/
+    states to show). **Unrelated to columns** (see v3 correction).
   - `b"bracket"`, `b"color"` — left untouched.
-  - Optionally `b"tabColumnOrder"` (full ordered column list) + `b"tabColumns"`
-    (visible subset) — the tab's **own column override**, present only after the
-    tab has been column-customized. Bare lists; items are column tokens (`Bytes`),
-    frequently `Ref`/`Shared`.
-- **Presets** — `b"overviewProfilePresets"` → dict keyed by preset name → each
-  preset has `b"overviewColumns"` (its ordered visible set; `Ref`s to shared
-  column tokens). **This is the default a tab inherits when it has no own lists.**
-- **Master column list** — `b"overviewColumnOrder"` = `(FILETIME, list)` of all
-  available column tokens (the "add column" source). Wrapped in a
-  `(timestamp, list)` tuple; items bare `Bytes` (modern) or `Shared` (legacy).
+  - Optionally `b"tabColumnOrder"` (full ordered column list) and/or `b"tabColumns"`
+    (visible subset, stored alphabetically) — the tab's **own column override**,
+    each present only after the tab has been reordered / had its visibility
+    changed respectively (they appear **independently**). Bare lists; items are
+    column tokens (`Bytes`), frequently `Ref`/`Shared`.
+- **Account-default columns** (what an inheriting tab uses) — in the overview
+  container: `b"overviewColumns"` (the visible set) + `b"overviewColumnOrder"`
+  (the master ordered list of all columns). Items are column tokens (`Bytes`),
+  frequently `Ref`/`Shared`. *(`b"overviewProfilePresets"` is the FILTER-preset
+  system and carries no columns — not a column source.)*
 - **Window→tab mapping** — `b"tabsByWindowInstanceID"` = a **list of lists**;
   outer index = overview window instance, inner list = that window's tab indices
   in display order. Observed: `[[0,1,…,9,12,13],[10,11,14]]` — window 0 owns the
@@ -65,18 +85,19 @@ widths are structurally identical.
 
 ## 3. A tab's effective columns (core semantics)
 
-For a tab:
-1. If it has its own `tabColumns`/`tabColumnOrder` → those *are* its columns
-   (visible set + order).
-2. Otherwise → its **preset's** `overviewColumns` (resolve the tab's `overview`
-   field → `overviewProfilePresets[name]`). **The fallback is the preset — not
-   any account-level column set. That fallback target was v1's core bug.**
+For a tab, resolved **independently per axis** (visibility vs order):
+1. **Visible set** = its own `tabColumns` if present, else the account-default
+   `overviewColumns`.
+2. **Order** = its own `tabColumnOrder` if present, else the account-default
+   `overviewColumnOrder` (an *approximation* for inheriting tabs — the exact
+   per-tab inherited order is EVE runtime state, not in the file; see v3 ceiling).
 
-**Editing a tab's columns MATERIALIZES the tab's own `tabColumnOrder`/`tabColumns`**
-(copied from the effective preset set on first edit), then applies the edit —
-exactly what the EVE client does. **Column edits are strictly per-tab: the preset
-and all other tabs are untouched.** (So there is no "editing a shared preset"
-behavior; a standalone preset editor is deferred, §7.)
+A tab may own one axis and inherit the other. **Editing MATERIALIZES only the
+affected axis's own list** (`tabColumns` on a visibility change, `tabColumnOrder`
+on a reorder), seeded from the account default, then applies the edit — what the
+EVE client does. **Column edits are strictly per-tab; other tabs and the account
+defaults are untouched.** The write path inlines all `Shared`/`Ref` first so a
+rebuilt list can't orphan a `Ref` the file still points at (`RefBeforeStore`).
 
 ## 4. Two-slot app state + loading (already built, validated, kept)
 
@@ -98,13 +119,16 @@ Unchanged from v1 and confirmed correct in smoke:
 - **Character selector** — whose per-tab widths to edit (char file), from the
   M3b roster. (This is the char selector's real purpose.)
 - **Column rows** for the selected tab, in the tab's effective order:
-  - **checkbox** = visible; toggling **materializes** the tab's own lists (from
-    its preset) then edits — per-tab, preset untouched.
-  - **drag** = reorder the tab's `tabColumnOrder` (materialize if needed).
+  - **checkbox** = visible; toggling **materializes** the tab's own `tabColumns`
+    (seeded from the account-default visible set) then edits — per-tab, defaults
+    untouched.
+  - **drag** = reorder the tab's `tabColumnOrder` (materialize from the account
+    default if needed).
   - **width** = the selected character's width for this tab
     (`(overviewScroll2, tabIndex)`, char file).
-- A small **"inherits from preset «name»"** note while the tab has no own lists
-  (first edit gives it its own).
+- A small note while the tab inherits any axis: it uses the account-default
+  columns, and (for order) an inheriting tab's exact order isn't saved, so the
+  shown order is the account default — editing gives the tab its own copy.
 - **Save** writes each dirty slot (user = column overrides, char = widths)
   through its own chain.
 
