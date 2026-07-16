@@ -75,6 +75,10 @@
         <button class="mini" onclick={() => clearList(l)} disabled={l.entries.length === 0}>Clear</button>
       </header>
       <ul>
+        <!-- Index-keyed: safe only because inputs below are one-way (value=,
+             commit-on-change) and edits replace `lists` wholesale afterward.
+             If this ever grows bind:value or autofocus, switch to a
+             content-based key first or rows will steal focus on reorder/removal. -->
         {#each l.entries as entry, i (i)}
           <li draggable="true"
               ondragstart={(e) => { drag = { widget: l.widget, from: i };
@@ -105,7 +109,7 @@
   .af-list { margin-bottom: 1rem; }
   .af-list header { display: flex; align-items: baseline; gap: 0.6rem; }
   .af-list .title { font-weight: 600; }
-  .af-list .path { color: var(--fg-dim); font-size: 0.8em; overflow: hidden; text-overflow: ellipsis; }
+  .af-list .path { color: var(--fg-dim); font-size: 0.8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .af-list ul { list-style: none; padding: 0; margin: 0.25rem 0 0; }
   .af-list li { display: flex; align-items: center; gap: 0.4rem; padding: 0.1rem 0; }
   .grip { cursor: grab; opacity: 0.6; }
