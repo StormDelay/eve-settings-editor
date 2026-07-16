@@ -130,6 +130,23 @@ fn resolve_capture(state: tauri::State<'_, AppState>) -> accounts::CaptureResult
     ops::resolve_capture(&state, &settings_model::default_roots())
 }
 
+#[tauri::command]
+fn overview_columns(state: tauri::State<'_, AppState>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_columns(&state)
+}
+#[tauri::command]
+fn set_overview_visible(state: tauri::State<'_, AppState>, tab_index: i64, column: String, visible: bool) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::set_overview_visible(&state, tab_index, &column, visible)
+}
+#[tauri::command]
+fn set_overview_order(state: tauri::State<'_, AppState>, tab_index: i64, order: Vec<String>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::set_overview_order(&state, tab_index, order)
+}
+#[tauri::command]
+fn set_overview_width(state: tauri::State<'_, AppState>, tab_index: i64, column: String, width: i64) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::set_overview_width(&state, tab_index, &column, width)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -141,7 +158,8 @@ pub fn run() {
             apply_mutation, save_document, list_file_backups, restore_backup,
             window_layout, resolve_character_names, refresh_character_names,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
-            begin_capture, resolve_capture
+            begin_capture, resolve_capture,
+            overview_columns, set_overview_visible, set_overview_order, set_overview_width
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
