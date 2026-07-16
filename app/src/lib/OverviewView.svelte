@@ -26,8 +26,9 @@
     try { data = await api.setOverviewVisible(tabIndex!, column, visible); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
-  async function setWidth(column: string, width: number) {
-    if (charId === null || Number.isNaN(width)) return;
+  async function setWidth(column: string, raw: string) {
+    const width = Number(raw);
+    if (charId === null || raw.trim() === "" || Number.isNaN(width)) return;
     try { data = await api.setOverviewWidth(tabIndex!, column, width); onCharDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
@@ -74,7 +75,8 @@
         <li draggable="true"
             ondragstart={() => (dragFrom = i)}
             ondragover={(e) => e.preventDefault()}
-            ondrop={() => drop(i)}>
+            ondrop={() => drop(i)}
+            ondragend={() => (dragFrom = null)}>
           <span class="grip" title="Drag to reorder">⠿</span>
           <label title={col.name}>
             <input type="checkbox" checked={col.visible} onchange={(e) => toggle(col.name, (e.target as HTMLInputElement).checked)} />
@@ -82,7 +84,7 @@
           </label>
           <input class="w" type="number" min="0" disabled={charId === null}
                  value={col.width ?? ""} placeholder="—"
-                 onchange={(e) => setWidth(col.name, Number((e.target as HTMLInputElement).value))} />
+                 onchange={(e) => setWidth(col.name, (e.target as HTMLInputElement).value)} />
         </li>
       {/each}
     </ul>

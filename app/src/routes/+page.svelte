@@ -26,6 +26,11 @@
   let active = $state<Slot>("char");
   const current = $derived(slots[active]);
 
+  function slotSaveable(o: OpenOutcome | null, dirty: boolean): boolean {
+    return dirty && o?.status === "opened" && o.fidelity.state === "editable";
+  }
+  const canSave = $derived(slotSaveable(slots.char, dirtySlots.char) || slotSaveable(slots.user, dirtySlots.user));
+
   // Route a settings file to its slot by filename kind. Non-standard/other files
   // use the char slot (the generic editing slot).
   function slotForName(name: string): Slot {
@@ -318,7 +323,7 @@
         <span class="spacer"></span>
         <button
           class="save"
-          disabled={!(dirtySlots.char || dirtySlots.user) || current.fidelity.state !== "editable"}
+          disabled={!canSave}
           onclick={() => saveFile()}>Save</button>
       </header>
       {#if view === "layout"}
