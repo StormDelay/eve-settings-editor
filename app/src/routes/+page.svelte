@@ -313,11 +313,11 @@
             <button class:active={active === "user"} onclick={() => (active = "user")}>Account</button>
           </span>
         {/if}
-        {#if layoutAvailable || slots.user?.status === "opened"}
+        {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
             {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
-            {#if slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
+            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -344,7 +344,8 @@
             characters={openAccountCharacters}
             onLoadCharacter={loadCharacter}
             onUserDirty={() => (dirtySlots.user = true)}
-            onCharDirty={() => (dirtySlots.char = true)} />
+            onCharDirty={() => (dirtySlots.char = true)}
+            onShowAccounts={() => (mainView = "accounts")} />
         </div>
       {:else}
         <div class="searchbar">
