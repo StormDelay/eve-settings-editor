@@ -5,19 +5,51 @@
   import BackupsPanel from "$lib/BackupsPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
-  import { api, errMessage, type OpenOutcome } from "$lib/api";
-  import type { Mutation, NodePath, TreeNodeData, ErrDto } from "$lib/api";
+  import OverviewView from "$lib/OverviewView.svelte";
+  import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
+  import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
   import { searchTree } from "$lib/search";
-  import { names } from "$lib/names.svelte";
-  import { aliasFor } from "$lib/accounts.svelte";
+  import { names, resolveNames } from "$lib/names.svelte";
+  import { aliasFor, accountsStore } from "$lib/accounts.svelte";
+  import {
+    pairedFilePath,
+    associatedCharacters,
+    userSlotFor,
+    charSlotFor,
+  } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let mainView: "file" | "accounts" = $state("file");
-  let current: OpenOutcome | null = $state(null);
-  let dirty = $state(false);
+  // Two independent editing slots: a character file and an account (user) file,
+  // each with its own dirty flag. `active` picks which one the UI shows/edits.
+  const slots = $state<{ char: OpenOutcome | null; user: OpenOutcome | null }>({
+    char: null,
+    user: null,
+  });
+  const dirtySlots = $state<{ char: boolean; user: boolean }>({ char: false, user: false });
+  let active = $state<Slot>("char");
+  const current = $derived(slots[active]);
+
+  function slotSaveable(o: OpenOutcome | null, dirty: boolean): boolean {
+    return dirty && o?.status === "opened" && o.fidelity.state === "editable";
+  }
+  const canSave = $derived(slotSaveable(slots.char, dirtySlots.char) || slotSaveable(slots.user, dirtySlots.user));
+
+  // Route a settings file to its slot by filename kind. Non-standard/other files
+  // use the char slot (the generic editing slot).
+  function slotForName(name: string): Slot {
+    return /^core_user_\d+\.dat$/.test(name) ? "user" : "char";
+  }
+
+  // Discovered profiles, for resolving a char/user id to its file path within
+  // the same profile folder as an already-open file (see pairedFilePath).
+  let profiles = $state<Profile[]>([]);
+  api.discover().then((p) => (profiles = p)).catch(() => {});
+
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
-  let view: "tree" | "layout" = $state("tree");
+  let view: "tree" | "layout" | "overview" = $state("tree");
   let layoutAvailable = $state(false);
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
@@ -39,6 +71,40 @@
     const m = current.file_name.match(/^core_user_(\d+)\.dat$/);
     return m ? aliasFor(Number(m[1])) : null;
   });
+
+  // Best single label for the open file — character name, else user alias, else
+  // the bare filename. Feeds the OS window title and the backups panel.
+  const openDisplay = $derived.by(() => {
+    if (current?.status !== "opened") return null;
+    return openCharName ?? openUserAlias ?? current.file_name;
+  });
+
+  const APP_TITLE = "EVE Settings Editor";
+  $effect(() => {
+    void getCurrentWindow().setTitle(
+      openDisplay ? `${openDisplay} — ${APP_TITLE}` : APP_TITLE,
+    );
+  });
+
+  // Overview editor inputs: the ids of the open char/user files, and the roster's
+  // characters for the open account (the width selector loads one of these).
+  const openCharId = $derived.by(() => {
+    const o = slots.char;
+    if (o?.status !== "opened") return null;
+    const m = o.file_name.match(/^core_char_(\d+)\.dat$/);
+    return m ? Number(m[1]) : null;
+  });
+  const openUserId = $derived.by(() => {
+    const o = slots.user;
+    if (o?.status !== "opened") return null;
+    const m = o.file_name.match(/^core_user_(\d+)\.dat$/);
+    return m ? Number(m[1]) : null;
+  });
+  const openAccountCharacters = $derived(
+    openUserId === null ? [] : associatedCharacters(openUserId, accountsStore.roster),
+  );
+  // Resolve names so the width selector shows character names, not bare ids.
+  $effect(() => { if (openAccountCharacters.length) void resolveNames(openAccountCharacters); });
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
@@ -65,17 +131,36 @@
     searchBox?.blur();
   }
 
+  // Shared unsaved-changes prompt for anything that swaps out an open file:
+  // the Open-file dialog/sidebar and the (Task C4) character selector alike.
+  async function confirmDiscardIfDirty(): Promise<boolean> {
+    if (!dirtySlots.char && !dirtySlots.user) return true;
+    const which = [dirtySlots.char && "character", dirtySlots.user && "account"]
+      .filter(Boolean)
+      .join(" and ");
+    const noun = dirtySlots.char && dirtySlots.user ? "files" : "file";
+    return ask(
+      `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
+      { title: "Unsaved changes", kind: "warning" },
+    );
+  }
+
   async function openFile(path: string) {
-    if (dirty) {
-      const discard = await ask(
-        "You have unsaved changes. Discard them and open the other file?",
-        { title: "Unsaved changes", kind: "warning" },
-      );
-      if (!discard) return;
-    }
+    const name = path.split(/[\\/]/).pop() ?? "";
+    const slot = slotForName(name);
+    if (!(await confirmDiscardIfDirty())) return;
     try {
-      current = await api.open(path);
-      dirty = false;
+      const outcome = await api.open(slot, path);
+      slots[slot] = outcome;
+      // A file opened via the dialog isn't in the sidebar scan, so its name was
+      // never resolved — resolve it here so the header names it too. (A no-op if
+      // it was scanned: the id is already cached.)
+      if (outcome.status === "opened") {
+        const m = outcome.file_name.match(/^core_char_(\d+)\.dat$/);
+        if (m) void resolveNames([Number(m[1])]);
+      }
+      dirtySlots[slot] = false;
+      active = slot;
       savedAt += 1;
       view = "tree";
       mainView = "file";
@@ -83,10 +168,85 @@
       reveal = null;
       try {
         layoutAvailable =
-          current.status === "opened" && (await api.windowLayout()).windows.length > 0;
+          outcome.status === "opened" && (await api.windowLayout(slot)).windows.length > 0;
       } catch {
         layoutAvailable = false;
       }
+      // Reconcile the *other* slot so the two are always a matching char/user
+      // pair (or one empty) — never a stale, unrelated file the Overview editor
+      // would misread.
+      if (slot === "char") await reconcileUserSlot(outcome);
+      else await reconcileCharSlot(outcome);
+    } catch (e) {
+      await message(errMessage(e), { title: "Open failed", kind: "error" });
+    }
+  }
+
+  // Empty a slot: close its backend document and clear the frontend state.
+  async function clearSlot(slot: Slot) {
+    if (slots[slot] === null) return;
+    try {
+      await api.close(slot);
+    } catch { /* best-effort */ }
+    slots[slot] = null;
+    dirtySlots[slot] = false;
+  }
+
+  // After a character lands in the char slot, make the user slot its paired
+  // account file — or empty it. Never keep a stale, unrelated account file (the
+  // Overview view shows the Accounts nudge when the user slot is empty).
+  async function reconcileUserSlot(charOutcome: OpenOutcome) {
+    const charId =
+      charOutcome.status === "opened"
+        ? charOutcome.file_name.match(/^core_char_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const action = userSlotFor(
+      charOutcome.status === "opened" ? charOutcome.path : "",
+      charId === null ? null : Number(charId),
+      slots.user?.status === "opened" ? slots.user.path : null,
+      accountsStore.roster,
+      profiles,
+    );
+    if (action.kind === "keep") return;
+    if (action.kind === "clear") return clearSlot("user");
+    try {
+      slots.user = await api.open("user", action.path);
+      dirtySlots.user = false;
+    } catch {
+      await clearSlot("user"); // couldn't load the pair -> don't keep a stale one
+    }
+  }
+
+  // After an account file lands in the user slot, keep the char slot only if it
+  // holds one of this account's characters — otherwise empty it (the character
+  // selector picks which of the account's characters to load).
+  async function reconcileCharSlot(userOutcome: OpenOutcome) {
+    const userId =
+      userOutcome.status === "opened"
+        ? userOutcome.file_name.match(/^core_user_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const currentCharId =
+      slots.char?.status === "opened"
+        ? slots.char.file_name.match(/^core_char_(\d+)\.dat$/)?.[1] ?? null
+        : null;
+    const action = charSlotFor(
+      userId === null ? null : Number(userId),
+      currentCharId === null ? null : Number(currentCharId),
+      accountsStore.roster,
+    );
+    if (action.kind === "clear") await clearSlot("char");
+  }
+
+  // Load a selected character into the char slot (from the OverviewView selector).
+  async function loadCharacter(charId: number) {
+    if (!(await confirmDiscardIfDirty())) return;
+    const anchor = slots.user?.status === "opened" ? slots.user.path : "";
+    const charPath = pairedFilePath(profiles, anchor, charId, "char");
+    if (!charPath) return;
+    try {
+      slots.char = await api.open("char", charPath);
+      dirtySlots.char = false;
+      await resolveNames([charId]);
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
@@ -95,10 +255,13 @@
   // `rethrow` is for callers with somewhere better to put the error than a
   // dialog — the insert form shows it inline and stays open on failure.
   async function runMutation(m: Mutation, rethrow = false) {
-    if (current?.status !== "opened") return;
+    const doc = slots[active];
+    if (doc?.status !== "opened") return;
     try {
-      current.tree = await api.mutate(m);
-      dirty = true;
+      const tree = await api.mutate(active, m);
+      // Reassign (not mutate-in-place) so the derived `current` refires.
+      slots[active] = { ...doc, tree };
+      dirtySlots[active] = true;
     } catch (e) {
       if (rethrow) throw e;
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
@@ -111,31 +274,35 @@
     runMutation({ op: "remove_entry", path });
 
   async function saveFile(force = false) {
-    if (!dirty || current?.status !== "opened" || current.fidelity.state !== "editable") return;
-    try {
-      const report = await api.save(force);
-      dirty = false;
-      savedAt += 1;
-      let note = `Saved ${report.bytes_written} bytes.\nBackup: ${report.backup_path}`;
-      if (report.recent_sibling_writes.length > 0) {
-        note +=
-          `\n\nWarning: other files in this profile changed in the last 5 minutes` +
-          ` — the EVE client may be running and can overwrite your changes on logout:` +
-          `\n${report.recent_sibling_writes.join("\n")}`;
-      }
-      await message(note, { title: "Saved", kind: "info" });
-    } catch (e) {
-      const err = e as ErrDto;
-      if (err.code === "conflict") {
-        const overwrite = await ask(
-          "The file changed on disk after it was loaded (the EVE client may have " +
-            "written it). Overwrite anyway?\n\nA backup of the current on-disk file " +
-            "is taken first either way, so nothing is lost.",
-          { title: "File changed on disk", kind: "warning" },
-        );
-        if (overwrite) await saveFile(true);
-      } else {
-        await message(errMessage(e), { title: "Save failed — file untouched", kind: "error" });
+    for (const slot of ["char", "user"] as const) {
+      const o = slots[slot];
+      if (!dirtySlots[slot] || o?.status !== "opened" || o.fidelity.state !== "editable") continue;
+      try {
+        const report = await api.save(slot, force);
+        dirtySlots[slot] = false;
+        savedAt += 1;
+        const note = `Saved ${report.bytes_written} bytes to ${o.file_name}.\nBackup: ${report.backup_path}`;
+        await message(note, { title: "Saved", kind: "info" });
+      } catch (e) {
+        const err = e as ErrDto;
+        if (err.code === "conflict") {
+          const overwrite = await ask(
+            `${o.file_name} changed on disk after it was loaded (the EVE client may have ` +
+              `written it). Overwrite anyway?\n\nA backup of the on-disk file is taken first either way.`,
+            { title: "File changed on disk", kind: "warning" },
+          );
+          if (overwrite) {
+            try {
+              await api.save(slot, true);
+              dirtySlots[slot] = false;
+              savedAt += 1;
+            } catch (e2) {
+              await message(errMessage(e2), { title: "Save failed", kind: "error" });
+            }
+          }
+        } else {
+          await message(errMessage(e), { title: `Save failed — ${o.file_name} untouched`, kind: "error" });
+        }
       }
     }
   }
@@ -177,27 +344,47 @@
         {:else}
           <span class="badge editable">editable</span>
         {/if}
-        {#if dirty}<span class="badge dirty">unsaved changes</span>{/if}
-        {#if layoutAvailable}
+        {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
+        {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
+        {#if slots.char && slots.user}
+          <span class="viewtabs">
+            <button class:active={active === "char"} onclick={() => (active = "char")}>Character</button>
+            <button class:active={active === "user"} onclick={() => (active = "user")}>Account</button>
+          </span>
+        {/if}
+        {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
-            <button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>
+            {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
+            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
         <button
           class="save"
-          disabled={!dirty || current.fidelity.state !== "editable"}
+          disabled={!canSave}
           onclick={() => saveFile()}>Save</button>
       </header>
       {#if view === "layout"}
         <div class="tree-area">
           <LayoutView
+            slot={active}
             {runMutation}
             readOnly={current.fidelity.state !== "editable"}
             refreshToken={savedAt}
             bind:selectedId={selectedWindowId}
             onReveal={revealInTree} />
+        </div>
+      {:else if view === "overview"}
+        <div class="tree-area">
+          <OverviewView
+            userOpen={slots.user?.status === "opened"}
+            charId={openCharId}
+            characters={openAccountCharacters}
+            onLoadCharacter={loadCharacter}
+            onUserDirty={() => (dirtySlots.user = true)}
+            onCharDirty={() => (dirtySlots.char = true)}
+            onShowAccounts={() => (mainView = "accounts")} />
         </div>
       {:else}
         <div class="searchbar">
@@ -237,10 +424,12 @@
   </section>
   {#if current?.status === "opened"}
     <BackupsPanel
+      slot={active}
       {savedAt}
+      subtitle={openDisplay}
       onRestored={(outcome) => {
-        current = outcome;
-        dirty = false;
+        slots[active] = outcome;
+        dirtySlots[active] = false;
         savedAt += 1;
       }}
     />

@@ -60,7 +60,6 @@ export interface Profile {
 export interface SaveReport {
   backup_path: string;
   bytes_written: number;
-  recent_sibling_writes: string[];
 }
 
 export interface BackupInfo {
@@ -162,16 +161,40 @@ export interface CaptureResult {
   detected: [number, number] | null;
 }
 
+export interface OverviewColumn {
+  name: string;
+  label: string;
+  visible: boolean;
+  width: number | null;
+}
+export interface OverviewTab {
+  index: number;
+  name: string;
+  inherits: boolean;
+  columns: OverviewColumn[];
+}
+export interface OverviewWindow {
+  index: number;
+  tab_indices: number[];
+}
+export interface OverviewColumns {
+  tabs: OverviewTab[];
+  windows: OverviewWindow[];
+}
+
+export type Slot = "char" | "user";
+
 export const api = {
   discover: () => invoke<Profile[]>("discover_profiles"),
-  open: (path: string) => invoke<OpenOutcome>("open_file", { path }),
-  close: () => invoke<void>("close_file"),
-  mutate: (mutation: Mutation) => invoke<TreeNodeData>("apply_mutation", { mutation }),
-  save: (force: boolean) => invoke<SaveReport>("save_document", { force }),
-  listBackups: () => invoke<BackupInfo[]>("list_file_backups"),
-  restoreBackup: (backupPath: string) =>
-    invoke<OpenOutcome>("restore_backup", { backupPath }),
-  windowLayout: () => invoke<WindowLayout>("window_layout"),
+  open: (slot: Slot, path: string) => invoke<OpenOutcome>("open_file", { slot, path }),
+  close: (slot: Slot) => invoke<void>("close_file", { slot }),
+  mutate: (slot: Slot, mutation: Mutation) =>
+    invoke<TreeNodeData>("apply_mutation", { slot, mutation }),
+  save: (slot: Slot, force: boolean) => invoke<SaveReport>("save_document", { slot, force }),
+  listBackups: (slot: Slot) => invoke<BackupInfo[]>("list_file_backups", { slot }),
+  restoreBackup: (slot: Slot, backupPath: string) =>
+    invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
+  windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
   resolveCharacterNames: (ids: number[]) =>
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
@@ -185,6 +208,13 @@ export const api = {
     invoke<AccountRoster>("unpair_character", { charId }),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
+  overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
+  setOverviewVisible: (tabIndex: number, column: string, visible: boolean) =>
+    invoke<OverviewColumns>("set_overview_visible", { tabIndex, column, visible }),
+  setOverviewOrder: (tabIndex: number, order: string[]) =>
+    invoke<OverviewColumns>("set_overview_order", { tabIndex, order }),
+  setOverviewWidth: (tabIndex: number, column: string, width: number) =>
+    invoke<OverviewColumns>("set_overview_width", { tabIndex, column, width }),
 };
 
 export function errMessage(e: unknown): string {

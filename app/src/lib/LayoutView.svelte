@@ -1,17 +1,19 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
-  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath } from "$lib/api";
+  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot } from "$lib/api";
   import { canvasScale, toCanvas, toData, openWindows } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let {
+    slot,
     runMutation,
     readOnly,
     refreshToken,
     selectedId = $bindable(null),
     onReveal,
   }: {
+    slot: Slot;
     runMutation: (m: Mutation, rethrow?: boolean) => Promise<void>;
     readOnly: boolean;
     refreshToken: number;
@@ -37,7 +39,7 @@
 
   async function load() {
     try {
-      layout = await api.windowLayout();
+      layout = await api.windowLayout(slot);
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) {
         selectedId = null;
       }
@@ -46,11 +48,13 @@
     }
   }
 
-  // Reload when the parent signals a save/restore.
+  // Reload when the parent signals a save/restore, or when the slot switches.
   let lastToken = -1;
+  let lastSlot: Slot | null = null;
   $effect(() => {
-    if (refreshToken !== lastToken) {
+    if (refreshToken !== lastToken || slot !== lastSlot) {
       lastToken = refreshToken;
+      lastSlot = slot;
       load();
     }
   });
