@@ -110,28 +110,41 @@
     <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
   {/if}
   {#each rows as { p, label, primary } (p.dir)}
+    {@const visible = p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name))}
+    {@const groups = [
+      { title: "Characters", files: visible.filter((f) => f.kind === "char") },
+      { title: "Accounts", files: visible.filter((f) => f.kind === "user") },
+      { title: "Other", files: visible.filter((f) => f.kind === "other") },
+    ]}
     <details open={primary}>
       <summary title={p.dir}>
         {label}
         {#if primary}<span class="meta">most recent</span>{/if}
       </summary>
-      <ul>
-        {#each p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name)) as f (f.path)}
-          {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
-          {@const label =
-            hit
-              ? hit.name
-              : f.kind === "user" && f.id != null && aliasFor(f.id)
-                ? aliasFor(f.id)
-                : f.file_name}
-          <li>
-            <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-              {label}
-              <span class="meta">{Math.round(f.size / 1024)} KB</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+      <!-- Group by file kind so an account alias and a character with the same
+           displayed name are never ambiguous. -->
+      {#each groups as g (g.title)}
+        {#if g.files.length > 0}
+          <p class="group">{g.title}</p>
+          <ul>
+            {#each g.files as f (f.path)}
+              {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
+              {@const fileLabel =
+                hit
+                  ? hit.name
+                  : f.kind === "user" && f.id != null && aliasFor(f.id)
+                    ? aliasFor(f.id)
+                    : f.file_name}
+              <li>
+                <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+                  {fileLabel}
+                  <span class="meta">{Math.round(f.size / 1024)} KB</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/each}
     </details>
   {/each}
 </aside>
@@ -148,5 +161,13 @@
   }
   .toggle input {
     cursor: pointer;
+  }
+  .group {
+    margin: 0.4rem 0 0.1rem;
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    opacity: 0.85;
   }
 </style>
