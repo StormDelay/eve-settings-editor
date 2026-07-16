@@ -10,6 +10,7 @@ pub mod mutate;
 pub mod path;
 pub mod projection;
 pub mod save;
+mod treewalk;
 pub mod windows;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
