@@ -40,10 +40,12 @@ button:hover { border-color: var(--accent); }
 .sidebar .meta { color: var(--fg-dim); font-size: 0.85em; margin-left: 6px; }
 .editor { overflow: hidden; display: flex; flex-direction: column; }
 .filebar {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 8px 12px; border-bottom: 1px solid var(--border);
 }
-.filename { font-weight: 600; }
+/* Shrink + ellipsis so a long name doesn't hog the row; combined with the
+   filebar's flex-wrap this keeps the Save button reachable on small windows. */
+.filename { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { border-radius: 8px; padding: 1px 8px; font-size: 0.85em; }
 .badge.editable { background: var(--ok); color: #10240f; }
 .badge.read-only { background: var(--danger); color: #2b100d; }
