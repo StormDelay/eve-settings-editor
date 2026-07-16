@@ -59,6 +59,12 @@ measured on the real files; only the identifying numbers were replaced.
   autofill marker appeared in-game with the client otherwise behaving
   normally. This is the spec §8 exit gate: **M1 (M1a + M1b-1 + M1b-2) is
   complete** — the format round-trips, and the client reads what we write.
+- **2026-07-17 — Autofill editor manual validation PASSED.** A live `core_user`
+  file's remembered-text (`editHistory`) lists were edited through the app's new
+  Autofill view (add / remove / reorder, then clear-all), each save going through
+  the full backup → verify → atomic-write chain; the EVE client accepted the file
+  and the in-game autocomplete reflected the edits. Spec §8 exit gate for the
+  autofill editor milestone.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
