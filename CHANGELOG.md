@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-16
+
+Milestone 3: character names, character↔account association, and an
+overview-columns editor.
+
+### Added
+- Character names, resolved from ESI (EVE's name service), shown in the sidebar,
+  the open-file header, the backups panel, and the OS window title. Names are
+  cached to disk; a Refresh button re-fetches them.
+- Accounts view: give accounts readable names and associate characters with them.
+  Pair a character manually, or use guided capture — snapshot your files, make an
+  account-wide change in-game (e.g. toggle Camera Shake), log out, and the app
+  detects which character and account advanced and confirms the pairing.
+- Overview columns editor: per overview tab, show or hide columns, drag to
+  reorder, and set each column's width. Visibility and order live in the account
+  file, widths in the character file, and the app edits both through the usual
+  backup → verify → atomic-write chain. An uncustomized tab shows the
+  account-default columns until you edit it.
+- The sidebar file list is grouped into Characters and Accounts, so an account
+  whose alias matches a character's name is never ambiguous.
+
+### Changed
+- Editing a legacy overview file (`tabsettings`) upgrades it to the modern shape
+  (`tabsettings_new`); the two are structurally identical.
+
+### Fixed
+- The Save button stays reachable on small windows — the file bar now wraps.
+- Invalid character ids are remembered so they are not re-requested from ESI on
+  every launch.
+
+### Removed
+- The "other files changed recently" warning on save (the backup already
+  protects against the client overwriting changes on logout).
+
 ## [0.2.0] - 2026-07-15
 
 Milestone 2: a visual window-layout editor for character files.
