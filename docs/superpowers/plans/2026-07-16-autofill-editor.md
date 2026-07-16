@@ -504,7 +504,9 @@ fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 ///   "/b/box": (ts, [Ref 1 -> "Jita"]),   // (timestamp, list)-wrapped value
 /// })
 fn realshape_user() -> Value {
-    let jita = Value::Shared { slot: 1, value: Box::new(Value::Str("Jita".into())) };
+    // EVE's marshal only shares Bytes/Long/List/Dict — never Str — so a shared
+    // remembered string is stored as Bytes; `entry_str` lossy-decodes it to "Jita".
+    let jita = Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"Jita".to_vec())) };
     let hist = Value::Dict(vec![
         (b("/a/box"), Value::List(vec![jita, Value::Bytes(vec![])])),
         (b("/b/box"), Value::Tuple(vec![ts(), Value::List(vec![Value::Ref(1)])])),
