@@ -289,23 +289,55 @@ pub enum OverviewError {
 
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
     let prep = tab_edit_prep(user, tab_index);
+    // Immutable phase: resolve the target column's position WITHIN each owned
+    // list through Ref/Shared (real files store a customized tab's tabColumns/
+    // tabColumnOrder ITEMS as Shared/Ref, which the mutable phase's bare `==` on
+    // a `Bytes` token would miss — duplicating on show, failing to remove on
+    // hide). When the tab doesn't own a list, materialize seeds it from bare-
+    // Bytes defaults, so plain string membership over the defaults is correct.
+    let (owned_vis_pos, owned_order_pos) = owned_column_positions(user, tab_index, column);
+    let vis_pos = match prep.visible_idx {
+        Some(_) => owned_vis_pos,
+        None => prep.def_visible.iter().position(|c| c == column),
+    };
+    let in_order = match prep.order_idx {
+        Some(_) => owned_order_pos.is_some(),
+        None => prep.def_order.iter().any(|c| c == column),
+    };
     with_tab(user, tab_index, |tab| {
         let order_i = materialize_list(tab, b"tabColumnOrder", prep.order_idx, &prep.def_order);
         let visible_i = materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
-        let tok = Value::Bytes(column.as_bytes().to_vec());
         let vis = list_at(tab, visible_i);
-        let present = vis.iter().any(|v| v == &tok);
-        if visible && !present {
-            vis.push(tok.clone());
-        } else if !visible && present {
-            vis.retain(|v| v != &tok);
+        match (visible, vis_pos) {
+            (true, None) => vis.push(Value::Bytes(column.as_bytes().to_vec())),
+            (false, Some(i)) => { vis.remove(i); }
+            _ => {} // already in the desired state
         }
         // A newly-shown column must also exist in the order list.
-        let order = list_at(tab, order_i);
-        if visible && !order.iter().any(|v| v == &tok) {
-            order.push(tok);
+        if visible && !in_order {
+            list_at(tab, order_i).push(Value::Bytes(column.as_bytes().to_vec()));
         }
     })
+}
+
+/// Positions of the item resolving to `column` within the tab's OWNED
+/// `tabColumns` / `tabColumnOrder` lists (each `None` when the tab doesn't own
+/// that list or the column isn't present), in one shared-table pass. Owned list
+/// items are stored as `Shared`/`Ref` on real customized tabs, so each item's
+/// `effective` value is resolved before comparison — a bare `== Bytes(column)`
+/// would miss them.
+fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option<usize>, Option<usize>) {
+    let mut sh = SharedTable::new();
+    collect_shared(user, &mut sh);
+    let item_pos = |name: &[u8]| -> Option<usize> {
+        let overview = overview_container(user, &sh)?;
+        let tabs = tab_dict(overview, &sh)?;
+        let (_, tab) = tabs.iter().find(|(k, _)| as_int(effective(k, &sh)) == Some(tab_index))?;
+        let fields = as_dict(tab, &sh)?;
+        let items = as_list_r(find_child(fields, name, &sh)?, &sh)?;
+        items.iter().position(|it| is_bytes(effective(it, &sh), column.as_bytes()))
+    };
+    (item_pos(b"tabColumns"), item_pos(b"tabColumnOrder"))
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
@@ -1016,5 +1048,74 @@ mod tests {
             Some(vec!["TYPE".into(), "NAME".into()]),
             "reorder edited the owned list in place",
         );
+    }
+
+    /// A customized tab OWNS `tabColumns` / `tabColumnOrder` whose ITEMS are
+    /// `Shared`/`Ref` (as real files store them). The old `set_column_visible`
+    /// compared items with bare `==` against a `Bytes` token, so it MISSED the
+    /// Shared/Ref item: hiding a visible one was a no-op (item left in place) and
+    /// showing one already in the order list pushed a DUPLICATE. Resolving each
+    /// item's `effective` value first fixes both — asserted on the TREE, since the
+    /// projection resolves keys and masks a duplicate item.
+    #[test]
+    fn toggle_resolves_shared_ref_list_items_no_duplicate() {
+        // order (encoded first) defines the token Shareds; the visible list's
+        // Ref(10) then resolves to NAME, and DISTANCE is a Shared def of its own.
+        fn owning_tab() -> Value {
+            let tab = Value::Dict(vec![
+                (Value::Str("name".into()), Value::Str("PvP".into())),
+                (bytes("tabColumnOrder"), Value::List(vec![
+                    Value::Shared { slot: 10, value: Box::new(bytes("NAME")) },
+                    Value::Shared { slot: 12, value: Box::new(bytes("TYPE")) },
+                ])),
+                (bytes("tabColumns"), Value::List(vec![
+                    Value::Ref(10),                                                  // NAME (Ref item)
+                    Value::Shared { slot: 14, value: Box::new(bytes("DISTANCE")) },  // DISTANCE (Shared item)
+                ])),
+            ]);
+            Value::Dict(vec![(
+                bytes("overview"),
+                Value::Dict(vec![(
+                    bytes("tabsettings_new"),
+                    Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])]),
+                )]),
+            )])
+        }
+        fn count_resolving(fields: &Entries, sh: &SharedTable, list: &[u8], col: &[u8]) -> usize {
+            let items = as_list_r(find_child(fields, list, sh).unwrap(), sh).unwrap();
+            items.iter().filter(|it| is_bytes(effective(it, sh), col)).count()
+        }
+        fn tab0_fields<'a>(user: &'a Value, sh: &SharedTable<'a>) -> &'a Entries {
+            let Value::Dict(root) = user else { unreachable!() };
+            let overview = find_child(root, b"overview", sh).and_then(|v| as_dict(v, sh)).unwrap();
+            let tabs = tab_dict(overview, sh).unwrap();
+            let (_, tabv) = tabs.iter().find(|(k, _)| as_int(effective(k, sh)) == Some(0)).unwrap();
+            as_dict(tabv, sh).unwrap()
+        }
+
+        // Hide an already-visible Shared item (DISTANCE): it must be REMOVED, not
+        // duplicated/left behind.
+        let mut user = owning_tab();
+        set_column_visible(&mut user, 0, "DISTANCE", false).unwrap();
+        let mut sh = SharedTable::new();
+        collect_shared(&user, &mut sh);
+        let fields = tab0_fields(&user, &sh);
+        let vis = as_list_r(find_child(fields, b"tabColumns", &sh).unwrap(), &sh).unwrap();
+        assert_eq!(vis.len(), 1, "the Shared DISTANCE item was removed (list 2 -> 1), not missed");
+        assert_eq!(count_resolving(fields, &sh, b"tabColumns", b"DISTANCE"), 0, "no DISTANCE left in tabColumns");
+        assert_eq!(count_resolving(fields, &sh, b"tabColumns", b"NAME"), 1, "the NAME Ref item is untouched");
+
+        // Show a not-visible column that already exists in tabColumnOrder as a
+        // Shared item (TYPE): exactly ONE entry in each list, no duplicate.
+        let mut user = owning_tab();
+        set_column_visible(&mut user, 0, "TYPE", true).unwrap();
+        let mut sh = SharedTable::new();
+        collect_shared(&user, &mut sh);
+        let fields = tab0_fields(&user, &sh);
+        assert_eq!(count_resolving(fields, &sh, b"tabColumns", b"TYPE"), 1, "exactly one TYPE in tabColumns");
+        assert_eq!(count_resolving(fields, &sh, b"tabColumnOrder", b"TYPE"), 1,
+            "TYPE was already in the order list (as a Shared item) — not duplicated");
+        let (_, visible) = tab_lists(&user, 0);
+        assert!(visible.contains(&"TYPE".to_string()), "TYPE now reads back as visible");
     }
 }
