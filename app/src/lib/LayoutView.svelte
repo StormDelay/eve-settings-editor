@@ -48,11 +48,13 @@
     }
   }
 
-  // Reload when the parent signals a save/restore.
+  // Reload when the parent signals a save/restore, or when the slot switches.
   let lastToken = -1;
+  let lastSlot: Slot | null = null;
   $effect(() => {
-    if (refreshToken !== lastToken) {
+    if (refreshToken !== lastToken || slot !== lastSlot) {
       lastToken = refreshToken;
+      lastSlot = slot;
       load();
     }
   });
