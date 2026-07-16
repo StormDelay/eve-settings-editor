@@ -1,16 +1,26 @@
-//! Read + edit projection of the overview-columns category. Visibility and
-//! order live in the `core_user` file (per overview tab, with a fallback to the
-//! tab's preset); widths live in the `core_char` file (per tab). All EVE format
-//! knowledge (the `(timestamp, dict)` wrappers, the `(overviewScroll2, tab)`
-//! width key, column tokens as Bytes) lives here so the UI stays format-blind.
-//! Dict traversal reuses the shared `crate::treewalk` helpers.
+//! Read + edit projection of the overview-columns category. A tab's visibility
+//! (`tabColumns`) and order (`tabColumnOrder`) live in the `core_user` file and
+//! are INDEPENDENT — a tab can own one and inherit the other. A tab that owns
+//! neither inherits the account-global `overviewColumns` / `overviewColumnOrder`
+//! (both in the `overview` container). Widths live in the `core_char` file per
+//! tab. All EVE format knowledge (the `(timestamp, dict)` wrappers, the
+//! `(overviewScroll2, tab)` width key, column tokens as Bytes) lives here so the
+//! UI stays format-blind. Dict traversal reuses the shared `crate::treewalk`
+//! helpers.
+//!
+//! CEILING: an inheriting tab's EXACT on-screen order is EVE runtime state, not
+//! stored anywhere in the file (validated live — every stored order list is
+//! account-wide identical, yet inheriting tabs render a different order). So the
+//! account-global `overviewColumnOrder` is the best AVAILABLE approximation for
+//! an inheriting tab's order, not its true order; reordering the tab pins it.
 
 use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    collect_shared, effective, is_bytes, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
+    collect_shared, effective, inline_shares, is_bytes, unwrap_shared, unwrap_shared_ref, Entries,
+    SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -92,10 +102,12 @@ fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&
 
     let own_order = token_list(fields, b"tabColumnOrder", sh);
     let own_visible = token_list(fields, b"tabColumns", sh);
-    // A tab inherits unless it owns BOTH lists; any missing half falls back to
-    // the tab's PRESET, so a partial tab never silently hides or drops columns.
+    // Visibility and order inherit INDEPENDENTLY: a tab may own `tabColumns` but
+    // not `tabColumnOrder` (or vice versa). Each missing half falls back to the
+    // account default, so a partial tab never silently hides or drops columns.
+    // `inherits` (for the UI note) means the tab lacks at least one own list.
     let inherits = own_order.is_none() || own_visible.is_none();
-    let (def_order, def_visible) = preset_columns(fields, overview, sh);
+    let (def_order, def_visible) = default_columns(overview, sh);
     let order = own_order.unwrap_or(def_order);
     let visible = own_visible.unwrap_or(def_visible);
     let widths = char_tree.and_then(|c| tab_widths(c, index));
@@ -120,16 +132,17 @@ fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&
     Some(OverviewTab { index, name, inherits, columns })
 }
 
-/// The tab's preset columns: resolve the tab's `overview` field (a preset name)
-/// to `overviewProfilePresets[name].overviewColumns`. Order == visible == list.
-fn preset_columns(tab: &Entries, overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<String>) {
-    let preset_name = find_child(tab, b"overview", sh).and_then(|v| token_r(v, sh));
-    let cols = preset_name.and_then(|name| {
-        let presets = find_child(overview, b"overviewProfilePresets", sh).and_then(|v| as_dict(v, sh))?;
-        let preset = find_child(presets, name.as_bytes(), sh).and_then(|v| as_dict(v, sh))?;
-        token_list(preset, b"overviewColumns", sh)
-    }).unwrap_or_default();
-    (cols.clone(), cols)
+/// The account-global default columns an inheriting tab shows: `(order, visible)`
+/// from the `overview` container's `overviewColumnOrder` (master ~14-col order)
+/// and `overviewColumns` (the visible subset). Both are Bytes token lists whose
+/// items may be Ref/Shared (`token_list` resolves them). NOTE these are separate
+/// systems from `overviewProfilePresets`, which are FILTER presets (which SHIPS to
+/// show, integer id lists) and carry NO columns — reading columns from a preset
+/// was the 2a bug. See the module CEILING note on the order approximation.
+fn default_columns(overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<String>) {
+    let order = token_list(overview, b"overviewColumnOrder", sh).unwrap_or_default();
+    let visible = token_list(overview, b"overviewColumns", sh).unwrap_or_default();
+    (order, visible)
 }
 
 /// String field whose key is `name` (plain or string-table), value resolved
@@ -145,7 +158,7 @@ fn str_field_r(fields: &Entries, name: &str, sh: &SharedTable) -> Option<String>
     })
 }
 
-/// Immutable prep for a tab edit, in ONE shared-table pass: the preset-fallback
+/// Immutable prep for a tab edit, in ONE shared-table pass: the account-default
 /// `(order, visible)` columns to seed a materialized list, plus the tab's own
 /// `tabColumnOrder` / `tabColumns` entry indices resolved through Ref/Shared
 /// keys (`None` = the tab does not own that list). The mutable phase mutates by
@@ -169,7 +182,7 @@ fn tab_edit_prep(user: &Value, tab_index: i64) -> TabEdit {
         return empty;
     };
     let Some(fields) = as_dict(tab, &sh) else { return empty };
-    let (def_order, def_visible) = preset_columns(fields, overview, &sh);
+    let (def_order, def_visible) = default_columns(overview, &sh);
     TabEdit {
         def_order,
         def_visible,
@@ -287,7 +300,27 @@ pub enum OverviewError {
     NoTab,
 }
 
+/// Fully inline the tree's `Shared`/`Ref` before a structural column edit. A
+/// column edit rebuilds or shrinks a token list, which can destroy a `Shared`
+/// token DEFINITION the rest of the file still `Ref`s — the file then fails to
+/// encode (`RefBeforeStore`), since real files store a column token once and
+/// `Ref` it from `tabColumnOrder`/`tabColumns`/the account lists/`restoreData`.
+/// Inlining first drops ALL sharing, so no edit can dangle a `Ref`. The re-saved
+/// file is ~1.5x larger (dedup gone) but valid; EVE re-dedups it on next logout.
+// ponytail: inline the whole tree — simple + correct. A future encoder-side
+// auto-dedup (share structurally-equal values in emit order) would keep files
+// compact; do that only if the ~1.5x size actually bites.
+fn inline_user(user: &mut Value) {
+    let new = {
+        let mut sh = SharedTable::new();
+        collect_shared(user, &mut sh);
+        inline_shares(user, &sh)
+    };
+    *user = new;
+}
+
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
+    inline_user(user);
     let prep = tab_edit_prep(user, tab_index);
     // Immutable phase: resolve the target column's position WITHIN each owned
     // list through Ref/Shared (real files store a customized tab's tabColumns/
@@ -341,6 +374,7 @@ fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
+    inline_user(user);
     let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
         materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
@@ -418,8 +452,9 @@ fn dict_at(v: &Value, p: NodePath) -> Option<(&Entries, NodePath)> {
 
 /// Ensure the tab owns the named list and return its entry index. `idx` is the
 /// pre-resolved (Ref/Shared-key-aware) index of an already-owned list, or `None`
-/// when the tab genuinely lacks it — only then do we push a preset-seeded list
-/// (mirrors the client materializing an inheriting tab on first edit). Resolving
+/// when the tab genuinely lacks it — only then do we push a list seeded from the
+/// account default (mirrors the client materializing an inheriting tab on first
+/// edit). Resolving
 /// the key first is what stops a duplicate `Bytes` key being pushed over a list
 /// the tab already owns under a Ref/Shared field-name key.
 fn materialize_list(tab: &mut Entries, name: &[u8], idx: Option<usize>, defaults: &[String]) -> usize {
@@ -591,16 +626,13 @@ mod tests {
     }
 
     #[test]
-    fn projects_preset_fallback_and_window_grouping() {
+    fn projects_account_default_fallback_and_window_grouping() {
         use blue_marshal::Value;
         fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
         fn ts() -> Value { Value::Long(vec![0u8; 8]) }
-        // preset P: visible [NAME, TYPE]
-        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
-        let presets = Value::Dict(vec![(b("P"), preset)]);
         let tab0 = Value::Dict(vec![
-            (Value::StrTable(52), Value::Str("Alpha".into())),      // name (string-table key)
-            (b("overview"), b("P")),                                // references preset P (no own lists)
+            (Value::StrTable(52), Value::Str("Alpha".into())),      // name (string-table key); no own lists
+            (b("overview"), b("P")),                                // a FILTER preset name — irrelevant to columns
         ]);
         let tab1 = Value::Dict(vec![
             (Value::StrTable(52), Value::Str("Beta".into())),
@@ -609,7 +641,9 @@ mod tests {
         ]);
         let tabs = Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0), (Value::Int(1), tab1)])]);
         let overview = Value::Dict(vec![
-            (b("overviewProfilePresets"), presets),
+            // account-global default columns an inheriting tab falls back to
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")])),
             (b("tabsettings_new"), tabs),
             (b("tabsByWindowInstanceID"), Value::List(vec![
                 Value::List(vec![Value::Int(0)]),
@@ -626,16 +660,44 @@ mod tests {
         assert_eq!(oc.windows.len(), 2);
         assert_eq!(oc.windows[0].tab_indices, vec![0]);
         assert_eq!(oc.windows[1].tab_indices, vec![1]);
-        // tab 0 inherits preset P -> [NAME(hidden? no, preset visible), TYPE]
+        // tab 0 inherits the account default -> [NAME, TYPE], both visible
         let t0 = oc.tabs.iter().find(|t| t.index == 0).unwrap();
         assert!(t0.inherits, "tab 0 has no own lists");
         assert_eq!(t0.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
-        assert!(t0.columns.iter().all(|c| c.visible), "preset columns are the visible set");
+        assert!(t0.columns.iter().all(|c| c.visible), "account default visible set");
         // tab 1 owns its lists
         let t1 = oc.tabs.iter().find(|t| t.index == 1).unwrap();
         assert!(!t1.inherits);
         assert_eq!(t1.columns.iter().filter(|c| c.visible).map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["DISTANCE"]);
         assert_eq!(t1.columns.len(), 3, "order list of 3");
+    }
+
+    #[test]
+    fn tab_owning_visibility_but_not_order_inherits_only_the_order() {
+        // Real idiom (validated live on tab "3"): hiding a column materializes
+        // `tabColumns` but NOT `tabColumnOrder`, so the tab owns its visible set
+        // yet still inherits order from the account default.
+        use blue_marshal::Value;
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("3".into())),
+            // owns visibility (NAME hidden out of the default) but no order list
+            (b("tabColumns"), Value::List(vec![b("TYPE"), b("DISTANCE")])),
+        ]);
+        let overview = Value::Dict(vec![
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(2), tab)])])),
+        ]);
+        let user = Value::Dict(vec![(b("overview"), overview)]);
+
+        let t = project_overview(&user, None).tabs.into_iter().find(|t| t.index == 2).unwrap();
+        assert!(t.inherits, "inherits because it lacks its own order list");
+        // Order comes from the account default; visibility from the tab's own set.
+        assert_eq!(t.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["NAME", "TYPE", "DISTANCE"]);
+        let visible: Vec<_> = t.columns.iter().filter(|c| c.visible).map(|c| c.name.as_str()).collect();
+        assert_eq!(visible, vec!["TYPE", "DISTANCE"], "NAME hidden by the tab's own tabColumns");
     }
 
     fn tab_lists(user: &Value, index: i64) -> (Vec<String>, Vec<String>) {
@@ -666,20 +728,79 @@ mod tests {
         assert_eq!(order, vec!["DISTANCE", "NAME", "TYPE"]);
     }
 
+    #[test]
+    fn edit_preserves_cross_referenced_shared_tokens_and_still_encodes() {
+        // Real-file idiom: a column token is stored ONCE as a `Shared` and `Ref`'d
+        // elsewhere. Here tab 0's tabColumnOrder DEFINES Shared slot 1 ("NAME");
+        // the account-level overviewColumnOrder/overviewColumns REFERENCE it.
+        // A column edit rebuilds/shrinks tab 0's list — without inlining sharing
+        // first, that destroys the Shared(1) definition and the account lists'
+        // Ref(1) dangles, so encode fails RefBeforeStore(1). This guards that fix.
+        use blue_marshal::{decode, encode, Value};
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let tab0 = Value::Dict(vec![
+            (b("tabColumnOrder"), Value::List(vec![
+                Value::Shared { slot: 1, value: Box::new(b("NAME")) }, b("TYPE"),
+            ])),
+            (b("tabColumns"), Value::List(vec![b("TYPE")])),
+        ]);
+        // tabsettings_new is FIRST so slot 1 is stored before the Refs below.
+        let overview = Value::Dict(vec![
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])])),
+            (b("overviewColumnOrder"), Value::List(vec![Value::Ref(1), b("TYPE")])),
+            (b("overviewColumns"), Value::List(vec![Value::Ref(1)])),
+        ]);
+        let mut user = Value::Dict(vec![(b("overview"), overview)]);
+        encode(&user).expect("fixture must encode before the edit");
+
+        set_column_order(&mut user, 0, &["TYPE".into(), "NAME".into()]).unwrap();
+
+        let bytes = encode(&user).expect("edited tree must still encode (no dangling Ref)");
+        let decoded = decode(&bytes).unwrap();
+        let t0 = project_overview(&decoded, None).tabs.into_iter().find(|t| t.index == 0).unwrap();
+        assert_eq!(t0.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), vec!["TYPE", "NAME"]);
+    }
+
+    #[test]
+    fn hiding_a_shared_defining_column_still_encodes() {
+        // Hiding removes a token from tabColumns; if that token was the `Shared`
+        // definition and is `Ref`'d from the account lists, dropping it would
+        // dangle the Ref. Inlining before the edit prevents it.
+        use blue_marshal::{encode, Value};
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let tab0 = Value::Dict(vec![
+            (b("tabColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
+            (b("tabColumns"), Value::List(vec![
+                Value::Shared { slot: 1, value: Box::new(b("NAME")) }, b("TYPE"),
+            ])),
+        ]);
+        let overview = Value::Dict(vec![
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])])),
+            (b("overviewColumns"), Value::List(vec![Value::Ref(1)])),
+        ]);
+        let mut user = Value::Dict(vec![(b("overview"), overview)]);
+        encode(&user).expect("fixture must encode before the edit");
+
+        set_column_visible(&mut user, 0, "NAME", false).unwrap();
+
+        encode(&user).expect("hiding a Shared-defining column must still encode");
+    }
+
     /// A tab that inherits (no own lists) materializes from the account defaults
     /// on first edit, then applies the edit.
     fn user_inheriting_tab() -> Value {
-        // The tab owns no lists; it names preset "G" so the read falls back to
-        // the preset's columns (account-level lists feed the edit-side materialize).
+        // The tab owns no column lists; it names a FILTER preset "G" (irrelevant
+        // to columns). The account-level lists feed both the read fallback and the
+        // edit-side materialize.
         let tab = Value::Dict(vec![
             (Value::Str("name".into()), Value::Str("General".into())),
             (bytes("overview"), bytes("G")),
         ]);
-        let preset = Value::Dict(vec![(bytes("overviewColumns"), Value::List(vec![bytes("NAME"), bytes("TYPE")]))]);
         Value::Dict(vec![(
             bytes("overview"),
             Value::Dict(vec![
-                (bytes("overviewProfilePresets"), Value::Dict(vec![(bytes("G"), preset)])),
                 (bytes("overviewColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
                 (bytes("overviewColumns"), Value::List(vec![bytes("NAME")])),
                 (
@@ -703,14 +824,14 @@ mod tests {
     }
 
     #[test]
-    fn editing_inheriting_tab_materializes_from_preset_not_account() {
+    fn editing_inheriting_tab_materializes_from_account_default() {
         use blue_marshal::Value;
         fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
         fn ts() -> Value { Value::Long(vec![0u8; 8]) }
-        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
-        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]);
+        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]); // names a FILTER preset; no own column lists
         let overview = Value::Dict(vec![
-            (b("overviewProfilePresets"), Value::Dict(vec![(b("P"), preset)])),
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")])),
             (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])])),
         ]);
         let mut user = Value::Dict(vec![(b("overview"), overview)]);
@@ -723,17 +844,15 @@ mod tests {
         let visible: Vec<_> = t0.columns.iter().filter(|c| c.visible).map(|c| c.name.clone()).collect();
         assert!(visible.contains(&"DISTANCE".to_string()));
         assert!(visible.contains(&"NAME".to_string()) && visible.contains(&"TYPE".to_string()),
-            "preset's visible columns carried into the materialized tab");
-        // preset untouched: overviewProfilePresets["P"].overviewColumns is still
-        // [NAME, TYPE] — materialize copies from it, it must not mutate it.
+            "account default's visible columns carried into the materialized tab");
+        // account default untouched: overview.overviewColumns is still [NAME, TYPE]
+        // — materialize copies from it, it must not mutate it.
         let mut sh = SharedTable::new();
         collect_shared(&user, &mut sh);
         let Value::Dict(root) = &user else { unreachable!() };
         let overview = find_child(root, b"overview", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
-        let presets = find_child(overview, b"overviewProfilePresets", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
-        let preset = find_child(presets, b"P", &sh).and_then(|v| as_dict(v, &sh)).unwrap();
-        assert_eq!(token_list(preset, b"overviewColumns", &sh), Some(vec!["NAME".into(), "TYPE".into()]),
-            "the preset's own column list was not mutated by materialize");
+        assert_eq!(token_list(overview, b"overviewColumns", &sh), Some(vec!["NAME".into(), "TYPE".into()]),
+            "the account default column list was not mutated by materialize");
     }
 
     #[test]
@@ -745,10 +864,10 @@ mod tests {
         use blue_marshal::Value;
         fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
         fn ts() -> Value { Value::Long(vec![0u8; 8]) }
-        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
-        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]);
+        let tab0 = Value::Dict(vec![(b("overview"), b("P"))]); // no own column lists
         let overview = Value::Dict(vec![
-            (b("overviewProfilePresets"), Value::Dict(vec![(b("P"), preset)])),
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")])),
             (
                 Value::Shared { slot: 2, value: Box::new(b("tabsettings_new")) },
                 Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0)])]),
@@ -766,7 +885,7 @@ mod tests {
         assert!(t0.columns.iter().any(|c| c.visible && c.name == "DISTANCE"),
             "the edit landed on the real tab, not a phantom");
         assert!(t0.columns.iter().any(|c| c.name == "NAME") && t0.columns.iter().any(|c| c.name == "TYPE"),
-            "materialized from the preset");
+            "materialized from the account default");
     }
 
     #[test]
@@ -1007,7 +1126,7 @@ mod tests {
 
     /// A tab owns `tabColumnOrder` / `tabColumns` under Ref/Shared-deduped
     /// field-name keys. A bare `is_bytes` match misses them, so `materialize_from`
-    /// pushed a preset-seeded DUPLICATE list and the edit landed on the phantom
+    /// pushed a default-seeded DUPLICATE list and the edit landed on the phantom
     /// while the read saw the original. The resolved-key path must edit in place.
     #[test]
     fn edit_resolves_a_shared_field_name_key_no_duplicate() {
