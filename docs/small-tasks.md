@@ -38,6 +38,17 @@ Workflow:
   when editing window placements on the layout canvas, which wants as much
   horizontal room as possible. _Added 2026-07-15._
 
+- [ ] **Collapsible character/account categories.** Make the sidebar file-list
+  group headers (Characters / Accounts / Other) collapsible so a long list is
+  easier to navigate — click a category header to fold its files away. _Added
+  2026-07-17._
+
+- [ ] **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
+  added `treewalk::inline_all` (drop all `Shared`/`Ref` sharing); `overview.rs`'s
+  private `inline_user` is now functionally identical. Delete the private copy and
+  have `overview.rs` call the shared helper. Do it as its own change gated by the
+  overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
+
 ## Shipped
 
 ### M3
