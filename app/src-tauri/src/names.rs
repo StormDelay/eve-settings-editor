@@ -17,6 +17,21 @@ pub struct ResolvedName {
     pub category: String,
 }
 
+/// Sentinel category for a tombstone: an id ESI confirmed invalid (a 404 batch
+/// that narrowed to this single id). Kept in the cache so `needed` skips it
+/// instead of re-bisecting it against ESI's error limit every launch, but never
+/// surfaced as a name. Not a real ESI category, so it can't collide with one.
+const INVALID_CATEGORY: &str = "__invalid__";
+
+impl ResolvedName {
+    fn tombstone() -> Self {
+        ResolvedName { name: String::new(), category: INVALID_CATEGORY.to_string() }
+    }
+    fn is_invalid(&self) -> bool {
+        self.category == INVALID_CATEGORY
+    }
+}
+
 /// id -> resolved name. Serialized to JSON with string keys (serde_json).
 pub type Cache = HashMap<u64, ResolvedName>;
 
@@ -67,10 +82,11 @@ fn apply_fetch(cache: &mut Cache, fetched: Vec<EsiName>) {
     }
 }
 
-/// The subset of `ids` the cache can name; ids with no name are omitted.
+/// The subset of `ids` the cache can name; ids with no name — or tombstoned as
+/// invalid — are omitted.
 fn select(ids: &[u64], cache: &Cache) -> Cache {
     ids.iter()
-        .filter_map(|id| cache.get(id).map(|n| (*id, n.clone())))
+        .filter_map(|id| cache.get(id).filter(|n| !n.is_invalid()).map(|n| (*id, n.clone())))
         .collect()
 }
 
@@ -176,7 +192,16 @@ where
     if !need.is_empty() {
         match fetch(&need) {
             Ok(fetched) => {
+                let found: std::collections::HashSet<u64> =
+                    fetched.iter().map(|n| n.id).collect();
                 apply_fetch(&mut cache, fetched);
+                // Any requested id ESI didn't return is invalid (salvage_resolve
+                // drops single-id 404s): tombstone it so we stop re-requesting it.
+                for id in &need {
+                    if !found.contains(id) {
+                        cache.insert(*id, ResolvedName::tombstone());
+                    }
+                }
                 let _ = save_cache(dir, &cache);
             }
             // Read the detail (silences the never-read warning) and leave a
@@ -337,6 +362,39 @@ mod tests {
             Ok(vec![EsiName { category: "character".into(), id: 1, name: "New".into() }])
         });
         assert_eq!(out.get(&1).unwrap().name, "New");
+    }
+
+    #[test]
+    fn resolve_with_tombstones_unresolved_ids_and_skips_them_next_time() {
+        let dir = temp_dir("tombstone");
+        // First resolve: id 1 is named, id 2 is invalid (the fetch omits it).
+        let out = resolve_with(&dir, &[1, 2], false, |misses| {
+            assert_eq!(misses, &[1, 2]);
+            Ok(vec![EsiName { category: "character".into(), id: 1, name: "One".into() }])
+        });
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(&1).unwrap().name, "One");
+        assert!(!out.contains_key(&2), "an invalid id is never surfaced as a name");
+        // The tombstone was persisted for the invalid id.
+        assert!(load_cache(&dir).get(&2).unwrap().is_invalid());
+        // Second resolve: nothing is fetched — id 1 is named, id 2 is tombstoned.
+        let out2 = resolve_with(&dir, &[1, 2], false, |_| panic!("must not refetch a tombstoned id"));
+        assert_eq!(out2.len(), 1);
+        assert_eq!(out2.get(&1).unwrap().name, "One");
+    }
+
+    #[test]
+    fn resolve_with_refetch_all_reattempts_a_tombstoned_id() {
+        let dir = temp_dir("tombstone-refetch");
+        // Seed a tombstone for id 2 (fetch names nothing).
+        resolve_with(&dir, &[2], false, |_| Ok(vec![]));
+        assert!(load_cache(&dir).get(&2).unwrap().is_invalid());
+        // A manual refresh re-requests it; ESI now names it, overwriting the tombstone.
+        let out = resolve_with(&dir, &[2], true, |misses| {
+            assert_eq!(misses, &[2], "refetch_all re-requests the tombstoned id");
+            Ok(vec![EsiName { category: "character".into(), id: 2, name: "Now Valid".into() }])
+        });
+        assert_eq!(out.get(&2).unwrap().name, "Now Valid");
     }
 
     #[test]
