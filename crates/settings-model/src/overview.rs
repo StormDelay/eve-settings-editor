@@ -1,6 +1,6 @@
 //! Read + edit projection of the overview-columns category. Visibility and
-//! order live in the `core_user` file (per overview tab, with account-default
-//! inheritance); widths live in the `core_char` file (per tab). All EVE format
+//! order live in the `core_user` file (per overview tab, with a fallback to the
+//! tab's preset); widths live in the `core_char` file (per tab). All EVE format
 //! knowledge (the `(timestamp, dict)` wrappers, the `(overviewScroll2, tab)`
 //! width key, column tokens as Bytes) lives here so the UI stays format-blind.
 //! Dict traversal reuses the shared `crate::treewalk` helpers.
@@ -10,17 +10,22 @@ use serde::Serialize;
 
 use crate::path::{resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    child_dict, effective, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
+    child_dict, collect_shared, effective, is_bytes, timestamped_dict, unwrap_shared, unwrap_shared_ref,
+    Entries, SharedTable,
 };
-// ponytail: collect_shared has no non-test caller yet (R3 wires find_child et al.
-// into project_overview); scoped to tests so the plain lib build the integration
-// tests link against doesn't warn on an unused import.
-#[cfg(test)]
-use crate::treewalk::collect_shared;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewColumns {
+    pub windows: Vec<OverviewWindow>,
     pub tabs: Vec<OverviewTab>,
+}
+
+/// A physical overview window and the tab indices it shows, in order — grouped
+/// from `tabsByWindowInstanceID` (a list-of-lists of tab indices, one per window).
+#[derive(Debug, Serialize, PartialEq)]
+pub struct OverviewWindow {
+    pub index: usize,
+    pub tab_indices: Vec<i64>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -40,24 +45,58 @@ pub struct OverviewColumn {
 }
 
 pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColumns {
-    let tabs = tab_settings(user)
-        .map(|(dict, _)| dict.iter().filter_map(|(k, v)| project_tab(k, v, user, char_tree)).collect())
+    let mut sh = SharedTable::new();
+    collect_shared(user, &mut sh);
+    let empty = OverviewColumns { windows: vec![], tabs: vec![] };
+    let Some(overview) = overview_container(user, &sh) else { return empty };
+
+    let windows = window_groups(overview, &sh);
+    let tabs = tab_dict(overview, &sh)
+        .map(|d| d.iter().filter_map(|(k, v)| project_tab(k, v, overview, char_tree, &sh)).collect())
         .unwrap_or_default();
-    OverviewColumns { tabs }
+    OverviewColumns { windows, tabs }
 }
 
-fn project_tab(key: &Value, tab: &Value, user: &Value, char_tree: Option<&Value>) -> Option<OverviewTab> {
-    let index = as_int(key)?;
-    let Value::Dict(fields) = unwrap_shared_ref(tab) else { return None };
-    let name = str_field(fields, "name").unwrap_or_else(|| format!("Tab {index}"));
+/// The `overview` container dict (key resolved through Ref/Shared).
+fn overview_container<'a>(user: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    let Value::Dict(root) = effective(user, sh) else { return None };
+    find_child(root, b"overview", sh).and_then(|v| as_dict(v, sh))
+}
 
-    let own_order = list_field(fields, b"tabColumnOrder");
-    let own_visible = list_field(fields, b"tabColumns");
+/// The tab dict from `tabsettings_new` (modern) or `tabsettings` (legacy).
+fn tab_dict<'a>(overview: &'a Entries, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    for key in [b"tabsettings_new".as_slice(), b"tabsettings"] {
+        if let Some(v) = find_child(overview, key, sh) {
+            if let Some(d) = as_dict(v, sh) {
+                return Some(d);
+            }
+        }
+    }
+    None
+}
+
+/// Window groups from `tabsByWindowInstanceID` (a list of lists of tab indices).
+fn window_groups(overview: &Entries, sh: &SharedTable) -> Vec<OverviewWindow> {
+    let Some(v) = find_child(overview, b"tabsByWindowInstanceID", sh) else { return vec![] };
+    let Some(outer) = as_list_r(v, sh) else { return vec![] };
+    outer.iter().enumerate().filter_map(|(i, inner)| {
+        let list = as_list_r(inner, sh)?;
+        let tab_indices = list.iter().filter_map(|e| as_int(effective(e, sh))).collect();
+        Some(OverviewWindow { index: i, tab_indices })
+    }).collect()
+}
+
+fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&Value>, sh: &SharedTable) -> Option<OverviewTab> {
+    let index = as_int(effective(key, sh))?;
+    let fields = as_dict(tab, sh)?;
+    let name = str_field_r(fields, "name", sh).unwrap_or_else(|| format!("Tab {index}"));
+
+    let own_order = token_list(fields, b"tabColumnOrder", sh);
+    let own_visible = token_list(fields, b"tabColumns", sh);
     // A tab inherits unless it owns BOTH lists; any missing half falls back to
-    // the account defaults independently, so a partial tab never silently hides
-    // or drops columns.
+    // the tab's PRESET, so a partial tab never silently hides or drops columns.
     let inherits = own_order.is_none() || own_visible.is_none();
-    let (def_order, def_visible) = account_defaults(user);
+    let (def_order, def_visible) = preset_columns(fields, overview, sh);
     let order = own_order.unwrap_or(def_order);
     let visible = own_visible.unwrap_or(def_visible);
     let widths = char_tree.and_then(|c| tab_widths(c, index));
@@ -82,6 +121,31 @@ fn project_tab(key: &Value, tab: &Value, user: &Value, char_tree: Option<&Value>
     Some(OverviewTab { index, name, inherits, columns })
 }
 
+/// The tab's preset columns: resolve the tab's `overview` field (a preset name)
+/// to `overviewProfilePresets[name].overviewColumns`. Order == visible == list.
+fn preset_columns(tab: &Entries, overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<String>) {
+    let preset_name = find_child(tab, b"overview", sh).and_then(|v| token_r(v, sh));
+    let cols = preset_name.and_then(|name| {
+        let presets = find_child(overview, b"overviewProfilePresets", sh).and_then(|v| as_dict(v, sh))?;
+        let preset = find_child(presets, name.as_bytes(), sh).and_then(|v| as_dict(v, sh))?;
+        token_list(preset, b"overviewColumns", sh)
+    }).unwrap_or_default();
+    (cols.clone(), cols)
+}
+
+/// String field whose key is `name` (plain or string-table), value resolved
+/// through Ref/Shared. Values may be Str, UCS2, or Bytes (tab names use all).
+fn str_field_r(fields: &Entries, name: &str, sh: &SharedTable) -> Option<String> {
+    fields.iter().find_map(|(k, v)| {
+        if !key_is(effective(k, sh), name) { return None; }
+        match effective(v, sh) {
+            Value::Str(t) | Value::StrUcs2(t) => Some(t.clone()),
+            Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+            _ => None,
+        }
+    })
+}
+
 /// Account-level defaults: (overviewColumnOrder, overviewColumns) as token lists.
 fn account_defaults(user: &Value) -> (Vec<String>, Vec<String>) {
     let Some((ov, _)) = child_dict(user, b"overview", Vec::new()) else { return (vec![], vec![]) };
@@ -90,16 +154,22 @@ fn account_defaults(user: &Value) -> (Vec<String>, Vec<String>) {
     (order, visible)
 }
 
-/// Widths for a tab: column token -> px, from char root -> ui -> SortHeadersSizes.
+/// Widths for a tab: column token -> px, from char root -> ui -> SortHeadersSizes,
+/// resolving Ref/Shared indirection (deduped width dicts and Ref column tokens).
+// ponytail: rebuilds the char shared-table per tab; char trees are small and tab
+// counts tiny, so the O(tabs * chartree) walk is a non-issue (thread it if it isn't).
 fn tab_widths(char_tree: &Value, tab_index: i64) -> Option<std::collections::HashMap<String, i64>> {
-    let (ui, ui_path) = child_dict(char_tree, b"ui", Vec::new())?;
-    let (sizes, _) = timestamped_dict(ui, &ui_path, b"SortHeadersSizes")?;
-    let (_, cols) = sizes.iter().find(|(k, _)| is_width_key(k, tab_index))?;
-    let Value::Dict(entries) = unwrap_shared_ref(cols) else { return None };
+    let mut sh = SharedTable::new();
+    collect_shared(char_tree, &mut sh);
+    let Value::Dict(root) = effective(char_tree, &sh) else { return None };
+    let ui = find_child(root, b"ui", &sh).and_then(|v| as_dict(v, &sh))?;
+    let sizes = find_child(ui, b"SortHeadersSizes", &sh).and_then(|v| as_dict(v, &sh))?;
+    let (_, cols) = sizes.iter().find(|(k, _)| is_width_key(effective(k, &sh), tab_index))?;
+    let entries = as_dict(cols, &sh)?;
     Some(
         entries
             .iter()
-            .filter_map(|(k, v)| Some((token(k)?, as_int(v)?)))
+            .filter_map(|(k, v)| Some((token_r(k, &sh)?, as_int(effective(v, &sh))?)))
             .collect(),
     )
 }
@@ -141,21 +211,6 @@ fn token(v: &Value) -> Option<String> {
     }
 }
 
-fn str_field(fields: &Entries, name: &str) -> Option<String> {
-    fields.iter().find_map(|(k, v)| {
-        if !key_is(k, name) {
-            return None;
-        }
-        // The value can be Str, UCS2, or Bytes (real tab names use all three),
-        // and may be Shared-wrapped.
-        match unwrap_shared_ref(v) {
-            Value::Str(t) | Value::StrUcs2(t) => Some(t.clone()),
-            Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-            _ => None,
-        }
-    })
-}
-
 /// True if the dict key is the string `name`, whether stored plainly or as a
 /// string-table reference — real files store the `"name"` key as `t52`.
 fn key_is(k: &Value, name: &str) -> bool {
@@ -191,12 +246,7 @@ fn as_list(v: &Value) -> Option<&Vec<Value>> {
     }
 }
 
-// ponytail: the five helpers below have no non-test caller yet — R3 switches
-// project_overview over to them and deletes the superseded v1 helpers above,
-// at which point these `allow(dead_code)` come off.
-
 /// Value of the entry whose resolved key is `Bytes(name)`, itself resolved.
-#[allow(dead_code)]
 fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
     dict.iter()
         .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
@@ -204,7 +254,6 @@ fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Optio
 }
 
 /// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper.
-#[allow(dead_code)]
 fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
     match effective(v, sh) {
         Value::Dict(d) => Some(d),
@@ -217,7 +266,6 @@ fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
 }
 
 /// Resolve to a list, unwrapping a `(timestamp, list)` wrapper.
-#[allow(dead_code)]
 fn as_list_r<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
     match effective(v, sh) {
         Value::List(l) => Some(l),
@@ -229,7 +277,6 @@ fn as_list_r<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
     }
 }
 
-#[allow(dead_code)]
 fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
@@ -238,7 +285,6 @@ fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
 }
 
 /// Resolved list-of-tokens for a byte-named field within `dict`.
-#[allow(dead_code)]
 fn token_list(dict: &Entries, name: &[u8], sh: &SharedTable) -> Option<Vec<String>> {
     let v = find_child(dict, name, sh)?;
     Some(as_list_r(v, sh)?.iter().filter_map(|t| token_r(t, sh)).collect())
@@ -428,44 +474,51 @@ mod tests {
     }
 
     #[test]
-    fn an_inheriting_tab_reads_from_account_defaults() {
-        // Tab 1 owns no lists; account defaults provide order [NAME, TYPE], visible [NAME].
-        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::Str("General".into()))]);
-        let user = Value::Dict(vec![(
-            bytes("overview"),
-            Value::Dict(vec![
-                (bytes("overviewColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
-                (bytes("overviewColumns"), Value::List(vec![bytes("NAME")])),
-                (bytes("tabsettings_new"),
-                 Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(1), tab)])])),
-            ]),
-        )]);
-        let t = &project_overview(&user, None).tabs[0];
-        assert!(t.inherits);
-        assert_eq!(t.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
-        assert!(t.columns[0].visible && !t.columns[1].visible);
-    }
-
-    #[test]
-    fn a_tab_owning_only_order_falls_back_to_default_visibility() {
-        // Tab owns tabColumnOrder [NAME, TYPE] but no tabColumns; account default visible = [TYPE].
-        let tab = Value::Dict(vec![
-            (Value::Str("name".into()), Value::Str("P".into())),
-            (bytes("tabColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
+    fn projects_preset_fallback_and_window_grouping() {
+        use blue_marshal::Value;
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        // preset P: visible [NAME, TYPE]
+        let preset = Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE")]))]);
+        let presets = Value::Dict(vec![(b("P"), preset)]);
+        let tab0 = Value::Dict(vec![
+            (Value::StrTable(52), Value::Str("Alpha".into())),      // name (string-table key)
+            (b("overview"), b("P")),                                // references preset P (no own lists)
         ]);
-        let user = Value::Dict(vec![(
-            bytes("overview"),
-            Value::Dict(vec![
-                (bytes("overviewColumns"), Value::List(vec![bytes("TYPE")])),
-                (bytes("tabsettings_new"),
-                 Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
-            ]),
-        )]);
-        let t = &project_overview(&user, None).tabs[0];
-        assert!(t.inherits, "owning only one list still counts as inheriting");
-        let type_col = t.columns.iter().find(|c| c.name == "TYPE").unwrap();
-        let name_col = t.columns.iter().find(|c| c.name == "NAME").unwrap();
-        assert!(type_col.visible && !name_col.visible, "default visibility applied; nothing silently hidden");
+        let tab1 = Value::Dict(vec![
+            (Value::StrTable(52), Value::Str("Beta".into())),
+            (b("tabColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("tabColumns"), Value::List(vec![b("DISTANCE")])),
+        ]);
+        let tabs = Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab0), (Value::Int(1), tab1)])]);
+        let overview = Value::Dict(vec![
+            (b("overviewProfilePresets"), presets),
+            (b("tabsettings_new"), tabs),
+            (b("tabsByWindowInstanceID"), Value::List(vec![
+                Value::List(vec![Value::Int(0)]),
+                Value::List(vec![Value::Int(1)]),
+            ])),
+        ]);
+        // The overview container's KEY is a Ref to a Shared("overview").
+        let user = Value::Dict(vec![
+            (Value::Shared { slot: 1, value: Box::new(b("overview")) }, overview),
+        ]);
+
+        let oc = project_overview(&user, None);
+        // window grouping
+        assert_eq!(oc.windows.len(), 2);
+        assert_eq!(oc.windows[0].tab_indices, vec![0]);
+        assert_eq!(oc.windows[1].tab_indices, vec![1]);
+        // tab 0 inherits preset P -> [NAME(hidden? no, preset visible), TYPE]
+        let t0 = oc.tabs.iter().find(|t| t.index == 0).unwrap();
+        assert!(t0.inherits, "tab 0 has no own lists");
+        assert_eq!(t0.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
+        assert!(t0.columns.iter().all(|c| c.visible), "preset columns are the visible set");
+        // tab 1 owns its lists
+        let t1 = oc.tabs.iter().find(|t| t.index == 1).unwrap();
+        assert!(!t1.inherits);
+        assert_eq!(t1.columns.iter().filter(|c| c.visible).map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["DISTANCE"]);
+        assert_eq!(t1.columns.len(), 3, "order list of 3");
     }
 
     fn tab_lists(user: &Value, index: i64) -> (Vec<String>, Vec<String>) {
@@ -499,10 +552,17 @@ mod tests {
     /// A tab that inherits (no own lists) materializes from the account defaults
     /// on first edit, then applies the edit.
     fn user_inheriting_tab() -> Value {
-        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::Str("General".into()))]);
+        // The tab owns no lists; it names preset "G" so the read falls back to
+        // the preset's columns (account-level lists feed the edit-side materialize).
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("General".into())),
+            (bytes("overview"), bytes("G")),
+        ]);
+        let preset = Value::Dict(vec![(bytes("overviewColumns"), Value::List(vec![bytes("NAME"), bytes("TYPE")]))]);
         Value::Dict(vec![(
             bytes("overview"),
             Value::Dict(vec![
+                (bytes("overviewProfilePresets"), Value::Dict(vec![(bytes("G"), preset)])),
                 (bytes("overviewColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
                 (bytes("overviewColumns"), Value::List(vec![bytes("NAME")])),
                 (
