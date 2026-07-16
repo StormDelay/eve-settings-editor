@@ -728,10 +728,18 @@ check(
     "People & Places search",
 );
 
-// Derived fallback: unknown widget -> strip boilerplate, title-case the segment.
+// Curated hit via substring match (the needle appears mid-path).
 check(
-  "unknown widget derives a readable label",
+  "curated needle matches as a substring",
   labelFor("/inventory/content/main/quickFilter/SingleLineEditText") === "Quick Filter",
+);
+
+// Derived fallback: an UNCURATED widget must exercise derive() itself —
+// strip boilerplate segments, split camelCase, title-case. (Must not match any
+// curated needle, or it would never reach derive.)
+check(
+  "uncurated widget derives a readable label from camelCase",
+  labelFor("/someWindow/content/main/mediumTimer/SingleLineEditText") === "Medium Timer",
 );
 
 // Never empty, even for a degenerate path.
