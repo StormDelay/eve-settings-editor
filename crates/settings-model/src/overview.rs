@@ -46,17 +46,24 @@ fn project_tab(key: &Value, tab: &Value, user: &Value, char_tree: Option<&Value>
 
     let own_order = list_field(fields, b"tabColumnOrder");
     let own_visible = list_field(fields, b"tabColumns");
-    let inherits = own_order.is_none() && own_visible.is_none();
-
-    // Effective order/visible: the tab's own lists, else the account defaults.
-    let (order, visible) = match (own_order, own_visible) {
-        (Some(o), v) => (o, v.unwrap_or_default()),
-        (None, Some(v)) => (v.clone(), v),
-        (None, None) => account_defaults(user),
-    };
+    // A tab inherits unless it owns BOTH lists; any missing half falls back to
+    // the account defaults independently, so a partial tab never silently hides
+    // or drops columns.
+    let inherits = own_order.is_none() || own_visible.is_none();
+    let (def_order, def_visible) = account_defaults(user);
+    let order = own_order.unwrap_or(def_order);
+    let visible = own_visible.unwrap_or(def_visible);
     let widths = char_tree.and_then(|c| tab_widths(c, index));
 
-    let columns = order
+    // Rows follow the order list, then any visible token not present in it, so a
+    // visible-but-unordered column still appears (hidden columns are never lost).
+    let mut ordered = order.clone();
+    for tok in &visible {
+        if !ordered.contains(tok) {
+            ordered.push(tok.clone());
+        }
+    }
+    let columns = ordered
         .iter()
         .map(|tok| OverviewColumn {
             label: prettify(tok),
@@ -210,5 +217,46 @@ mod tests {
     fn a_file_without_overview_projects_empty() {
         let empty = Value::Dict(vec![]);
         assert!(project_overview(&empty, None).tabs.is_empty());
+    }
+
+    #[test]
+    fn an_inheriting_tab_reads_from_account_defaults() {
+        // Tab 1 owns no lists; account defaults provide order [NAME, TYPE], visible [NAME].
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::Str("General".into()))]);
+        let user = Value::Dict(vec![(
+            bytes("overview"),
+            Value::Dict(vec![
+                (bytes("overviewColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
+                (bytes("overviewColumns"), Value::List(vec![bytes("NAME")])),
+                (bytes("tabsettings_new"),
+                 Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(1), tab)])])),
+            ]),
+        )]);
+        let t = &project_overview(&user, None).tabs[0];
+        assert!(t.inherits);
+        assert_eq!(t.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["NAME", "TYPE"]);
+        assert!(t.columns[0].visible && !t.columns[1].visible);
+    }
+
+    #[test]
+    fn a_tab_owning_only_order_falls_back_to_default_visibility() {
+        // Tab owns tabColumnOrder [NAME, TYPE] but no tabColumns; account default visible = [TYPE].
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("P".into())),
+            (bytes("tabColumnOrder"), Value::List(vec![bytes("NAME"), bytes("TYPE")])),
+        ]);
+        let user = Value::Dict(vec![(
+            bytes("overview"),
+            Value::Dict(vec![
+                (bytes("overviewColumns"), Value::List(vec![bytes("TYPE")])),
+                (bytes("tabsettings_new"),
+                 Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+            ]),
+        )]);
+        let t = &project_overview(&user, None).tabs[0];
+        assert!(t.inherits, "owning only one list still counts as inheriting");
+        let type_col = t.columns.iter().find(|c| c.name == "TYPE").unwrap();
+        let name_col = t.columns.iter().find(|c| c.name == "NAME").unwrap();
+        assert!(type_col.visible && !name_col.visible, "default visibility applied; nothing silently hidden");
     }
 }
