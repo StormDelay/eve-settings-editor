@@ -63,7 +63,17 @@
   <div class="ov-controls">
     <label>Tab
       <select bind:value={tabIndex}>
-        {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+        {#if data.windows.length > 0}
+          {#each data.windows as w (w.index)}
+            <optgroup label="Overview {w.index + 1}">
+              {#each w.tab_indices as idx (idx)}
+                <option value={idx}>{data.tabs.find((t) => t.index === idx)?.name ?? `Tab ${idx}`}</option>
+              {/each}
+            </optgroup>
+          {/each}
+        {:else}
+          {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+        {/if}
       </select>
     </label>
     <label>Character (for widths)
@@ -104,7 +114,7 @@
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, input.w {
+  select, option, optgroup, input.w {
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
   }
