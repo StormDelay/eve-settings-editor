@@ -135,6 +135,31 @@ button. `+page.svelte` gains `mainView: … | "batch"`. Flow, top to bottom:
   on next write (it self-heals). This is the existing re-share debt already
   logged in the small-tasks ledger, not new to M4. Full copy is unaffected (raw
   bytes).
+- **Layout copy is char-scoped, but not all window state is.** The Layout
+  category replaces the char file's `windows` subtree wholesale, and that part
+  works — but *which* windows EVE recreates on the next login is partly driven
+  by state living outside that subtree, so a copied target does not end up
+  window-for-window identical to its source. Two sources of drift, both
+  confirmed by live smoke (2026-07-17, char → char):
+  - **Overview windows are account-scoped.** How many overview windows exist is
+    defined in the `core_user_*` file's `overview` key (the window groups
+    `project_overview` reads), not in the char file. Copying a source char whose
+    account defines 2 overview windows onto a target char whose account defines
+    3 left the target with `overview_2` recreated at default geometry on next
+    login. The char file only stores *where* each overview window sits; the
+    account decides *that it exists*.
+  - **Chat/convo windows follow the character's runtime state.** EVE recreated
+    the target's own `chatchannel_*` windows (a channel it is in, an open
+    convo) after the copy removed them.
+  The splice itself is correct and was verified against the live files: the
+  target's `windows` went from 299 entries to exactly the source's 40. EVE then
+  re-added the 3 windows its account/runtime state required and flushed the file
+  on logout. So the ceiling is scope, not correctness — **matching two
+  characters fully also requires their accounts' overview config to match**,
+  which is cross-file and belongs to the M5 milestone (master design §9). Note
+  the corollary: a layout copy discards the target's accumulated per-character
+  window state (old convos, fitting windows, mail) — that is the intended
+  wholesale-replace semantic, and EVE self-heals what it still needs.
 - **Full copy relies on filename identity.** EVE reads a file's character /
   account identity from its **filename**, not its content (confirmed by the
   developer; it is the premise every settings-manager copy-and-rename workflow

@@ -29,6 +29,21 @@ Workflow:
   (inject the CHANGELOG section into `releaseBody`, or fill in the draft before
   publishing). _Added 2026-07-17._
 
+- [ ] **Warn in the batch preview when a target's resolution differs.** Master
+  design §6 requires it — *"window geometry is absolute pixels; the preview warns
+  for each target whose stored resolution differs from the source's"* — but the
+  M4 spec dropped the requirement and no task built it, so a layout copy from a
+  2560×1440 character onto a 1920×1080 one silently puts windows off-screen.
+  Recoverable (every target is backed up) but exactly the surprise the warning
+  exists to prevent. The projection already has the data: `WindowLayout` carries
+  `resolution_matches`, and `WindowRect` carries `screen_w`/`screen_h`
+  (`windows.rs:42,54-55`). The gap is that the batch flow never reads a target's
+  layout — `batch_targets` returns `Candidate { path, file_name, id, folder,
+  same_folder }` and nothing more, so surfacing this needs each candidate's
+  stored resolution (either widen `Candidate`, or a separate command the preview
+  calls for the selected targets). Weigh cost against M5, which will revisit this
+  flow anyway. _Added 2026-07-17 (found documenting the M4 smoke)._
+
 - [ ] **Add a search to the Autofill section.** The autofill view lists every
   remembered-text widget with no way to narrow them, so finding one list (or
   finding which list contains a given entry) means scrolling the lot. Add a
@@ -77,8 +92,17 @@ Workflow:
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
-Ordering: **M4 batch apply stays the next milestone**, then the layout-canvas
-milestone, then the codec/refactor milestone.
+Ordering (updated 2026-07-17): **M4 batch apply** (code-complete, awaiting live
+smoke), then **M5 cross-file batch apply**, then the layout-canvas milestone,
+then the codec/refactor milestone.
+
+**M5 — cross-file batch apply** (master design §9): batch apply for the sections
+that span two files — overview settings (user → user), and the account-scoped
+overview-window groups that decide which windows a char-scoped layout copy will
+actually produce. Added after M4's live smoke showed a layout copy can't make two
+characters match on its own: how many overview windows exist is account state,
+where each sits is char state. See the M4 spec's §7 ceiling for the evidence.
+_Added 2026-07-17._
 
 **Layout-canvas milestone:**
 

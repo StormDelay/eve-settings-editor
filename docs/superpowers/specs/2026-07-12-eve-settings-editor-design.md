@@ -93,7 +93,11 @@ Resolution sources, in priority order (**revised by M0 findings**, 2026-07-13 �
 
 ### Batch apply (M4)
 Flow: pick a **source** file → choose categories (window layout / overview columns / suggestion lists) → multi-select **target** files (char categories to char files, user categories to user files) → preview summary → apply. Each target runs the full save-path invariant chain independently; one failure does not halt the others; a per-target success/failure report is shown at the end.
-**Geometry caveat:** window geometry is absolute pixels; the preview warns for each target whose stored resolution differs from the source's.
+**Shipped in M4:** whole-file copy, window layout (char → char), autofill /
+suggestion lists (user → user). **Overview columns is cross-file and moved to
+M5** (§9) — see the M4 spec's §7 ceiling for why a char-scoped layout copy alone
+cannot make two characters match.
+**Geometry caveat:** window geometry is absolute pixels; the preview warns for each target whose stored resolution differs from the source's. **Not built in M4** — the M4 spec dropped it and no task owned it; `windows.rs` already projects `resolution_matches` / `screen_w` / `screen_h`, but the batch flow never reads a target's layout. Tracked in the small-tasks ledger.
 
 ## 7. Error handling
 
@@ -118,7 +122,30 @@ Flow: pick a **source** file → choose categories (window layout / overview col
 - **M1 — Core:** codec + raw tree editor + full save chain with backups. The tool is already useful here.
 - **M2 — Layout canvas** + properties panel.
 - **M3 — Overview columns + autofill editors;** ESI name resolution + account aliases; packaging for Windows/macOS/Linux.
-- **M4 — Batch apply** across characters/accounts.
+- **M4 — Batch apply** across characters/accounts. Ships the char-scoped and
+  user-scoped categories only: window layout (char → char) and autofill /
+  suggestion lists (user → user), plus whole-file copy. Overview is excluded —
+  see M5.
+- **M5 — Batch apply for cross-file sections.** M4's categories each live in a
+  single file, so they copy in one write. The remaining sections do not, and M4's
+  live smoke (M4 spec §7) showed why that is not a detail: copying a char's window
+  layout leaves the target with a different set of overview windows, because *how
+  many overview windows exist* is account-scoped (the `core_user_*` `overview`
+  key) while *where each one sits* is char-scoped (the char `windows` key). One
+  visible setting, two files. This milestone covers batch apply for those:
+  - **Overview settings** (columns, tabs, presets) — user → user, the category
+    §6 already lists but M4 deliberately deferred.
+  - **The account-scoped half of window layout** — the overview-window groups
+    that decide which windows a copied layout will actually produce.
+  Design questions it must answer: whether a char-scoped and a user-scoped
+  category can be applied as one coherent user-level operation (pick a source
+  *character*, copy "their whole window setup", touching both that char's file
+  and its account's file); how targets are chosen when one selection implies
+  writes to two files; and how a partial failure is reported when a
+  logically-single copy is two writes that can fail independently — M4's
+  per-target report assumes one target = one file. The blast radius is wider than
+  M4's: an account-level write affects **every character on that account**, not
+  just the one picked, and the preview must say so plainly.
 
 ## 10. Deferred (designed-for, not built)
 
