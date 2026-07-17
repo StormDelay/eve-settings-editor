@@ -187,6 +187,22 @@ export interface RememberedList {
   entries: string[];
 }
 
+export type Category = "layout" | "autofill";
+export interface BatchCandidate {
+  path: string;
+  file_name: string;
+  id: number | null;
+  folder: string;
+  same_folder: boolean;
+}
+export type BatchOp = { kind: "full_copy" } | { kind: "categories"; categories: Category[] };
+export interface BatchTargetResult {
+  path: string;
+  ok: boolean;
+  backup_path: string | null;
+  error: string | null;
+}
+
 export type Slot = "char" | "user";
 
 export const api = {
@@ -224,6 +240,10 @@ export const api = {
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
   clearAllAutofill: () => invoke<RememberedList[]>("clear_all_autofill"),
+  batchTargets: (sourcePath: string, allowOtherFolders: boolean) =>
+    invoke<BatchCandidate[]>("batch_targets", { sourcePath, allowOtherFolders }),
+  batchApply: (sourcePath: string, op: BatchOp, targets: string[]) =>
+    invoke<BatchTargetResult[]>("batch_apply", { sourcePath, op, targets }),
 };
 
 export function errMessage(e: unknown): string {
