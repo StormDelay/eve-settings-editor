@@ -1,8 +1,9 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, errMessage, type Profile, type SettingsFile } from "./api";
-  import { names, resolveNames, refreshNames } from "./names.svelte";
-  import { aliasFor, loadRoster } from "./accounts.svelte";
+  import { api, errMessage, type Profile } from "./api";
+  import { resolveNames, refreshNames } from "./names.svelte";
+  import { loadRoster } from "./accounts.svelte";
+  import { byResolvedName, resolvedName } from "./filesort.svelte";
 
   let {
     onOpen,
@@ -16,24 +17,9 @@
     onCollapse: () => void;
   } = $props();
 
-  // Displayed name for a file: resolved character name, else account alias, else
-  // null when it's still a bare id (name unresolved / no alias) — those sort last.
-  const resolvedName = (f: SettingsFile): string | null => {
-    if (f.kind === "char" && f.id != null) return names[f.id]?.name ?? null;
-    if (f.kind === "user" && f.id != null) return aliasFor(f.id) ?? null;
-    return null;
-  };
-
-  // Alphabetical by resolved name; unresolved (bare-id) files sort below the
-  // named ones, ordered among themselves by file name.
-  const byName = (a: SettingsFile, b: SettingsFile) => {
-    const na = resolvedName(a);
-    const nb = resolvedName(b);
-    if (na && nb) return na.localeCompare(nb);
-    if (na) return -1;
-    if (nb) return 1;
-    return a.file_name.localeCompare(b.file_name);
-  };
+  // Naming and ordering come from filesort, shared with the batch-apply target
+  // list so the two cannot drift apart.
+  const byName = byResolvedName;
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
@@ -165,7 +151,7 @@
               {#each g.files as f (f.path)}
                 <li>
                   <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-                    {resolvedName(f) ?? f.file_name}
+                    {resolvedName(f.kind, f.id) ?? f.file_name}
                     <span class="meta">{Math.round(f.size / 1024)} KB</span>
                   </button>
                 </li>
