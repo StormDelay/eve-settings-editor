@@ -137,9 +137,8 @@ pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result
         BatchOp::FullCopy => Ok(targets
             .iter()
             .map(|t| {
-                let tkind = file_kind(Path::new(t));
-                if tkind != src_kind {
-                    return err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"));
+                if let Some(r) = kind_mismatch(t, &src_kind) {
+                    return r;
                 }
                 match full_copy_to(&bytes, Path::new(t)) {
                     Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
@@ -156,9 +155,8 @@ pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result
             Ok(targets
                 .iter()
                 .map(|t| {
-                    let tkind = file_kind(Path::new(t));
-                    if tkind != src_kind {
-                        return err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"));
+                    if let Some(r) = kind_mismatch(t, &src_kind) {
+                        return r;
                     }
                     match apply_categories_to(Path::new(t), &extracted) {
                         Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
@@ -168,6 +166,17 @@ pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result
                 .collect())
         }
     }
+}
+
+/// The write path must never trust the caller's target list: a target of a
+/// different kind than the source is refused before any write (spec §6 — the
+/// type match is enforced regardless of the folder toggle). Shared by both
+/// `BatchOp` arms so they cannot drift on the comparison or its message.
+fn kind_mismatch(t: &str, src_kind: &FileKind) -> Option<TargetResult> {
+    let tkind = file_kind(Path::new(t));
+    (&tkind != src_kind).then(|| {
+        err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"))
+    })
 }
 
 fn ok_result(path: &str, backup: String) -> TargetResult {
@@ -922,6 +931,35 @@ mod tests {
         let results = batch_apply(
             src.to_str().unwrap(),
             BatchOp::FullCopy,
+            &[target.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
+        assert!(results[0].error.is_some());
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            target_bytes,
+            "target bytes unchanged: the write path never trusted the caller's kind"
+        );
+    }
+
+    #[test]
+    fn batch_apply_categories_refuses_a_mismatched_target_kind() {
+        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-cat-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_char_1.dat"); // char source, content has the autofill category
+        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
+        let src_bytes = af_bytes("/x", "y");
+        let target_bytes = af_bytes("/other", "z");
+        fs::write(&src, &src_bytes).unwrap();
+        fs::write(&target, &target_bytes).unwrap();
+
+        let results = batch_apply(
+            src.to_str().unwrap(),
+            BatchOp::Categories { categories: vec![Category::Autofill] },
             &[target.to_string_lossy().into_owned()],
         )
         .unwrap();
