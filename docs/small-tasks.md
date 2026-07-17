@@ -29,6 +29,17 @@ Workflow:
   (inject the CHANGELOG section into `releaseBody`, or fill in the draft before
   publishing). _Added 2026-07-17._
 
+- [ ] **Add a search to the Autofill section.** The autofill view lists every
+  remembered-text widget with no way to narrow them, so finding one list (or
+  finding which list contains a given entry) means scrolling the lot. Add a
+  filter box that narrows the rendered lists as you type, matching both the
+  widget's display label (`labelFor`) and the entries themselves — "which list
+  has that station name in it?" is the other half of why you'd search. Filter the
+  already-derived `sorted` list (`AutofillView.svelte:21`); an empty query shows
+  everything. Note `search.ts`'s `searchTree` is not reusable here — it walks a
+  `TreeNodeData` tree, whereas this is a flat `RememberedList[]`, so a plain
+  case-insensitive filter is all it needs, not new machinery. _Added 2026-07-17._
+
 - [ ] **Keep the current view when switching files.** Opening a file always
   snaps the editor back to the Tree tab (`+page.svelte:171`, `view = "tree"` in
   `openFile`), so switching between two character files while working on window
