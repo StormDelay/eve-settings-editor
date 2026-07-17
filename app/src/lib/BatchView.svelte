@@ -1,8 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api, errMessage, type Profile, type Category, type BatchCandidate, type BatchTargetResult, type BatchOp } from "./api";
-  import { names } from "./names.svelte";
-  import { aliasFor } from "./accounts.svelte";
+  import { byResolvedName, resolvedName } from "./filesort.svelte";
 
   let { openPath }: { openPath: string | null } = $props();
 
@@ -10,11 +9,13 @@
   let profiles = $state<Profile[]>([]);
   api.discover().then((p) => (profiles = p)).catch(() => {});
   const sources = $derived(
-    profiles.flatMap((p) =>
-      p.files
-        .filter((f) => f.kind === "char" || f.kind === "user")
-        .map((f) => ({ path: f.path, file_name: f.file_name, id: f.id, kind: f.kind })),
-    ),
+    profiles
+      .flatMap((p) =>
+        p.files
+          .filter((f) => f.kind === "char" || f.kind === "user")
+          .map((f) => ({ path: f.path, file_name: f.file_name, id: f.id, kind: f.kind })),
+      )
+      .sort(byResolvedName),
   );
 
   // Defaults to the file open in the editor when this view mounts; the user
@@ -65,9 +66,20 @@
     selectedTargets = next;
   }
 
+  // Targets are all the source's kind (batch_targets filters on it), so they
+  // order by the same rule the sidebar's file list uses.
+  const sortedCandidates = $derived(
+    [...candidates].sort((a, b) =>
+      byResolvedName(
+        { kind: sourceKind ?? "", id: a.id, file_name: a.file_name },
+        { kind: sourceKind ?? "", id: b.id, file_name: b.file_name },
+      ),
+    ),
+  );
+
   const nameOf = (id: number | null, kind: string, fileName: string) => {
     if (id == null) return fileName;
-    return aliasFor(id) ?? names[id]?.name ?? (kind === "user" ? `account ${id}` : `char ${id}`);
+    return resolvedName(kind, id) ?? (kind === "user" ? `account ${id}` : `char ${id}`);
   };
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -127,7 +139,7 @@
       {:else if candidates.length === 0}
         <p class="muted">No other {sourceKind} files found.</p>
       {:else}
-        {#each candidates as c}
+        {#each sortedCandidates as c}
           <label>
             <input type="checkbox" checked={selectedTargets.has(c.path)} onchange={() => toggleTarget(c.path)} />
             {nameOf(c.id, sourceKind ?? "", c.file_name)}
