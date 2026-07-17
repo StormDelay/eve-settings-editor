@@ -29,6 +29,22 @@ Workflow:
   (inject the CHANGELOG section into `releaseBody`, or fill in the draft before
   publishing). _Added 2026-07-17._
 
+- [ ] **Keep the current view when switching files.** Opening a file always
+  snaps the editor back to the Tree tab (`+page.svelte:171`, `view = "tree"` in
+  `openFile`), so switching between two character files while working on window
+  placements bounces you out of Layout every time. Instead, keep the current
+  `view` when it's still available for the newly opened file, and fall back to
+  Tree only when it isn't (e.g. Layout → a user file, which has no layout).
+  Availability is already expressed by the tab-button conditions
+  (`+page.svelte:374-377`): Layout needs `layoutAvailable`, Overview needs
+  `openCharId !== null || slots.user?.status === "opened"`, Autofill needs an
+  opened user file. Implementation note: `layoutAvailable` is recomputed at
+  `+page.svelte:176`, *after* the reset at line 171 — so the new file's
+  availability isn't known at reset time. Preserve the desired view and clamp it
+  to Tree once availability is recomputed, rather than deciding at line 171.
+  Leave `revealInTree` (`+page.svelte:117`) alone — that jump to Tree is
+  deliberate. _Added 2026-07-17._
+
 - [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
   backups panel) retractable/collapsible so the center pane can grow — useful
   when editing window placements on the layout canvas, which wants as much
