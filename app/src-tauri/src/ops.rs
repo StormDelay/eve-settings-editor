@@ -14,7 +14,7 @@ use settings_model::{
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
-    apply_categories_to, extract_categories, full_copy_to, Category,
+    apply_categories_to, extract_categories, file_kind, full_copy_to, Category,
 };
 
 use crate::accounts;
@@ -123,27 +123,47 @@ pub struct TargetResult {
 
 /// Apply `op` from `source_path` to each target. The source is read (and, for a
 /// category copy, decoded and extracted) exactly once. One target's failure is
-/// recorded and never halts the rest. A source that cannot be read/decoded fails
-/// the whole op up front, before any target is touched.
+/// recorded and never halts the rest. A source that cannot be read/decoded, or
+/// whose selected categories are entirely absent from the source, fails the
+/// whole op up front, before any target is touched. Each target's kind is
+/// re-derived here (never trusted from the caller, which is a Tauri command
+/// boundary) and a mismatch is refused as that target's own failure, without
+/// touching the file.
 pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result<Vec<TargetResult>, ErrDto> {
     let source = Path::new(source_path);
     let bytes = fs::read(source).map_err(|e| ErrDto::new("io", e.to_string()))?;
+    let src_kind = file_kind(source);
     match op {
         BatchOp::FullCopy => Ok(targets
             .iter()
-            .map(|t| match full_copy_to(&bytes, Path::new(t)) {
-                Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
-                Err(e) => err_result(t, e),
+            .map(|t| {
+                let tkind = file_kind(Path::new(t));
+                if tkind != src_kind {
+                    return err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"));
+                }
+                match full_copy_to(&bytes, Path::new(t)) {
+                    Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
+                    Err(e) => err_result(t, e),
+                }
             })
             .collect()),
         BatchOp::Categories { categories } => {
             let value = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
             let extracted = extract_categories(&value, &categories);
+            if extracted.is_empty() {
+                return Err(ErrDto::new("no_categories", "the source file has none of the selected categories"));
+            }
             Ok(targets
                 .iter()
-                .map(|t| match apply_categories_to(Path::new(t), &extracted) {
-                    Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
-                    Err(e) => err_result(t, e),
+                .map(|t| {
+                    let tkind = file_kind(Path::new(t));
+                    if tkind != src_kind {
+                        return err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"));
+                    }
+                    match apply_categories_to(Path::new(t), &extracted) {
+                        Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
+                        Err(e) => err_result(t, e),
+                    }
                 })
                 .collect())
         }
@@ -851,6 +871,69 @@ mod tests {
         let results = batch_apply(src.to_str().unwrap(), BatchOp::FullCopy, &[dst.to_string_lossy().into_owned()]).unwrap();
         assert!(results[0].ok);
         assert_eq!(fs::read(&dst).unwrap(), src_bytes);
+    }
+
+    #[test]
+    fn batch_apply_categories_aborts_when_source_lacks_the_category() {
+        let dir = std::env::temp_dir().join(format!("app-batchnocat-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_user_1.dat");
+        let target = dir.join("core_user_2.dat");
+        // Source has no `ui`/`editHistory` at all.
+        let src_bytes =
+            encode(&Value::Dict(vec![(Value::Bytes(b"other".to_vec()), Value::Int(1))])).unwrap();
+        let target_bytes = af_bytes("/keep", "Amarr");
+        fs::write(&src, &src_bytes).unwrap();
+        fs::write(&target, &target_bytes).unwrap();
+
+        let err = batch_apply(
+            src.to_str().unwrap(),
+            BatchOp::Categories { categories: vec![Category::Autofill] },
+            &[target.to_string_lossy().into_owned()],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "no_categories");
+
+        // Byte-identical: no pointless de-dup/re-encode rewrite, and no backup.
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            target_bytes,
+            "target must be untouched when the source lacks the selected category"
+        );
+        assert!(
+            !dir.join("eve-settings-editor-backups").exists(),
+            "no backup should have been created"
+        );
+    }
+
+    #[test]
+    fn batch_apply_full_copy_refuses_a_mismatched_target_kind() {
+        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_char_1.dat"); // char source
+        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
+        let src_bytes = af_bytes("/x", "y");
+        let target_bytes = af_bytes("/other", "z");
+        fs::write(&src, &src_bytes).unwrap();
+        fs::write(&target, &target_bytes).unwrap();
+
+        let results = batch_apply(
+            src.to_str().unwrap(),
+            BatchOp::FullCopy,
+            &[target.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
+        assert!(results[0].error.is_some());
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            target_bytes,
+            "target bytes unchanged: the write path never trusted the caller's kind"
+        );
     }
 
     #[test]

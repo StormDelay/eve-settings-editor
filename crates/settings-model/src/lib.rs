@@ -17,7 +17,7 @@ pub mod autofill;
 pub mod batch;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
-pub use discover::{default_roots, discover, FileKind, Profile, SettingsFile}; // enabled in Task 8
+pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
 pub use document::{Document, Fidelity, LoadError};
 pub use mutate::{apply, Mutation, MutateError, NewValue};
 pub use path::{resolve, resolve_mut, NodePath, Step};
