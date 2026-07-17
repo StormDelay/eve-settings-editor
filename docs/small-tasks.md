@@ -20,7 +20,47 @@ Workflow:
   warnings. A design §11 "go public" item; low effort, high value once anyone
   outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
 
-- [ ] **Re-share correctly instead of inlining on overview save.** Overview column
+- [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
+  backups panel) retractable/collapsible so the center pane can grow — useful
+  when editing window placements on the layout canvas, which wants as much
+  horizontal room as possible. _Added 2026-07-15._ **Implemented 2026-07-17
+  (collapse chevron → thin reopen rail; in-memory state) — awaiting release.**
+
+- [ ] **Collapsible character/account categories.** Make the sidebar file-list
+  group headers (Characters / Accounts / Other) collapsible so a long list is
+  easier to navigate — click a category header to fold its files away. _Added
+  2026-07-17._ **Implemented 2026-07-17 (native `<details>` per group) — awaiting
+  release.**
+
+- [ ] **Sort files alphabetically within each category.** Within each sidebar
+  category (Characters / Accounts), sort files alphabetically by their resolved
+  character name or account alias. Files still showing a bare numerical id (name
+  unresolved / no alias) sort below the named ones. _Added 2026-07-17._
+  **Implemented 2026-07-17 — awaiting release.**
+
+## Promoted to milestones
+
+Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
+Ordering: **M4 batch apply stays the next milestone**, then the layout-canvas
+milestone, then the codec/refactor milestone.
+
+**Layout-canvas milestone:**
+
+- **Resize layout windows from any corner.** In the layout canvas, a selected
+  window can only be resized from the bottom-right handle today. Add resize
+  handles on all four corners (edges optional) once a window is selected, so it
+  can be resized from any corner. _Added 2026-07-15._
+
+- **Understand and integrate window stacks in the layout editor.** The layout
+  editor surfaces a window's stack id but doesn't model stacking. Work out how EVE
+  window stacks actually work (windows tabbed/grouped together, sharing a position)
+  and integrate them into the layout canvas — e.g. represent a stack as a group
+  and let the editor move/edit stacked windows coherently rather than as
+  independent rectangles. _Added 2026-07-17._
+
+**Codec/refactor milestone (after the layout one):**
+
+- **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
   refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
   longer matches what the EVE client would write. Revisit: re-derive a correct
@@ -28,34 +68,7 @@ Workflow:
   structurally-equal values in emit order) so the saved file matches the client's
   dedup. _Added 2026-07-16 (M3c)._
 
-- [ ] **Resize layout windows from any corner.** In the layout canvas, a
-  selected window can only be resized from the bottom-right handle today. Add
-  resize handles on all four corners (edges optional) once a window is selected,
-  so it can be resized from any corner. _Added 2026-07-15._
-
-- [ ] **Understand and integrate window stacks in the layout editor.** The
-  layout editor surfaces a window's stack id but doesn't model stacking. Work out
-  how EVE window stacks actually work (windows tabbed/grouped together, sharing a
-  position) and integrate them into the layout canvas — e.g. represent a stack as
-  a group and let the editor move/edit stacked windows coherently rather than as
-  independent rectangles. _Added 2026-07-17._
-
-- [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
-  backups panel) retractable/collapsible so the center pane can grow — useful
-  when editing window placements on the layout canvas, which wants as much
-  horizontal room as possible. _Added 2026-07-15._
-
-- [ ] **Collapsible character/account categories.** Make the sidebar file-list
-  group headers (Characters / Accounts / Other) collapsible so a long list is
-  easier to navigate — click a category header to fold its files away. _Added
-  2026-07-17._
-
-- [ ] **Sort files alphabetically within each category.** Within each sidebar
-  category (Characters / Accounts), sort files alphabetically by their resolved
-  character name or account alias. Files still showing a bare numerical id (name
-  unresolved / no alias) sort below the named ones. _Added 2026-07-17._
-
-- [ ] **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
+- **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
   added `treewalk::inline_all` (drop all `Shared`/`Ref` sharing); `overview.rs`'s
   private `inline_user` is now functionally identical. Delete the private copy and
   have `overview.rs` call the shared helper. Do it as its own change gated by the
