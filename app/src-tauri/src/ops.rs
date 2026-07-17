@@ -12,7 +12,7 @@ use settings_model::{
     set_column_order, set_column_visible, set_column_width,
     window_layout as project_window_layout,
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
-    Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
+    Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
 };
 
@@ -55,6 +55,54 @@ impl ErrDto {
     fn new(code: &str, message: impl Into<String>) -> Self {
         ErrDto { code: code.into(), message: message.into() }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Candidate {
+    pub path: String,
+    pub file_name: String,
+    pub id: Option<u64>,
+    pub folder: String,
+    pub same_folder: bool,
+}
+
+/// Discovered files eligible as batch targets for `source_path`: same file type,
+/// and (unless `allow_other_folders`) the source's own profile folder. The source
+/// itself is never a candidate.
+pub fn batch_targets(roots: &[PathBuf], source_path: &str, allow_other_folders: bool) -> Vec<Candidate> {
+    let profiles = discover(roots);
+    let src = Path::new(source_path);
+    let mut src_kind: Option<&FileKind> = None;
+    let mut src_dir: Option<PathBuf> = None;
+    for p in &profiles {
+        for f in &p.files {
+            if f.path == src {
+                src_kind = Some(&f.kind);
+                src_dir = Some(p.dir.clone());
+            }
+        }
+    }
+    let Some(kind) = src_kind else { return Vec::new() };
+    let mut out = Vec::new();
+    for p in &profiles {
+        let same = Some(&p.dir) == src_dir.as_ref();
+        if !same && !allow_other_folders {
+            continue;
+        }
+        for f in &p.files {
+            if &f.kind != kind || f.path == src {
+                continue;
+            }
+            out.push(Candidate {
+                path: f.path.to_string_lossy().into_owned(),
+                file_name: f.file_name.clone(),
+                id: f.id,
+                folder: format!("{}/{}", p.server, p.profile),
+                same_folder: same,
+            });
+        }
+    }
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -648,5 +696,45 @@ mod tests {
     fn autofill_without_a_user_slot_errors() {
         let state = AppState::new();
         assert_eq!(autofill_lists(&state).unwrap_err().code, "no_document");
+    }
+
+    fn discovery_tree() -> PathBuf {
+        // Two profile folders, each with char + user files.
+        let root = std::env::temp_dir().join(format!("app-batchtargets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let tq = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        let sisi = root.join("c_eve_sharedcache_sisi_singularity").join("settings_Default");
+        fs::create_dir_all(&tq).unwrap();
+        fs::create_dir_all(&sisi).unwrap();
+        for p in [&tq, &sisi] {
+            fs::write(p.join("core_char_90000001.dat"), b"x").unwrap();
+            fs::write(p.join("core_char_90000002.dat"), b"x").unwrap();
+            fs::write(p.join("core_user_987654.dat"), b"x").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn batch_targets_same_folder_same_type_excludes_source() {
+        let root = discovery_tree();
+        let src = root
+            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
+        let out = batch_targets(&[root], src.to_str().unwrap(), false);
+        // Only the OTHER char in the same folder — not the user file, not sisi, not itself.
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file_name, "core_char_90000002.dat");
+        assert!(out[0].same_folder);
+    }
+
+    #[test]
+    fn batch_targets_allow_other_folders_adds_matching_type_elsewhere() {
+        let root = discovery_tree();
+        let src = root
+            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
+        let out = batch_targets(&[root], src.to_str().unwrap(), true);
+        // Same-folder other char + both chars in sisi = 3.
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|c| c.file_name.starts_with("core_char_")));
+        assert!(out.iter().any(|c| !c.same_folder), "cross-folder candidate present");
     }
 }
