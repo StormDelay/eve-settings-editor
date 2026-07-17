@@ -2,21 +2,31 @@
   import { untrack } from "svelte";
   import { api, errMessage, type Profile, type Category, type BatchCandidate, type BatchTargetResult, type BatchOp } from "./api";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
+  import { profileLabels } from "./profiles";
 
   let { openPath }: { openPath: string | null } = $props();
 
   // All char/user files across discovery, as source options.
   let profiles = $state<Profile[]>([]);
   api.discover().then((p) => (profiles = p)).catch(() => {});
-  const sources = $derived(
-    profiles
+  // Discovery spans every profile, so the same character name can appear more
+  // than once — each entry carries its profile's label to tell them apart.
+  const sources = $derived.by(() => {
+    const labels = profileLabels(profiles);
+    return profiles
       .flatMap((p) =>
         p.files
           .filter((f) => f.kind === "char" || f.kind === "user")
-          .map((f) => ({ path: f.path, file_name: f.file_name, id: f.id, kind: f.kind })),
+          .map((f) => ({
+            path: f.path,
+            file_name: f.file_name,
+            id: f.id,
+            kind: f.kind,
+            folder: labels.get(p.dir)!,
+          })),
       )
-      .sort(byResolvedName),
-  );
+      .sort(byResolvedName);
+  });
 
   // Defaults to the file open in the editor when this view mounts; the user
   // can then pick a different source, so only the initial value is captured.
@@ -112,7 +122,7 @@
     <select id="src" bind:value={sourcePath}>
       <option value={null} disabled>Choose a file…</option>
       {#each sources as s}
-        <option value={s.path}>{nameOf(s.id, s.kind, s.file_name)} — {s.kind} — {s.file_name}</option>
+        <option value={s.path}>{s.folder} · {nameOf(s.id, s.kind, s.file_name)} — {s.kind} — {s.file_name}</option>
       {/each}
     </select>
   </section>
