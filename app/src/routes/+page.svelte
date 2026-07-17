@@ -22,6 +22,10 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let mainView: "file" | "accounts" = $state("file");
+  // Side panels collapse to a thin reopen rail so the center pane (esp. the
+  // layout canvas) can use the full width. In-memory only; resets on reload.
+  let sidebarOpen = $state(true);
+  let backupsOpen = $state(true);
   // Two independent editing slots: a character file and an account (user) file,
   // each with its own dirty flag. `active` picks which one the UI shows/edits.
   const slots = $state<{ char: OpenOutcome | null; user: OpenOutcome | null }>({
@@ -327,8 +331,16 @@
   }}
 />
 
-<main class="layout">
-  <Sidebar onOpen={openFile} onShowAccounts={() => (mainView = "accounts")} />
+<main class="layout" class:sidebar-collapsed={!sidebarOpen} class:backups-collapsed={!backupsOpen}>
+  {#if sidebarOpen}
+    <Sidebar
+      onOpen={openFile}
+      onShowAccounts={() => (mainView = "accounts")}
+      onCollapse={() => (sidebarOpen = false)} />
+  {:else}
+    <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
+      title="Show file list" aria-label="Show file list">»</button>
+  {/if}
   {#if mainView === "accounts"}
     <AccountsView openPath={current?.status === "opened" ? current.path : null} />
   {:else}
@@ -431,16 +443,22 @@
     {/if}
   </section>
   {#if current?.status === "opened"}
-    <BackupsPanel
-      slot={active}
-      {savedAt}
-      subtitle={openDisplay}
-      onRestored={(outcome) => {
-        slots[active] = outcome;
-        dirtySlots[active] = false;
-        savedAt += 1;
-      }}
-    />
+    {#if backupsOpen}
+      <BackupsPanel
+        slot={active}
+        {savedAt}
+        subtitle={openDisplay}
+        onCollapse={() => (backupsOpen = false)}
+        onRestored={(outcome) => {
+          slots[active] = outcome;
+          dirtySlots[active] = false;
+          savedAt += 1;
+        }}
+      />
+    {:else}
+      <button class="rail rail-right" onclick={() => (backupsOpen = true)}
+        title="Show backups" aria-label="Show backups">«</button>
+    {/if}
   {/if}
   {#if insertTarget !== null}
     <div class="overlay" role="none" onclick={() => (insertTarget = null)}>

@@ -1,11 +1,34 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, errMessage, type Profile } from "./api";
+  import { api, errMessage, type Profile, type SettingsFile } from "./api";
   import { names, resolveNames, refreshNames } from "./names.svelte";
   import { aliasFor, loadRoster } from "./accounts.svelte";
 
-  let { onOpen, onShowAccounts }: { onOpen: (path: string) => void; onShowAccounts: () => void } =
+  let {
+    onOpen,
+    onShowAccounts,
+    onCollapse,
+  }: { onOpen: (path: string) => void; onShowAccounts: () => void; onCollapse: () => void } =
     $props();
+
+  // Displayed name for a file: resolved character name, else account alias, else
+  // null when it's still a bare id (name unresolved / no alias) — those sort last.
+  const resolvedName = (f: SettingsFile): string | null => {
+    if (f.kind === "char" && f.id != null) return names[f.id]?.name ?? null;
+    if (f.kind === "user" && f.id != null) return aliasFor(f.id) ?? null;
+    return null;
+  };
+
+  // Alphabetical by resolved name; unresolved (bare-id) files sort below the
+  // named ones, ordered among themselves by file name.
+  const byName = (a: SettingsFile, b: SettingsFile) => {
+    const na = resolvedName(a);
+    const nb = resolvedName(b);
+    if (na && nb) return na.localeCompare(nb);
+    if (na) return -1;
+    if (nb) return 1;
+    return a.file_name.localeCompare(b.file_name);
+  };
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
@@ -90,15 +113,19 @@
 </script>
 
 <aside class="sidebar">
-  <div class="sidebar-actions">
-    <button onclick={pickFile}>Open file…</button>
-    <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
-    <button
-      onclick={refreshNamesClick}
-      disabled={namesBusy}
-      title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
-    <button onclick={onShowAccounts} title="Manage account names and character associations"
-      >Accounts</button>
+  <div class="sidebar-top">
+    <div class="sidebar-actions">
+      <button onclick={pickFile}>Open file…</button>
+      <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
+      <button
+        onclick={refreshNamesClick}
+        disabled={namesBusy}
+        title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
+      <button onclick={onShowAccounts} title="Manage account names and character associations"
+        >Accounts</button>
+    </div>
+    <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
+      >«</button>
   </div>
   <label class="toggle" title="Show only EVE's own core_char_<id>.dat / core_user_<id>.dat files">
     <input type="checkbox" bind:checked={hideNonStandard} />
@@ -112,9 +139,9 @@
   {#each rows as { p, label, primary } (p.dir)}
     {@const visible = p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name))}
     {@const groups = [
-      { title: "Characters", files: visible.filter((f) => f.kind === "char") },
-      { title: "Accounts", files: visible.filter((f) => f.kind === "user") },
-      { title: "Other", files: visible.filter((f) => f.kind === "other") },
+      { title: "Characters", files: visible.filter((f) => f.kind === "char").sort(byName) },
+      { title: "Accounts", files: visible.filter((f) => f.kind === "user").sort(byName) },
+      { title: "Other", files: visible.filter((f) => f.kind === "other").sort(byName) },
     ]}
     <details open={primary}>
       <summary title={p.dir}>
@@ -125,24 +152,19 @@
            displayed name are never ambiguous. -->
       {#each groups as g (g.title)}
         {#if g.files.length > 0}
-          <p class="group">{g.title}</p>
-          <ul>
-            {#each g.files as f (f.path)}
-              {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
-              {@const fileLabel =
-                hit
-                  ? hit.name
-                  : f.kind === "user" && f.id != null && aliasFor(f.id)
-                    ? aliasFor(f.id)
-                    : f.file_name}
-              <li>
-                <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-                  {fileLabel}
-                  <span class="meta">{Math.round(f.size / 1024)} KB</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <details class="group-fold" open>
+            <summary class="group">{g.title}</summary>
+            <ul>
+              {#each g.files as f (f.path)}
+                <li>
+                  <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+                    {resolvedName(f) ?? f.file_name}
+                    <span class="meta">{Math.round(f.size / 1024)} KB</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </details>
         {/if}
       {/each}
     </details>
@@ -169,5 +191,21 @@
     letter-spacing: 0.05em;
     color: var(--fg-dim);
     opacity: 0.85;
+    cursor: pointer;
+  }
+  /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
+     takes the remaining width and wraps within it. */
+  .sidebar-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .sidebar-top .sidebar-actions {
+    flex: 1;
+    margin-bottom: 0;
+  }
+  .collapse {
+    padding: 0 6px;
   }
 </style>
