@@ -54,6 +54,8 @@ Workflow:
   everything. Note `search.ts`'s `searchTree` is not reusable here — it walks a
   `TreeNodeData` tree, whereas this is a flat `RememberedList[]`, so a plain
   case-insensitive filter is all it needs, not new machinery. _Added 2026-07-17._
+  **Implemented 2026-07-17 (filter box over `sorted`, matching label + raw widget
+  path + entries; filter-scoped empty state) — awaiting release.**
 
 - [ ] **Keep the current view when switching files.** Opening a file always
   snaps the editor back to the Tree tab (`+page.svelte:171`, `view = "tree"` in
@@ -69,7 +71,9 @@ Workflow:
   availability isn't known at reset time. Preserve the desired view and clamp it
   to Tree once availability is recomputed, rather than deciding at line 171.
   Leave `revealInTree` (`+page.svelte:117`) alone — that jump to Tree is
-  deliberate. _Added 2026-07-17._
+  deliberate. _Added 2026-07-17._ **Implemented 2026-07-17 (capture the prior
+  view, reset to Tree during the async load, promote back once availability is
+  known via `viewAvailable`) — awaiting release.**
 
 - [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
   backups panel) retractable/collapsible so the center pane can grow — useful
