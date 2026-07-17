@@ -55,8 +55,17 @@
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
-  let view: "tree" | "layout" | "overview" | "autofill" = $state("tree");
+  type View = "tree" | "layout" | "overview" | "autofill";
+  let view: View = $state("tree");
   let layoutAvailable = $state(false);
+  // Whether a view has anything to show for the currently open file(s) — the same
+  // conditions that gate each view's tab button below. Used to keep the user on
+  // their current tab across a file switch when the new file still supports it.
+  const viewAvailable = (v: View) =>
+    v === "tree" ||
+    (v === "layout" && layoutAvailable) ||
+    (v === "overview" && (openCharId !== null || slots.user?.status === "opened")) ||
+    (v === "autofill" && slots.user?.status === "opened");
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
@@ -168,6 +177,11 @@
       dirtySlots[slot] = false;
       active = slot;
       savedAt += 1;
+      // Keep the tab the user was on if the new file still supports it (switching
+      // between two chars shouldn't bounce you out of Layout), but reset to Tree
+      // while the new file loads so no view renders against stale data — its
+      // availability (esp. layoutAvailable) isn't known until the awaits below.
+      const priorView = view;
       view = "tree";
       mainView = "file";
       selectedWindowId = null;
@@ -183,6 +197,7 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
+      if (viewAvailable(priorView)) view = priorView;
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
