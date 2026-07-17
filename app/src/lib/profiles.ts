@@ -10,6 +10,25 @@ import type { Profile } from "./api";
  * only in that case, the install name is appended to tell them apart, so the
  * common case stays short.
  */
+/**
+ * The profile actually in use: the one whose files were touched most recently.
+ * `null` when there are no profiles, or when none carries a usable timestamp —
+ * callers then have nothing better to guess with. Ties keep the first, which is
+ * discovery's alphabetical order.
+ */
+export function primaryProfileDir(profiles: Profile[]): string | null {
+  let best: string | null = null;
+  let bestTime = 0;
+  for (const p of profiles) {
+    const touched = p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
+    if (touched > bestTime) {
+      bestTime = touched;
+      best = p.dir;
+    }
+  }
+  return best;
+}
+
 export function profileLabels(profiles: Profile[]): Map<string, string> {
   const key = (p: Profile) => `${p.server} / ${p.profile}`;
   const seen = new Map<string, number>();

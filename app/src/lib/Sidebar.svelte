@@ -4,7 +4,7 @@
   import { resolveNames, refreshNames } from "./names.svelte";
   import { loadRoster } from "./accounts.svelte";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
-  import { profileLabels } from "./profiles";
+  import { primaryProfileDir, profileLabels } from "./profiles";
 
   let {
     onOpen,
@@ -39,18 +39,9 @@
   // and opened. Array.sort is stable, so the rest keep their alphabetical run.
   const rows = $derived.by(() => {
     const labels = profileLabels(profiles);
-
-    const touched = (p: Profile) =>
-      p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
-    const times = profiles.map(touched);
-    const newest = times.reduce((best, t, i) => (t > times[best] ? i : best), 0);
-
+    const primaryDir = primaryProfileDir(profiles);
     return profiles
-      .map((p, i) => ({
-        p,
-        label: labels.get(p.dir)!,
-        primary: i === newest && times[i] > 0,
-      }))
+      .map((p) => ({ p, label: labels.get(p.dir)!, primary: p.dir === primaryDir }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
   });
 

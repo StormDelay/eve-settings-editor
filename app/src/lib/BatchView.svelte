@@ -2,18 +2,15 @@
   import { untrack } from "svelte";
   import { api, errMessage, type Profile, type Category, type BatchCandidate, type BatchTargetResult, type BatchOp } from "./api";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
-  import { profileLabels } from "./profiles";
+  import { primaryProfileDir, profileLabels } from "./profiles";
 
   let { openPath }: { openPath: string | null } = $props();
 
   // All char/user files across discovery, as source options.
   let profiles = $state<Profile[]>([]);
   api.discover().then((p) => (profiles = p)).catch(() => {});
-  // Discovery spans every profile, so the same character name can appear more
-  // than once — each entry carries its profile's label to tell them apart.
-  const sources = $derived.by(() => {
-    const labels = profileLabels(profiles);
-    return profiles
+  const sources = $derived(
+    profiles
       .flatMap((p) =>
         p.files
           .filter((f) => f.kind === "char" || f.kind === "user")
@@ -22,11 +19,37 @@
             file_name: f.file_name,
             id: f.id,
             kind: f.kind,
-            folder: labels.get(p.dir)!,
+            dir: p.dir,
           })),
       )
-      .sort(byResolvedName);
+      .sort(byResolvedName),
+  );
+
+  // Discovery spans every profile, and the same character name can appear in
+  // several — so the source is picked in two steps, profile then file, rather
+  // than from one long ambiguous list. Only profiles holding a usable file are
+  // offered.
+  const folders = $derived.by(() => {
+    const labels = profileLabels(profiles);
+    return profiles
+      .filter((p) => sources.some((s) => s.dir === p.dir))
+      .map((p) => ({ dir: p.dir, label: labels.get(p.dir)! }));
   });
+
+  // The folder follows the chosen file, so opening the view on a file lands on
+  // its profile; with nothing chosen, the profile actually in use (most
+  // recently touched) is the best guess. An explicit pick overrides both.
+  let folderPick = $state<string | null>(null);
+  const autoFolder = $derived(
+    sources.find((s) => s.path === sourcePath)?.dir ?? primaryProfileDir(profiles),
+  );
+  const folder = $derived(folderPick ?? autoFolder);
+  const filesInFolder = $derived(sources.filter((s) => s.dir === folder));
+
+  function pickFolder(dir: string) {
+    folderPick = dir;
+    sourcePath = null; // the previously picked file lives in another profile
+  }
 
   // Defaults to the file open in the editor when this view mounts; the user
   // can then pick a different source, so only the initial value is captured.
@@ -118,11 +141,18 @@
   <h2>Batch apply</h2>
 
   <section>
+    <label for="folder">Profile</label>
+    <select id="folder" value={folder} onchange={(e) => pickFolder(e.currentTarget.value)}>
+      {#each folders as f}
+        <option value={f.dir}>{f.label}</option>
+      {/each}
+    </select>
+
     <label for="src">Source file</label>
     <select id="src" bind:value={sourcePath}>
       <option value={null} disabled>Choose a file…</option>
-      {#each sources as s}
-        <option value={s.path}>{s.folder} · {nameOf(s.id, s.kind, s.file_name)} — {s.kind} — {s.file_name}</option>
+      {#each filesInFolder as s}
+        <option value={s.path}>{nameOf(s.id, s.kind, s.file_name)} — {s.kind} — {s.file_name}</option>
       {/each}
     </select>
   </section>
