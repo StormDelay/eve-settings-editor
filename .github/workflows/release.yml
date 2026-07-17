@@ -30,6 +30,29 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
+      # Build the release body from this tag's CHANGELOG section so each release
+      # ships a real summary, not a bare pointer. bash is available on all three
+      # runners (Windows via Git Bash). Falls back to the generic note if the
+      # section is missing.
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # index()-based matching, not regex: the header contains '[' and ']',
+          # which are regex metacharacters that gawk mangles under escaping.
+          section=$(awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { grab=1; next }
+            grab && index($0, "## [") == 1 { exit }
+            grab { print }
+          ' CHANGELOG.md)
+          {
+            echo 'RELEASE_BODY<<__EOF__'
+            if [ -n "$(printf '%s' "$section" | tr -d '[:space:]')" ]; then
+              printf '%s\n\n' "$section"
+            fi
+            echo 'Unsigned builds — expect OS warnings on first launch (spec §11).'
+            echo '__EOF__'
+          } >> "$GITHUB_ENV"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,7 +61,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "EVE Settings Editor ${{ github.ref_name }}"
           releaseDraft: true
-          releaseBody: "See CHANGELOG.md. Unsigned builds — expect OS warnings (spec §11)."
+          releaseBody: ${{ env.RELEASE_BODY }}
 
   # The bundler names assets by extension only (.msi/.dmg/.AppImage), so which
   # OS a file is for isn't obvious in the release list. Prefix each with its OS
