@@ -815,16 +815,24 @@ mod tests {
         fs::write(&bad, [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap(); // non-canonical -> ReadOnly
 
         let op = BatchOp::Categories { categories: vec![Category::Autofill] };
-        let targets = vec![good.to_string_lossy().into_owned(), bad.to_string_lossy().into_owned()];
+        // `bad` comes FIRST and `good` comes AFTER it: a break-on-failure
+        // regression would leave `good` unprocessed, so this ordering is what
+        // makes the test able to catch that regression (a [good, bad] order
+        // would look identical whether or not the batch halted on `bad`).
+        let bad_path = bad.to_string_lossy().into_owned();
+        let good_path = good.to_string_lossy().into_owned();
+        let targets = vec![bad_path.clone(), good_path.clone()];
         let results = batch_apply(src.to_str().unwrap(), op, &targets).unwrap();
 
         assert_eq!(results.len(), 2);
-        let g = results.iter().find(|r| r.path == targets[0]).unwrap();
-        assert!(g.ok && g.backup_path.is_some());
-        let bd = results.iter().find(|r| r.path == targets[1]).unwrap();
+        let bd = results.iter().find(|r| r.path == bad_path).unwrap();
         assert!(!bd.ok && bd.error.is_some(), "read-only target failed but did not halt the batch");
+        let g = results.iter().find(|r| r.path == good_path).unwrap();
+        assert!(g.ok && g.backup_path.is_some());
 
-        // The good target actually received the source category.
+        // The good target — processed AFTER the failing one — actually
+        // received the source's category; a break-on-failure regression
+        // would never reach it.
         let reread = decode(&fs::read(&good).unwrap()).unwrap();
         assert_eq!(project_edit_history(&reread)[0].widget, "/from_source");
     }
@@ -852,12 +860,29 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let src = dir.join("core_user_1.dat");
         fs::write(&src, [0xFF, 0xFF]).unwrap(); // undecodable
+        let target = dir.join("core_user_2.dat");
+        let target_bytes = af_bytes("/untouched", "Dodixie");
+        fs::write(&target, &target_bytes).unwrap();
+
         let err = batch_apply(
             src.to_str().unwrap(),
             BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[],
+            &[target.to_string_lossy().into_owned()],
         )
         .unwrap_err();
         assert_eq!(err.code, "decode");
+
+        // The target must be byte-identical to before the call: this proves
+        // the op aborted before touching any target, not merely that it
+        // surfaced an error (an empty target list would prove that trivially).
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            target_bytes,
+            "target must be untouched when the source fails to decode"
+        );
+        assert!(
+            !dir.join("eve-settings-editor-backups").exists(),
+            "no backup should have been created"
+        );
     }
 }
