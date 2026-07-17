@@ -232,11 +232,17 @@ mod tests {
         let src = dir.join("core_char_1.dat");
         let dst = dir.join("core_char_2.dat");
         let src_bytes = encode(&user_a()).unwrap();
+        let dst_bytes = encode(&user_b()).unwrap();
         std::fs::write(&src, &src_bytes).unwrap();
-        std::fs::write(&dst, encode(&user_b()).unwrap()).unwrap();
+        std::fs::write(&dst, &dst_bytes).unwrap();
 
         let backup = full_copy_to(&src_bytes, &dst).unwrap();
         assert!(backup.exists(), "target backed up before overwrite");
+        assert_eq!(
+            std::fs::read(&backup).unwrap(),
+            dst_bytes,
+            "backup captured target's pre-overwrite bytes"
+        );
         assert_eq!(std::fs::read(&dst).unwrap(), src_bytes, "target now byte-identical to source");
     }
 
