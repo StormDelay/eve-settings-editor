@@ -1,8 +1,8 @@
 // Run: npm test  (node --test; Node strips the types itself). No test
 // framework and no @types/node on purpose — the frontend dependency list stays
 // as scaffolded. A throw is a failing exit code, which is all a runner needs.
-import { profileLabels } from "./profiles.ts";
-import type { Profile } from "./api.ts";
+import { primaryProfileDir, profileLabels } from "./profiles.ts";
+import type { Profile, SettingsFile } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -75,6 +75,49 @@ const profile = (install: string, server: string, name: string): Profile => ({
 
 {
   check("no profiles yields no labels", profileLabels([]).size === 0);
+}
+
+// primaryProfileDir: the profile actually in use is the most recently touched.
+const file = (name: string, modified: number | null): SettingsFile => ({
+  path: `/x/${name}`,
+  file_name: name,
+  kind: "char",
+  id: 1,
+  size: 1,
+  modified_unix: modified,
+});
+
+const withFiles = (dir: string, files: SettingsFile[]): Profile => ({
+  install: "i",
+  server: "tranquility",
+  profile: "Default",
+  dir,
+  files,
+});
+
+{
+  const older = withFiles("/a", [file("core_char_1.dat", 100)]);
+  const newer = withFiles("/b", [file("core_char_2.dat", 500)]);
+  check(
+    "picks the most recently touched profile",
+    primaryProfileDir([older, newer]) === "/b",
+  );
+  check("order does not matter", primaryProfileDir([newer, older]) === "/b");
+}
+
+{
+  // A profile's recency is its newest file, not its first or its average.
+  const a = withFiles("/a", [file("x.dat", 10), file("y.dat", 900)]);
+  const b = withFiles("/b", [file("z.dat", 500)]);
+  check("a profile is as recent as its newest file", primaryProfileDir([a, b]) === "/a");
+}
+
+{
+  check("no profiles yields null", primaryProfileDir([]) === null);
+  check(
+    "profiles without timestamps yield null rather than a false guess",
+    primaryProfileDir([withFiles("/a", [file("x.dat", null)]), withFiles("/b", [])]) === null,
+  );
 }
 
 console.log("profiles.test.ts: all checks passed");
