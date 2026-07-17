@@ -26,7 +26,7 @@ pub use save::{save, SaveError, SaveReport}; // enabled in Task 6
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, StackField, WindowLayout, WindowRect};
 pub use overview::{project_overview, set_column_order, set_column_visible, set_column_width, OverviewColumn, OverviewColumns, OverviewError, OverviewTab, OverviewWindow};
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
-pub use batch::{apply_to_tree, extract_categories, Category};
+pub use batch::{apply_categories_to, apply_to_tree, extract_categories, full_copy_to, Category};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {

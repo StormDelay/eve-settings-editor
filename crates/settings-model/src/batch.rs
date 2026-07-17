@@ -8,7 +8,10 @@
 
 use blue_marshal::Value;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
+use crate::document::{Document, LoadError};
+use crate::save::{save, SaveReport};
 use crate::treewalk::{inline_all, is_bytes, Entries};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +62,30 @@ pub fn apply_to_tree(target: &mut Value, extracted: &[(Category, Value)]) {
             None => parent.push((Value::Bytes(last[0].to_vec()), subtree.clone())),
         }
     }
+}
+
+/// Back up `target`, then atomically overwrite it with `source_bytes`. Byte-for-
+/// byte; the source is already a valid file. Returns the backup path.
+pub fn full_copy_to(source_bytes: &[u8], target: &Path) -> Result<PathBuf, String> {
+    let backup = crate::save::backup_current(target)?;
+    crate::save::atomic_write(target, source_bytes)?;
+    Ok(backup)
+}
+
+/// Load `target`, splice each extracted category in, and run the full save chain
+/// (encode -> verify -> backup -> atomic write; ReadOnly targets are refused).
+/// `force_conflict = true`: the target is loaded fresh in this call, so there is
+/// no genuine conflict to guard against.
+pub fn apply_categories_to(
+    target: &Path,
+    extracted: &[(Category, Value)],
+) -> Result<SaveReport, String> {
+    let mut doc = Document::load(target).map_err(|e| match e {
+        LoadError::Io(m) => format!("Io: {m}"),
+        LoadError::Decode { message, .. } => format!("Decode: {message}"),
+    })?;
+    apply_to_tree(&mut doc.value, extracted);
+    save(&mut doc, true).map_err(|e| format!("{e:?}"))
 }
 
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
@@ -190,5 +217,54 @@ mod tests {
         let extracted = extract_categories(&user_a(), &[Category::Autofill]);
         apply_to_tree(&mut target, &extracted);
         encode(&target).expect("post-splice target encodes (outside Ref inlined, not dangled)");
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("batch-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn full_copy_overwrites_bytes_and_backs_up() {
+        let dir = temp_dir("full");
+        let src = dir.join("core_char_1.dat");
+        let dst = dir.join("core_char_2.dat");
+        let src_bytes = encode(&user_a()).unwrap();
+        std::fs::write(&src, &src_bytes).unwrap();
+        std::fs::write(&dst, encode(&user_b()).unwrap()).unwrap();
+
+        let backup = full_copy_to(&src_bytes, &dst).unwrap();
+        assert!(backup.exists(), "target backed up before overwrite");
+        assert_eq!(std::fs::read(&dst).unwrap(), src_bytes, "target now byte-identical to source");
+    }
+
+    #[test]
+    fn category_apply_replaces_only_the_category_on_disk() {
+        let dir = temp_dir("cat");
+        let dst = dir.join("core_user_2.dat");
+        std::fs::write(&dst, encode(&user_b()).unwrap()).unwrap();
+
+        let extracted = extract_categories(&user_a(), &[Category::Autofill]);
+        let report = apply_categories_to(&dst, &extracted).unwrap();
+        assert!(report.backup_path.exists());
+
+        let reread = decode(&std::fs::read(&dst).unwrap()).unwrap();
+        let lists = crate::autofill::project_edit_history(&reread);
+        assert_eq!(lists[0].widget, "/a", "category came from the source");
+        let Value::Dict(root) = &reread else { panic!() };
+        assert!(root.iter().any(|(k, _)| is_bytes(k, b"keep")), "sibling key preserved on disk");
+    }
+
+    #[test]
+    fn category_apply_refuses_a_read_only_target() {
+        // A non-canonical stream (INT8-encoded 1) loads ReadOnly; save refuses it.
+        let dir = temp_dir("ro");
+        let dst = dir.join("core_user_3.dat");
+        std::fs::write(&dst, [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap();
+        let extracted = extract_categories(&user_a(), &[Category::Autofill]);
+        let err = apply_categories_to(&dst, &extracted).unwrap_err();
+        assert!(err.contains("ReadOnly"), "read-only target surfaced as an error: {err}");
     }
 }
