@@ -20,6 +20,15 @@ Workflow:
   warnings. A design §11 "go public" item; low effort, high value once anyone
   outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
 
+- [ ] **Write informative GitHub release notes.** Every release (v0.1.0–v0.4.0)
+  carries the same generic body — `.github/workflows/release.yml:41` hardcodes
+  `releaseBody: "See CHANGELOG.md. Unsigned builds — expect OS warnings…"`. Go
+  back and give each published release a real summary (the milestone's headline
+  features, drawn from its CHANGELOG section) instead of a bare changelog pointer,
+  and improve the release-prep flow so future releases ship an informative body
+  (inject the CHANGELOG section into `releaseBody`, or fill in the draft before
+  publishing). _Added 2026-07-17._
+
 - [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
   backups panel) retractable/collapsible so the center pane can grow — useful
   when editing window placements on the layout canvas, which wants as much
