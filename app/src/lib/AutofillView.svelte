@@ -21,6 +21,20 @@
     lists ? [...lists].sort((a, b) => labelFor(a.widget).localeCompare(labelFor(b.widget))) : [],
   );
 
+  // Filter box: narrow to lists whose label, raw widget path, or any remembered
+  // entry contains the query ("which list has that station name?"). Empty shows all.
+  let query = $state("");
+  const filtered = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter(
+      (l) =>
+        labelFor(l.widget).toLowerCase().includes(q) ||
+        l.widget.toLowerCase().includes(q) ||
+        l.entries.some((e) => e.toLowerCase().includes(q)),
+    );
+  });
+
   async function commit(widget: string, entries: string[]) {
     try { lists = await api.setAutofillList(widget, entries); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
@@ -65,9 +79,13 @@
   <p class="hint">No remembered text in this account file yet.</p>
 {:else if lists}
   <div class="af-top">
+    <input class="af-filter" type="text" placeholder="Filter lists…" bind:value={query} />
     <button class="danger" onclick={clearAll}>Clear all remembered text</button>
   </div>
-  {#each sorted as l (l.widget)}
+  {#if filtered.length === 0}
+    <p class="hint">No lists match “{query}”.</p>
+  {/if}
+  {#each filtered as l (l.widget)}
     <section class="af-list">
       <header>
         <span class="title" title={l.widget}>{labelFor(l.widget)}</span>
@@ -105,7 +123,8 @@
 {/if}
 
 <style>
-  .af-top { margin-bottom: 0.75rem; }
+  .af-top { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.75rem; }
+  .af-filter { flex: 1; max-width: 20rem; }
   .af-list { margin-bottom: 1rem; }
   .af-list header { display: flex; align-items: baseline; gap: 0.6rem; }
   .af-list .title { font-weight: 600; }
