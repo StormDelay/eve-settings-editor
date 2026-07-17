@@ -7,9 +7,14 @@
   let {
     onOpen,
     onShowAccounts,
+    onShowBatch,
     onCollapse,
-  }: { onOpen: (path: string) => void; onShowAccounts: () => void; onCollapse: () => void } =
-    $props();
+  }: {
+    onOpen: (path: string) => void;
+    onShowAccounts: () => void;
+    onShowBatch: () => void;
+    onCollapse: () => void;
+  } = $props();
 
   // Displayed name for a file: resolved character name, else account alias, else
   // null when it's still a bare id (name unresolved / no alias) — those sort last.
@@ -123,6 +128,8 @@
         title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
       <button onclick={onShowAccounts} title="Manage account names and character associations"
         >Accounts</button>
+      <button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first"
+        >Batch apply</button>
     </div>
     <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
       >«</button>
