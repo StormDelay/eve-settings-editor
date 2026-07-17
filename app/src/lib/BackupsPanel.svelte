@@ -7,11 +7,13 @@
     savedAt,
     subtitle,
     onRestored,
+    onCollapse,
   }: {
     slot: Slot;
     savedAt: number;
     subtitle: string | null;
     onRestored: (outcome: OpenOutcome) => void;
+    onCollapse: () => void;
   } = $props();
 
   let backups: BackupInfo[] = $state([]);
@@ -46,7 +48,11 @@
 </script>
 
 <aside class="backups">
-  <h3>Backups</h3>
+  <div class="backups-head">
+    <button class="collapse" onclick={onCollapse} title="Hide backups" aria-label="Hide backups"
+      >»</button>
+    <h3>Backups</h3>
+  </div>
   {#if subtitle}<p class="subtitle" title={subtitle}>{subtitle}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
   {#if backups.length === 0}
@@ -64,6 +70,20 @@
 </aside>
 
 <style>
+  .backups-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  /* The default h3 top margin pushes the whole head (and its chevron) down;
+     zero it so the chevron pins to the top-left, symmetric with the sidebar's. */
+  .backups-head h3 {
+    margin: 0;
+  }
+  .collapse {
+    padding: 0 6px;
+  }
   .subtitle {
     margin: -0.25rem 0 0.5rem;
     font-size: 0.85em;

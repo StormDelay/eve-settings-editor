@@ -130,6 +130,30 @@ fn leading_u64(stem_rest: &str) -> Option<u64> {
     digits.parse::<u64>().ok()
 }
 
+/// The one definition of the `core_char_`/`core_user_` prefix rules: derive
+/// kind + id from a `.dat` stem (file name minus the `.dat` extension).
+/// Routed through by both the scan loop below and `file_kind`, so a caller
+/// re-deriving a path's kind elsewhere (e.g. a trust-boundary check) can
+/// never drift from what `discover` itself considers a char/user file.
+fn kind_and_id(stem: &str) -> (FileKind, Option<u64>) {
+    if let Some(rest) = stem.strip_prefix("core_char_") {
+        (FileKind::Char, leading_u64(rest))
+    } else if let Some(rest) = stem.strip_prefix("core_user_") {
+        (FileKind::User, leading_u64(rest))
+    } else {
+        (FileKind::Other, None)
+    }
+}
+
+/// Derive a settings file's kind from its path's file name alone (no
+/// directory scan). For callers that must re-verify a path's kind at a
+/// trust boundary without re-running `discover`.
+pub fn file_kind(path: &Path) -> FileKind {
+    let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = file_name.trim_end_matches(".dat");
+    kind_and_id(stem).0
+}
+
 fn collect_files(dir: &Path) -> Vec<SettingsFile> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else { return out };
@@ -140,13 +164,7 @@ fn collect_files(dir: &Path) -> Vec<SettingsFile> {
             continue;
         }
         let stem = file_name.trim_end_matches(".dat");
-        let (kind, id) = if let Some(rest) = stem.strip_prefix("core_char_") {
-            (FileKind::Char, leading_u64(rest))
-        } else if let Some(rest) = stem.strip_prefix("core_user_") {
-            (FileKind::User, leading_u64(rest))
-        } else {
-            (FileKind::Other, None)
-        };
+        let (kind, id) = kind_and_id(stem);
         let meta = entry.metadata().ok();
         out.push(SettingsFile {
             path,
@@ -214,6 +232,15 @@ mod tests {
     fn missing_roots_yield_empty_not_error() {
         let ghost = std::env::temp_dir().join("settings-model-no-such-root");
         assert!(discover(&[ghost]).is_empty());
+    }
+
+    #[test]
+    fn file_kind_derives_from_the_path_file_name_alone() {
+        assert_eq!(file_kind(Path::new("/x/core_char_123456789.dat")), FileKind::Char);
+        assert_eq!(file_kind(Path::new("/x/core_user_987654.dat")), FileKind::User);
+        // Anomalous name: still Char kind, matching discover's own tolerance.
+        assert_eq!(file_kind(Path::new("/x/core_char__.dat")), FileKind::Char);
+        assert_eq!(file_kind(Path::new("/x/prefs.ini")), FileKind::Other);
     }
 
     #[test]

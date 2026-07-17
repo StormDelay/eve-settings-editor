@@ -1,11 +1,26 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, errMessage, type Profile } from "./api";
-  import { names, resolveNames, refreshNames } from "./names.svelte";
-  import { aliasFor, loadRoster } from "./accounts.svelte";
+  import { resolveNames, refreshNames } from "./names.svelte";
+  import { loadRoster } from "./accounts.svelte";
+  import { byResolvedName, resolvedName } from "./filesort.svelte";
+  import { primaryProfileDir, profileLabels } from "./profiles";
 
-  let { onOpen, onShowAccounts }: { onOpen: (path: string) => void; onShowAccounts: () => void } =
-    $props();
+  let {
+    onOpen,
+    onShowAccounts,
+    onShowBatch,
+    onCollapse,
+  }: {
+    onOpen: (path: string) => void;
+    onShowAccounts: () => void;
+    onShowBatch: () => void;
+    onCollapse: () => void;
+  } = $props();
+
+  // Naming and ordering come from filesort, shared with the batch-apply target
+  // list so the two cannot drift apart.
+  const byName = byResolvedName;
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
@@ -17,28 +32,16 @@
   let hideNonStandard = $state(true);
   const isStandardName = (name: string) => /^core_(char|user)_\d+\.dat$/.test(name);
 
-  // Two installs can hold the same server and profile name (a SharedCache dir
-  // and a legacy one both with settings_Default) — then, and only then, the
-  // install name is what tells them apart. Full path is on the tooltip.
+  // Profile labels come from profiles.ts, shared with the batch-apply source
+  // picker (which faces the same ambiguity). Full path is on the tooltip.
   // discover() returns them alphabetically; the profile whose files were
   // touched most recently is the one actually in use, so it gets pinned on top
   // and opened. Array.sort is stable, so the rest keep their alphabetical run.
   const rows = $derived.by(() => {
-    const seen = new Map<string, number>();
-    const key = (p: Profile) => `${p.server} / ${p.profile}`;
-    for (const p of profiles) seen.set(key(p), (seen.get(key(p)) ?? 0) + 1);
-
-    const touched = (p: Profile) =>
-      p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
-    const times = profiles.map(touched);
-    const newest = times.reduce((best, t, i) => (t > times[best] ? i : best), 0);
-
+    const labels = profileLabels(profiles);
+    const primaryDir = primaryProfileDir(profiles);
     return profiles
-      .map((p, i) => ({
-        p,
-        label: seen.get(key(p))! > 1 ? `${key(p)} · ${p.install}` : key(p),
-        primary: i === newest && times[i] > 0,
-      }))
+      .map((p) => ({ p, label: labels.get(p.dir)!, primary: p.dir === primaryDir }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
   });
 
@@ -90,15 +93,21 @@
 </script>
 
 <aside class="sidebar">
-  <div class="sidebar-actions">
-    <button onclick={pickFile}>Open file…</button>
-    <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
-    <button
-      onclick={refreshNamesClick}
-      disabled={namesBusy}
-      title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
-    <button onclick={onShowAccounts} title="Manage account names and character associations"
-      >Accounts</button>
+  <div class="sidebar-top">
+    <div class="sidebar-actions">
+      <button onclick={pickFile}>Open file…</button>
+      <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
+      <button
+        onclick={refreshNamesClick}
+        disabled={namesBusy}
+        title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
+      <button onclick={onShowAccounts} title="Manage account names and character associations"
+        >Accounts</button>
+      <button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first"
+        >Batch apply</button>
+    </div>
+    <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
+      >«</button>
   </div>
   <label class="toggle" title="Show only EVE's own core_char_<id>.dat / core_user_<id>.dat files">
     <input type="checkbox" bind:checked={hideNonStandard} />
@@ -112,9 +121,9 @@
   {#each rows as { p, label, primary } (p.dir)}
     {@const visible = p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name))}
     {@const groups = [
-      { title: "Characters", files: visible.filter((f) => f.kind === "char") },
-      { title: "Accounts", files: visible.filter((f) => f.kind === "user") },
-      { title: "Other", files: visible.filter((f) => f.kind === "other") },
+      { title: "Characters", files: visible.filter((f) => f.kind === "char").sort(byName) },
+      { title: "Accounts", files: visible.filter((f) => f.kind === "user").sort(byName) },
+      { title: "Other", files: visible.filter((f) => f.kind === "other").sort(byName) },
     ]}
     <details open={primary}>
       <summary title={p.dir}>
@@ -125,24 +134,19 @@
            displayed name are never ambiguous. -->
       {#each groups as g (g.title)}
         {#if g.files.length > 0}
-          <p class="group">{g.title}</p>
-          <ul>
-            {#each g.files as f (f.path)}
-              {@const hit = f.kind === "char" && f.id != null ? names[f.id] : undefined}
-              {@const fileLabel =
-                hit
-                  ? hit.name
-                  : f.kind === "user" && f.id != null && aliasFor(f.id)
-                    ? aliasFor(f.id)
-                    : f.file_name}
-              <li>
-                <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-                  {fileLabel}
-                  <span class="meta">{Math.round(f.size / 1024)} KB</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <details class="group-fold" open>
+            <summary class="group">{g.title}</summary>
+            <ul>
+              {#each g.files as f (f.path)}
+                <li>
+                  <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+                    {resolvedName(f.kind, f.id) ?? f.file_name}
+                    <span class="meta">{Math.round(f.size / 1024)} KB</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </details>
         {/if}
       {/each}
     </details>
@@ -169,5 +173,21 @@
     letter-spacing: 0.05em;
     color: var(--fg-dim);
     opacity: 0.85;
+    cursor: pointer;
+  }
+  /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
+     takes the remaining width and wraps within it. */
+  .sidebar-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .sidebar-top .sidebar-actions {
+    flex: 1;
+    margin-bottom: 0;
+  }
+  .collapse {
+    padding: 0 6px;
   }
 </style>
