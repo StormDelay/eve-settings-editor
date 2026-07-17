@@ -4,6 +4,7 @@
   import { resolveNames, refreshNames } from "./names.svelte";
   import { loadRoster } from "./accounts.svelte";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
+  import { profileLabels } from "./profiles";
 
   let {
     onOpen,
@@ -31,16 +32,13 @@
   let hideNonStandard = $state(true);
   const isStandardName = (name: string) => /^core_(char|user)_\d+\.dat$/.test(name);
 
-  // Two installs can hold the same server and profile name (a SharedCache dir
-  // and a legacy one both with settings_Default) — then, and only then, the
-  // install name is what tells them apart. Full path is on the tooltip.
+  // Profile labels come from profiles.ts, shared with the batch-apply source
+  // picker (which faces the same ambiguity). Full path is on the tooltip.
   // discover() returns them alphabetically; the profile whose files were
   // touched most recently is the one actually in use, so it gets pinned on top
   // and opened. Array.sort is stable, so the rest keep their alphabetical run.
   const rows = $derived.by(() => {
-    const seen = new Map<string, number>();
-    const key = (p: Profile) => `${p.server} / ${p.profile}`;
-    for (const p of profiles) seen.set(key(p), (seen.get(key(p)) ?? 0) + 1);
+    const labels = profileLabels(profiles);
 
     const touched = (p: Profile) =>
       p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
@@ -50,7 +48,7 @@
     return profiles
       .map((p, i) => ({
         p,
-        label: seen.get(key(p))! > 1 ? `${key(p)} · ${p.install}` : key(p),
+        label: labels.get(p.dir)!,
         primary: i === newest && times[i] > 0,
       }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
