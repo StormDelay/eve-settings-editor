@@ -7,6 +7,7 @@
   import AccountsView from "$lib/AccountsView.svelte";
   import OverviewView from "$lib/OverviewView.svelte";
   import AutofillView from "$lib/AutofillView.svelte";
+  import BatchView from "$lib/BatchView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
   import { searchTree } from "$lib/search";
@@ -21,7 +22,7 @@
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
-  let mainView: "file" | "accounts" = $state("file");
+  let mainView: "file" | "accounts" | "batch" = $state("file");
   // Side panels collapse to a thin reopen rail so the center pane (esp. the
   // layout canvas) can use the full width. In-memory only; resets on reload.
   let sidebarOpen = $state(true);
@@ -336,6 +337,7 @@
     <Sidebar
       onOpen={openFile}
       onShowAccounts={() => (mainView = "accounts")}
+      onShowBatch={() => (mainView = "batch")}
       onCollapse={() => (sidebarOpen = false)} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
@@ -343,6 +345,8 @@
   {/if}
   {#if mainView === "accounts"}
     <AccountsView openPath={current?.status === "opened" ? current.path : null} />
+  {:else if mainView === "batch"}
+    <BatchView openPath={current?.status === "opened" ? current.path : null} />
   {:else}
   <section class="editor">
     {#if current === null}
