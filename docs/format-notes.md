@@ -59,6 +59,39 @@ measured on the real files; only the identifying numbers were replaced.
   autofill marker appeared in-game with the client otherwise behaving
   normally. This is the spec §8 exit gate: **M1 (M1a + M1b-1 + M1b-2) is
   complete** — the format round-trips, and the client reads what we write.
+- **2026-07-17 — M4 batch apply manual validation PASSED.** All three batch
+  paths were driven against live files through the app's Batch view, each target
+  backed up before being overwritten: a char's window layout copied char → char,
+  a user's autofill lists copied user → user, and a whole-file copy char → char.
+  The EVE client accepted every written file, the settings appeared in-game, and
+  a category-copied target re-opened **Editable** in the app afterwards (proving
+  it decodes and re-encodes identically — no duplicate keys, no corruption).
+  Spec §8 exit gate for M4.
+  **Finding — a layout copy does not make two characters window-identical, and
+  that is not a bug in the copy.** The target came out with one extra overview
+  window plus two extra chat windows. Investigated on the live files: the splice
+  is correct — the target's `windows` went from 299 entries to exactly the
+  source's 40 — and the extras are EVE re-creating them on next login, then
+  flushing on logout (the target's mtime is ~10 min after our backup, and the
+  source's later still). Two distinct causes, both outside the char file's
+  `windows` subtree:
+  - **Overview windows are account-scoped.** How many exist is defined in the
+    `core_user` file's `overview` key (the window groups `project_overview`
+    reads); the char file only stores *where* each one sits. Copying from a char
+    whose account defines 2 overview windows onto a char whose account defines 3
+    left the third recreated at default geometry. Confirmed by projecting the
+    live account files: they define 2 or 3 overview windows depending on the
+    account.
+  - **Chat/convo windows follow the character's runtime state** — EVE recreated
+    the target's own `chatchannel_*` windows (a channel it is in, an open
+    convo) after the copy removed them.
+  So a char-scoped layout copy cannot make two characters match on its own;
+  their accounts' overview config has to match too. Recorded as a ceiling in the
+  M4 spec §7 and as the driver for the M5 cross-file batch-apply milestone
+  (master design §9). Corollary worth knowing: a layout copy discards the
+  target's accumulated per-character window state (299 → 40 here — old convos,
+  fitting windows, mail); that is the intended wholesale-replace semantic, and
+  EVE self-heals whatever it still needs.
 - **2026-07-17 — Autofill editor manual validation PASSED.** A live `core_user`
   file's remembered-text (`editHistory`) lists were edited through the app's new
   Autofill view (add / remove / reorder, then clear-all), each save going through
