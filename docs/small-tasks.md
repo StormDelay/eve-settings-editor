@@ -104,6 +104,23 @@ characters match on its own: how many overview windows exist is account state,
 where each sits is char state. See the M4 spec's §7 ceiling for the evidence.
 _Added 2026-07-17._
 
+Also carried into M5 (deferred from M4, 2026-07-17):
+
+- **Disambiguate the batch target list's folder label.** With "Show other
+  folders" ticked, each target renders `Candidate.folder`, built backend-side as
+  `format!("{}/{}", p.server, p.profile)` (`ops.rs`) — which omits the install
+  name, so two installs holding the same server *and* profile (a SharedCache dir
+  and a legacy one both with `settings_Default`) render identically and the user
+  cannot tell which file they are about to overwrite. Confirmed present on the
+  developer's machine (two `tranquility / Default` profiles). Display-only —
+  `same_folder` is driven by `p.dir` equality, so the safety filter is
+  unaffected. The frontend already solves this for the sidebar and the batch
+  *source* picker via `profiles.ts`'s `profileLabels`, which appends the install
+  name only when a collision exists; the fix is to give the target list the same
+  label, which means either widening `Candidate` or labelling frontend-side from
+  the discovered profiles. Grouped into M5 because that milestone reworks this
+  flow anyway.
+
 **Layout-canvas milestone:**
 
 - **Resize layout windows from any corner.** In the layout canvas, a selected
