@@ -6,6 +6,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-18
+
+Batch apply: copy settings from one file to many, plus sidebar and editor
+quality-of-life improvements.
+
+### Added
+- Batch apply — a new sidebar view that copies settings from one source file to
+  many same-type targets. Copy the whole file, or just a category: window layout
+  between characters, or remembered-text (autofill) lists between accounts. Every
+  target is backed up before it is overwritten, one target's failure never stops
+  the rest, and a per-target result is shown at the end. The source is picked in
+  two steps — profile, then file — so characters with the same name across
+  profiles are never ambiguous, and target files are sorted the same way as the
+  sidebar list.
+- The editor keeps your current tab when you switch files, instead of snapping
+  back to Tree — so moving between characters while working on window layouts no
+  longer bounces you out of the Layout canvas. It falls back to Tree only when the
+  new file doesn't support the current tab.
+- The Autofill view has a filter box that narrows the remembered-text lists as you
+  type, matching the list name, its widget path, or any remembered entry.
+- The sidebar's file-list side panels collapse to a thin rail so the editor can
+  use the full width, and the Characters / Accounts / Other groups fold away.
+  Files within each group are sorted by their resolved character name or account
+  alias, with still-unresolved files listed below.
+
+### Known limitations
+- Copying window layout between characters does not make them window-for-window
+  identical: how many overview windows exist is account-scoped, not stored in the
+  character file, so EVE recreates any the source lacked at their default
+  position on next login. Cross-file batch apply (overview settings and the
+  account-scoped part of window layout) is planned for a following release.
+- The batch preview does not yet warn when a target's screen resolution differs
+  from the source's; window positions are absolute pixels, so copying between
+  differently-sized displays can place windows off-screen (recoverable — every
+  target is backed up).
+
 ## [0.4.0] - 2026-07-17
 
 Autofill editor: edit the client's remembered text-input history.
