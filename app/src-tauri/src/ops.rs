@@ -14,6 +14,7 @@ use settings_model::{
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
+    apply_categories_to, extract_categories, full_copy_to, Category,
 };
 
 use crate::accounts;
@@ -103,6 +104,57 @@ pub fn batch_targets(roots: &[PathBuf], source_path: &str, allow_other_folders: 
         }
     }
     out
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchOp {
+    FullCopy,
+    Categories { categories: Vec<Category> },
+}
+
+#[derive(Debug, Serialize)]
+pub struct TargetResult {
+    pub path: String,
+    pub ok: bool,
+    pub backup_path: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Apply `op` from `source_path` to each target. The source is read (and, for a
+/// category copy, decoded and extracted) exactly once. One target's failure is
+/// recorded and never halts the rest. A source that cannot be read/decoded fails
+/// the whole op up front, before any target is touched.
+pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result<Vec<TargetResult>, ErrDto> {
+    let source = Path::new(source_path);
+    let bytes = fs::read(source).map_err(|e| ErrDto::new("io", e.to_string()))?;
+    match op {
+        BatchOp::FullCopy => Ok(targets
+            .iter()
+            .map(|t| match full_copy_to(&bytes, Path::new(t)) {
+                Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
+                Err(e) => err_result(t, e),
+            })
+            .collect()),
+        BatchOp::Categories { categories } => {
+            let value = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+            let extracted = extract_categories(&value, &categories);
+            Ok(targets
+                .iter()
+                .map(|t| match apply_categories_to(Path::new(t), &extracted) {
+                    Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
+                    Err(e) => err_result(t, e),
+                })
+                .collect())
+        }
+    }
+}
+
+fn ok_result(path: &str, backup: String) -> TargetResult {
+    TargetResult { path: path.to_string(), ok: true, backup_path: Some(backup), error: None }
+}
+fn err_result(path: &str, error: String) -> TargetResult {
+    TargetResult { path: path.to_string(), ok: false, backup_path: None, error: Some(error) }
 }
 
 #[derive(Debug, Serialize)]
@@ -362,7 +414,7 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blue_marshal::{encode, Value};
+    use blue_marshal::{decode, encode, Value};
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}", std::process::id()));
@@ -736,5 +788,76 @@ mod tests {
         assert_eq!(out.len(), 3);
         assert!(out.iter().all(|c| c.file_name.starts_with("core_char_")));
         assert!(out.iter().any(|c| !c.same_folder), "cross-folder candidate present");
+    }
+
+    fn af_bytes(widget: &str, entry: &str) -> Vec<u8> {
+        let hist = Value::Dict(vec![(
+            Value::Bytes(widget.as_bytes().to_vec()),
+            Value::List(vec![Value::Str(entry.into())]),
+        )]);
+        let ui = Value::Dict(vec![(
+            Value::Bytes(b"editHistory".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), hist]),
+        )]);
+        encode(&Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), ui)])).unwrap()
+    }
+
+    #[test]
+    fn batch_apply_categories_reports_per_target_including_a_read_only_failure() {
+        let dir = std::env::temp_dir().join(format!("app-batchapply-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_user_1.dat");
+        let good = dir.join("core_user_2.dat");
+        let bad = dir.join("core_user_3.dat");
+        fs::write(&src, af_bytes("/from_source", "Jita")).unwrap();
+        fs::write(&good, af_bytes("/old", "Amarr")).unwrap();
+        fs::write(&bad, [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap(); // non-canonical -> ReadOnly
+
+        let op = BatchOp::Categories { categories: vec![Category::Autofill] };
+        let targets = vec![good.to_string_lossy().into_owned(), bad.to_string_lossy().into_owned()];
+        let results = batch_apply(src.to_str().unwrap(), op, &targets).unwrap();
+
+        assert_eq!(results.len(), 2);
+        let g = results.iter().find(|r| r.path == targets[0]).unwrap();
+        assert!(g.ok && g.backup_path.is_some());
+        let bd = results.iter().find(|r| r.path == targets[1]).unwrap();
+        assert!(!bd.ok && bd.error.is_some(), "read-only target failed but did not halt the batch");
+
+        // The good target actually received the source category.
+        let reread = decode(&fs::read(&good).unwrap()).unwrap();
+        assert_eq!(project_edit_history(&reread)[0].widget, "/from_source");
+    }
+
+    #[test]
+    fn batch_apply_full_copy_makes_targets_byte_identical() {
+        let dir = std::env::temp_dir().join(format!("app-batchfull-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_char_1.dat");
+        let dst = dir.join("core_char_2.dat");
+        let src_bytes = af_bytes("/x", "y");
+        fs::write(&src, &src_bytes).unwrap();
+        fs::write(&dst, af_bytes("/other", "z")).unwrap();
+
+        let results = batch_apply(src.to_str().unwrap(), BatchOp::FullCopy, &[dst.to_string_lossy().into_owned()]).unwrap();
+        assert!(results[0].ok);
+        assert_eq!(fs::read(&dst).unwrap(), src_bytes);
+    }
+
+    #[test]
+    fn batch_apply_undecodable_source_fails_the_whole_op() {
+        let dir = std::env::temp_dir().join(format!("app-batchbadsrc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("core_user_1.dat");
+        fs::write(&src, [0xFF, 0xFF]).unwrap(); // undecodable
+        let err = batch_apply(
+            src.to_str().unwrap(),
+            BatchOp::Categories { categories: vec![Category::Autofill] },
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "decode");
     }
 }
