@@ -2,8 +2,9 @@
 //! without a Tauri runtime. The `#[tauri::command]` wrappers in lib.rs are
 //! one-liners delegating here.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -14,7 +15,7 @@ use settings_model::{
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
-    apply_categories_to, extract_categories, file_kind, full_copy_to, Category,
+    apply_categories_to, extract_categories, full_copy_to, Category,
 };
 
 use crate::accounts;
@@ -58,59 +59,348 @@ impl ErrDto {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct Candidate {
-    pub path: String,
-    pub file_name: String,
-    pub id: Option<u64>,
-    pub folder: String,
-    pub same_folder: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Aspect {
+    Layout,
+    Overview,
+    Autofill,
+    Everything,
 }
 
-/// Discovered files eligible as batch targets for `source_path`: same file type,
-/// and (unless `allow_other_folders`) the source's own profile folder. The source
-/// itself is never a candidate.
-pub fn batch_targets(roots: &[PathBuf], source_path: &str, allow_other_folders: bool) -> Vec<Candidate> {
+/// What a chosen set of aspects writes, split by file side. Pure derivation of
+/// the single routing table (plan header): the char file, the account file, or
+/// both — as subtree splices or a whole-file copy (`Everything`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AspectWrites {
+    pub char_categories: Vec<Category>,
+    pub account_categories: Vec<Category>,
+    pub char_full_copy: bool,
+    pub account_full_copy: bool,
+}
+
+impl AspectWrites {
+    pub fn writes_account(&self) -> bool {
+        self.account_full_copy || !self.account_categories.is_empty()
+    }
+    pub fn writes_char(&self) -> bool {
+        self.char_full_copy || !self.char_categories.is_empty()
+    }
+    /// True when the char write copies window geometry (drives the off-screen
+    /// resolution warning): a full char copy, or a Layout splice.
+    pub fn copies_char_geometry(&self) -> bool {
+        self.char_full_copy || self.char_categories.contains(&Category::Layout)
+    }
+}
+
+pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
+    if aspects.contains(&Aspect::Everything) {
+        return AspectWrites {
+            char_categories: vec![],
+            account_categories: vec![],
+            char_full_copy: true,
+            account_full_copy: true,
+        };
+    }
+    let mut char_categories = vec![];
+    let mut account_categories = vec![];
+    for a in aspects {
+        match a {
+            Aspect::Layout => char_categories.push(Category::Layout),
+            Aspect::Overview => {
+                char_categories.push(Category::OverviewWidths);
+                account_categories.push(Category::Overview);
+            }
+            Aspect::Autofill => account_categories.push(Category::Autofill),
+            Aspect::Everything => unreachable!("handled above"),
+        }
+    }
+    AspectWrites { char_categories, account_categories, char_full_copy: false, account_full_copy: false }
+}
+
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct SetupPlan {
+    pub char_writes: Vec<CharWrite>,
+    pub account_writes: Vec<AccountWrite>,
+    pub excluded: Vec<ExcludedTarget>,
+    pub source_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CharWrite {
+    pub char_id: u64,
+    pub path: String,
+    pub full_copy: bool,
+    pub resolution_mismatch: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct AccountWrite {
+    pub user_id: u64,
+    pub path: String,
+    pub full_copy: bool,
+    /// Characters on this account that are NOT selected targets — the write
+    /// changes them too.
+    pub collateral_char_ids: Vec<u64>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ExcludedTarget {
+    pub char_id: u64,
+    pub reason: String,
+}
+
+/// The account (user id) that owns `char_id`, per the persisted pairing.
+fn account_of(store: &accounts::AccountsStore, char_id: u64) -> Option<u64> {
+    store.accounts.iter().find(|(_, a)| a.characters.contains(&char_id)).map(|(&uid, _)| uid)
+}
+
+/// Pure planner. All disk-dependent inputs (discovered file paths, the store,
+/// each char's stored screen resolution) are passed in, so this is unit-tested
+/// without a filesystem. Paths are already folder-scoped by the caller.
+pub fn plan_setup(
+    char_paths: &HashMap<u64, PathBuf>,
+    user_paths: &HashMap<u64, PathBuf>,
+    store: &accounts::AccountsStore,
+    resolutions: &HashMap<u64, (i64, i64)>,
+    source_char: u64,
+    target_chars: &[u64],
+    aspects: &[Aspect],
+) -> SetupPlan {
+    let w = aspect_writes(aspects);
+    let mut plan = SetupPlan::default();
+
+    let source_account = account_of(store, source_char);
+    if w.writes_account() {
+        match source_account {
+            None => {
+                plan.source_error = Some(
+                    "The source character has no paired account — pair it in the Accounts view first."
+                        .into(),
+                );
+                return plan;
+            }
+            Some(uid) if !user_paths.contains_key(&uid) => {
+                plan.source_error = Some("The source character's account file was not found.".into());
+                return plan;
+            }
+            _ => {}
+        }
+    }
+    let src_res = resolutions.get(&source_char).copied();
+
+    let mut included: Vec<u64> = Vec::new();
+    for &t in target_chars {
+        if t == source_char {
+            continue;
+        }
+        if !char_paths.contains_key(&t) {
+            plan.excluded.push(ExcludedTarget { char_id: t, reason: "Character file not found in this folder.".into() });
+            continue;
+        }
+        if w.writes_account() {
+            match account_of(store, t) {
+                None => {
+                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "No account paired — pair it in the Accounts view to include.".into() });
+                    continue;
+                }
+                Some(uid) if !user_paths.contains_key(&uid) => {
+                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "Account file not found in this folder.".into() });
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        included.push(t);
+    }
+
+    if w.writes_char() {
+        for &t in &included {
+            let path = char_paths[&t].to_string_lossy().into_owned();
+            let resolution_mismatch = w.copies_char_geometry()
+                && match (src_res, resolutions.get(&t).copied()) {
+                    (Some(s), Some(d)) => s != d && s != (0, 0) && d != (0, 0),
+                    _ => false,
+                };
+            plan.char_writes.push(CharWrite { char_id: t, path, full_copy: w.char_full_copy, resolution_mismatch });
+        }
+    }
+
+    if w.writes_account() {
+        let mut by_account: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        for &t in &included {
+            let uid = account_of(store, t).expect("included target is paired");
+            by_account.entry(uid).or_default().push(t);
+        }
+        for (uid, selected_on_acct) in by_account {
+            if Some(uid) == source_account {
+                continue; // already carries the source's settings
+            }
+            let path = user_paths[&uid].to_string_lossy().into_owned();
+            let selected: HashSet<u64> = selected_on_acct.into_iter().collect();
+            let collateral: Vec<u64> = store
+                .accounts
+                .get(&uid)
+                .map(|a| a.characters.iter().copied().filter(|c| !selected.contains(c)).collect())
+                .unwrap_or_default();
+            plan.account_writes.push(AccountWrite { user_id: uid, path, full_copy: w.account_full_copy, collateral_char_ids: collateral });
+        }
+    }
+
+    plan
+}
+
+/// Discover, folder-scope to the source's profile (unless `allow_other_folders`),
+/// and split into char/user id->path maps. Returns the source char's id too.
+fn scoped_files(
+    roots: &[PathBuf],
+    source_char_path: &str,
+    allow_other_folders: bool,
+) -> Option<(u64, HashMap<u64, PathBuf>, HashMap<u64, PathBuf>)> {
     let profiles = discover(roots);
-    let src = Path::new(source_path);
-    let mut src_kind: Option<&FileKind> = None;
-    let mut src_dir: Option<PathBuf> = None;
+    let src = Path::new(source_char_path);
+    let mut src_id = None;
+    let mut src_dir = None;
     for p in &profiles {
         for f in &p.files {
             if f.path == src {
-                src_kind = Some(&f.kind);
+                src_id = f.id;
                 src_dir = Some(p.dir.clone());
             }
         }
     }
-    let Some(kind) = src_kind else { return Vec::new() };
-    let mut out = Vec::new();
+    let src_id = src_id?;
+    let mut char_paths = HashMap::new();
+    let mut user_paths = HashMap::new();
     for p in &profiles {
-        let same = Some(&p.dir) == src_dir.as_ref();
-        if !same && !allow_other_folders {
+        if !allow_other_folders && Some(&p.dir) != src_dir.as_ref() {
             continue;
         }
         for f in &p.files {
-            if &f.kind != kind || f.path == src {
-                continue;
+            let Some(id) = f.id else { continue };
+            match f.kind {
+                FileKind::Char => { char_paths.insert(id, f.path.clone()); }
+                FileKind::User => { user_paths.insert(id, f.path.clone()); }
+                FileKind::Other => {}
             }
-            out.push(Candidate {
-                path: f.path.to_string_lossy().into_owned(),
-                file_name: f.file_name.clone(),
-                id: f.id,
-                folder: format!("{}/{}", p.server, p.profile),
-                same_folder: same,
-            });
         }
+    }
+    Some((src_id, char_paths, user_paths))
+}
+
+/// Each char's stored screen resolution (reference_w, reference_h), for the
+/// resolution-mismatch warning. Only the source + requested targets are read.
+fn gather_resolutions(char_paths: &HashMap<u64, PathBuf>, ids: &[u64]) -> HashMap<u64, (i64, i64)> {
+    let mut out = HashMap::new();
+    for &id in ids {
+        let Some(path) = char_paths.get(&id) else { continue };
+        let Ok(bytes) = fs::read(path) else { continue };
+        let Ok(value) = blue_marshal::decode(&bytes) else { continue };
+        let wl = project_window_layout(&value);
+        out.insert(id, (wl.reference_w, wl.reference_h));
     }
     out
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum BatchOp {
-    FullCopy,
-    Categories { categories: Vec<Category> },
+/// Map target file paths to char ids within the scoped char map.
+fn target_ids(char_paths: &HashMap<u64, PathBuf>, target_char_paths: &[String]) -> Vec<u64> {
+    target_char_paths
+        .iter()
+        .filter_map(|t| {
+            let tp = Path::new(t);
+            char_paths.iter().find(|(_, p)| p.as_path() == tp).map(|(&id, _)| id)
+        })
+        .collect()
+}
+
+pub fn setup_preview(
+    roots: &[PathBuf],
+    dir: &Path,
+    source_char_path: &str,
+    target_char_paths: &[String],
+    aspects: &[Aspect],
+    allow_other_folders: bool,
+) -> SetupPlan {
+    let Some((src_id, char_paths, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders)
+    else {
+        return SetupPlan { source_error: Some("Source file not found.".into()), ..Default::default() };
+    };
+    let targets = target_ids(&char_paths, target_char_paths);
+    let store = accounts::load_store(dir);
+    let resolutions = if aspect_writes(aspects).copies_char_geometry() {
+        let mut ids = targets.clone();
+        ids.push(src_id);
+        gather_resolutions(&char_paths, &ids)
+    } else {
+        HashMap::new()
+    };
+    plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects)
+}
+
+pub fn setup_apply(
+    roots: &[PathBuf],
+    dir: &Path,
+    source_char_path: &str,
+    target_char_paths: &[String],
+    aspects: &[Aspect],
+    allow_other_folders: bool,
+) -> Result<Vec<TargetResult>, ErrDto> {
+    let plan = setup_preview(roots, dir, source_char_path, target_char_paths, aspects, allow_other_folders);
+    if let Some(e) = plan.source_error {
+        return Err(ErrDto::new("source", e));
+    }
+    let w = aspect_writes(aspects);
+
+    // Read/decode the source's two files once, extracting each side's subtrees.
+    let src_char_bytes = fs::read(source_char_path).map_err(|e| ErrDto::new("io", e.to_string()))?;
+    let char_extracted = if !w.char_categories.is_empty() {
+        let v = blue_marshal::decode(&src_char_bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+        extract_categories(&v, &w.char_categories)
+    } else {
+        vec![]
+    };
+    // The account (user) file behind the source char, if any account write is needed.
+    let (user_bytes, account_extracted) = if w.writes_account() {
+        let Some((src_id, _cp, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders) else {
+            return Err(ErrDto::new("source", "Source file not found."));
+        };
+        let store = accounts::load_store(dir);
+        let uid = account_of(&store, src_id).ok_or_else(|| ErrDto::new("source", "Source character has no paired account."))?;
+        let upath = user_paths.get(&uid).ok_or_else(|| ErrDto::new("source", "Source account file not found."))?;
+        let bytes = fs::read(upath).map_err(|e| ErrDto::new("io", e.to_string()))?;
+        let extracted = if !w.account_categories.is_empty() {
+            let v = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+            extract_categories(&v, &w.account_categories)
+        } else {
+            vec![]
+        };
+        (bytes, extracted)
+    } else {
+        (vec![], vec![])
+    };
+
+    let mut results = Vec::new();
+    for cw in &plan.char_writes {
+        let r = if cw.full_copy {
+            full_copy_to(&src_char_bytes, Path::new(&cw.path))
+                .map(|bk| ok_result(&cw.path, bk.to_string_lossy().into_owned()))
+        } else {
+            apply_categories_to(Path::new(&cw.path), &char_extracted)
+                .map(|rep| ok_result(&cw.path, rep.backup_path.to_string_lossy().into_owned()))
+        };
+        results.push(r.unwrap_or_else(|e| err_result(&cw.path, e)));
+    }
+    for aw in &plan.account_writes {
+        let r = if aw.full_copy {
+            full_copy_to(&user_bytes, Path::new(&aw.path))
+                .map(|bk| ok_result(&aw.path, bk.to_string_lossy().into_owned()))
+        } else {
+            apply_categories_to(Path::new(&aw.path), &account_extracted)
+                .map(|rep| ok_result(&aw.path, rep.backup_path.to_string_lossy().into_owned()))
+        };
+        results.push(r.unwrap_or_else(|e| err_result(&aw.path, e)));
+    }
+    Ok(results)
 }
 
 #[derive(Debug, Serialize)]
@@ -119,64 +409,6 @@ pub struct TargetResult {
     pub ok: bool,
     pub backup_path: Option<String>,
     pub error: Option<String>,
-}
-
-/// Apply `op` from `source_path` to each target. The source is read (and, for a
-/// category copy, decoded and extracted) exactly once. One target's failure is
-/// recorded and never halts the rest. A source that cannot be read/decoded, or
-/// whose selected categories are entirely absent from the source, fails the
-/// whole op up front, before any target is touched. Each target's kind is
-/// re-derived here (never trusted from the caller, which is a Tauri command
-/// boundary) and a mismatch is refused as that target's own failure, without
-/// touching the file.
-pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result<Vec<TargetResult>, ErrDto> {
-    let source = Path::new(source_path);
-    let bytes = fs::read(source).map_err(|e| ErrDto::new("io", e.to_string()))?;
-    let src_kind = file_kind(source);
-    match op {
-        BatchOp::FullCopy => Ok(targets
-            .iter()
-            .map(|t| {
-                if let Some(r) = kind_mismatch(t, &src_kind) {
-                    return r;
-                }
-                match full_copy_to(&bytes, Path::new(t)) {
-                    Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
-                    Err(e) => err_result(t, e),
-                }
-            })
-            .collect()),
-        BatchOp::Categories { categories } => {
-            let value = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
-            let extracted = extract_categories(&value, &categories);
-            if extracted.is_empty() {
-                return Err(ErrDto::new("no_categories", "the source file has none of the selected categories"));
-            }
-            Ok(targets
-                .iter()
-                .map(|t| {
-                    if let Some(r) = kind_mismatch(t, &src_kind) {
-                        return r;
-                    }
-                    match apply_categories_to(Path::new(t), &extracted) {
-                        Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
-                        Err(e) => err_result(t, e),
-                    }
-                })
-                .collect())
-        }
-    }
-}
-
-/// The write path must never trust the caller's target list: a target of a
-/// different kind than the source is refused before any write (spec §6 — the
-/// type match is enforced regardless of the folder toggle). Shared by both
-/// `BatchOp` arms so they cannot drift on the comparison or its message.
-fn kind_mismatch(t: &str, src_kind: &FileKind) -> Option<TargetResult> {
-    let tkind = file_kind(Path::new(t));
-    (&tkind != src_kind).then(|| {
-        err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"))
-    })
 }
 
 fn ok_result(path: &str, backup: String) -> TargetResult {
@@ -330,8 +562,6 @@ fn hex_preview(bytes: &[u8], around: usize) -> String {
     out
 }
 
-use std::path::PathBuf;
-
 /// Snapshot current file mtimes as the guided-capture baseline, excluding
 /// both open documents (the app itself may write them).
 pub fn begin_capture(state: &AppState, roots: &[PathBuf]) {
@@ -443,7 +673,7 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blue_marshal::{decode, encode, Value};
+    use blue_marshal::{encode, Value};
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}", std::process::id()));
@@ -779,231 +1009,170 @@ mod tests {
         assert_eq!(autofill_lists(&state).unwrap_err().code, "no_document");
     }
 
-    fn discovery_tree() -> PathBuf {
-        // Two profile folders, each with char + user files.
-        let root = std::env::temp_dir().join(format!("app-batchtargets-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let tq = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
-        let sisi = root.join("c_eve_sharedcache_sisi_singularity").join("settings_Default");
-        fs::create_dir_all(&tq).unwrap();
-        fs::create_dir_all(&sisi).unwrap();
-        for p in [&tq, &sisi] {
-            fs::write(p.join("core_char_90000001.dat"), b"x").unwrap();
-            fs::write(p.join("core_char_90000002.dat"), b"x").unwrap();
-            fs::write(p.join("core_user_987654.dat"), b"x").unwrap();
-        }
-        root
+    #[test]
+    fn everything_is_full_copy_of_both_files() {
+        let w = aspect_writes(&[Aspect::Everything]);
+        assert!(w.char_full_copy && w.account_full_copy);
+        assert!(w.char_categories.is_empty() && w.account_categories.is_empty());
+        assert!(w.writes_account() && w.writes_char() && w.copies_char_geometry());
     }
 
     #[test]
-    fn batch_targets_same_folder_same_type_excludes_source() {
-        let root = discovery_tree();
-        let src = root
-            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
-        let out = batch_targets(&[root], src.to_str().unwrap(), false);
-        // Only the OTHER char in the same folder — not the user file, not sisi, not itself.
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].file_name, "core_char_90000002.dat");
-        assert!(out[0].same_folder);
+    fn everything_wins_even_when_mixed_with_others() {
+        let w = aspect_writes(&[Aspect::Layout, Aspect::Everything]);
+        assert!(w.char_full_copy && w.account_full_copy);
     }
 
     #[test]
-    fn batch_targets_allow_other_folders_adds_matching_type_elsewhere() {
-        let root = discovery_tree();
-        let src = root
-            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
-        let out = batch_targets(&[root], src.to_str().unwrap(), true);
-        // Same-folder other char + both chars in sisi = 3.
-        assert_eq!(out.len(), 3);
-        assert!(out.iter().all(|c| c.file_name.starts_with("core_char_")));
-        assert!(out.iter().any(|c| !c.same_folder), "cross-folder candidate present");
-    }
-
-    fn af_bytes(widget: &str, entry: &str) -> Vec<u8> {
-        let hist = Value::Dict(vec![(
-            Value::Bytes(widget.as_bytes().to_vec()),
-            Value::List(vec![Value::Str(entry.into())]),
-        )]);
-        let ui = Value::Dict(vec![(
-            Value::Bytes(b"editHistory".to_vec()),
-            Value::Tuple(vec![Value::Long(vec![0u8; 8]), hist]),
-        )]);
-        encode(&Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), ui)])).unwrap()
+    fn overview_writes_widths_to_char_and_overview_to_account() {
+        let w = aspect_writes(&[Aspect::Overview]);
+        assert_eq!(w.char_categories, vec![Category::OverviewWidths]);
+        assert_eq!(w.account_categories, vec![Category::Overview]);
+        assert!(w.writes_account() && w.writes_char());
+        assert!(!w.copies_char_geometry(), "overview does not copy window geometry");
     }
 
     #[test]
-    fn batch_apply_categories_reports_per_target_including_a_read_only_failure() {
-        let dir = std::env::temp_dir().join(format!("app-batchapply-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        let good = dir.join("core_user_2.dat");
-        let bad = dir.join("core_user_3.dat");
-        fs::write(&src, af_bytes("/from_source", "Jita")).unwrap();
-        fs::write(&good, af_bytes("/old", "Amarr")).unwrap();
-        fs::write(&bad, [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap(); // non-canonical -> ReadOnly
-
-        let op = BatchOp::Categories { categories: vec![Category::Autofill] };
-        // `bad` comes FIRST and `good` comes AFTER it: a break-on-failure
-        // regression would leave `good` unprocessed, so this ordering is what
-        // makes the test able to catch that regression (a [good, bad] order
-        // would look identical whether or not the batch halted on `bad`).
-        let bad_path = bad.to_string_lossy().into_owned();
-        let good_path = good.to_string_lossy().into_owned();
-        let targets = vec![bad_path.clone(), good_path.clone()];
-        let results = batch_apply(src.to_str().unwrap(), op, &targets).unwrap();
-
-        assert_eq!(results.len(), 2);
-        let bd = results.iter().find(|r| r.path == bad_path).unwrap();
-        assert!(!bd.ok && bd.error.is_some(), "read-only target failed but did not halt the batch");
-        let g = results.iter().find(|r| r.path == good_path).unwrap();
-        assert!(g.ok && g.backup_path.is_some());
-
-        // The good target — processed AFTER the failing one — actually
-        // received the source's category; a break-on-failure regression
-        // would never reach it.
-        let reread = decode(&fs::read(&good).unwrap()).unwrap();
-        assert_eq!(project_edit_history(&reread)[0].widget, "/from_source");
+    fn layout_is_char_only_no_account_write() {
+        let w = aspect_writes(&[Aspect::Layout]);
+        assert_eq!(w.char_categories, vec![Category::Layout]);
+        assert!(w.account_categories.is_empty());
+        assert!(!w.writes_account());
+        assert!(w.copies_char_geometry());
     }
 
     #[test]
-    fn batch_apply_full_copy_makes_targets_byte_identical() {
-        let dir = std::env::temp_dir().join(format!("app-batchfull-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat");
-        let dst = dir.join("core_char_2.dat");
-        let src_bytes = af_bytes("/x", "y");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&dst, af_bytes("/other", "z")).unwrap();
+    fn autofill_is_account_only() {
+        let w = aspect_writes(&[Aspect::Autofill]);
+        assert!(w.char_categories.is_empty());
+        assert_eq!(w.account_categories, vec![Category::Autofill]);
+        assert!(w.writes_account() && !w.writes_char());
+    }
 
-        let results = batch_apply(src.to_str().unwrap(), BatchOp::FullCopy, &[dst.to_string_lossy().into_owned()]).unwrap();
-        assert!(results[0].ok);
-        assert_eq!(fs::read(&dst).unwrap(), src_bytes);
+    fn store_2accounts() -> accounts::AccountsStore {
+        // account 10 has chars {1,2}; account 20 has char {3}. char 4 unpaired.
+        let mut s = accounts::AccountsStore::default();
+        s.accounts.insert(10, accounts::Account { alias: None, characters: vec![1, 2] });
+        s.accounts.insert(20, accounts::Account { alias: None, characters: vec![3] });
+        s
+    }
+    fn paths(ids: &[u64], prefix: &str) -> HashMap<u64, PathBuf> {
+        ids.iter().map(|&i| (i, PathBuf::from(format!("{prefix}{i}.dat")))).collect()
     }
 
     #[test]
-    fn batch_apply_categories_aborts_when_source_lacks_the_category() {
-        let dir = std::env::temp_dir().join(format!("app-batchnocat-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        let target = dir.join("core_user_2.dat");
-        // Source has no `ui`/`editHistory` at all.
-        let src_bytes =
-            encode(&Value::Dict(vec![(Value::Bytes(b"other".to_vec()), Value::Int(1))])).unwrap();
-        let target_bytes = af_bytes("/keep", "Amarr");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let err = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap_err();
-        assert_eq!(err.code, "no_categories");
-
-        // Byte-identical: no pointless de-dup/re-encode rewrite, and no backup.
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target must be untouched when the source lacks the selected category"
-        );
-        assert!(
-            !dir.join("eve-settings-editor-backups").exists(),
-            "no backup should have been created"
-        );
+    fn overview_dedupes_account_write_and_lists_collateral() {
+        // Source char 3 (account 20). Targets 1 and 2 both on account 10.
+        let cp = paths(&[1, 2, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 2], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 2, "both targets get a char (widths) write");
+        assert_eq!(plan.account_writes.len(), 1, "one account write for account 10, deduped");
+        assert_eq!(plan.account_writes[0].user_id, 10);
+        assert!(plan.account_writes[0].collateral_char_ids.is_empty(),
+            "both chars on account 10 are selected — no collateral");
+        assert!(plan.source_error.is_none());
     }
 
     #[test]
-    fn batch_apply_full_copy_refuses_a_mismatched_target_kind() {
-        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat"); // char source
-        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
-        let src_bytes = af_bytes("/x", "y");
-        let target_bytes = af_bytes("/other", "z");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let results = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::FullCopy,
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
-        assert!(results[0].error.is_some());
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target bytes unchanged: the write path never trusted the caller's kind"
-        );
+    fn overview_warns_collateral_for_unselected_sibling() {
+        // Source char 3. Target 1 on account 10 (whose other char 2 is NOT selected).
+        let cp = paths(&[1, 2, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1], &[Aspect::Overview]);
+        assert_eq!(plan.account_writes.len(), 1);
+        assert_eq!(plan.account_writes[0].collateral_char_ids, vec![2], "char 2 is collateral");
     }
 
     #[test]
-    fn batch_apply_categories_refuses_a_mismatched_target_kind() {
-        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-cat-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat"); // char source, content has the autofill category
-        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
-        let src_bytes = af_bytes("/x", "y");
-        let target_bytes = af_bytes("/other", "z");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let results = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
-        assert!(results[0].error.is_some());
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target bytes unchanged: the write path never trusted the caller's kind"
-        );
+    fn account_aspect_excludes_an_unpaired_target() {
+        let cp = paths(&[1, 3, 4], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Autofill]);
+        assert_eq!(plan.excluded.len(), 1);
+        assert_eq!(plan.excluded[0].char_id, 4);
+        assert_eq!(plan.account_writes.len(), 1, "only the paired target's account is written");
     }
 
     #[test]
-    fn batch_apply_undecodable_source_fails_the_whole_op() {
-        let dir = std::env::temp_dir().join(format!("app-batchbadsrc-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        fs::write(&src, [0xFF, 0xFF]).unwrap(); // undecodable
-        let target = dir.join("core_user_2.dat");
-        let target_bytes = af_bytes("/untouched", "Dodixie");
-        fs::write(&target, &target_bytes).unwrap();
+    fn layout_only_includes_unpaired_targets_no_account_write() {
+        let cp = paths(&[1, 3, 4], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Layout]);
+        assert!(plan.excluded.is_empty(), "layout needs no pairing");
+        assert_eq!(plan.char_writes.len(), 2);
+        assert!(plan.account_writes.is_empty());
+    }
 
-        let err = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap_err();
-        assert_eq!(err.code, "decode");
+    #[test]
+    fn target_on_source_account_skips_the_account_write() {
+        // Source char 1 (account 10). Target char 2, same account 10.
+        let cp = paths(&[1, 2], "char");
+        let up = paths(&[10], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 1, &[2], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
+        assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
+    }
 
-        // The target must be byte-identical to before the call: this proves
-        // the op aborted before touching any target, not merely that it
-        // surfaced an error (an empty target list would prove that trivially).
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target must be untouched when the source fails to decode"
-        );
-        assert!(
-            !dir.join("eve-settings-editor-backups").exists(),
-            "no backup should have been created"
-        );
+    #[test]
+    fn unpaired_source_with_account_aspect_is_a_source_error() {
+        let cp = paths(&[3, 4], "char");
+        let up = paths(&[20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 4, &[3], &[Aspect::Overview]);
+        assert!(plan.source_error.is_some());
+        assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty());
+    }
+
+    #[test]
+    fn resolution_mismatch_flagged_for_layout_when_screens_differ() {
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let mut res = HashMap::new();
+        res.insert(3u64, (2560i64, 1440i64)); // source
+        res.insert(1u64, (1920i64, 1080i64)); // target differs
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, 3, &[1], &[Aspect::Layout]);
+        assert!(plan.char_writes[0].resolution_mismatch);
+    }
+
+    #[test]
+    fn setup_apply_overview_reports_char_and_account_writes_with_a_readonly_failure() {
+        use blue_marshal::{encode, Value};
+        let base = std::env::temp_dir().join(format!("app-setup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // Discovery root with the real install/profile structure discover() expects.
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let overview = |c: &str| Value::Dict(vec![(b("overview"),
+            Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b(c)]))]))]);
+        let widths = || Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("SortHeadersSizes"),
+            Value::Tuple(vec![ts(), Value::Dict(vec![])]))]))]);
+        // source char 100 on account 500; target char 200 on account 600.
+        std::fs::write(prof.join("core_char_100.dat"), encode(&widths()).unwrap()).unwrap();
+        std::fs::write(prof.join("core_user_500.dat"), encode(&overview("SRC")).unwrap()).unwrap();
+        std::fs::write(prof.join("core_char_200.dat"), encode(&widths()).unwrap()).unwrap();
+        // read-only stream (INT8-encoded) => save() refuses it => account write fails.
+        std::fs::write(prof.join("core_user_600.dat"), [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap();
+
+        // accounts.json lives in the app-data dir, separate from the discovery root.
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(500, accounts::Account { alias: None, characters: vec![100] });
+        store.accounts.insert(600, accounts::Account { alias: None, characters: vec![200] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+        let roots = vec![base.join("root")];
+        let src = prof.join("core_char_100.dat").to_string_lossy().into_owned();
+        let tgt = vec![prof.join("core_char_200.dat").to_string_lossy().into_owned()];
+        let results = setup_apply(&roots, &app_dir, &src, &tgt, &[Aspect::Overview], false).unwrap();
+
+        // One char write (widths -> char 200, ok) and one account write (overview
+        // -> read-only user 600, fails) — the failure did not halt the char write.
+        let char_ok = results.iter().any(|r| r.path.contains("core_char_200") && r.ok);
+        let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
+        assert!(char_ok, "char widths write succeeded");
+        assert!(acct_fail, "read-only account write failed but was reported, not panicked");
     }
 }

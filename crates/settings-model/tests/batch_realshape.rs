@@ -107,3 +107,59 @@ fn autofill_copy_between_users_encodes_and_matches_source() {
     assert!(widgets.contains(&"/a"), "target now has the source's widget list");
     assert!(!widgets.contains(&"/other"), "target's old category was replaced wholesale");
 }
+
+/// user root -> { columnDefs: [Shared "NAME"], overview: { overviewColumns: [Ref],
+/// tabsByWindowInstanceID: [[0]] } }
+///
+/// A column token shared between a sibling of `overview` (its Shared def) and a
+/// list INSIDE `overview` (a bare Ref). Extracting `overview` without inlining
+/// the whole source first clones a subtree with a dangling Ref that fails to encode.
+fn user_with_overview() -> Value {
+    let name = Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"NAME".to_vec())) };
+    let overview = Value::Dict(vec![
+        (b("overviewColumns"), Value::List(vec![Value::Ref(1)])),
+        (b("tabsByWindowInstanceID"), Value::List(vec![Value::List(vec![Value::Int(0)])])),
+    ]);
+    Value::Dict(vec![
+        (b("columnDefs"), Value::List(vec![name])), // Shared def precedes `overview`
+        (b("overview"), overview),
+    ])
+}
+
+/// char root -> { widthDefs: [Shared "NAME"], ui: { SortHeadersSizes: (ts, {
+/// (overviewScroll2, 0): { Ref: 120 } }) } }
+///
+/// A column token shared between `widthDefs` (Shared def) and a width-dict key
+/// inside SortHeadersSizes (bare Ref). Same inline-first requirement.
+fn char_with_widths() -> Value {
+    let name = Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"NAME".to_vec())) };
+    let cols = Value::Dict(vec![(Value::Ref(1), Value::Int(120))]);
+    let sizes = Value::Dict(vec![(
+        Value::Tuple(vec![b("overviewScroll2"), Value::Int(0)]),
+        cols,
+    )]);
+    Value::Dict(vec![
+        (b("widthDefs"), Value::List(vec![name])), // Shared def precedes `ui`
+        (b("ui"), Value::Dict(vec![(b("SortHeadersSizes"), Value::Tuple(vec![ts(), sizes]))])),
+    ])
+}
+
+#[test]
+fn overview_copy_between_users_encodes_across_the_shared_boundary() {
+    let source = user_with_overview();
+    encode(&source).expect("source fixture encodes (def precedes ref)");
+    let mut target = user_with_overview();
+    let extracted = extract_categories(&source, &[Category::Overview]);
+    apply_to_tree(&mut target, &extracted);
+    encode(&target).expect("post-copy overview encodes (cross-boundary Ref inlined)");
+}
+
+#[test]
+fn overview_widths_copy_between_chars_encodes_across_the_shared_boundary() {
+    let source = char_with_widths();
+    encode(&source).expect("source fixture encodes (def precedes ref)");
+    let mut target = char_with_widths();
+    let extracted = extract_categories(&source, &[Category::OverviewWidths]);
+    apply_to_tree(&mut target, &extracted);
+    encode(&target).expect("post-copy widths encode (cross-boundary Ref inlined)");
+}

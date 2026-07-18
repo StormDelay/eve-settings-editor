@@ -98,6 +98,21 @@ measured on the real files; only the identifying numbers were replaced.
   the full backup → verify → atomic-write chain; the EVE client accepted the file
   and the in-game autocomplete reflected the edits. Spec §8 exit gate for the
   autofill editor milestone.
+- **2026-07-18 — M5 character-centric batch apply validation PASSED.** The
+  reworked, character-centric Batch view was driven against live files: a source
+  character's **Window layout + Overview** copied onto a target character on a
+  *different* account (writing both the target char file and its account
+  `core_user` file), and an **Everything** full-clone (byte-copy of both the char
+  and account files) onto another target. Each written file was backed up first,
+  the EVE client accepted every result, and the copies landed in-game — with the
+  overview config now cross-copied, the M4 layout-copy ceiling (overview-window
+  count following account state) is closed. The preview correctly named the
+  collateral characters an account-wide write also changes. Spec §9 / master
+  design §9 exit gate for M5. Three UI issues found during the smoke were fixed
+  same-session (commit `7286d0f`): an already-selected target that a later
+  account-aspect choice excludes now unchecks and is dropped from the write list
+  (the backend already refused to write it); the Accounts-view character pickers
+  are sorted by name; a Select-all/Clear was added to the target list.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 

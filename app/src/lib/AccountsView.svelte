@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, errMessage, type Profile } from "./api";
   import { names } from "./names.svelte";
+  import { resolvedName } from "./filesort.svelte";
   import { accountsStore, loadRoster, setAlias, confirmPairing, unpair } from "./accounts.svelte";
 
   let { openPath }: { openPath: string | null } = $props();
@@ -30,6 +31,18 @@
   );
   const unassigned = $derived(
     scope ? roster.unassigned.filter((id) => scope.chars.has(id)) : roster.unassigned,
+  );
+  // Order the character pickers the same way the sidebar and batch view do:
+  // named characters alphabetically, bare ids after them.
+  const sortedUnassigned = $derived(
+    [...unassigned].sort((a, b) => {
+      const na = resolvedName("char", a);
+      const nb = resolvedName("char", b);
+      if (na && nb) return na.localeCompare(nb);
+      if (na) return -1;
+      if (nb) return 1;
+      return a - b;
+    }),
   );
 
   // Guided capture state (see Task 11 for the flow body).
@@ -141,7 +154,7 @@
                     e.currentTarget.selectedIndex = 0;
                   }}>
                   <option value="">＋ add character</option>
-                  {#each unassigned as uid (uid)}
+                  {#each sortedUnassigned as uid (uid)}
                     <option value={uid}>{nameOf(uid)}</option>
                   {/each}
                 </select>
@@ -157,7 +170,7 @@
     <div class="unassigned">
       <h3>Unassigned characters</h3>
       <ul>
-        {#each unassigned as uid (uid)}
+        {#each sortedUnassigned as uid (uid)}
           <li>{nameOf(uid)}</li>
         {/each}
       </ul>

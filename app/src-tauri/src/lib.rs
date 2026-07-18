@@ -161,16 +161,39 @@ fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_
 }
 
 #[tauri::command]
-fn batch_targets(source_path: String, allow_other_folders: bool) -> Vec<ops::Candidate> {
-    ops::batch_targets(&settings_model::default_roots(), &source_path, allow_other_folders)
+fn setup_preview(
+    app: tauri::AppHandle,
+    source_char_path: String,
+    target_char_paths: Vec<String>,
+    aspects: Vec<ops::Aspect>,
+    allow_other_folders: bool,
+) -> ops::SetupPlan {
+    ops::setup_preview(
+        &settings_model::default_roots(),
+        &app_dir(&app),
+        &source_char_path,
+        &target_char_paths,
+        &aspects,
+        allow_other_folders,
+    )
 }
+
 #[tauri::command]
-fn batch_apply(
-    source_path: String,
-    op: ops::BatchOp,
-    targets: Vec<String>,
+fn setup_apply(
+    app: tauri::AppHandle,
+    source_char_path: String,
+    target_char_paths: Vec<String>,
+    aspects: Vec<ops::Aspect>,
+    allow_other_folders: bool,
 ) -> Result<Vec<ops::TargetResult>, ErrDto> {
-    ops::batch_apply(&source_path, op, &targets)
+    ops::setup_apply(
+        &settings_model::default_roots(),
+        &app_dir(&app),
+        &source_char_path,
+        &target_char_paths,
+        &aspects,
+        allow_other_folders,
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -187,7 +210,7 @@ pub fn run() {
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             autofill_lists, set_autofill_list, clear_all_autofill,
-            batch_targets, batch_apply
+            setup_preview, setup_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
