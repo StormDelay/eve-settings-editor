@@ -161,19 +161,6 @@ fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_
 }
 
 #[tauri::command]
-fn batch_targets(source_path: String, allow_other_folders: bool) -> Vec<ops::Candidate> {
-    ops::batch_targets(&settings_model::default_roots(), &source_path, allow_other_folders)
-}
-#[tauri::command]
-fn batch_apply(
-    source_path: String,
-    op: ops::BatchOp,
-    targets: Vec<String>,
-) -> Result<Vec<ops::TargetResult>, ErrDto> {
-    ops::batch_apply(&source_path, op, &targets)
-}
-
-#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source_char_path: String,
@@ -223,7 +210,6 @@ pub fn run() {
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             autofill_lists, set_autofill_list, clear_all_autofill,
-            batch_targets, batch_apply,
             setup_preview, setup_apply
         ])
         .run(tauri::generate_context!())
