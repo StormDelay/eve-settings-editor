@@ -48,33 +48,26 @@ Workflow:
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
-Ordering (updated 2026-07-18): M4 batch apply (shipped v0.5.0) and **M5
-character-centric batch apply (shipped v0.6.0)** are both done; next is the
-**layout-canvas milestone**, then the **codec/refactor milestone**. (M5 absorbed
-the two carried-in M4 items — the resolution-differ preview warning and the
-target-list folder-label disambiguation — both now under Shipped 0.6.0.)
+Ordering (**re-sequenced 2026-07-18**): M4 batch apply (shipped v0.5.0) and **M5
+character-centric batch apply (shipped v0.6.0)** are both done. Next is the
+**codec/refactor (Shared/Ref) foundation**, *then* the **layout-canvas window
+stacks** milestone — reordered because window-stack membership editing is the
+heaviest structural editor yet and should sit on a correct encoder rather than
+on the inline-first hack it would otherwise have to be un-built from. (M5
+absorbed the two carried-in M4 items — the resolution-differ preview warning and
+the target-list folder-label disambiguation — both now under Shipped 0.6.0.)
 
-**Layout-canvas milestone:**
-
-- **Resize layout windows from any corner.** In the layout canvas, a selected
-  window can only be resized from the bottom-right handle today. Add resize
-  handles on all four corners (edges optional) once a window is selected, so it
-  can be resized from any corner. _Added 2026-07-15._
-
-- **Understand and integrate window stacks in the layout editor.** The layout
-  editor surfaces a window's stack id but doesn't model stacking. Work out how EVE
-  window stacks actually work (windows tabbed/grouped together, sharing a position)
-  and integrate them into the layout canvas — e.g. represent a stack as a group
-  and let the editor move/edit stacked windows coherently rather than as
-  independent rectangles. _Added 2026-07-17._
-
-**Codec/refactor milestone (after the layout one):**
+**Codec/refactor (Shared/Ref) foundation — NEXT.** Goal: general encoder-side
+auto-dedup so any editor can inline → edit → let the encoder re-derive correct
+canonical `Shared`/`Ref` sharing, instead of each feature hand-rolling
+inline-first and shipping a ~1.5× file the client re-deduplicates. This subsumes
+both items below:
 
 - **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
   refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
-  longer matches what the EVE client would write. Revisit: re-derive a correct
-  canonical `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
+  longer matches what the EVE client would write. Re-derive a correct canonical
+  `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
   structurally-equal values in emit order) so the saved file matches the client's
   dedup. _Added 2026-07-16 (M3c)._
 
@@ -83,6 +76,22 @@ target-list folder-label disambiguation — both now under Shipped 0.6.0.)
   private `inline_user` is now functionally identical. Delete the private copy and
   have `overview.rs` call the shared helper. Do it as its own change gated by the
   overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
+
+**Layout-canvas window stacks — AFTER the codec foundation.** Design worked out
+and written up 2026-07-18 in
+`docs/superpowers/specs/2026-07-18-layout-canvas-window-stacks-design.md`
+(includes the corpus-verified stack model: `stacksWindows` member→container +
+`preferredIdxInStack3` tab order; stack ids are window-id refs, never ints, so
+the current Int-only stack field is dead). Scope: model stacks, draw one tabbed
+rectangle per open stack, coherent move/resize, and membership editing
+(unstack / add-to-existing / reorder); new-stack creation gated on a live
+capture experiment. Membership editing depends on the codec foundation above.
+_Added 2026-07-17; designed 2026-07-18._
+
+**Resize layout windows from any corner — independent, ship anytime.** In the
+layout canvas a selected window resizes only from the bottom-right handle today;
+add handles on all four corners (edges optional). No codec dependency — its
+resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 
 ## Shipped
 
