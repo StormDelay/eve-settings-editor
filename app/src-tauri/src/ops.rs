@@ -15,7 +15,7 @@ use settings_model::{
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
-    apply_categories_to, extract_categories, file_kind, full_copy_to, Category,
+    apply_categories_to, extract_categories, full_copy_to, Category,
 };
 
 use crate::accounts;
@@ -57,61 +57,6 @@ impl ErrDto {
     fn new(code: &str, message: impl Into<String>) -> Self {
         ErrDto { code: code.into(), message: message.into() }
     }
-}
-
-#[derive(Debug, Serialize)]
-pub struct Candidate {
-    pub path: String,
-    pub file_name: String,
-    pub id: Option<u64>,
-    pub folder: String,
-    pub same_folder: bool,
-}
-
-/// Discovered files eligible as batch targets for `source_path`: same file type,
-/// and (unless `allow_other_folders`) the source's own profile folder. The source
-/// itself is never a candidate.
-pub fn batch_targets(roots: &[PathBuf], source_path: &str, allow_other_folders: bool) -> Vec<Candidate> {
-    let profiles = discover(roots);
-    let src = Path::new(source_path);
-    let mut src_kind: Option<&FileKind> = None;
-    let mut src_dir: Option<PathBuf> = None;
-    for p in &profiles {
-        for f in &p.files {
-            if f.path == src {
-                src_kind = Some(&f.kind);
-                src_dir = Some(p.dir.clone());
-            }
-        }
-    }
-    let Some(kind) = src_kind else { return Vec::new() };
-    let mut out = Vec::new();
-    for p in &profiles {
-        let same = Some(&p.dir) == src_dir.as_ref();
-        if !same && !allow_other_folders {
-            continue;
-        }
-        for f in &p.files {
-            if &f.kind != kind || f.path == src {
-                continue;
-            }
-            out.push(Candidate {
-                path: f.path.to_string_lossy().into_owned(),
-                file_name: f.file_name.clone(),
-                id: f.id,
-                folder: format!("{}/{}", p.server, p.profile),
-                same_folder: same,
-            });
-        }
-    }
-    out
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum BatchOp {
-    FullCopy,
-    Categories { categories: Vec<Category> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -466,64 +411,6 @@ pub struct TargetResult {
     pub error: Option<String>,
 }
 
-/// Apply `op` from `source_path` to each target. The source is read (and, for a
-/// category copy, decoded and extracted) exactly once. One target's failure is
-/// recorded and never halts the rest. A source that cannot be read/decoded, or
-/// whose selected categories are entirely absent from the source, fails the
-/// whole op up front, before any target is touched. Each target's kind is
-/// re-derived here (never trusted from the caller, which is a Tauri command
-/// boundary) and a mismatch is refused as that target's own failure, without
-/// touching the file.
-pub fn batch_apply(source_path: &str, op: BatchOp, targets: &[String]) -> Result<Vec<TargetResult>, ErrDto> {
-    let source = Path::new(source_path);
-    let bytes = fs::read(source).map_err(|e| ErrDto::new("io", e.to_string()))?;
-    let src_kind = file_kind(source);
-    match op {
-        BatchOp::FullCopy => Ok(targets
-            .iter()
-            .map(|t| {
-                if let Some(r) = kind_mismatch(t, &src_kind) {
-                    return r;
-                }
-                match full_copy_to(&bytes, Path::new(t)) {
-                    Ok(bk) => ok_result(t, bk.to_string_lossy().into_owned()),
-                    Err(e) => err_result(t, e),
-                }
-            })
-            .collect()),
-        BatchOp::Categories { categories } => {
-            let value = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
-            let extracted = extract_categories(&value, &categories);
-            if extracted.is_empty() {
-                return Err(ErrDto::new("no_categories", "the source file has none of the selected categories"));
-            }
-            Ok(targets
-                .iter()
-                .map(|t| {
-                    if let Some(r) = kind_mismatch(t, &src_kind) {
-                        return r;
-                    }
-                    match apply_categories_to(Path::new(t), &extracted) {
-                        Ok(r) => ok_result(t, r.backup_path.to_string_lossy().into_owned()),
-                        Err(e) => err_result(t, e),
-                    }
-                })
-                .collect())
-        }
-    }
-}
-
-/// The write path must never trust the caller's target list: a target of a
-/// different kind than the source is refused before any write (spec §6 — the
-/// type match is enforced regardless of the folder toggle). Shared by both
-/// `BatchOp` arms so they cannot drift on the comparison or its message.
-fn kind_mismatch(t: &str, src_kind: &FileKind) -> Option<TargetResult> {
-    let tkind = file_kind(Path::new(t));
-    (&tkind != src_kind).then(|| {
-        err_result(t, format!("target is {tkind:?} but source is {src_kind:?} (type mismatch)"))
-    })
-}
-
 fn ok_result(path: &str, backup: String) -> TargetResult {
     TargetResult { path: path.to_string(), ok: true, backup_path: Some(backup), error: None }
 }
@@ -786,7 +673,7 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blue_marshal::{decode, encode, Value};
+    use blue_marshal::{encode, Value};
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}", std::process::id()));
@@ -1122,201 +1009,6 @@ mod tests {
         assert_eq!(autofill_lists(&state).unwrap_err().code, "no_document");
     }
 
-    fn discovery_tree() -> PathBuf {
-        // Two profile folders, each with char + user files.
-        let root = std::env::temp_dir().join(format!("app-batchtargets-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let tq = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
-        let sisi = root.join("c_eve_sharedcache_sisi_singularity").join("settings_Default");
-        fs::create_dir_all(&tq).unwrap();
-        fs::create_dir_all(&sisi).unwrap();
-        for p in [&tq, &sisi] {
-            fs::write(p.join("core_char_90000001.dat"), b"x").unwrap();
-            fs::write(p.join("core_char_90000002.dat"), b"x").unwrap();
-            fs::write(p.join("core_user_987654.dat"), b"x").unwrap();
-        }
-        root
-    }
-
-    #[test]
-    fn batch_targets_same_folder_same_type_excludes_source() {
-        let root = discovery_tree();
-        let src = root
-            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
-        let out = batch_targets(&[root], src.to_str().unwrap(), false);
-        // Only the OTHER char in the same folder — not the user file, not sisi, not itself.
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].file_name, "core_char_90000002.dat");
-        assert!(out[0].same_folder);
-    }
-
-    #[test]
-    fn batch_targets_allow_other_folders_adds_matching_type_elsewhere() {
-        let root = discovery_tree();
-        let src = root
-            .join("c_eve_sharedcache_tq_tranquility/settings_Default/core_char_90000001.dat");
-        let out = batch_targets(&[root], src.to_str().unwrap(), true);
-        // Same-folder other char + both chars in sisi = 3.
-        assert_eq!(out.len(), 3);
-        assert!(out.iter().all(|c| c.file_name.starts_with("core_char_")));
-        assert!(out.iter().any(|c| !c.same_folder), "cross-folder candidate present");
-    }
-
-    fn af_bytes(widget: &str, entry: &str) -> Vec<u8> {
-        let hist = Value::Dict(vec![(
-            Value::Bytes(widget.as_bytes().to_vec()),
-            Value::List(vec![Value::Str(entry.into())]),
-        )]);
-        let ui = Value::Dict(vec![(
-            Value::Bytes(b"editHistory".to_vec()),
-            Value::Tuple(vec![Value::Long(vec![0u8; 8]), hist]),
-        )]);
-        encode(&Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), ui)])).unwrap()
-    }
-
-    #[test]
-    fn batch_apply_categories_reports_per_target_including_a_read_only_failure() {
-        let dir = std::env::temp_dir().join(format!("app-batchapply-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        let good = dir.join("core_user_2.dat");
-        let bad = dir.join("core_user_3.dat");
-        fs::write(&src, af_bytes("/from_source", "Jita")).unwrap();
-        fs::write(&good, af_bytes("/old", "Amarr")).unwrap();
-        fs::write(&bad, [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap(); // non-canonical -> ReadOnly
-
-        let op = BatchOp::Categories { categories: vec![Category::Autofill] };
-        // `bad` comes FIRST and `good` comes AFTER it: a break-on-failure
-        // regression would leave `good` unprocessed, so this ordering is what
-        // makes the test able to catch that regression (a [good, bad] order
-        // would look identical whether or not the batch halted on `bad`).
-        let bad_path = bad.to_string_lossy().into_owned();
-        let good_path = good.to_string_lossy().into_owned();
-        let targets = vec![bad_path.clone(), good_path.clone()];
-        let results = batch_apply(src.to_str().unwrap(), op, &targets).unwrap();
-
-        assert_eq!(results.len(), 2);
-        let bd = results.iter().find(|r| r.path == bad_path).unwrap();
-        assert!(!bd.ok && bd.error.is_some(), "read-only target failed but did not halt the batch");
-        let g = results.iter().find(|r| r.path == good_path).unwrap();
-        assert!(g.ok && g.backup_path.is_some());
-
-        // The good target — processed AFTER the failing one — actually
-        // received the source's category; a break-on-failure regression
-        // would never reach it.
-        let reread = decode(&fs::read(&good).unwrap()).unwrap();
-        assert_eq!(project_edit_history(&reread)[0].widget, "/from_source");
-    }
-
-    #[test]
-    fn batch_apply_full_copy_makes_targets_byte_identical() {
-        let dir = std::env::temp_dir().join(format!("app-batchfull-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat");
-        let dst = dir.join("core_char_2.dat");
-        let src_bytes = af_bytes("/x", "y");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&dst, af_bytes("/other", "z")).unwrap();
-
-        let results = batch_apply(src.to_str().unwrap(), BatchOp::FullCopy, &[dst.to_string_lossy().into_owned()]).unwrap();
-        assert!(results[0].ok);
-        assert_eq!(fs::read(&dst).unwrap(), src_bytes);
-    }
-
-    #[test]
-    fn batch_apply_categories_aborts_when_source_lacks_the_category() {
-        let dir = std::env::temp_dir().join(format!("app-batchnocat-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        let target = dir.join("core_user_2.dat");
-        // Source has no `ui`/`editHistory` at all.
-        let src_bytes =
-            encode(&Value::Dict(vec![(Value::Bytes(b"other".to_vec()), Value::Int(1))])).unwrap();
-        let target_bytes = af_bytes("/keep", "Amarr");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let err = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap_err();
-        assert_eq!(err.code, "no_categories");
-
-        // Byte-identical: no pointless de-dup/re-encode rewrite, and no backup.
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target must be untouched when the source lacks the selected category"
-        );
-        assert!(
-            !dir.join("eve-settings-editor-backups").exists(),
-            "no backup should have been created"
-        );
-    }
-
-    #[test]
-    fn batch_apply_full_copy_refuses_a_mismatched_target_kind() {
-        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat"); // char source
-        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
-        let src_bytes = af_bytes("/x", "y");
-        let target_bytes = af_bytes("/other", "z");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let results = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::FullCopy,
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
-        assert!(results[0].error.is_some());
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target bytes unchanged: the write path never trusted the caller's kind"
-        );
-    }
-
-    #[test]
-    fn batch_apply_categories_refuses_a_mismatched_target_kind() {
-        let dir = std::env::temp_dir().join(format!("app-batchkindmismatch-cat-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_char_1.dat"); // char source, content has the autofill category
-        let target = dir.join("core_user_2.dat"); // user target: mismatched kind
-        let src_bytes = af_bytes("/x", "y");
-        let target_bytes = af_bytes("/other", "z");
-        fs::write(&src, &src_bytes).unwrap();
-        fs::write(&target, &target_bytes).unwrap();
-
-        let results = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(!results[0].ok, "mismatched-kind target is refused, not written");
-        assert!(results[0].error.is_some());
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target bytes unchanged: the write path never trusted the caller's kind"
-        );
-    }
-
     #[test]
     fn everything_is_full_copy_of_both_files() {
         let w = aspect_writes(&[Aspect::Everything]);
@@ -1355,39 +1047,6 @@ mod tests {
         assert!(w.char_categories.is_empty());
         assert_eq!(w.account_categories, vec![Category::Autofill]);
         assert!(w.writes_account() && !w.writes_char());
-    }
-
-    #[test]
-    fn batch_apply_undecodable_source_fails_the_whole_op() {
-        let dir = std::env::temp_dir().join(format!("app-batchbadsrc-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("core_user_1.dat");
-        fs::write(&src, [0xFF, 0xFF]).unwrap(); // undecodable
-        let target = dir.join("core_user_2.dat");
-        let target_bytes = af_bytes("/untouched", "Dodixie");
-        fs::write(&target, &target_bytes).unwrap();
-
-        let err = batch_apply(
-            src.to_str().unwrap(),
-            BatchOp::Categories { categories: vec![Category::Autofill] },
-            &[target.to_string_lossy().into_owned()],
-        )
-        .unwrap_err();
-        assert_eq!(err.code, "decode");
-
-        // The target must be byte-identical to before the call: this proves
-        // the op aborted before touching any target, not merely that it
-        // surfaced an error (an empty target list would prove that trivially).
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            target_bytes,
-            "target must be untouched when the source fails to decode"
-        );
-        assert!(
-            !dir.join("eve-settings-editor-backups").exists(),
-            "no backup should have been created"
-        );
     }
 
     fn store_2accounts() -> accounts::AccountsStore {
@@ -1480,8 +1139,7 @@ mod tests {
         use blue_marshal::{encode, Value};
         let base = std::env::temp_dir().join(format!("app-setup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        // Discovery root with the real install/profile structure discover() expects
-        // (mirrors the discovery_tree() helper the M4 target tests use).
+        // Discovery root with the real install/profile structure discover() expects.
         let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
         std::fs::create_dir_all(&prof).unwrap();
         fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
