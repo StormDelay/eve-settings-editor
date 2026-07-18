@@ -615,6 +615,8 @@ where
             return Err(ErrDto::new("read_only", reason.clone()));
         }
         edit(&mut doc.value).map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+        // Compact the inline-first edit before it can be saved.
+        doc.value = blue_marshal::reshare(&doc.value);
     }
     overview_columns(state)
 }
@@ -658,6 +660,7 @@ where
             return Err(ErrDto::new("read_only", reason.clone()));
         }
         edit(&mut doc.value).map_err(|e| ErrDto::new("autofill", format!("{e:?}")))?;
+        doc.value = blue_marshal::reshare(&doc.value);
     }
     autofill_lists(state)
 }
@@ -965,6 +968,24 @@ mod tests {
         assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 2);
         let oc = set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
         assert_eq!(oc.tabs[0].columns[0].name, "TYPE");
+    }
+
+    #[test]
+    fn overview_edit_leaves_the_user_doc_compactly_shared() {
+        let path = temp_file("ov-reshare", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+
+        let guard = state.user.lock().unwrap();
+        let doc = guard.as_ref().unwrap();
+        let bytes = blue_marshal::encode(&doc.value).unwrap();
+        // Repeated column tokens must be shared (stream shared-count > 0), not left
+        // fully inlined, and the reshared doc must round-trip.
+        let shared_count = i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        assert!(shared_count > 0, "overview edit should reshare repeated tokens");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value, "reshared doc round-trips");
     }
 
     #[test]
