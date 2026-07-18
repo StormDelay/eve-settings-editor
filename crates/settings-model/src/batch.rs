@@ -56,16 +56,20 @@ pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, V
 /// A missing intermediate parent dict (e.g. no `ui`) skips that category.
 pub fn apply_to_tree(target: &mut Value, extracted: &[(Category, Value)]) {
     inline_all(target);
-    let Value::Dict(root) = target else { return };
-    for (cat, subtree) in extracted {
-        let keys = cat.key_path();
-        let (parent_keys, last) = keys.split_at(keys.len() - 1);
-        let Some(parent) = descend_mut(root, parent_keys) else { continue };
-        match parent.iter_mut().find(|(k, _)| is_bytes(k, last[0])) {
-            Some((_, v)) => *v = subtree.clone(),
-            None => parent.push((Value::Bytes(last[0].to_vec()), subtree.clone())),
+    if let Value::Dict(root) = target {
+        for (cat, subtree) in extracted {
+            let keys = cat.key_path();
+            let (parent_keys, last) = keys.split_at(keys.len() - 1);
+            let Some(parent) = descend_mut(root, parent_keys) else { continue };
+            match parent.iter_mut().find(|(k, _)| is_bytes(k, last[0])) {
+                Some((_, v)) => *v = subtree.clone(),
+                None => parent.push((Value::Bytes(last[0].to_vec()), subtree.clone())),
+            }
         }
     }
+    // Re-derive compact immutable-only sharing so the saved file is not the
+    // ~1.5x fully-inlined blob (no reliance on EVE re-deduplicating).
+    *target = blue_marshal::reshare(target);
 }
 
 /// Back up `target`, then atomically overwrite it with `source_bytes`. Byte-for-
@@ -333,5 +337,32 @@ mod tests {
         assert_eq!(cols.iter().find(|(k, _)| is_bytes(k, b"NAME")).unwrap().1, Value::Int(120));
         assert!(root.iter().any(|(k, v)| is_bytes(k, b"other") && matches!(v, Value::Int(9))),
             "sibling under root survived");
+    }
+
+    #[test]
+    fn apply_to_tree_leaves_a_compact_shared_result() {
+        use blue_marshal::encode;
+        // A source Layout subtree whose window-id byte-string repeats across the
+        // geometry + flag dicts (the real shape). After splicing into a target and
+        // resharing, the encoded stream must carry shared objects (count > 0) and be
+        // smaller than the fully-inlined encoding.
+        let id = || Value::Bytes(b"overview_window".to_vec());
+        let windows = Value::Dict(vec![
+            (Value::Bytes(b"openWindows".to_vec()), Value::Dict(vec![(id(), Value::Bool(true))])),
+            (Value::Bytes(b"lockedWindows".to_vec()), Value::Dict(vec![(id(), Value::Bool(false))])),
+            (Value::Bytes(b"stacksWindows".to_vec()), Value::Dict(vec![(id(), id())])),
+        ]);
+        let extracted = vec![(Category::Layout, windows)];
+
+        let mut target = Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), Value::Dict(vec![]))]);
+        apply_to_tree(&mut target, &extracted);
+
+        let bytes = encode(&target).expect("resharded target encodes");
+        let shared_count = i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        assert!(shared_count > 0, "reshare shared the repeated id, count={shared_count}");
+
+        // Smaller than if we had left it fully inlined.
+        let inlined_len = encode(&blue_marshal::inline(&target)).unwrap().len();
+        assert!(bytes.len() < inlined_len, "{} !< {}", bytes.len(), inlined_len);
     }
 }
