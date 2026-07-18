@@ -13,6 +13,15 @@ Workflow:
 
 ## Open
 
+- [ ] **Improve the auto-derived autofill category labels.** In
+  `app/src/lib/autofill.ts`, widget paths not matched by the `CURATED` substring
+  map fall through to `derive()`, which just title-cases the last non-boilerplate
+  path segment — for many real EVE widgets this yields cryptic or generic labels
+  (the raw path is always shown too, so it's never *confusing*, just ugly). Fix
+  by expanding `CURATED` to cover the common real widget paths and/or making
+  `derive()` smarter (pick a more meaningful segment, or fold in more context
+  than the last one). _Added 2026-07-18._
+
 - [ ] **Make the view seamless when switching files.** Opening another file keeps
   the current editor tab (shipped in 0.5.0), but the switch visibly *blinks*: the
   view flashes to the default Tree view mid-switch before settling back on the kept
