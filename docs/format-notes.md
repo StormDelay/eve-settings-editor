@@ -113,6 +113,18 @@ measured on the real files; only the identifying numbers were replaced.
   account-aspect choice excludes now unchecks and is dropped from the write list
   (the backend already refused to write it); the Accounts-view character pickers
   are sorted by name; a Select-all/Clear was added to the target list.
+- **2026-07-18 — Codec re-share foundation validation PASSED.** The new
+  `blue_marshal::reshare` immutable-only canonicalization pass (run before encode
+  on the inline-first structural editors, replacing the ~1.5x fully-inlined save
+  that relied on EVE re-deduplicating) was driven live: overview column edits,
+  autofill remembered-list edits, and a batch category copy were each saved
+  through the full chain and re-opened **Editable**, and the EVE client accepted
+  the reshared files in-game — confirming our identity-ordered canonical
+  `Shared`/`Ref` sharing is valid to the client even though it is not
+  byte-identical to CCP's own slot numbering. Automated backing: the byte-identical
+  replay gate is unchanged and green, and a new reshare-preservation gate holds
+  over all ~5022 corpus files (`inline(reshare(decode)) == inline(decode)`).
+  Branch `codec-reshare-foundation`.
 
 ## Opcode table (from reverence marshal.h, fetched 2026-07-12)
 
