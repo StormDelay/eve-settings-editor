@@ -288,6 +288,19 @@ mod tests {
     }
 
     #[test]
+    fn never_shares_a_repeated_tuple_containing_a_mutable() {
+        // A repeated TUPLE that itself contains a List (mutable) must never be
+        // shared, even though it occurs 3x — is_shareable's Tuple arm requires
+        // every element to be immutable, and a List inside disqualifies it.
+        let tup = || Value::Tuple(vec![b("aa"), Value::List(vec![Value::Int(1)])]);
+        let t = Value::List(vec![tup(), tup(), tup()]);
+        let out = reshare(&t);
+        assert!(!any_shared_tuple_or_list(&out), "tuple containing a mutable is never shared");
+        assert_eq!(decode(&encode(&out).unwrap()).unwrap(), out, "still encodes and round-trips");
+        assert_eq!(inline(&decode(&encode(&out).unwrap()).unwrap()), inline(&t), "semantics preserved");
+    }
+
+    #[test]
     fn shares_repeated_immutable_tuples() {
         // Identical geometry tuples (all ints => immutable) repeated -> shared.
         let g = || Value::Tuple(vec![Value::Int(16), Value::Int(714), Value::Int(450)]);
@@ -353,6 +366,18 @@ mod tests {
             Value::Shared { value, .. } => matches!(&**value, Value::List(_)) || any_shared_list(value),
             Value::Tuple(xs) | Value::List(xs) => xs.iter().any(any_shared_list),
             Value::Dict(es) => es.iter().any(|(k, val)| any_shared_list(k) || any_shared_list(val)),
+            _ => false,
+        }
+    }
+    fn any_shared_tuple_or_list(v: &Value) -> bool {
+        match v {
+            Value::Shared { value, .. } => {
+                matches!(&**value, Value::Tuple(_) | Value::List(_)) || any_shared_tuple_or_list(value)
+            }
+            Value::Tuple(xs) | Value::List(xs) => xs.iter().any(any_shared_tuple_or_list),
+            Value::Dict(es) => {
+                es.iter().any(|(k, val)| any_shared_tuple_or_list(k) || any_shared_tuple_or_list(val))
+            }
             _ => false,
         }
     }
