@@ -2,8 +2,9 @@
 //! without a Tauri runtime. The `#[tauri::command]` wrappers in lib.rs are
 //! one-liners delegating here.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -170,6 +171,138 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
         }
     }
     AspectWrites { char_categories, account_categories, char_full_copy: false, account_full_copy: false }
+}
+
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct SetupPlan {
+    pub char_writes: Vec<CharWrite>,
+    pub account_writes: Vec<AccountWrite>,
+    pub excluded: Vec<ExcludedTarget>,
+    pub source_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CharWrite {
+    pub char_id: u64,
+    pub path: String,
+    pub full_copy: bool,
+    pub resolution_mismatch: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct AccountWrite {
+    pub user_id: u64,
+    pub path: String,
+    pub full_copy: bool,
+    /// Characters on this account that are NOT selected targets — the write
+    /// changes them too.
+    pub collateral_char_ids: Vec<u64>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ExcludedTarget {
+    pub char_id: u64,
+    pub reason: String,
+}
+
+/// The account (user id) that owns `char_id`, per the persisted pairing.
+fn account_of(store: &accounts::AccountsStore, char_id: u64) -> Option<u64> {
+    store.accounts.iter().find(|(_, a)| a.characters.contains(&char_id)).map(|(&uid, _)| uid)
+}
+
+/// Pure planner. All disk-dependent inputs (discovered file paths, the store,
+/// each char's stored screen resolution) are passed in, so this is unit-tested
+/// without a filesystem. Paths are already folder-scoped by the caller.
+pub fn plan_setup(
+    char_paths: &HashMap<u64, PathBuf>,
+    user_paths: &HashMap<u64, PathBuf>,
+    store: &accounts::AccountsStore,
+    resolutions: &HashMap<u64, (i64, i64)>,
+    source_char: u64,
+    target_chars: &[u64],
+    aspects: &[Aspect],
+) -> SetupPlan {
+    let w = aspect_writes(aspects);
+    let mut plan = SetupPlan::default();
+
+    let source_account = account_of(store, source_char);
+    if w.writes_account() {
+        match source_account {
+            None => {
+                plan.source_error = Some(
+                    "The source character has no paired account — pair it in the Accounts view first."
+                        .into(),
+                );
+                return plan;
+            }
+            Some(uid) if !user_paths.contains_key(&uid) => {
+                plan.source_error = Some("The source character's account file was not found.".into());
+                return plan;
+            }
+            _ => {}
+        }
+    }
+    let src_res = resolutions.get(&source_char).copied();
+
+    let mut included: Vec<u64> = Vec::new();
+    for &t in target_chars {
+        if t == source_char {
+            continue;
+        }
+        if !char_paths.contains_key(&t) {
+            plan.excluded.push(ExcludedTarget { char_id: t, reason: "Character file not found in this folder.".into() });
+            continue;
+        }
+        if w.writes_account() {
+            match account_of(store, t) {
+                None => {
+                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "No account paired — pair it in the Accounts view to include.".into() });
+                    continue;
+                }
+                Some(uid) if !user_paths.contains_key(&uid) => {
+                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "Account file not found in this folder.".into() });
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        included.push(t);
+    }
+
+    if w.writes_char() {
+        for &t in &included {
+            let path = char_paths[&t].to_string_lossy().into_owned();
+            let resolution_mismatch = w.copies_char_geometry()
+                && match (src_res, resolutions.get(&t).copied()) {
+                    (Some(s), Some(d)) => s != d && s != (0, 0) && d != (0, 0),
+                    _ => false,
+                };
+            plan.char_writes.push(CharWrite { char_id: t, path, full_copy: w.char_full_copy, resolution_mismatch });
+        }
+    }
+
+    if w.writes_account() {
+        let mut by_account: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        for &t in &included {
+            let uid = account_of(store, t).expect("included target is paired");
+            by_account.entry(uid).or_default().push(t);
+        }
+        for (uid, selected_on_acct) in by_account {
+            if Some(uid) == source_account {
+                continue; // already carries the source's settings
+            }
+            let path = user_paths[&uid].to_string_lossy().into_owned();
+            let selected: HashSet<u64> = selected_on_acct.into_iter().collect();
+            let collateral: Vec<u64> = store
+                .accounts
+                .get(&uid)
+                .map(|a| a.characters.iter().copied().filter(|c| !selected.contains(c)).collect())
+                .unwrap_or_default();
+            plan.account_writes.push(AccountWrite { user_id: uid, path, full_copy: w.account_full_copy, collateral_char_ids: collateral });
+        }
+    }
+
+    plan
 }
 
 #[derive(Debug, Serialize)]
@@ -388,8 +521,6 @@ fn hex_preview(bytes: &[u8], around: usize) -> String {
     }
     out
 }
-
-use std::path::PathBuf;
 
 /// Snapshot current file mtimes as the guided-capture baseline, excluding
 /// both open documents (the app itself may write them).
@@ -1104,5 +1235,90 @@ mod tests {
             !dir.join("eve-settings-editor-backups").exists(),
             "no backup should have been created"
         );
+    }
+
+    fn store_2accounts() -> accounts::AccountsStore {
+        // account 10 has chars {1,2}; account 20 has char {3}. char 4 unpaired.
+        let mut s = accounts::AccountsStore::default();
+        s.accounts.insert(10, accounts::Account { alias: None, characters: vec![1, 2] });
+        s.accounts.insert(20, accounts::Account { alias: None, characters: vec![3] });
+        s
+    }
+    fn paths(ids: &[u64], prefix: &str) -> HashMap<u64, PathBuf> {
+        ids.iter().map(|&i| (i, PathBuf::from(format!("{prefix}{i}.dat")))).collect()
+    }
+
+    #[test]
+    fn overview_dedupes_account_write_and_lists_collateral() {
+        // Source char 3 (account 20). Targets 1 and 2 both on account 10.
+        let cp = paths(&[1, 2, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 2], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 2, "both targets get a char (widths) write");
+        assert_eq!(plan.account_writes.len(), 1, "one account write for account 10, deduped");
+        assert_eq!(plan.account_writes[0].user_id, 10);
+        assert!(plan.account_writes[0].collateral_char_ids.is_empty(),
+            "both chars on account 10 are selected — no collateral");
+        assert!(plan.source_error.is_none());
+    }
+
+    #[test]
+    fn overview_warns_collateral_for_unselected_sibling() {
+        // Source char 3. Target 1 on account 10 (whose other char 2 is NOT selected).
+        let cp = paths(&[1, 2, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1], &[Aspect::Overview]);
+        assert_eq!(plan.account_writes.len(), 1);
+        assert_eq!(plan.account_writes[0].collateral_char_ids, vec![2], "char 2 is collateral");
+    }
+
+    #[test]
+    fn account_aspect_excludes_an_unpaired_target() {
+        let cp = paths(&[1, 3, 4], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Autofill]);
+        assert_eq!(plan.excluded.len(), 1);
+        assert_eq!(plan.excluded[0].char_id, 4);
+        assert_eq!(plan.account_writes.len(), 1, "only the paired target's account is written");
+    }
+
+    #[test]
+    fn layout_only_includes_unpaired_targets_no_account_write() {
+        let cp = paths(&[1, 3, 4], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Layout]);
+        assert!(plan.excluded.is_empty(), "layout needs no pairing");
+        assert_eq!(plan.char_writes.len(), 2);
+        assert!(plan.account_writes.is_empty());
+    }
+
+    #[test]
+    fn target_on_source_account_skips_the_account_write() {
+        // Source char 1 (account 10). Target char 2, same account 10.
+        let cp = paths(&[1, 2], "char");
+        let up = paths(&[10], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 1, &[2], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
+        assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
+    }
+
+    #[test]
+    fn unpaired_source_with_account_aspect_is_a_source_error() {
+        let cp = paths(&[3, 4], "char");
+        let up = paths(&[20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 4, &[3], &[Aspect::Overview]);
+        assert!(plan.source_error.is_some());
+        assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty());
+    }
+
+    #[test]
+    fn resolution_mismatch_flagged_for_layout_when_screens_differ() {
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let mut res = HashMap::new();
+        res.insert(3u64, (2560i64, 1440i64)); // source
+        res.insert(1u64, (1920i64, 1080i64)); // target differs
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, 3, &[1], &[Aspect::Layout]);
+        assert!(plan.char_writes[0].resolution_mismatch);
     }
 }
