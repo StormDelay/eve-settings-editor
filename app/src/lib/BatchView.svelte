@@ -106,6 +106,10 @@
 
   const nameOfChar = (id: number | null, fileName: string) =>
     id == null ? fileName : (resolvedName("char", id) ?? `char ${id}`);
+  const accountLabel = (id: number) => {
+    const alias = resolvedName("user", id);
+    return alias ? `${alias} (${id})` : `${id}`;
+  };
   const folderLabelOf = (dir: string) => profileLabels(profiles).get(dir) ?? dir;
 
   // Reset op + targets when the source changes.
@@ -115,15 +119,20 @@
     selectedTargets = new Set();
   });
 
-  // Preview from the backend whenever source/aspects/targets settle.
+  // Preview from the backend whenever source/aspects/targets settle. Guarded
+  // by a request token so a slow, stale response can't clobber a newer plan.
   let plan = $state<SetupPlan | null>(null);
+  let previewSeq = 0;
   $effect(() => {
     const sp = sourcePath;
     const asp = [...selected];
     const tgts = [...selectedTargets];
     const allow = allowOtherFolders;
     if (!sp || asp.length === 0 || tgts.length === 0) { plan = null; return; }
-    api.setupPreview(sp, tgts, asp as Aspect[], allow).then((p) => (plan = p)).catch(() => (plan = null));
+    const seq = ++previewSeq;
+    api.setupPreview(sp, tgts, asp as Aspect[], allow)
+      .then((p) => { if (seq === previewSeq) plan = p; })
+      .catch(() => { if (seq === previewSeq) plan = null; });
   });
 
   let busy = $state(false);
@@ -207,8 +216,8 @@
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
             <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
           {/each}
-          {#each plan.account_writes.filter((w) => w.collateral_char_ids.length > 0) as w}
-            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : "Overview / autofill changed"} for account {w.user_id} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}.</p>
+          {#each plan.account_writes as w}
+            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : "Overview / autofill changed"} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}
           {#each plan.excluded as ex}
             <p class="muted">Excluded {nameOfChar(ex.char_id, `char ${ex.char_id}`)} — {ex.reason}</p>
