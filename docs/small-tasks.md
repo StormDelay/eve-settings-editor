@@ -57,11 +57,14 @@ on the inline-first hack it would otherwise have to be un-built from. (M5
 absorbed the two carried-in M4 items — the resolution-differ preview warning and
 the target-list folder-label disambiguation — both now under Shipped 0.6.0.)
 
-**Codec/refactor (Shared/Ref) foundation — NEXT.** Goal: general encoder-side
-auto-dedup so any editor can inline → edit → let the encoder re-derive correct
-canonical `Shared`/`Ref` sharing, instead of each feature hand-rolling
-inline-first and shipping a ~1.5× file the client re-deduplicates. This subsumes
-both items below:
+**Codec/refactor (Shared/Ref) foundation — NEXT.** Designed 2026-07-18:
+`docs/superpowers/specs/2026-07-18-codec-reshare-foundation-design.md`. Goal: a
+`blue_marshal::reshare` canonicalization pass (immutable-only dedup) that the
+inline-first editors run before encode, so any editor can inline → edit →
+reshare → encode and ship a compact, self-contained file instead of a ~1.5× one
+the client re-deduplicates. Byte-identity to the client and dropping the
+`Shared`/`Ref` fidelity tags are explicit non-goals (CCP's slot numbering is
+opaque). This subsumes both items below:
 
 - **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
