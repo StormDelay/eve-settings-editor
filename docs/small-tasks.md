@@ -45,6 +45,26 @@ Workflow:
   account file), have no unit test — all simple branches, cheap insurance for a
   file-writing feature. _Added 2026-07-18 (M5 review, minor M4)._
 
+- [ ] **Make `treewalk::inline_all` Stream-scope-safe (or route it through
+  `blue_marshal::inline`).** `treewalk::inline_all`/`collect_shared`/`inline_shares`
+  resolve `Ref`s against one flat slot table that spans embedded `Value::Stream`
+  boundaries, but an embedded stream is an independent marshal blob whose slots
+  restart at 1 — so a stream with internal sharing would collide/corrupt. The
+  codec re-share milestone fixed exactly this in the new `blue_marshal::inline`
+  (Stream is a hard scope boundary) but left `treewalk::inline_all` — which the
+  structural editors call *before* reshare — unfixed. Pre-existing and unreachable
+  today (STREAM opcode count is 0 across the whole corpus), but it's an
+  inconsistency: route `inline_all` through `blue_marshal::inline`, or mirror the
+  per-stream scoping. _Added 2026-07-18 (codec re-share final review, minor M-1)._
+
+- [ ] **Add a cycle/depth guard to `blue_marshal::inline`'s `resolve`.** `resolve`
+  recurses `Ref → table lookup → resolve` with no bound; a hand-built
+  self-referential `Ref` (the shape `encode`'s `cyclic` test rejects) would
+  stack-overflow rather than error. Unreachable via `decode` (rejects cycles) or
+  the edit paths, but it's *less* guarded than the pre-existing
+  `treewalk::effective` (bounded `0..64`) — add a `MAX_DEPTH` bound mirroring
+  encode/decode. _Added 2026-07-18 (codec re-share final review, minor M-2)._
+
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.

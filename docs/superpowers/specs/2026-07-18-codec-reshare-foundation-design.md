@@ -84,14 +84,22 @@ The recursive "is this subtree immutable" predicate lives here too, next to
   tuple containing one; a tree with repeated immutable values returns with the
   repeats shared and non-repeats untouched; `inline_all(decode(encode(reshare(t))))`
   equals the inlined `t` (semantic preservation); `reshare` is deterministic and
-  idempotent; `encode(reshare(t)).len() <= encode(inline_all_of(t)).len()` (it
-  compacts, never bloats).
-- **Corpus gate (strong):** for every corpus file,
-  `inline_all(decode(bytes))` → `reshare` → `encode` → `decode` → `inline_all`
-  equals `inline_all(decode(bytes))` (reshare preserves semantics over the whole
-  corpus), and each reshared encode is no larger than the inlined encode. Lives
-  alongside the existing byte-identical round-trip gate, which stays green and
-  unchanged.
+  idempotent; and on a realistic tree (immutable values repeated ≥ 2× as real
+  ids are) `encode(reshare(t))` is smaller than `encode(inline(t))`. Note the
+  compaction is not a universal inequality: a *degenerate* micro-repeat (e.g. a
+  2-byte `Bytes` repeated exactly twice — 8 bytes inlined vs. 4+2+4 reshared)
+  costs a couple of bytes more, because a `Shared`+`Ref`+tail-map slot has fixed
+  overhead. Real repeated ids are long and appear many times, so this never
+  bites in practice; the size assertion lives in the unit/integration tests on
+  realistic inputs, not as a strict corpus-wide gate.
+- **Corpus gate (strong):** for every corpus file, `reshare(decode(bytes))` must
+  `encode`, wire-round-trip back to the identical reshared tree, AND preserve the
+  source value — `inline(reshare(decode(bytes))) == inline(decode(bytes))`. That
+  is the real preservation proof (compare against the source, not merely
+  self-consistency), and it gates store-before-ref / slot validity over all
+  ~5,000 real files. No strict corpus-wide *size* assertion (see the degenerate
+  case above). Lives alongside the existing byte-identical round-trip gate, which
+  stays green and unchanged.
 - **`settings-model`:** existing overview/autofill/batch encode tests assert the
   saved output is compact (resharded) and re-opens Editable; add a no-bloat size
   assertion so a regression that silently inlines is caught.
