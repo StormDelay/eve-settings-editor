@@ -113,6 +113,65 @@ pub enum BatchOp {
     Categories { categories: Vec<Category> },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Aspect {
+    Layout,
+    Overview,
+    Autofill,
+    Everything,
+}
+
+/// What a chosen set of aspects writes, split by file side. Pure derivation of
+/// the single routing table (plan header): the char file, the account file, or
+/// both — as subtree splices or a whole-file copy (`Everything`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AspectWrites {
+    pub char_categories: Vec<Category>,
+    pub account_categories: Vec<Category>,
+    pub char_full_copy: bool,
+    pub account_full_copy: bool,
+}
+
+impl AspectWrites {
+    pub fn writes_account(&self) -> bool {
+        self.account_full_copy || !self.account_categories.is_empty()
+    }
+    pub fn writes_char(&self) -> bool {
+        self.char_full_copy || !self.char_categories.is_empty()
+    }
+    /// True when the char write copies window geometry (drives the off-screen
+    /// resolution warning): a full char copy, or a Layout splice.
+    pub fn copies_char_geometry(&self) -> bool {
+        self.char_full_copy || self.char_categories.contains(&Category::Layout)
+    }
+}
+
+pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
+    if aspects.contains(&Aspect::Everything) {
+        return AspectWrites {
+            char_categories: vec![],
+            account_categories: vec![],
+            char_full_copy: true,
+            account_full_copy: true,
+        };
+    }
+    let mut char_categories = vec![];
+    let mut account_categories = vec![];
+    for a in aspects {
+        match a {
+            Aspect::Layout => char_categories.push(Category::Layout),
+            Aspect::Overview => {
+                char_categories.push(Category::OverviewWidths);
+                account_categories.push(Category::Overview);
+            }
+            Aspect::Autofill => account_categories.push(Category::Autofill),
+            Aspect::Everything => unreachable!("handled above"),
+        }
+    }
+    AspectWrites { char_categories, account_categories, char_full_copy: false, account_full_copy: false }
+}
+
 #[derive(Debug, Serialize)]
 pub struct TargetResult {
     pub path: String,
@@ -972,6 +1031,46 @@ mod tests {
             target_bytes,
             "target bytes unchanged: the write path never trusted the caller's kind"
         );
+    }
+
+    #[test]
+    fn everything_is_full_copy_of_both_files() {
+        let w = aspect_writes(&[Aspect::Everything]);
+        assert!(w.char_full_copy && w.account_full_copy);
+        assert!(w.char_categories.is_empty() && w.account_categories.is_empty());
+        assert!(w.writes_account() && w.writes_char() && w.copies_char_geometry());
+    }
+
+    #[test]
+    fn everything_wins_even_when_mixed_with_others() {
+        let w = aspect_writes(&[Aspect::Layout, Aspect::Everything]);
+        assert!(w.char_full_copy && w.account_full_copy);
+    }
+
+    #[test]
+    fn overview_writes_widths_to_char_and_overview_to_account() {
+        let w = aspect_writes(&[Aspect::Overview]);
+        assert_eq!(w.char_categories, vec![Category::OverviewWidths]);
+        assert_eq!(w.account_categories, vec![Category::Overview]);
+        assert!(w.writes_account() && w.writes_char());
+        assert!(!w.copies_char_geometry(), "overview does not copy window geometry");
+    }
+
+    #[test]
+    fn layout_is_char_only_no_account_write() {
+        let w = aspect_writes(&[Aspect::Layout]);
+        assert_eq!(w.char_categories, vec![Category::Layout]);
+        assert!(w.account_categories.is_empty());
+        assert!(!w.writes_account());
+        assert!(w.copies_char_geometry());
+    }
+
+    #[test]
+    fn autofill_is_account_only() {
+        let w = aspect_writes(&[Aspect::Autofill]);
+        assert!(w.char_categories.is_empty());
+        assert_eq!(w.account_categories, vec![Category::Autofill]);
+        assert!(w.writes_account() && !w.writes_char());
     }
 
     #[test]
