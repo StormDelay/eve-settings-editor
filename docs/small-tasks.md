@@ -13,6 +13,16 @@ Workflow:
 
 ## Open
 
+- [ ] **Make the view seamless when switching files.** Opening another file keeps
+  the current editor tab (shipped in 0.5.0), but the switch visibly *blinks*: the
+  view flashes to the default Tree view mid-switch before settling back on the kept
+  view (e.g. Layout). It should be seamless — no flash to Tree. Likely the tab
+  state momentarily resets to the default while the new file loads and its
+  supported views are recomputed, then restores; hold the view across the load
+  instead of reset-then-restore (and/or don't render the default view during the
+  in-between). Lives in `+page.svelte`'s view-switch logic (the
+  Tree / Layout / Overview / Autofill switcher). _Added 2026-07-18._
+
 - [ ] **Skip empty-subtree writes in a batch category copy.** In
   `ops.rs::setup_apply`, a category splice is applied to every planned target even
   when the source's subtree for that category is empty or absent (e.g. an Overview
