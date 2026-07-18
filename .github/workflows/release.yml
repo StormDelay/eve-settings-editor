@@ -30,10 +30,11 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
-      # Build the release body from this tag's CHANGELOG section so each release
-      # ships a real summary, not a bare pointer. bash is available on all three
-      # runners (Windows via Git Bash). Falls back to the generic note if the
-      # section is missing.
+      # Build the release body from the SUMMARY at the top of this tag's CHANGELOG
+      # section — the lines between the version header and the first '### '
+      # subsection. The changelog keeps the full detail below that; the release
+      # page stays short. bash is on all three runners (Windows via Git Bash);
+      # falls back to the generic note if the summary is missing.
       - name: Extract release notes from CHANGELOG
         shell: bash
         run: |
@@ -42,6 +43,7 @@ jobs:
           # which are regex metacharacters that gawk mangles under escaping.
           section=$(awk -v ver="$version" '
             index($0, "## [" ver "]") == 1 { grab=1; next }
+            grab && index($0, "### ") == 1 { exit }
             grab && index($0, "## [") == 1 { exit }
             grab { print }
           ' CHANGELOG.md)
