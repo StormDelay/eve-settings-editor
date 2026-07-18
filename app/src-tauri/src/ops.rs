@@ -615,6 +615,8 @@ where
             return Err(ErrDto::new("read_only", reason.clone()));
         }
         edit(&mut doc.value).map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
+        // Compact the inline-first edit before it can be saved.
+        doc.value = blue_marshal::reshare(&doc.value);
     }
     overview_columns(state)
 }
@@ -658,6 +660,7 @@ where
             return Err(ErrDto::new("read_only", reason.clone()));
         }
         edit(&mut doc.value).map_err(|e| ErrDto::new("autofill", format!("{e:?}")))?;
+        doc.value = blue_marshal::reshare(&doc.value);
     }
     autofill_lists(state)
 }
@@ -968,6 +971,24 @@ mod tests {
     }
 
     #[test]
+    fn overview_edit_leaves_the_user_doc_compactly_shared() {
+        let path = temp_file("ov-reshare", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+
+        let guard = state.user.lock().unwrap();
+        let doc = guard.as_ref().unwrap();
+        let bytes = blue_marshal::encode(&doc.value).unwrap();
+        // Repeated column tokens must be shared (stream shared-count > 0), not left
+        // fully inlined, and the reshared doc must round-trip.
+        let shared_count = i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        assert!(shared_count > 0, "overview edit should reshare repeated tokens");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value, "reshared doc round-trips");
+    }
+
+    #[test]
     fn overview_without_a_user_slot_errors() {
         let state = AppState::new();
         assert_eq!(overview_columns(&state).unwrap_err().code, "no_document");
@@ -1001,6 +1022,46 @@ mod tests {
 
         let lists = clear_all_autofill(&state).unwrap();
         assert!(lists[0].entries.is_empty(), "list emptied, widget kept");
+    }
+
+    fn autofill_user_bytes_with_repeated_ts() -> Vec<u8> {
+        // Same shape as autofill_user_bytes, but the outer `ui` value is ALSO a
+        // (ts, dict) tuple wrapper, reusing the identical 8-byte Long as
+        // editHistory's own timestamp — a repeated shareable immutable, so the
+        // post-edit reshare pass has something real to compact.
+        let ts = Value::Long(vec![0u8; 8]);
+        let hist = Value::Dict(vec![(
+            Value::Bytes(b"/a/box".to_vec()),
+            Value::List(vec![Value::Str("Jita".into()), Value::Str("Amarr".into())]),
+        )]);
+        let ui_inner = Value::Dict(vec![(
+            Value::Bytes(b"editHistory".to_vec()),
+            Value::Tuple(vec![ts.clone(), hist]),
+        )]);
+        encode(&Value::Dict(vec![(
+            Value::Bytes(b"ui".to_vec()),
+            Value::Tuple(vec![ts, ui_inner]),
+        )]))
+        .unwrap()
+    }
+
+    #[test]
+    fn autofill_edit_leaves_the_user_doc_compactly_shared() {
+        let path = temp_file("af-reshare", &autofill_user_bytes_with_repeated_ts());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_autofill_list(&state, "/a/box", vec!["Dodixie".into()]).unwrap();
+
+        let guard = state.user.lock().unwrap();
+        let doc = guard.as_ref().unwrap();
+        let bytes = blue_marshal::encode(&doc.value).unwrap();
+        // The repeated timestamp Long must be shared (stream shared-count > 0),
+        // not left fully inlined, and the reshared doc must round-trip — the key
+        // regression guard that reshare ran without corrupting the tree.
+        let shared_count = i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        assert!(shared_count > 0, "autofill edit should reshare the repeated timestamp");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value, "reshared doc round-trips");
     }
 
     #[test]

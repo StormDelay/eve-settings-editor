@@ -13,6 +13,15 @@ Workflow:
 
 ## Open
 
+- [ ] **Improve the auto-derived autofill category labels.** In
+  `app/src/lib/autofill.ts`, widget paths not matched by the `CURATED` substring
+  map fall through to `derive()`, which just title-cases the last non-boilerplate
+  path segment — for many real EVE widgets this yields cryptic or generic labels
+  (the raw path is always shown too, so it's never *confusing*, just ugly). Fix
+  by expanding `CURATED` to cover the common real widget paths and/or making
+  `derive()` smarter (pick a more meaningful segment, or fold in more context
+  than the last one). _Added 2026-07-18._
+
 - [ ] **Make the view seamless when switching files.** Opening another file keeps
   the current editor tab (shipped in 0.5.0), but the switch visibly *blinks*: the
   view flashes to the default Tree view mid-switch before settling back on the kept
@@ -45,36 +54,52 @@ Workflow:
   account file), have no unit test — all simple branches, cheap insurance for a
   file-writing feature. _Added 2026-07-18 (M5 review, minor M4)._
 
+- [ ] **Make `treewalk::inline_all` Stream-scope-safe (or route it through
+  `blue_marshal::inline`).** `treewalk::inline_all`/`collect_shared`/`inline_shares`
+  resolve `Ref`s against one flat slot table that spans embedded `Value::Stream`
+  boundaries, but an embedded stream is an independent marshal blob whose slots
+  restart at 1 — so a stream with internal sharing would collide/corrupt. The
+  codec re-share milestone fixed exactly this in the new `blue_marshal::inline`
+  (Stream is a hard scope boundary) but left `treewalk::inline_all` — which the
+  structural editors call *before* reshare — unfixed. Pre-existing and unreachable
+  today (STREAM opcode count is 0 across the whole corpus), but it's an
+  inconsistency: route `inline_all` through `blue_marshal::inline`, or mirror the
+  per-stream scoping. _Added 2026-07-18 (codec re-share final review, minor M-1)._
+
+- [ ] **Add a cycle/depth guard to `blue_marshal::inline`'s `resolve`.** `resolve`
+  recurses `Ref → table lookup → resolve` with no bound; a hand-built
+  self-referential `Ref` (the shape `encode`'s `cyclic` test rejects) would
+  stack-overflow rather than error. Unreachable via `decode` (rejects cycles) or
+  the edit paths, but it's *less* guarded than the pre-existing
+  `treewalk::effective` (bounded `0..64`) — add a `MAX_DEPTH` bound mirroring
+  encode/decode. _Added 2026-07-18 (codec re-share final review, minor M-2)._
+
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
-Ordering (updated 2026-07-18): M4 batch apply (shipped v0.5.0) and **M5
-character-centric batch apply (shipped v0.6.0)** are both done; next is the
-**layout-canvas milestone**, then the **codec/refactor milestone**. (M5 absorbed
-the two carried-in M4 items — the resolution-differ preview warning and the
-target-list folder-label disambiguation — both now under Shipped 0.6.0.)
+Ordering (**re-sequenced 2026-07-18**): M4 batch apply (shipped v0.5.0) and **M5
+character-centric batch apply (shipped v0.6.0)** are both done. Next is the
+**codec/refactor (Shared/Ref) foundation**, *then* the **layout-canvas window
+stacks** milestone — reordered because window-stack membership editing is the
+heaviest structural editor yet and should sit on a correct encoder rather than
+on the inline-first hack it would otherwise have to be un-built from. (M5
+absorbed the two carried-in M4 items — the resolution-differ preview warning and
+the target-list folder-label disambiguation — both now under Shipped 0.6.0.)
 
-**Layout-canvas milestone:**
-
-- **Resize layout windows from any corner.** In the layout canvas, a selected
-  window can only be resized from the bottom-right handle today. Add resize
-  handles on all four corners (edges optional) once a window is selected, so it
-  can be resized from any corner. _Added 2026-07-15._
-
-- **Understand and integrate window stacks in the layout editor.** The layout
-  editor surfaces a window's stack id but doesn't model stacking. Work out how EVE
-  window stacks actually work (windows tabbed/grouped together, sharing a position)
-  and integrate them into the layout canvas — e.g. represent a stack as a group
-  and let the editor move/edit stacked windows coherently rather than as
-  independent rectangles. _Added 2026-07-17._
-
-**Codec/refactor milestone (after the layout one):**
+**Codec/refactor (Shared/Ref) foundation — NEXT.** Designed 2026-07-18:
+`docs/superpowers/specs/2026-07-18-codec-reshare-foundation-design.md`. Goal: a
+`blue_marshal::reshare` canonicalization pass (immutable-only dedup) that the
+inline-first editors run before encode, so any editor can inline → edit →
+reshare → encode and ship a compact, self-contained file instead of a ~1.5× one
+the client re-deduplicates. Byte-identity to the client and dropping the
+`Shared`/`Ref` fidelity tags are explicit non-goals (CCP's slot numbering is
+opaque). This subsumes both items below:
 
 - **Re-share correctly instead of inlining on overview save.** Overview column
   edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
   refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
-  longer matches what the EVE client would write. Revisit: re-derive a correct
-  canonical `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
+  longer matches what the EVE client would write. Re-derive a correct canonical
+  `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
   structurally-equal values in emit order) so the saved file matches the client's
   dedup. _Added 2026-07-16 (M3c)._
 
@@ -83,6 +108,22 @@ target-list folder-label disambiguation — both now under Shipped 0.6.0.)
   private `inline_user` is now functionally identical. Delete the private copy and
   have `overview.rs` call the shared helper. Do it as its own change gated by the
   overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
+
+**Layout-canvas window stacks — AFTER the codec foundation.** Design worked out
+and written up 2026-07-18 in
+`docs/superpowers/specs/2026-07-18-layout-canvas-window-stacks-design.md`
+(includes the corpus-verified stack model: `stacksWindows` member→container +
+`preferredIdxInStack3` tab order; stack ids are window-id refs, never ints, so
+the current Int-only stack field is dead). Scope: model stacks, draw one tabbed
+rectangle per open stack, coherent move/resize, and membership editing
+(unstack / add-to-existing / reorder); new-stack creation gated on a live
+capture experiment. Membership editing depends on the codec foundation above.
+_Added 2026-07-17; designed 2026-07-18._
+
+**Resize layout windows from any corner — independent, ship anytime.** In the
+layout canvas a selected window resizes only from the bottom-right handle today;
+add handles on all four corners (edges optional). No codec dependency — its
+resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 
 ## Shipped
 

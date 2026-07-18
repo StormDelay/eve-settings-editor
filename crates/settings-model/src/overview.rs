@@ -19,8 +19,7 @@ use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    collect_shared, effective, inline_shares, is_bytes, unwrap_shared, unwrap_shared_ref, Entries,
-    SharedTable,
+    collect_shared, effective, is_bytes, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -300,32 +299,13 @@ pub enum OverviewError {
     NoTab,
 }
 
-/// Fully inline the tree's `Shared`/`Ref` before a structural column edit. A
-/// column edit rebuilds or shrinks a token list, which can destroy a `Shared`
-/// token DEFINITION the rest of the file still `Ref`s — the file then fails to
-/// encode (`RefBeforeStore`), since real files store a column token once and
-/// `Ref` it from `tabColumnOrder`/`tabColumns`/the account lists/`restoreData`.
-/// Inlining first drops ALL sharing, so no edit can dangle a `Ref`. The re-saved
-/// file is ~1.5x larger (dedup gone) but valid; EVE re-dedups it on next logout.
-// ponytail: inline the whole tree — simple + correct. A future encoder-side
-// auto-dedup (share structurally-equal values in emit order) would keep files
-// compact; do that only if the ~1.5x size actually bites.
-fn inline_user(user: &mut Value) {
-    let new = {
-        let mut sh = SharedTable::new();
-        collect_shared(user, &mut sh);
-        inline_shares(user, &sh)
-    };
-    *user = new;
-}
-
 /// Upgrade a legacy overview to the modern shape on edit: if the container has
 /// only the legacy `tabsettings` tab dict (no `tabsettings_new`), rename the key
 /// to `tabsettings_new`. The two formats are structurally identical (validated
 /// on real files — same account-default lists, `tabsByWindowInstanceID`, and
 /// per-tab `tabColumns`/`tabColumnOrder`), so this is a pure key rename; EVE
 /// reads `tabsettings_new`, and a new-only file is a state EVE itself produces.
-/// Run AFTER `inline_user`, so the overview container and its keys are plain.
+/// Run AFTER `inline_all`, so the overview container and its keys are plain.
 fn migrate_legacy_overview(user: &mut Value) {
     let Some(entries) = overview_entries_mut(user) else { return };
     if entries.iter().any(|(k, _)| is_bytes(k, b"tabsettings_new")) {
@@ -337,7 +317,7 @@ fn migrate_legacy_overview(user: &mut Value) {
 }
 
 /// Mutable entries of the `root → overview` container (unwrapping a
-/// `(timestamp, dict)` value). Assumes a plain tree (post-`inline_user`).
+/// `(timestamp, dict)` value). Assumes a plain tree (post-`inline_all`).
 fn overview_entries_mut(user: &mut Value) -> Option<&mut Entries> {
     let Value::Dict(root) = user else { return None };
     let (_, ov) = root.iter_mut().find(|(k, _)| is_bytes(k, b"overview"))?;
@@ -352,7 +332,7 @@ fn overview_entries_mut(user: &mut Value) -> Option<&mut Entries> {
 }
 
 pub fn set_column_visible(user: &mut Value, tab_index: i64, column: &str, visible: bool) -> Result<(), OverviewError> {
-    inline_user(user);
+    crate::treewalk::inline_all(user);
     migrate_legacy_overview(user);
     let prep = tab_edit_prep(user, tab_index);
     // Immutable phase: resolve the target column's position WITHIN each owned
@@ -407,7 +387,7 @@ fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
-    inline_user(user);
+    crate::treewalk::inline_all(user);
     migrate_legacy_overview(user);
     let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
