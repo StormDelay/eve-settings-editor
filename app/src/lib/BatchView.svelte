@@ -104,6 +104,27 @@
   }
   const targetDisabled = (id: number | null) => anyAccountAspect && !(id != null && pairedIds.has(id));
 
+  // The targets actually sent to the backend: the selected set minus any row the
+  // current aspect selection excludes (an unpaired character under an account
+  // aspect). The backend independently excludes them too, but filtering here
+  // keeps the UI honest — a disabled row never counts as a real target, and its
+  // selection is preserved so it re-includes if the aspect choice changes back.
+  const effectiveTargets = $derived(
+    [...selectedTargets].filter((p) => {
+      const c = chars.find((x) => x.path === p);
+      return c ? !targetDisabled(c.id) : false;
+    }),
+  );
+
+  function selectAllTargets() {
+    const next = new Set(selectedTargets);
+    for (const c of candidates) if (!targetDisabled(c.id)) next.add(c.path);
+    selectedTargets = next;
+  }
+  function clearTargets() {
+    selectedTargets = new Set();
+  }
+
   const nameOfChar = (id: number | null, fileName: string) =>
     id == null ? fileName : (resolvedName("char", id) ?? `char ${id}`);
   const accountLabel = (id: number) => {
@@ -126,7 +147,7 @@
   $effect(() => {
     const sp = sourcePath;
     const asp = [...selected];
-    const tgts = [...selectedTargets];
+    const tgts = effectiveTargets;
     const allow = allowOtherFolders;
     if (!sp || asp.length === 0 || tgts.length === 0) { plan = null; return; }
     const seq = ++previewSeq;
@@ -139,7 +160,7 @@
   let error = $state<string | null>(null);
   let results = $state<BatchTargetResult[] | null>(null);
   const canApply = $derived(
-    !!sourcePath && selected.size > 0 && selectedTargets.size > 0 && !busy &&
+    !!sourcePath && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
     !!plan && !plan.source_error && (plan.char_writes.length + plan.account_writes.length > 0),
   );
 
@@ -147,7 +168,7 @@
     if (!sourcePath) return;
     busy = true; error = null; results = null;
     try {
-      results = await api.setupApply(sourcePath, [...selectedTargets], [...selected] as Aspect[], allowOtherFolders);
+      results = await api.setupApply(sourcePath, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
     } catch (e) {
       error = errMessage(e);
     } finally {
@@ -190,6 +211,8 @@
     <section>
       <div class="head">
         Target characters
+        <button type="button" class="linkbtn" onclick={selectAllTargets}>Select all</button>
+        <button type="button" class="linkbtn" onclick={clearTargets}>Clear</button>
         <label class="inline"><input type="checkbox" bind:checked={allowOtherFolders} /> Show other folders</label>
       </div>
       {#if candidates.length === 0}
@@ -197,7 +220,7 @@
       {:else}
         {#each candidates as c}
           <label class:disabled={targetDisabled(c.id)}>
-            <input type="checkbox" checked={selectedTargets.has(c.path)}
+            <input type="checkbox" checked={selectedTargets.has(c.path) && !targetDisabled(c.id)}
               disabled={targetDisabled(c.id)} onchange={() => toggleTarget(c.path)} />
             {nameOfChar(c.id, c.file_name)}
             <span class="muted">{c.file_name}{c.dir === folder ? "" : ` · ${folderLabelOf(c.dir)}`}</span>
@@ -252,6 +275,8 @@
   label { display: block; padding: 0.15rem 0; }
   label.disabled { opacity: 0.5; }
   label.inline { display: inline; font-weight: 400; }
+  .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .linkbtn:hover { text-decoration: underline; }
   select, option { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit; }
   input[type="checkbox"] { accent-color: var(--accent); }
   .muted { color: var(--fg-dim); }
