@@ -28,52 +28,36 @@ Workflow:
   carry the old generic "See CHANGELOG.md" body. Go back and rewrite each from its
   CHANGELOG section. _Added 2026-07-17; flow shipped in v0.5.0, backfill deferred._
 
-- [ ] **Warn in the batch preview when a target's resolution differs.** Master
-  design §6 requires it — *"window geometry is absolute pixels; the preview warns
-  for each target whose stored resolution differs from the source's"* — but the
-  M4 spec dropped the requirement and no task built it, so a layout copy from a
-  2560×1440 character onto a 1920×1080 one silently puts windows off-screen.
-  Recoverable (every target is backed up) but exactly the surprise the warning
-  exists to prevent. The projection already has the data: `WindowLayout` carries
-  `resolution_matches`, and `WindowRect` carries `screen_w`/`screen_h`
-  (`windows.rs:42,54-55`). The gap is that the batch flow never reads a target's
-  layout — `batch_targets` returns `Candidate { path, file_name, id, folder,
-  same_folder }` and nothing more, so surfacing this needs each candidate's
-  stored resolution (either widen `Candidate`, or a separate command the preview
-  calls for the selected targets). Weigh cost against M5, which will revisit this
-  flow anyway. _Added 2026-07-17 (found documenting the M4 smoke)._
+- [ ] **Skip empty-subtree writes in a batch category copy.** In
+  `ops.rs::setup_apply`, a category splice is applied to every planned target even
+  when the source's subtree for that category is empty or absent (e.g. an Overview
+  copy from a source char that has no `SortHeadersSizes` widths still rewrites and
+  backs up each target char file with an empty widths splice). Harmless (the splice
+  changes nothing) but it inflates the preview's "will write N files" count,
+  produces a spurious backup, and grows the target ~1.5× via `inline_all`. Skip a
+  write whose extracted subtree is empty — ideally reflected in `plan_setup` so the
+  preview count is honest too. _Added 2026-07-18 (M5 whole-branch review, minor M1)._
+
+- [ ] **Extract the batch view's shared candidate filter+sort helper.**
+  `BatchView.svelte`'s `sourceOptions` and `candidates` deriveds repeat the same
+  `filter(folder-scope) → sort(byResolvedName)` chain; extract one `charsInScope`
+  derived and build both from it. Cosmetic. _Added 2026-07-18 (M5 review, minor M2)._
+
+- [ ] **Fill batch-apply edge-case tests.** `plan_setup`'s "account file missing
+  from `user_paths`" exclusion branches (source and target), empty/duplicate
+  `target_chars`, and the all-targets-on-the-source-account case, plus
+  `setup_apply`'s own error branches (`source_error` → `Err`, missing source
+  account file), have no unit test — all simple branches, cheap insurance for a
+  file-writing feature. _Added 2026-07-18 (M5 review, minor M4)._
 
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
-Ordering (updated 2026-07-17): **M4 batch apply** (code-complete, awaiting live
-smoke), then **M5 cross-file batch apply**, then the layout-canvas milestone,
-then the codec/refactor milestone.
-
-**M5 — cross-file batch apply** (master design §9): batch apply for the sections
-that span two files — overview settings (user → user), and the account-scoped
-overview-window groups that decide which windows a char-scoped layout copy will
-actually produce. Added after M4's live smoke showed a layout copy can't make two
-characters match on its own: how many overview windows exist is account state,
-where each sits is char state. See the M4 spec's §7 ceiling for the evidence.
-_Added 2026-07-17._
-
-Also carried into M5 (deferred from M4, 2026-07-17):
-
-- **Disambiguate the batch target list's folder label.** With "Show other
-  folders" ticked, each target renders `Candidate.folder`, built backend-side as
-  `format!("{}/{}", p.server, p.profile)` (`ops.rs`) — which omits the install
-  name, so two installs holding the same server *and* profile (a SharedCache dir
-  and a legacy one both with `settings_Default`) render identically and the user
-  cannot tell which file they are about to overwrite. Confirmed present on the
-  developer's machine (two `tranquility / Default` profiles). Display-only —
-  `same_folder` is driven by `p.dir` equality, so the safety filter is
-  unaffected. The frontend already solves this for the sidebar and the batch
-  *source* picker via `profiles.ts`'s `profileLabels`, which appends the install
-  name only when a collision exists; the fix is to give the target list the same
-  label, which means either widening `Candidate` or labelling frontend-side from
-  the discovered profiles. Grouped into M5 because that milestone reworks this
-  flow anyway.
+Ordering (updated 2026-07-18): M4 batch apply (shipped v0.5.0) and **M5
+character-centric batch apply (shipped v0.6.0)** are both done; next is the
+**layout-canvas milestone**, then the **codec/refactor milestone**. (M5 absorbed
+the two carried-in M4 items — the resolution-differ preview warning and the
+target-list folder-label disambiguation — both now under Shipped 0.6.0.)
 
 **Layout-canvas milestone:**
 
@@ -106,6 +90,30 @@ Also carried into M5 (deferred from M4, 2026-07-17):
   overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
 
 ## Shipped
+
+### 0.6.0
+
+- [x] **Cross-file / character-centric batch apply (M5).** The batch view is now
+  character-to-character: pick a source character and target characters, copy
+  Window layout / Overview / Autofill / Everything, and the engine routes each
+  aspect to the char file and/or the account `core_user` file, dedupes account
+  writes, and names the collateral characters an account-wide write also changes.
+  Replaces the M4 file-centric flow. _Added 2026-07-17; shipped 2026-07-18._
+- [x] **Warn in the batch preview when a target's resolution differs.** The
+  preview flags a target whose stored screen resolution differs from the source's
+  (a layout copy would land windows off-screen). Built into the M5 flow. _Added
+  2026-07-17._
+- [x] **Disambiguate the batch target list's folder label.** Target rows under
+  "show other folders" use `profiles.ts` `profileLabels`, appending the install
+  name on a server/profile collision. Built into the M5 target list. _Added
+  2026-07-17._
+- [x] **Sort the Accounts-view character pickers.** The "add character" dropdowns
+  and the Unassigned list sort by resolved name, matching the file list. _Added
+  2026-07-18._
+- [x] **Select-all / Clear for the batch target list, and drop excluded targets.**
+  A Select-all/Clear control on the target list; an already-selected target that a
+  later account-aspect choice excludes now unchecks and is dropped from the write
+  list. _Added 2026-07-18._
 
 ### 0.5.0
 
