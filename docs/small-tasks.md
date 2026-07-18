@@ -13,21 +13,6 @@ Workflow:
 
 ## Open
 
-- [ ] **Add a short public-facing README.** The repo root has no README and
-  `app/README.md` is still the stock Tauri template. Write a brief one: what the
-  tool is, that it edits local EVE settings files (with backups), where to
-  download the installers, and a note that builds are unsigned so expect OS
-  warnings. A design §11 "go public" item; low effort, high value once anyone
-  outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
-
-- [ ] **Backfill informative release notes for v0.1.0–v0.4.0.** The release-prep
-  *flow* is fixed as of v0.5.0 — `release.yml` now extracts each tag's CHANGELOG
-  section into `releaseBody` (verified live: v0.5.0's draft body is its full
-  CHANGELOG section), so future releases ship a real summary automatically. What
-  remains is the backfill: the already-published v0.1.0–v0.4.0 releases still
-  carry the old generic "See CHANGELOG.md" body. Go back and rewrite each from its
-  CHANGELOG section. _Added 2026-07-17; flow shipped in v0.5.0, backfill deferred._
-
 - [ ] **Skip empty-subtree writes in a batch category copy.** In
   `ops.rs::setup_apply`, a category splice is applied to every planned target even
   when the source's subtree for that category is empty or absent (e.g. an Overview
@@ -114,6 +99,13 @@ target-list folder-label disambiguation — both now under Shipped 0.6.0.)
   A Select-all/Clear control on the target list; an already-selected target that a
   later account-aspect choice excludes now unchecks and is dropped from the write
   list. _Added 2026-07-18._
+- [x] **Add a short public-facing README.** A concise root `README.md` — what the
+  tool is, features, install (with the unsigned-builds note), scope/safety, build,
+  and MIT license. _Added 2026-07-16; shipped 2026-07-18._
+- [x] **Backfill release notes for v0.1.0–v0.4.0.** The four already-published
+  releases' bodies were rewritten from their CHANGELOG sections (via
+  `gh release edit`), replacing the old generic "See CHANGELOG.md" text. _Added
+  2026-07-17; shipped 2026-07-18._
 
 ### 0.5.0
 
