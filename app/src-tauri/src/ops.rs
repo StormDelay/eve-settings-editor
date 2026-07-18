@@ -305,6 +305,159 @@ pub fn plan_setup(
     plan
 }
 
+/// Discover, folder-scope to the source's profile (unless `allow_other_folders`),
+/// and split into char/user id->path maps. Returns the source char's id too.
+fn scoped_files(
+    roots: &[PathBuf],
+    source_char_path: &str,
+    allow_other_folders: bool,
+) -> Option<(u64, HashMap<u64, PathBuf>, HashMap<u64, PathBuf>)> {
+    let profiles = discover(roots);
+    let src = Path::new(source_char_path);
+    let mut src_id = None;
+    let mut src_dir = None;
+    for p in &profiles {
+        for f in &p.files {
+            if f.path == src {
+                src_id = f.id;
+                src_dir = Some(p.dir.clone());
+            }
+        }
+    }
+    let src_id = src_id?;
+    let mut char_paths = HashMap::new();
+    let mut user_paths = HashMap::new();
+    for p in &profiles {
+        if !allow_other_folders && Some(&p.dir) != src_dir.as_ref() {
+            continue;
+        }
+        for f in &p.files {
+            let Some(id) = f.id else { continue };
+            match f.kind {
+                FileKind::Char => { char_paths.insert(id, f.path.clone()); }
+                FileKind::User => { user_paths.insert(id, f.path.clone()); }
+                FileKind::Other => {}
+            }
+        }
+    }
+    Some((src_id, char_paths, user_paths))
+}
+
+/// Each char's stored screen resolution (reference_w, reference_h), for the
+/// resolution-mismatch warning. Only the source + requested targets are read.
+fn gather_resolutions(char_paths: &HashMap<u64, PathBuf>, ids: &[u64]) -> HashMap<u64, (i64, i64)> {
+    let mut out = HashMap::new();
+    for &id in ids {
+        let Some(path) = char_paths.get(&id) else { continue };
+        let Ok(bytes) = fs::read(path) else { continue };
+        let Ok(value) = blue_marshal::decode(&bytes) else { continue };
+        let wl = project_window_layout(&value);
+        out.insert(id, (wl.reference_w, wl.reference_h));
+    }
+    out
+}
+
+/// Map target file paths to char ids within the scoped char map.
+fn target_ids(char_paths: &HashMap<u64, PathBuf>, target_char_paths: &[String]) -> Vec<u64> {
+    target_char_paths
+        .iter()
+        .filter_map(|t| {
+            let tp = Path::new(t);
+            char_paths.iter().find(|(_, p)| p.as_path() == tp).map(|(&id, _)| id)
+        })
+        .collect()
+}
+
+pub fn setup_preview(
+    roots: &[PathBuf],
+    dir: &Path,
+    source_char_path: &str,
+    target_char_paths: &[String],
+    aspects: &[Aspect],
+    allow_other_folders: bool,
+) -> SetupPlan {
+    let Some((src_id, char_paths, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders)
+    else {
+        return SetupPlan { source_error: Some("Source file not found.".into()), ..Default::default() };
+    };
+    let targets = target_ids(&char_paths, target_char_paths);
+    let store = accounts::load_store(dir);
+    let resolutions = if aspect_writes(aspects).copies_char_geometry() {
+        let mut ids = targets.clone();
+        ids.push(src_id);
+        gather_resolutions(&char_paths, &ids)
+    } else {
+        HashMap::new()
+    };
+    plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects)
+}
+
+pub fn setup_apply(
+    roots: &[PathBuf],
+    dir: &Path,
+    source_char_path: &str,
+    target_char_paths: &[String],
+    aspects: &[Aspect],
+    allow_other_folders: bool,
+) -> Result<Vec<TargetResult>, ErrDto> {
+    let plan = setup_preview(roots, dir, source_char_path, target_char_paths, aspects, allow_other_folders);
+    if let Some(e) = plan.source_error {
+        return Err(ErrDto::new("source", e));
+    }
+    let w = aspect_writes(aspects);
+
+    // Read/decode the source's two files once, extracting each side's subtrees.
+    let src_char_bytes = fs::read(source_char_path).map_err(|e| ErrDto::new("io", e.to_string()))?;
+    let char_extracted = if !w.char_categories.is_empty() {
+        let v = blue_marshal::decode(&src_char_bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+        extract_categories(&v, &w.char_categories)
+    } else {
+        vec![]
+    };
+    // The account (user) file behind the source char, if any account write is needed.
+    let (user_bytes, account_extracted) = if w.writes_account() {
+        let Some((src_id, _cp, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders) else {
+            return Err(ErrDto::new("source", "Source file not found."));
+        };
+        let store = accounts::load_store(dir);
+        let uid = account_of(&store, src_id).ok_or_else(|| ErrDto::new("source", "Source character has no paired account."))?;
+        let upath = user_paths.get(&uid).ok_or_else(|| ErrDto::new("source", "Source account file not found."))?;
+        let bytes = fs::read(upath).map_err(|e| ErrDto::new("io", e.to_string()))?;
+        let extracted = if !w.account_categories.is_empty() {
+            let v = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+            extract_categories(&v, &w.account_categories)
+        } else {
+            vec![]
+        };
+        (bytes, extracted)
+    } else {
+        (vec![], vec![])
+    };
+
+    let mut results = Vec::new();
+    for cw in &plan.char_writes {
+        let r = if cw.full_copy {
+            full_copy_to(&src_char_bytes, Path::new(&cw.path))
+                .map(|bk| ok_result(&cw.path, bk.to_string_lossy().into_owned()))
+        } else {
+            apply_categories_to(Path::new(&cw.path), &char_extracted)
+                .map(|rep| ok_result(&cw.path, rep.backup_path.to_string_lossy().into_owned()))
+        };
+        results.push(r.unwrap_or_else(|e| err_result(&cw.path, e)));
+    }
+    for aw in &plan.account_writes {
+        let r = if aw.full_copy {
+            full_copy_to(&user_bytes, Path::new(&aw.path))
+                .map(|bk| ok_result(&aw.path, bk.to_string_lossy().into_owned()))
+        } else {
+            apply_categories_to(Path::new(&aw.path), &account_extracted)
+                .map(|rep| ok_result(&aw.path, rep.backup_path.to_string_lossy().into_owned()))
+        };
+        results.push(r.unwrap_or_else(|e| err_result(&aw.path, e)));
+    }
+    Ok(results)
+}
+
 #[derive(Debug, Serialize)]
 pub struct TargetResult {
     pub path: String,
@@ -1320,5 +1473,48 @@ mod tests {
         res.insert(1u64, (1920i64, 1080i64)); // target differs
         let plan = plan_setup(&cp, &up, &store_2accounts(), &res, 3, &[1], &[Aspect::Layout]);
         assert!(plan.char_writes[0].resolution_mismatch);
+    }
+
+    #[test]
+    fn setup_apply_overview_reports_char_and_account_writes_with_a_readonly_failure() {
+        use blue_marshal::{encode, Value};
+        let base = std::env::temp_dir().join(format!("app-setup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // Discovery root with the real install/profile structure discover() expects
+        // (mirrors the discovery_tree() helper the M4 target tests use).
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let overview = |c: &str| Value::Dict(vec![(b("overview"),
+            Value::Dict(vec![(b("overviewColumns"), Value::List(vec![b(c)]))]))]);
+        let widths = || Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("SortHeadersSizes"),
+            Value::Tuple(vec![ts(), Value::Dict(vec![])]))]))]);
+        // source char 100 on account 500; target char 200 on account 600.
+        std::fs::write(prof.join("core_char_100.dat"), encode(&widths()).unwrap()).unwrap();
+        std::fs::write(prof.join("core_user_500.dat"), encode(&overview("SRC")).unwrap()).unwrap();
+        std::fs::write(prof.join("core_char_200.dat"), encode(&widths()).unwrap()).unwrap();
+        // read-only stream (INT8-encoded) => save() refuses it => account write fails.
+        std::fs::write(prof.join("core_user_600.dat"), [0x7E, 0, 0, 0, 0, 0x06, 0x01]).unwrap();
+
+        // accounts.json lives in the app-data dir, separate from the discovery root.
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(500, accounts::Account { alias: None, characters: vec![100] });
+        store.accounts.insert(600, accounts::Account { alias: None, characters: vec![200] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+        let roots = vec![base.join("root")];
+        let src = prof.join("core_char_100.dat").to_string_lossy().into_owned();
+        let tgt = vec![prof.join("core_char_200.dat").to_string_lossy().into_owned()];
+        let results = setup_apply(&roots, &app_dir, &src, &tgt, &[Aspect::Overview], false).unwrap();
+
+        // One char write (widths -> char 200, ok) and one account write (overview
+        // -> read-only user 600, fails) — the failure did not halt the char write.
+        let char_ok = results.iter().any(|r| r.path.contains("core_char_200") && r.ok);
+        let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
+        assert!(char_ok, "char widths write succeeded");
+        assert!(acct_fail, "read-only account write failed but was reported, not panicked");
     }
 }
