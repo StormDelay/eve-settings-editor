@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-18
+
+Batch apply, reimagined around the character.
+
+- Copy a character's setup onto other characters — window layout, overview
+  (columns, tabs, presets), autofill, or everything — and the tool works out
+  which files to write.
+- When a copy also changes settings shared by a whole account, the preview names
+  the other characters it will affect, before anything is written.
+- Warns when a target's screen resolution differs from the source's (a layout
+  copy could otherwise land windows off-screen).
+
+### Added
+- A character-centric batch view: pick a source character and target characters,
+  then choose what to copy — Window layout, Overview, Autofill, or Everything (a
+  full clone of both the character file and its account file). Each written file
+  is backed up first, and one file's failure never stops the rest.
+- Cross-file copies. Overview and autofill live in the account file, so copying
+  them to make one character match also changes every other character on that
+  account — the preview lists those "collateral" characters (and notes that
+  characters you have not paired yet are affected too) so it is never a surprise.
+- A resolution-mismatch warning in the batch preview, and a Select all / Clear
+  control for the target list.
+
+### Changed
+- Batch apply is now character-to-character and replaces the previous
+  file-by-file batch flow; where each setting physically lives is handled for you.
+- The Accounts view's character pickers are sorted by name, matching the file list.
+
+### Fixed
+- A layout copy can now actually reproduce another character's overview windows,
+  because the account-scoped overview configuration is copied alongside the
+  character's window positions — the limitation noted in 0.5.0.
+
 ## [0.5.0] - 2026-07-18
 
 Batch apply, plus sidebar and editor quality-of-life improvements.
