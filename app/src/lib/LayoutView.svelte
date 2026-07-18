@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot } from "$lib/api";
-  import { canvasScale, toCanvas, toData, openWindows } from "$lib/layout";
+  import { canvasScale, toCanvas, toData, openWindows, resizeRect, type Corner } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -131,7 +131,7 @@
 
   type Drag =
     | { kind: "move"; w: WindowRect; startX: number; startY: number; ox: number; oy: number }
-    | { kind: "resize"; w: WindowRect; startX: number; startY: number; ow: number; oh: number };
+    | { kind: "resize"; w: WindowRect; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number };
   let drag: Drag | null = null;
 
   // Capture on the canvas (not the rectangle) so its onpointermove/up keep
@@ -144,10 +144,13 @@
     e.preventDefault();
   }
 
-  function startResize(w: WindowRect, e: PointerEvent) {
+  function startResize(w: WindowRect, corner: Corner, e: PointerEvent) {
     if (readOnly) return;
     selectedId = w.id;
-    drag = { kind: "resize", w, startX: e.clientX, startY: e.clientY, ow: w.geom!.w, oh: w.geom!.h };
+    drag = {
+      kind: "resize", w, corner, startX: e.clientX, startY: e.clientY,
+      ox: w.geom!.x, oy: w.geom!.y, ow: w.geom!.w, oh: w.geom!.h,
+    };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
     e.stopPropagation();
@@ -162,7 +165,7 @@
     } else {
       preview = {
         ...preview,
-        [drag.w.id]: { ...rectOf(drag.w), w: Math.max(0, drag.ow + dx), h: Math.max(0, drag.oh + dy) },
+        [drag.w.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
       };
     }
   }
@@ -185,7 +188,7 @@
     }
     // Keep the preview showing the dropped position through the commit + refetch,
     // then clear it — by then `layout` holds the same value, so no snap-back blink.
-    await commit(geomMutations(w, d.kind === "move" ? { x: p.x, y: p.y } : { w: p.w, h: p.h }));
+    await commit(geomMutations(w, d.kind === "move" ? { x: p.x, y: p.y } : { x: p.x, y: p.y, w: p.w, h: p.h }));
     clearPreview(w.id);
   }
 </script>
@@ -212,8 +215,12 @@
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
             onpointerdown={(e) => startMove(w, e)}>
             <span class="win-label">{w.label}</span>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <span class="resize" onpointerdown={(e) => startResize(w, e)}></span>
+            {#if w.id === selectedId}
+              {#each (["tl", "tr", "bl", "br"] as const) as c}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span class="resize {c}" onpointerdown={(e) => startResize(w, c, e)}></span>
+              {/each}
+            {/if}
           </div>
         {/each}
       </div>
@@ -276,15 +283,16 @@
   }
   .resize {
     position: absolute;
-    right: 0;
-    bottom: 0;
     width: 12px;
     height: 12px;
-    cursor: se-resize;
     background: currentColor;
     opacity: 0.6;
     touch-action: none;
   }
+  .resize.tl { left: 0; top: 0; cursor: nwse-resize; }
+  .resize.tr { right: 0; top: 0; cursor: nesw-resize; }
+  .resize.bl { left: 0; bottom: 0; cursor: nesw-resize; }
+  .resize.br { right: 0; bottom: 0; cursor: nwse-resize; }
   .ref {
     color: #888;
     font-size: 11px;
