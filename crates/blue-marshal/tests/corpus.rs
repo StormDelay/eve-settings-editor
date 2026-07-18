@@ -103,3 +103,52 @@ fn every_corpus_file_reencodes_byte_identically() {
         failures.join("\n")
     );
 }
+
+/// Codec re-share gate: for every corpus file, `reshare` must preserve the
+/// value and produce a stream that encodes and round-trips. `reshare` inlines
+/// internally and is a normalizer, so re-normalizing after a wire round-trip
+/// must land on the identical value — that proves no value was dropped or
+/// corrupted and that the emitted sharing satisfies store-before-ref. The
+/// byte-identical replay gate above is unchanged and still guards the read path.
+#[test]
+fn reshare_preserves_every_corpus_file() {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
+    if !corpus.is_dir() {
+        eprintln!("corpus missing at {corpus:?} — skipping (run tools/sync-corpus.ps1)");
+        return;
+    }
+    let mut files = Vec::new();
+    collect_dat_files(&corpus, &mut files);
+    if files.is_empty() {
+        eprintln!("corpus empty at {corpus:?} — skipping (run tools/sync-corpus.ps1)");
+        return;
+    }
+    let mut failures = Vec::new();
+    for f in &files {
+        let data = fs::read(f).unwrap();
+        let Ok(value) = blue_marshal::decode(&data) else {
+            failures.push(format!("{}: decode", f.display()));
+            continue;
+        };
+        let reshared = blue_marshal::reshare(&value);
+        let bytes = match blue_marshal::encode(&reshared) {
+            Ok(b) => b,
+            Err(e) => {
+                failures.push(format!("{}: reshared encode: {e}", f.display()));
+                continue;
+            }
+        };
+        match blue_marshal::decode(&bytes) {
+            Ok(back) if blue_marshal::reshare(&back) == reshared => {}
+            Ok(_) => failures.push(format!("{}: reshare not preserved by round-trip", f.display())),
+            Err(e) => failures.push(format!("{}: reshared decode: {e}", f.display())),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}/{} corpus files failed the reshare gate:\n{}",
+        failures.len(),
+        files.len(),
+        failures.join("\n")
+    );
+}
