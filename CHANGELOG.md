@@ -8,8 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.5.0] - 2026-07-18
 
-Batch apply: copy settings from one file to many, plus sidebar and editor
-quality-of-life improvements.
+Batch apply, plus sidebar and editor quality-of-life improvements.
+
+- Batch apply: copy settings from one file to many — whole file, window layout
+  (character → character), or autofill lists (account → account) — each target
+  backed up first.
+- The editor keeps your current tab when you switch files.
+- A filter box in the Autofill view.
+- Collapsible sidebar panels and file-type groups; files sorted by name.
+- Release notes are now generated from this changelog.
+
+Heads-up: a layout copy is not window-for-window identical (overview-window
+count is account-scoped), and the preview does not yet warn on resolution
+mismatch — see the changelog for details.
 
 ### Added
 - Batch apply — a new sidebar view that copies settings from one source file to
