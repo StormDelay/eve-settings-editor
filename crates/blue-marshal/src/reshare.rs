@@ -46,7 +46,10 @@ fn collect(v: &Value, out: &mut HashMap<u32, Value>) {
             collect(k, out);
             collect(val, out);
         }),
-        Value::Stream(inner) => collect(inner, out),
+        // Stream is a hard scope boundary: encode.rs encodes an embedded Stream
+        // as an independent marshal blob with its own local slot numbering, so
+        // sharing must never cross into it (see `resolve`/`rebuild` below).
+        Value::Stream(_) => {}
         Value::Instance { class, state } => {
             collect(class, out);
             collect(state, out);
@@ -75,7 +78,8 @@ fn resolve(v: &Value, table: &HashMap<u32, Value>) -> Value {
         Value::Dict(es) => {
             Value::Dict(es.iter().map(|(k, val)| (resolve(k, table), resolve(val, table))).collect())
         }
-        Value::Stream(inner) => Value::Stream(Box::new(resolve(inner, table))),
+        // Own scope: the embedded stream inlines independently of the outer table.
+        Value::Stream(inner) => Value::Stream(Box::new(inline(inner))),
         Value::Instance { class, state } => Value::Instance {
             class: Box::new(resolve(class, table)),
             state: Box::new(resolve(state, table)),
@@ -141,7 +145,9 @@ fn tally(v: &Value, counts: &mut HashMap<Vec<u8>, usize>) {
             tally(val, counts);
             tally(k, counts);
         }),
-        Value::Stream(inner) => tally(inner, counts),
+        // Scope boundary, as in `collect`: don't count the inner stream's
+        // values against the outer table.
+        Value::Stream(_) => {}
         Value::Instance { class, state } => {
             tally(class, counts);
             tally(state, counts);
@@ -194,7 +200,9 @@ fn rebuild(
                 })
                 .collect(),
         ),
-        Value::Stream(inner) => Value::Stream(Box::new(rebuild(inner, counts, slots, next))),
+        // Own scope: the embedded stream reshares independently of the outer
+        // slot numbering, mirroring the encoder's fresh `1..=count` per stream.
+        Value::Stream(inner) => Value::Stream(Box::new(reshare(inner))),
         Value::Instance { class, state } => Value::Instance {
             class: Box::new(rebuild(class, counts, slots, next)),
             state: Box::new(rebuild(state, counts, slots, next)),
@@ -306,6 +314,20 @@ mod tests {
         let inlined_len = encode(&inline(&t)).unwrap().len();
         let reshared_len = encode(&reshare(&t)).unwrap().len();
         assert!(reshared_len < inlined_len, "{reshared_len} !< {inlined_len}");
+    }
+
+    #[test]
+    fn stream_is_an_independent_sharing_scope() {
+        use crate::decode::decode;
+        // "overview" appears once outside and twice inside an embedded Stream. The
+        // nested stream is its own marshal blob with local slots, so sharing must
+        // NOT cross the boundary — the result must still encode and round-trip.
+        let inner = Value::List(vec![b("overview"), b("overview")]);
+        let t = Value::Tuple(vec![b("overview"), Value::Stream(Box::new(inner))]);
+        let out = reshare(&t);
+        let bytes = encode(&out).expect("reshared tree containing a Stream encodes");
+        assert_eq!(decode(&bytes).unwrap(), out, "round-trips");
+        assert_eq!(inline(&decode(&bytes).unwrap()), inline(&t), "semantics preserved");
     }
 
     // --- test helpers (walk the tree counting share nodes) ---
