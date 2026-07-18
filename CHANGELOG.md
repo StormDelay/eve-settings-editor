@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-18
+
+Leaner settings files.
+
+- When you edit overview columns or autofill lists, or copy settings between
+  characters, the tool now writes a compact file instead of a larger, fully
+  expanded one — closer to what EVE itself writes, and no longer leaning on the
+  game to tidy the file up on next logout.
+
+### Changed
+- Structural edits (overview, autofill, batch copy) re-derive a compact,
+  canonical shared-object layout before saving, so a saved file is no longer
+  ~1.5× larger than it needs to be. This is internal to how files are written;
+  what the settings mean, and how they load in-game, is unchanged.
+
 ## [0.6.0] - 2026-07-18
 
 Batch apply, reimagined around the character.
