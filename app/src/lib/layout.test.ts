@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching search.test.ts.
-import { canvasScale, toCanvas, toData, openWindows } from "./layout.ts";
+import { canvasScale, toCanvas, toData, openWindows, resizeRect } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -47,5 +47,36 @@ const wins = [win("a", true, true), win("b", false, true), win("c", true, false)
 const open = openWindows(wins);
 check("open filter keeps only open AND renderable windows", open.length === 1);
 check("open filter keeps the right window", open[0].id === "a");
+
+// --- resizeRect: drag one corner, opposite corner stays anchored ------------
+{
+  const orig = { x: 100, y: 100, w: 200, h: 100 }; // right=300, bottom=200
+
+  // BR: only w/h grow; top-left (100,100) anchored (today's behavior).
+  const br = resizeRect(orig, "br", 40, 20);
+  check("br keeps top-left anchored", br.x === 100 && br.y === 100);
+  check("br grows w,h by the delta", br.w === 240 && br.h === 120);
+
+  // TL: x/y move; bottom-right (300,200) stays fixed.
+  const tl = resizeRect(orig, "tl", 40, 20);
+  check("tl moves x,y by the delta", tl.x === 140 && tl.y === 120);
+  check("tl keeps bottom-right fixed", tl.x + tl.w === 300 && tl.y + tl.h === 200);
+
+  // TR: right/top move; bottom-left (100,200) stays fixed.
+  const tr = resizeRect(orig, "tr", 40, 20);
+  check("tr keeps bottom-left fixed", tr.x === 100 && tr.y + tr.h === 200);
+  check("tr grows w, shrinks h", tr.w === 240 && tr.h === 80);
+
+  // BL: left/bottom move; top-right (300,100) stays fixed.
+  const bl = resizeRect(orig, "bl", 40, 20);
+  check("bl keeps top-right fixed", bl.x + bl.w === 300 && bl.y === 100);
+  check("bl shrinks w, grows h", bl.w === 160 && bl.h === 120);
+
+  // Clamp: a delta larger than the size floors size at 0 and pins the dragged
+  // corner to the anchor — it cannot cross it.
+  const crossed = resizeRect(orig, "tl", 999, 999);
+  check("clamp floors w,h at 0", crossed.w === 0 && crossed.h === 0);
+  check("clamp pins the corner to the anchor", crossed.x === 300 && crossed.y === 200);
+}
 
 console.log("layout: all checks passed");

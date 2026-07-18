@@ -21,3 +21,36 @@ export function toData(canvasPx: number, scale: number): number {
 export function openWindows(windows: WindowRect[]): WindowRect[] {
   return windows.filter((w) => w.open && w.renderable);
 }
+
+export type Corner = "tl" | "tr" | "bl" | "br";
+
+/**
+ * Resize a rect by dragging one corner by (dx, dy) data px. The opposite
+ * corner is the fixed anchor. Size floors at 0 (matching the canvas's existing
+ * resize) and the dragged corner is pinned so it can't cross the anchor.
+ */
+export function resizeRect(
+  orig: { x: number; y: number; w: number; h: number },
+  corner: Corner,
+  dx: number,
+  dy: number,
+): { x: number; y: number; w: number; h: number } {
+  const left = corner === "tl" || corner === "bl";
+  const top = corner === "tl" || corner === "tr";
+  let { x, y, w, h } = orig;
+  if (left) {
+    const anchorR = orig.x + orig.w; // right edge stays fixed
+    x = Math.min(orig.x + dx, anchorR);
+    w = anchorR - x;
+  } else {
+    w = Math.max(0, orig.w + dx); // left edge fixed, right edge moves
+  }
+  if (top) {
+    const anchorB = orig.y + orig.h; // bottom edge stays fixed
+    y = Math.min(orig.y + dy, anchorB);
+    h = anchorB - y;
+  } else {
+    h = Math.max(0, orig.h + dy);
+  }
+  return { x, y, w, h };
+}
