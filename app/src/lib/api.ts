@@ -203,6 +203,30 @@ export interface BatchTargetResult {
   error: string | null;
 }
 
+export type Aspect = "layout" | "overview" | "autofill" | "everything";
+export interface CharWrite {
+  char_id: number;
+  path: string;
+  full_copy: boolean;
+  resolution_mismatch: boolean;
+}
+export interface AccountWrite {
+  user_id: number;
+  path: string;
+  full_copy: boolean;
+  collateral_char_ids: number[];
+}
+export interface ExcludedTarget {
+  char_id: number;
+  reason: string;
+}
+export interface SetupPlan {
+  char_writes: CharWrite[];
+  account_writes: AccountWrite[];
+  excluded: ExcludedTarget[];
+  source_error: string | null;
+}
+
 export type Slot = "char" | "user";
 
 export const api = {
@@ -244,6 +268,20 @@ export const api = {
     invoke<BatchCandidate[]>("batch_targets", { sourcePath, allowOtherFolders }),
   batchApply: (sourcePath: string, op: BatchOp, targets: string[]) =>
     invoke<BatchTargetResult[]>("batch_apply", { sourcePath, op, targets }),
+  setupPreview: (
+    sourceCharPath: string,
+    targetCharPaths: string[],
+    aspects: Aspect[],
+    allowOtherFolders: boolean,
+  ) =>
+    invoke<SetupPlan>("setup_preview", { sourceCharPath, targetCharPaths, aspects, allowOtherFolders }),
+  setupApply: (
+    sourceCharPath: string,
+    targetCharPaths: string[],
+    aspects: Aspect[],
+    allowOtherFolders: boolean,
+  ) =>
+    invoke<BatchTargetResult[]>("setup_apply", { sourceCharPath, targetCharPaths, aspects, allowOtherFolders }),
 };
 
 export function errMessage(e: unknown): string {
