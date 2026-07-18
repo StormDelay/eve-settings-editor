@@ -77,6 +77,12 @@ check("open filter keeps the right window", open[0].id === "a");
   const crossed = resizeRect(orig, "tl", 999, 999);
   check("clamp floors w,h at 0", crossed.w === 0 && crossed.h === 0);
   check("clamp pins the corner to the anchor", crossed.x === 300 && crossed.y === 200);
+
+  // The other clamp path: a right/bottom edge shrunk past its own size floors
+  // at 0 (Math.max), with x/y anchored.
+  const floored = resizeRect(orig, "br", -999, -999);
+  check("br floors w,h at 0 on negative overshoot", floored.w === 0 && floored.h === 0);
+  check("br keeps x,y anchored when floored", floored.x === 100 && floored.y === 100);
 }
 
 console.log("layout: all checks passed");
