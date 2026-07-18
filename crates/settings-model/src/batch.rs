@@ -19,6 +19,8 @@ use crate::treewalk::{inline_all, is_bytes, Entries};
 pub enum Category {
     Layout,
     Autofill,
+    Overview,
+    OverviewWidths,
 }
 
 impl Category {
@@ -27,6 +29,8 @@ impl Category {
         match self {
             Category::Layout => &[b"windows"],
             Category::Autofill => &[b"ui", b"editHistory"],
+            Category::Overview => &[b"overview"],
+            Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
         }
     }
 }
@@ -272,5 +276,62 @@ mod tests {
         let extracted = extract_categories(&user_a(), &[Category::Autofill]);
         let err = apply_categories_to(&dst, &extracted).unwrap_err();
         assert!(err.contains("ReadOnly"), "read-only target surfaced as an error: {err}");
+    }
+
+    /// user root -> overview -> { overviewColumns: ["NAME"], tabsByWindowInstanceID: [[0]] }
+    fn user_overview(col: &str) -> Value {
+        let overview = Value::Dict(vec![
+            (b("overviewColumns"), Value::List(vec![b(col)])),
+            (b("tabsByWindowInstanceID"), Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]);
+        Value::Dict(vec![(b("overview"), overview), (b("keep"), Value::Int(7))])
+    }
+
+    /// char root -> ui -> SortHeadersSizes -> (ts, { (overviewScroll2, 0): { NAME: w } })
+    fn char_widths(w: i64) -> Value {
+        let cols = Value::Dict(vec![(b("NAME"), Value::Int(w))]);
+        let sizes = Value::Dict(vec![(
+            Value::Tuple(vec![b("overviewScroll2"), Value::Int(0)]),
+            cols,
+        )]);
+        let ui = Value::Dict(vec![(b("SortHeadersSizes"), Value::Tuple(vec![ts(), sizes]))]);
+        Value::Dict(vec![(b("ui"), ui), (b("other"), Value::Int(9))])
+    }
+
+    #[test]
+    fn overview_category_replaces_the_overview_subtree_and_keeps_siblings() {
+        let extracted = extract_categories(&user_overview("SOURCECOL"), &[Category::Overview]);
+        assert_eq!(extracted.len(), 1);
+        let mut target = user_overview("TARGETCOL");
+        apply_to_tree(&mut target, &extracted);
+
+        // The overview subtree is now the source's: overviewColumns == ["SOURCECOL"].
+        let Value::Dict(root) = &target else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_bytes(k, b"overview")).unwrap();
+        let Value::Dict(ov) = ov else { panic!() };
+        let (_, cols) = ov.iter().find(|(k, _)| is_bytes(k, b"overviewColumns")).unwrap();
+        assert_eq!(cols, &Value::List(vec![b("SOURCECOL")]), "overview came from the source");
+        assert!(root.iter().any(|(k, v)| is_bytes(k, b"keep") && matches!(v, Value::Int(7))),
+            "unrelated sibling survived");
+    }
+
+    #[test]
+    fn overview_widths_category_replaces_sortheaderssizes_and_keeps_siblings() {
+        let extracted = extract_categories(&char_widths(120), &[Category::OverviewWidths]);
+        assert_eq!(extracted.len(), 1);
+        let mut target = char_widths(999);
+        apply_to_tree(&mut target, &extracted);
+
+        // The width came from the source: NAME == 120, not the target's 999.
+        let Value::Dict(root) = &target else { panic!() };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).unwrap();
+        let Value::Dict(ui) = ui else { panic!() };
+        let (_, shs) = ui.iter().find(|(k, _)| is_bytes(k, b"SortHeadersSizes")).unwrap();
+        let Value::Tuple(items) = shs else { panic!() };
+        let Value::Dict(sizes) = &items[1] else { panic!() };
+        let Value::Dict(cols) = &sizes[0].1 else { panic!() };
+        assert_eq!(cols.iter().find(|(k, _)| is_bytes(k, b"NAME")).unwrap().1, Value::Int(120));
+        assert!(root.iter().any(|(k, v)| is_bytes(k, b"other") && matches!(v, Value::Int(9))),
+            "sibling under root survived");
     }
 }
