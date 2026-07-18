@@ -105,10 +105,8 @@ fn every_corpus_file_reencodes_byte_identically() {
 }
 
 /// Codec re-share gate: for every corpus file, `reshare` must preserve the
-/// value and produce a stream that encodes and round-trips. `reshare` inlines
-/// internally and is a normalizer, so re-normalizing after a wire round-trip
-/// must land on the identical value — that proves no value was dropped or
-/// corrupted and that the emitted sharing satisfies store-before-ref. The
+/// SOURCE value (checked via `inline` against the original decode) and
+/// produce a stream that encodes and wire-round-trips back to itself. The
 /// byte-identical replay gate above is unchanged and still guards the read path.
 #[test]
 fn reshare_preserves_every_corpus_file() {
@@ -131,6 +129,10 @@ fn reshare_preserves_every_corpus_file() {
             continue;
         };
         let reshared = blue_marshal::reshare(&value);
+        if blue_marshal::inline(&reshared) != blue_marshal::inline(&value) {
+            failures.push(format!("{}: reshare changed the value", f.display()));
+            continue;
+        }
         let bytes = match blue_marshal::encode(&reshared) {
             Ok(b) => b,
             Err(e) => {
@@ -139,8 +141,8 @@ fn reshare_preserves_every_corpus_file() {
             }
         };
         match blue_marshal::decode(&bytes) {
-            Ok(back) if blue_marshal::reshare(&back) == reshared => {}
-            Ok(_) => failures.push(format!("{}: reshare not preserved by round-trip", f.display())),
+            Ok(back) if back == reshared => {}
+            Ok(_) => failures.push(format!("{}: round-trip differs", f.display())),
             Err(e) => failures.push(format!("{}: reshared decode: {e}", f.display())),
         }
     }
