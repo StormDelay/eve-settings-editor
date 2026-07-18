@@ -20,14 +20,13 @@ Workflow:
   warnings. A design §11 "go public" item; low effort, high value once anyone
   outside the dev downloads an artifact. _Added 2026-07-16 (packaging check)._
 
-- [ ] **Write informative GitHub release notes.** Every release (v0.1.0–v0.4.0)
-  carries the same generic body — `.github/workflows/release.yml:41` hardcodes
-  `releaseBody: "See CHANGELOG.md. Unsigned builds — expect OS warnings…"`. Go
-  back and give each published release a real summary (the milestone's headline
-  features, drawn from its CHANGELOG section) instead of a bare changelog pointer,
-  and improve the release-prep flow so future releases ship an informative body
-  (inject the CHANGELOG section into `releaseBody`, or fill in the draft before
-  publishing). _Added 2026-07-17._
+- [ ] **Backfill informative release notes for v0.1.0–v0.4.0.** The release-prep
+  *flow* is fixed as of v0.5.0 — `release.yml` now extracts each tag's CHANGELOG
+  section into `releaseBody` (verified live: v0.5.0's draft body is its full
+  CHANGELOG section), so future releases ship a real summary automatically. What
+  remains is the backfill: the already-published v0.1.0–v0.4.0 releases still
+  carry the old generic "See CHANGELOG.md" body. Go back and rewrite each from its
+  CHANGELOG section. _Added 2026-07-17; flow shipped in v0.5.0, backfill deferred._
 
 - [ ] **Warn in the batch preview when a target's resolution differs.** Master
   design §6 requires it — *"window geometry is absolute pixels; the preview warns
@@ -43,55 +42,6 @@ Workflow:
   stored resolution (either widen `Candidate`, or a separate command the preview
   calls for the selected targets). Weigh cost against M5, which will revisit this
   flow anyway. _Added 2026-07-17 (found documenting the M4 smoke)._
-
-- [ ] **Add a search to the Autofill section.** The autofill view lists every
-  remembered-text widget with no way to narrow them, so finding one list (or
-  finding which list contains a given entry) means scrolling the lot. Add a
-  filter box that narrows the rendered lists as you type, matching both the
-  widget's display label (`labelFor`) and the entries themselves — "which list
-  has that station name in it?" is the other half of why you'd search. Filter the
-  already-derived `sorted` list (`AutofillView.svelte:21`); an empty query shows
-  everything. Note `search.ts`'s `searchTree` is not reusable here — it walks a
-  `TreeNodeData` tree, whereas this is a flat `RememberedList[]`, so a plain
-  case-insensitive filter is all it needs, not new machinery. _Added 2026-07-17._
-  **Implemented 2026-07-17 (filter box over `sorted`, matching label + raw widget
-  path + entries; filter-scoped empty state) — awaiting release.**
-
-- [ ] **Keep the current view when switching files.** Opening a file always
-  snaps the editor back to the Tree tab (`+page.svelte:171`, `view = "tree"` in
-  `openFile`), so switching between two character files while working on window
-  placements bounces you out of Layout every time. Instead, keep the current
-  `view` when it's still available for the newly opened file, and fall back to
-  Tree only when it isn't (e.g. Layout → a user file, which has no layout).
-  Availability is already expressed by the tab-button conditions
-  (`+page.svelte:374-377`): Layout needs `layoutAvailable`, Overview needs
-  `openCharId !== null || slots.user?.status === "opened"`, Autofill needs an
-  opened user file. Implementation note: `layoutAvailable` is recomputed at
-  `+page.svelte:176`, *after* the reset at line 171 — so the new file's
-  availability isn't known at reset time. Preserve the desired view and clamp it
-  to Tree once availability is recomputed, rather than deciding at line 171.
-  Leave `revealInTree` (`+page.svelte:117`) alone — that jump to Tree is
-  deliberate. _Added 2026-07-17._ **Implemented 2026-07-17 (capture the prior
-  view, reset to Tree during the async load, promote back once availability is
-  known via `viewAvailable`) — awaiting release.**
-
-- [ ] **Collapsible side panels.** Make the side panels (sidebar file list and
-  backups panel) retractable/collapsible so the center pane can grow — useful
-  when editing window placements on the layout canvas, which wants as much
-  horizontal room as possible. _Added 2026-07-15._ **Implemented 2026-07-17
-  (collapse chevron → thin reopen rail; in-memory state) — awaiting release.**
-
-- [ ] **Collapsible character/account categories.** Make the sidebar file-list
-  group headers (Characters / Accounts / Other) collapsible so a long list is
-  easier to navigate — click a category header to fold its files away. _Added
-  2026-07-17._ **Implemented 2026-07-17 (native `<details>` per group) — awaiting
-  release.**
-
-- [ ] **Sort files alphabetically within each category.** Within each sidebar
-  category (Characters / Accounts), sort files alphabetically by their resolved
-  character name or account alias. Files still showing a bare numerical id (name
-  unresolved / no alias) sort below the named ones. _Added 2026-07-17._
-  **Implemented 2026-07-17 — awaiting release.**
 
 ## Promoted to milestones
 
@@ -156,6 +106,27 @@ Also carried into M5 (deferred from M4, 2026-07-17):
   overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
 
 ## Shipped
+
+### 0.5.0
+
+- [x] **Add a search to the Autofill section.** A filter box narrows the
+  remembered-text lists as you type, matching the list label, the raw widget
+  path, and the entries. _Added 2026-07-17._
+- [x] **Keep the current view when switching files.** Opening a file keeps the
+  current editor tab when the new file supports it, falling back to Tree only
+  when it doesn't — no more being bounced out of Layout. _Added 2026-07-17._
+- [x] **Collapsible side panels.** The sidebar and backups panels collapse to a
+  thin reopen rail so the center pane can use the full width. _Added 2026-07-15._
+- [x] **Collapsible character/account categories.** The sidebar group headers
+  (Characters / Accounts / Other) fold away via native `<details>`. _Added
+  2026-07-17._
+- [x] **Sort files alphabetically within each category.** Files sort by resolved
+  character name / account alias, bare-id files below the named ones. _Added
+  2026-07-17._
+- [x] **Build GitHub release notes from the CHANGELOG.** `release.yml` extracts
+  each tag's CHANGELOG section into the release body, so releases ship a real
+  summary instead of a bare pointer. (Backfilling the old v0.1.0–v0.4.0 bodies
+  is still open, above.) _Added 2026-07-17._
 
 ### M3
 
