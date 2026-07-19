@@ -124,6 +124,20 @@
     if (m) commit([m]);
   }
 
+  // --- Stack membership ------------------------------------------------------
+
+  async function runStack(p: Promise<WindowLayout>) {
+    try {
+      layout = await p;
+    } catch (e) {
+      await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
+    }
+  }
+  const onUnstack = (id: string) => runStack(api.stackUnstack(id));
+  const onReorder = (container: string, members: string[]) => runStack(api.stackReorder(container, members));
+  const onAddToStack = (member: string, container: string) => runStack(api.stackAdd(member, container));
+  const onCreateStack = (m1: string, m2: string) => runStack(api.stackCreate(m1, m2));
+
   // --- Canvas drag & resize ------------------------------------------------
 
   type Drag =
@@ -257,13 +271,18 @@
     </div>
     <WindowPanel
       windows={layout.windows}
+      stacks={layout.stacks}
       {selectedId}
       {readOnly}
       {onSelect}
       {onToggleOpen}
       {onGeom}
       {onFlag}
-      {onReveal} />
+      {onReveal}
+      {onUnstack}
+      {onReorder}
+      {onAddToStack}
+      {onCreateStack} />
   </div>
 {/if}
 
