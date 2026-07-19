@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching search.test.ts.
-import { canvasScale, toCanvas, toData, openWindows, resizeRect } from "./layout.ts";
+import { canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -83,6 +83,33 @@ check("open filter keeps the right window", open[0].id === "a");
   const floored = resizeRect(orig, "br", -999, -999);
   check("br floors w,h at 0 on negative overshoot", floored.w === 0 && floored.h === 0);
   check("br keeps x,y anchored when floored", floored.x === 100 && floored.y === 100);
+}
+
+// --- stackUnits: group open windows into draw units -------------------------
+{
+  const g = (x: number) => ({ x, y: 0, w: 100, h: 80, screen_w: 2560, screen_h: 1440,
+    x_path: [], y_path: [], w_path: [], h_path: [], screen_w_path: [], screen_h_path: [] });
+  const mk = (id: string, open: boolean, stack: any): WindowRect => ({
+    id, label: id, open, renderable: true, resolution_matches: true, geom: g(open ? 10 : 0),
+    flags: [], stack,
+  });
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      mk("C", true, { container_id: "C", role: "container" }),
+      mk("m1", true, { container_id: "C", role: "member" }),
+      mk("m2", false, { container_id: "C", role: "member" }), // closed member: excluded from tabs
+      mk("free", true, null),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("stackUnits produces one stack + one free unit", units.length === 2);
+  const stackUnit = units.find((u) => u.stack)!;
+  check("stack unit anchors on the container", stackUnit.anchor.id === "C");
+  check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "m1");
+  const freeUnit = units.find((u) => !u.stack)!;
+  check("free window is its own unit", freeUnit.key === "free" && freeUnit.tabs.length === 1);
 }
 
 console.log("layout: all checks passed");
