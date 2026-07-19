@@ -69,8 +69,8 @@ export interface DrawUnit {
 /**
  * Group the open, renderable windows into draw units: one per stack (drawn at
  * the stack's anchor, with its open members as tabs in preferred order) and one
- * per non-stacked window. A stack whose anchor is not open/renderable is dropped
- * (nothing to draw).
+ * per non-stacked window. A stack with no open members — or whose anchor is not
+ * open/renderable — is not drawn (nothing to show).
  */
 export function stackUnits(layout: WindowLayout): DrawUnit[] {
   const drawn = openWindows(layout.windows);
@@ -80,9 +80,15 @@ export function stackUnits(layout: WindowLayout): DrawUnit[] {
   const claimed = new Set<string>();
 
   for (const s of layout.stacks) {
+    const tabs = s.members.map((id) => byId.get(id)).filter((w): w is WindowRect => !!w);
+    // A stack with no open members has nothing to show — hide it, and claim its
+    // (possibly open) container so it doesn't fall through as a lone window.
+    if (tabs.length === 0) {
+      claimed.add(s.container_id);
+      continue;
+    }
     const anchor = byId.get(s.anchor_id);
     if (!anchor) continue; // anchor not open/renderable — skip the stack
-    const tabs = s.members.map((id) => byId.get(id)).filter((w): w is WindowRect => !!w);
     // The container itself is not a tab unless it is also a member.
     for (const w of tabs) claimed.add(w.id);
     claimed.add(s.container_id);

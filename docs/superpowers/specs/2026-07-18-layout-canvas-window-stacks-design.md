@@ -134,7 +134,8 @@ All writes go through the unchanged verify → backup → atomic-write save chai
 
 - Group open windows by stack. Each stack draws **one** rectangle at its anchor
   geom, with member names as tabs along the top; non-stacked windows draw as
-  today.
+  today. A stack with **no open members** is not drawn at all (its container/
+  frame is hidden too — an empty stack has nothing to show).
 - Selecting the stack rect selects the stack; clicking a tab selects that
   member (drives the detail panel). Move/resize acts on the whole stack
   (coherent write, §4).
