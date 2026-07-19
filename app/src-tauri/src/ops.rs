@@ -17,6 +17,7 @@ use settings_model::{
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
+    create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, OverviewTabError,
 };
 
 use crate::accounts;
@@ -314,6 +315,19 @@ fn target_ids(char_paths: &HashMap<u64, PathBuf>, target_char_paths: &[String]) 
         .collect()
 }
 
+/// True if decoding `path` and extracting `cats` yields nothing — the source has
+/// none of these categories, so a splice would be a no-op. Empty `cats` or any
+/// read/decode error returns false (never silently drop a write we can't verify).
+fn source_side_empty(path: &Path, cats: &[Category]) -> bool {
+    if cats.is_empty() {
+        return false;
+    }
+    match fs::read(path).ok().and_then(|b| blue_marshal::decode(&b).ok()) {
+        Some(v) => extract_categories(&v, cats).is_empty(),
+        None => false,
+    }
+}
+
 pub fn setup_preview(
     roots: &[PathBuf],
     dir: &Path,
@@ -335,7 +349,27 @@ pub fn setup_preview(
     } else {
         HashMap::new()
     };
-    plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects)
+    let mut plan = plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects);
+
+    // Drop no-op splice writes: a splice aspect whose categories are all absent
+    // from the source would just back up and rewrite every target for nothing and
+    // inflate the write count (e.g. an Overview copy from a char that never resized
+    // its overview columns has no SortHeadersSizes to splice). Full copies always write.
+    let w = aspect_writes(aspects);
+    if !w.char_full_copy
+        && !plan.char_writes.is_empty()
+        && source_side_empty(Path::new(source_char_path), &w.char_categories)
+    {
+        plan.char_writes.clear();
+    }
+    if !w.account_full_copy && !plan.account_writes.is_empty() {
+        if let Some(upath) = account_of(&store, src_id).and_then(|uid| user_paths.get(&uid)) {
+            if source_side_empty(upath, &w.account_categories) {
+                plan.account_writes.clear();
+            }
+        }
+    }
+    plan
 }
 
 pub fn setup_apply(
@@ -663,6 +697,59 @@ pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width:
             .map_err(|e| ErrDto::new("overview", format!("{e:?}")))?;
     }
     overview_columns(state)
+}
+
+/// Edit the user slot's overview tab structure, reshare, then re-project.
+fn edit_user_tabs<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), OverviewTabError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(|e| {
+            let jv = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(
+                jv.get("code").and_then(|c| c.as_str()).unwrap_or("tab"),
+                e.to_string(),
+            )
+        })?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    overview_columns(state)
+}
+
+pub fn tab_rename(state: &AppState, tab_idx: i64, name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| rename_tab(v, tab_idx, &name))
+}
+
+pub fn tab_delete(state: &AppState, tab_idx: i64) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| delete_tab(v, tab_idx))
+}
+
+pub fn tab_reorder(state: &AppState, window_idx: usize, order: Vec<i64>) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| reorder_tabs_in_window(v, window_idx, &order))
+}
+
+pub fn tab_move(state: &AppState, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| move_tab(v, tab_idx, from_window, to_window, pos))
+}
+
+pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: Option<i64>) -> Result<OverviewColumns, ErrDto> {
+    // Copy the preset name of the chosen sibling (else the first tab, else a
+    // safe default); a new tab must reference a valid preset.
+    let preset = {
+        let cols = overview_columns(state)?;
+        from_tab
+            .and_then(|t| cols.tabs.iter().find(|x| x.index == t))
+            .or_else(|| cols.tabs.first())
+            .map(|t| t.preset.clone())
+            .unwrap_or_else(|| "default".to_string())
+    };
+    edit_user_tabs(state, |v| create_tab(v, window_idx, &name, &preset).map(|_| ()))
 }
 
 pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
@@ -1085,6 +1172,28 @@ mod tests {
         assert_eq!(overview_columns(&state).unwrap_err().code, "no_document");
     }
 
+    #[test]
+    fn tab_rename_then_reproject_reflects_the_new_name() {
+        // Build a user file with one overview tab, open it into the user slot.
+        let user = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(
+                Value::Int(0),
+                Value::Dict(vec![
+                    (Value::Str("name".into()), Value::Str("Main".into())),
+                    (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+                ]),
+            )])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]))]);
+        let path = temp_file("tabrename", &encode(&user).unwrap());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let cols = tab_rename(&state, 0, "Combat".into()).unwrap();
+        assert_eq!(cols.tabs[0].name, "Combat");
+    }
+
     fn autofill_user_bytes() -> Vec<u8> {
         // root -> b"ui" -> b"editHistory" -> (ts, { "/a/box": ["Jita", "Amarr"] })
         let hist = Value::Dict(vec![(
@@ -1264,6 +1373,18 @@ mod tests {
         let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 1, &[2], &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
         assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
+    }
+
+    #[test]
+    fn source_side_empty_detects_absent_category() {
+        let with = encode(&Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), Value::Dict(vec![]))])).unwrap();
+        let without = encode(&Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![]))])).unwrap();
+        let p_with = temp_file("with-windows", &with);
+        let p_without = temp_file("no-windows", &without);
+        assert!(!source_side_empty(&p_with, &[Category::Layout]), "windows present -> not a no-op");
+        assert!(source_side_empty(&p_without, &[Category::Layout]), "windows absent -> a no-op splice");
+        assert!(!source_side_empty(&p_with, &[]), "no categories -> false (guard)");
+        assert!(!source_side_empty(Path::new("does-not-exist.dat"), &[Category::Layout]), "unreadable -> false");
     }
 
     #[test]

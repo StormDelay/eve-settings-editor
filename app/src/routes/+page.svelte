@@ -177,12 +177,11 @@
       dirtySlots[slot] = false;
       active = slot;
       savedAt += 1;
-      // Keep the tab the user was on if the new file still supports it (switching
-      // between two chars shouldn't bounce you out of Layout), but reset to Tree
-      // while the new file loads so no view renders against stale data — its
-      // availability (esp. layoutAvailable) isn't known until the awaits below.
+      // Hold the tab the user was on across the load (switching between two chars
+      // shouldn't bounce you out of Layout), falling back to Tree only if the new
+      // file can't support it. Each view reads the already-swapped active slot and
+      // is null-safe against its own mid-load fetch, so there's no flash to Tree.
       const priorView = view;
-      view = "tree";
       mainView = "file";
       selectedWindowId = null;
       reveal = null;
@@ -197,7 +196,7 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
-      if (viewAvailable(priorView)) view = priorView;
+      if (!viewAvailable(priorView)) view = "tree";
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
