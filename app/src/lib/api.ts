@@ -178,6 +178,7 @@ export interface OverviewColumn {
 export interface OverviewTab {
   index: number;
   name: string;
+  preset: string;
   inherits: boolean;
   columns: OverviewColumn[];
 }
@@ -261,6 +262,16 @@ export const api = {
     invoke<OverviewColumns>("set_overview_order", { tabIndex, order }),
   setOverviewWidth: (tabIndex: number, column: string, width: number) =>
     invoke<OverviewColumns>("set_overview_width", { tabIndex, column, width }),
+  tabCreate: (windowIdx: number, name: string, fromTab: number | null) =>
+    invoke<OverviewColumns>("tab_create", { windowIdx, name, fromTab }),
+  tabRename: (tabIdx: number, name: string) =>
+    invoke<OverviewColumns>("tab_rename", { tabIdx, name }),
+  tabDelete: (tabIdx: number) =>
+    invoke<OverviewColumns>("tab_delete", { tabIdx }),
+  tabReorder: (windowIdx: number, order: number[]) =>
+    invoke<OverviewColumns>("tab_reorder", { windowIdx, order }),
+  tabMove: (tabIdx: number, fromWindow: number, toWindow: number, pos: number) =>
+    invoke<OverviewColumns>("tab_move", { tabIdx, fromWindow, toWindow, pos }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
