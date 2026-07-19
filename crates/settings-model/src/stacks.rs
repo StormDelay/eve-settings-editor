@@ -16,6 +16,8 @@ pub enum StackError {
     NoWindows,
     /// The named member is not present in `stacksWindows`.
     NotStacked { member: String },
+    /// A window to be stacked has no geometry entry — it cannot anchor a stack.
+    MissingGeometry { window: String },
 }
 
 fn is_b(k: &Value, name: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == name) }
@@ -115,11 +117,10 @@ pub fn create_stack(v: &mut Value, member1: &str, member2: &str) -> Result<Strin
     // Geometry: C and M2 take M1's current rect.
     let win = windows_mut(v)?;
     let geoms = child_inner(win, b"windowSizesAndPositions_1");
-    let m1_rect = geoms.iter().find(|(k, _)| is_b(k, m1b)).map(|(_, r)| r.clone());
-    if let Some(rect) = m1_rect {
-        set_entry(geoms, &cb, rect.clone());
-        set_entry(geoms, m2b, rect);
-    }
+    let rect = geoms.iter().find(|(k, _)| is_b(k, m1b)).map(|(_, r)| r.clone())
+        .ok_or_else(|| StackError::MissingGeometry { window: member1.to_string() })?;
+    set_entry(geoms, &cb, rect.clone());
+    set_entry(geoms, m2b, rect);
     // Membership.
     let sw = child_inner(win, b"stacksWindows");
     set_entry(sw, m1b, Value::Bytes(cb.clone()));
@@ -131,12 +132,10 @@ pub fn create_stack(v: &mut Value, member1: &str, member2: &str) -> Result<Strin
         (Value::Bytes(m2b.to_vec()), Value::Int(1)),
     ];
     // Open C + both members; mark C in the three state dicts.
-    for (dict, val) in [(b"openWindows".as_slice(), true)] {
-        let d = child_inner(win, dict);
-        set_entry(d, &cb, Value::Bool(val));
-        set_entry(d, m1b, Value::Bool(val));
-        set_entry(d, m2b, Value::Bool(val));
-    }
+    let ow = child_inner(win, b"openWindows");
+    set_entry(ow, &cb, Value::Bool(true));
+    set_entry(ow, m1b, Value::Bool(true));
+    set_entry(ow, m2b, Value::Bool(true));
     for dict in [b"isLightBackgroundWindows".as_slice(), b"isOverlayedWindows", b"minimizedWindows"] {
         let d = child_inner(win, dict);
         set_entry(d, &cb, Value::Bool(false));
@@ -204,6 +203,12 @@ mod tests {
     fn win<'a>(v: &'a Value) -> &'a Vec<(Value, Value)> {
         let Value::Dict(top) = v else { panic!() };
         let (_, w) = top.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windows")).unwrap();
+        let Value::Dict(d) = w else { panic!() };
+        d
+    }
+    fn win_mut<'a>(v: &'a mut Value) -> &'a mut Vec<(Value, Value)> {
+        let Value::Dict(top) = v else { panic!() };
+        let (_, w) = top.iter_mut().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windows")).unwrap();
         let Value::Dict(d) = w else { panic!() };
         d
     }
@@ -312,6 +317,20 @@ mod tests {
     }
 
     #[test]
+    fn create_skips_a_used_id_at_the_mint_floor() {
+        let mut v = free_windows_root();
+        // Occupy the mint floor id "1000" as an existing window.
+        let win = win_mut(&mut v);
+        let (_, g) = win.iter_mut().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windowSizesAndPositions_1")).unwrap();
+        let Value::Tuple(t) = g else { panic!() };
+        let Value::Dict(d) = &mut t[1] else { panic!() };
+        d.push((b("1000"), Value::Tuple(vec![Value::Int(0), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)])));
+
+        let c = create_stack(&mut v, "m1", "m2").unwrap();
+        assert_eq!(c, "1001", "mint_free_id must skip the used floor id");
+    }
+
+    #[test]
     fn create_links_members_opens_and_flags_the_container() {
         let mut v = free_windows_root();
         let c = create_stack(&mut v, "m1", "m2").unwrap();
@@ -324,9 +343,13 @@ mod tests {
         let (_, cd) = pref(&v).iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == cb)).unwrap();
         let Value::Dict(cd) = cd else { panic!() };
         assert_eq!(keys(cd), vec!["m1".to_string(), "m2".to_string()]);
+        let idx = |id: &[u8]| { let (_, v) = cd.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == id)).unwrap(); v.clone() };
+        assert_eq!(idx(b"m1"), Value::Int(0));
+        assert_eq!(idx(b"m2"), Value::Int(1));
         // Open: C, m1, m2 all true.
         assert_eq!(boolval(&v, b"openWindows", cb), Some(true));
         assert_eq!(boolval(&v, b"openWindows", b"m1"), Some(true));
+        assert_eq!(boolval(&v, b"openWindows", b"m2"), Some(true));
         // Container marked in the three state dicts (False).
         assert_eq!(boolval(&v, b"isOverlayedWindows", cb), Some(false));
         assert_eq!(boolval(&v, b"minimizedWindows", cb), Some(false));
