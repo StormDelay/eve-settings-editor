@@ -139,11 +139,28 @@
 
 <div class="window-panel">
   {#each stacks as stack (stack.container_id)}
+    {@const containerWindow = findWindow(stack.container_id)}
     <div class="stack-group">
-      <div class="stack-head">
-        <span class="stack-title">{stack.container_label}</span>
-        <span class="stack-count">{stack.members.length}</span>
-      </div>
+      {#if containerWindow}
+        <div
+          class="row frame"
+          class:selected={stack.container_id === selectedId}
+          use:scrollOnSelect={stack.container_id === selectedId}>
+          <div class="row-head">
+            <span class="frame-label" title="Stack frame">frame</span>
+            {@render rowHead(containerWindow)}
+            <span class="stack-count">{stack.members.length}</span>
+          </div>
+          {#if stack.container_id === selectedId && containerWindow.geom}
+            {@render detail(containerWindow)}
+          {/if}
+        </div>
+      {:else}
+        <div class="stack-head">
+          <span class="stack-title">{stack.container_label}</span>
+          <span class="stack-count">{stack.members.length}</span>
+        </div>
+      {/if}
       {#each stack.members as memberId, i (memberId)}
         {@const w = findWindow(memberId)}
         {#if w}
@@ -189,38 +206,40 @@
       <div class="row-head">
         {@render rowHead(w)}
       </div>
-      <div class="free-controls">
-        {#if stacks.length > 0}
-          <select
-            aria-label="Add to stack"
-            disabled={readOnly}
-            value=""
-            onchange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value;
-              if (v) onAddToStack(w.id, v);
-            }}>
-            <option value="" disabled>Add to stack…</option>
-            {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{s.container_label}</option>
-            {/each}
-          </select>
-        {/if}
-        {#if freeWindows.length > 1}
-          <select
-            aria-label="Stack with another window"
-            disabled={readOnly}
-            value=""
-            onchange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value;
-              if (v) onCreateStack(w.id, v);
-            }}>
-            <option value="" disabled>Stack with…</option>
-            {#each freeWindows.filter((o) => o.id !== w.id) as other (other.id)}
-              <option value={other.id}>{other.label}</option>
-            {/each}
-          </select>
-        {/if}
-      </div>
+      {#if stacks.length > 0 || freeWindows.length > 1}
+        <div class="free-controls">
+          {#if stacks.length > 0}
+            <select
+              aria-label="Add to stack"
+              disabled={readOnly}
+              value=""
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                if (v) onAddToStack(w.id, v);
+              }}>
+              <option value="" disabled>Add to stack…</option>
+              {#each stacks as s (s.container_id)}
+                <option value={s.container_id}>{s.container_label}</option>
+              {/each}
+            </select>
+          {/if}
+          {#if freeWindows.length > 1}
+            <select
+              aria-label="Stack with another window"
+              disabled={readOnly}
+              value=""
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                if (v) onCreateStack(w.id, v);
+              }}>
+              <option value="" disabled>Stack with…</option>
+              {#each freeWindows.filter((o) => o.id !== w.id) as other (other.id)}
+                <option value={other.id}>{other.label}</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+      {/if}
       {#if w.id === selectedId && w.geom}
         {@render detail(w)}
       {/if}
@@ -285,6 +304,17 @@
   }
   .stack-count {
     font-weight: 400;
+  }
+  .row.frame .row-head {
+    background: rgba(255, 255, 255, 0.04);
+    font-weight: 600;
+  }
+  .frame-label {
+    flex: 0 0 auto;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--fg-dim);
   }
   .row.member {
     border-bottom: none;
