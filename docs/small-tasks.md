@@ -13,24 +13,36 @@ Workflow:
 
 ## Open
 
-- [ ] **Window-stacks follow-ups (deferred from the milestone's final review).**
-  Non-blocking minors, all shipped as tracked debt: (1) `Stack.container_label`
-  is always == `container_id` — give stack frames a friendlier label when a
-  source exists; (2) `StackError`'s structured serde is dead — `ops.rs`
-  `edit_char_stacks` maps it with `format!("{e:?}")` (Debug) like the
-  overview/autofill siblings, so the `#[serde(tag="code")]` shape never reaches
-  the frontend (fails safe; either wire it through or drop the derive); (3) a
-  stack **move** fans only x/y, not w/h, so a member whose size drifted keeps it
-  on a move (cosmetic — members are meant to share a rect); (4) `runStack` in
-  `LayoutView.svelte` refreshes `layout` without re-validating `selectedId` (a
-  latent trap if a future stack op removes the selected window); (5) the panel's
-  "Stack with…" doesn't pre-filter a non-renderable initiating window (fails safe
-  via the caught `MissingGeometry` dialog) and the `<select>` doesn't reset to its
-  placeholder after a failed op; (6) test/tidy debt: no `stackUnits`
-  closed-anchor-drop unit test (behavior verified by trace + covered by the live
-  smoke), a duplicate window-builder helper in `layout.test.ts`, an unreachable
-  defensive branch in `unitWindows`, and no dedicated `.stacked` canvas CSS (the
-  tab strip is the visual signal). _Added 2026-07-19._
+- [ ] **Overview tab-management follow-ups (deferred from the milestone's final
+  review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
+  (1) `overview_tabs::move_tab` has no `UnknownTab` guard — moving a nonexistent
+  tab index inserts a phantom entry into the target window strip (UI-guarded, same
+  permissiveness as `reorder_tabs_in_window`); add a `tabs contains tab_idx` check
+  to match `delete_tab`; (2) the two name-key predicates diverge —
+  `overview_tabs::key_is_name` matches `Bytes("name")` but not `StrUcs2`, while
+  `overview::key_is` matches `StrUcs2` but not `Bytes` (neither form occurs on real
+  files, which use `StrTable(52)`); unify them into one shared predicate; (3)
+  `ops::tab_create` projects the overview twice (once for the preset copy, once in
+  `edit_user_tabs`) — harmless on tiny trees; (4) the UI's new-tab selection uses
+  `Math.max(...tabs.index)` (`OverviewView.svelte`), coupling it to the backend's
+  `max+1` allocation — sound today, but a before/after index set-diff would be
+  allocation-agnostic; (5) can't create a tab in an empty (zero-tab) overview
+  window (the New-tab target derives from the selected tab's window); (6) a few
+  trivial untested branches (`delete_tab`/`move_tab` own `UnknownTab` paths, the
+  `create_tab` preset-value assertion); (7) the tab-management **UI/UX is rough**
+  (flagged during the live smoke) — defer the polish/rework to the later
+  overview-depth slices (filter presets / colors / add-remove windows), which will
+  touch this same Overview view anyway. _Added 2026-07-19._
+
+- [ ] **Window-stacks follow-up: friendlier stack-frame labels.**
+  `Stack.container_label` is always == `container_id` (`windows.rs`) — give a
+  stack frame a friendlier label when a source name exists. Cosmetic. (The other
+  five minors from the milestone's final review — `StackError` serde wiring,
+  stack-move fanning w/h, `runStack` reselection, the panel select
+  pre-filter/reset, and the test / `.stacked`-CSS debt — were all already
+  resolved by the 0.8.0 polish commits; re-verified 2026-07-19. The one remaining
+  "unreachable defensive branch" in `stackUnits` is intentional defense and has a
+  test covering it — leave it.) _Added 2026-07-19._
 
 - [ ] **Profile the reshare (deduplication) pass.** Every structural editor
   (overview / autofill / batch / window-stack membership) runs
@@ -52,26 +64,6 @@ Workflow:
   by expanding `CURATED` to cover the common real widget paths and/or making
   `derive()` smarter (pick a more meaningful segment, or fold in more context
   than the last one). _Added 2026-07-18._
-
-- [ ] **Make the view seamless when switching files.** Opening another file keeps
-  the current editor tab (shipped in 0.5.0), but the switch visibly *blinks*: the
-  view flashes to the default Tree view mid-switch before settling back on the kept
-  view (e.g. Layout). It should be seamless — no flash to Tree. Likely the tab
-  state momentarily resets to the default while the new file loads and its
-  supported views are recomputed, then restores; hold the view across the load
-  instead of reset-then-restore (and/or don't render the default view during the
-  in-between). Lives in `+page.svelte`'s view-switch logic (the
-  Tree / Layout / Overview / Autofill switcher). _Added 2026-07-18._
-
-- [ ] **Skip empty-subtree writes in a batch category copy.** In
-  `ops.rs::setup_apply`, a category splice is applied to every planned target even
-  when the source's subtree for that category is empty or absent (e.g. an Overview
-  copy from a source char that has no `SortHeadersSizes` widths still rewrites and
-  backs up each target char file with an empty widths splice). Harmless (the splice
-  changes nothing) but it inflates the preview's "will write N files" count,
-  produces a spurious backup, and grows the target ~1.5× via `inline_all`. Skip a
-  write whose extracted subtree is empty — ideally reflected in `plan_setup` so the
-  preview count is honest too. _Added 2026-07-18 (M5 whole-branch review, minor M1)._
 
 - [ ] **Extract the batch view's shared candidate filter+sort helper.**
   `BatchView.svelte`'s `sourceOptions` and `candidates` deriveds repeat the same
@@ -157,6 +149,19 @@ add handles on all four corners (edges optional). No codec dependency — its
 resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 
 ## Shipped
+
+### Unreleased (on master)
+
+- [x] **No flash to Tree when switching files.** `+page.svelte` holds the current
+  view across the file load instead of reset-to-Tree-then-restore, falling back to
+  Tree only if the new file can't support that view. _Added 2026-07-18; done
+  2026-07-19._
+- [x] **Skip no-op splice writes in a batch category copy.** `setup_preview` now
+  drops the char/account writes when the source lacks every category a splice
+  aspect would copy (e.g. an Overview copy from a char with no `SortHeadersSizes`
+  widths), so there's no spurious backup/rewrite and the preview's write count is
+  honest. (The ~1.5× file-inflation half was already fixed by the 0.7.0 reshare
+  pass.) _Added 2026-07-18; done 2026-07-19._
 
 ### 0.6.0
 
