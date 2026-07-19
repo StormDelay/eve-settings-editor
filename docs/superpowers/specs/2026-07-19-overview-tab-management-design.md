@@ -93,13 +93,17 @@ and `tabsByWindowInstanceID`.
 
 Tab-only edits (Phase A — no client capture needed):
 
-- `create_tab(user, window_idx, name) -> new_tab_index` — new index =
+- `create_tab(user, window_idx, from_tab) -> new_tab_index` — new index =
   `max(existing indices) + 1` (indices are dict keys referenced by value in the
-  window lists; contiguity is not required). Set `name`; set `overview` to the
-  preset-name of the caller-selected sibling tab (fallback: the first existing
-  tab's preset, else the account default preset name — a minor discovery item,
-  §6). Omit column lists so the tab inherits. Append the new index to
-  `tabsByWindowInstanceID[window_idx]`.
+  window lists; contiguity is not required). **CLONE a sibling tab** (the
+  caller-selected `from_tab`, else the first tab) and override its name. Cloning
+  — not building a minimal `{name, overview}` dict — is REQUIRED: every real EVE
+  tab carries `bracket` and `color` keys, and EVE's "reset all overview settings"
+  iterates tabs reading them, so a tab missing them makes the reset throw
+  (found in the live smoke, 2026-07-19). The clone inherits the sibling's
+  preset (`overview`) and its `t52:"name"` key encoding; its `tabColumns` /
+  `tabColumnOrder` lists are dropped so the new tab inherits columns. Append the
+  new index to `tabsByWindowInstanceID[window_idx]`.
 - `rename_tab(user, tab_idx, name)` — set the tab's name field however it is
   stored (string-table or plain key), matching `str_field_r`'s key detection; if
   absent, insert a plain `name` key.
