@@ -104,6 +104,14 @@ check("open filter keeps the right window", open[0].id === "a");
   check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "m1");
   const freeUnit = units.find((u) => !u.stack)!;
   check("free window is its own unit", freeUnit.key === "free" && freeUnit.tabs.length === 1);
+
+  // fanTargets: a coherent move must repeat onto every renderable member,
+  // open or closed — a closed member left out of the fan would drift out of
+  // the stack (the live "jumping" bug). tabs stay display-only (open members).
+  const fanIds = stackUnit.fanTargets.map((w) => w.id);
+  check("fanTargets include the closed member m2 (no drift)", fanIds.includes("m2"));
+  check("fanTargets include the open member m1", fanIds.includes("m1"));
+  check("fanTargets include the anchor/container C", fanIds.includes("C"));
 }
 
 // --- stackUnits: a stack whose anchor (container) is closed is dropped -----

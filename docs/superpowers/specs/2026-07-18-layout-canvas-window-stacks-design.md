@@ -94,7 +94,9 @@ Two write paths, split by what they touch.
 
 **Geometry (coherent move/resize)** — pure `SetScalar`, no structural change.
 Moving/resizing a stack emits `set_scalar` on the geometry elements of the
-container *and every open member*, all pointing at the reference resolution.
+container *and every member that has geometry (open **or** closed — a closed
+member left behind would drift out of the stack)*, all pointing at the
+reference resolution.
 Reuses the existing M2 geometry-mutation path (the projection hands over each
 window's `x/y/w/h` paths). Repairing stale member drift is a free side effect.
 No dependency on the codec work — this path could ship independently.
