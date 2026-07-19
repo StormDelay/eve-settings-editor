@@ -139,6 +139,28 @@ pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), Overvie
     Ok(())
 }
 
+pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, preset: &str) -> Result<i64, OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    if window_idx >= groups_mut(ov).len() {
+        return Err(OverviewTabError::UnknownWindow { index: window_idx });
+    }
+    let new_idx = {
+        let tabs = tabs_mut(ov);
+        let new_idx = tabs.iter().filter_map(|(k, _)| as_int(k)).max().map(|m| m + 1).unwrap_or(0);
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::StrUcs2(name.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(preset.as_bytes().to_vec())),
+        ]);
+        tabs.push((Value::Int(new_idx), tab));
+        new_idx
+    };
+    if let Some(inner) = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut) {
+        inner.push(Value::Int(new_idx));
+    }
+    Ok(new_idx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +196,16 @@ mod tests {
         }).unwrap()
     }
 
+    fn window_indices(v: &Value, window: usize) -> Vec<i64> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let Value::List(outer) = g else { panic!() };
+        let Value::List(inner) = &outer[window] else { panic!() };
+        inner.iter().filter_map(as_int).collect()
+    }
+
     #[test]
     fn rename_sets_the_name_field() {
         let mut v = user_with_tabs();
@@ -185,5 +217,20 @@ mod tests {
     fn rename_unknown_tab_errors() {
         let mut v = user_with_tabs();
         assert!(matches!(rename_tab(&mut v, 9, "X"), Err(OverviewTabError::UnknownTab { index: 9 })));
+    }
+
+    #[test]
+    fn create_allocates_next_index_and_joins_the_window() {
+        let mut v = user_with_tabs(); // has tab 0 in window 0
+        let idx = create_tab(&mut v, 0, "Mining", "P").unwrap();
+        assert_eq!(idx, 1, "next free index after 0");
+        assert_eq!(tab_name(&v, 1), "Mining");
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "appended to window 0's strip");
+    }
+
+    #[test]
+    fn create_into_missing_window_errors() {
+        let mut v = user_with_tabs();
+        assert!(matches!(create_tab(&mut v, 5, "X", "P"), Err(OverviewTabError::UnknownWindow { index: 5 })));
     }
 }
