@@ -35,6 +35,15 @@ fn apply_mutation(
 }
 
 #[tauri::command]
+fn apply_mutations(
+    state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
+    mutations: Vec<settings_model::Mutation>,
+) -> Result<settings_model::Node, ErrDto> {
+    ops::apply_mutations(&state, slot, &mutations)
+}
+
+#[tauri::command]
 fn save_document(
     state: tauri::State<'_, AppState>,
     slot: ops::Slot,
@@ -161,6 +170,23 @@ fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_
 }
 
 #[tauri::command]
+fn stack_unstack(state: tauri::State<'_, AppState>, member: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_unstack(&state, &member)
+}
+#[tauri::command]
+fn stack_add(state: tauri::State<'_, AppState>, member: String, container: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_add(&state, &member, &container)
+}
+#[tauri::command]
+fn stack_reorder(state: tauri::State<'_, AppState>, container: String, members: Vec<String>) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_reorder(&state, &container, members)
+}
+#[tauri::command]
+fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_create(&state, &member1, &member2)
+}
+
+#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source_char_path: String,
@@ -204,13 +230,14 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
-            apply_mutation, save_document, list_file_backups, restore_backup,
+            apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             window_layout, resolve_character_names, refresh_character_names,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             autofill_lists, set_autofill_list, clear_all_autofill,
-            setup_preview, setup_apply
+            setup_preview, setup_apply,
+            stack_unstack, stack_add, stack_reorder, stack_create
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

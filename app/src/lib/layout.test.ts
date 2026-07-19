@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching search.test.ts.
-import { canvasScale, toCanvas, toData, openWindows, resizeRect } from "./layout.ts";
+import { canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -26,7 +26,7 @@ for (const scale of [0.5, 0.37, 1, 2]) {
   }
 }
 
-const win = (id: string, open: boolean, renderable: boolean): WindowRect => ({
+const win = (id: string, open: boolean, renderable: boolean, stack: WindowRect["stack"] = null): WindowRect => ({
   id,
   label: id,
   open,
@@ -40,7 +40,7 @@ const win = (id: string, open: boolean, renderable: boolean): WindowRect => ({
       }
     : null,
   flags: [],
-  stacks: null,
+  stack,
 });
 
 const wins = [win("a", true, true), win("b", false, true), win("c", true, false)];
@@ -83,6 +83,69 @@ check("open filter keeps the right window", open[0].id === "a");
   const floored = resizeRect(orig, "br", -999, -999);
   check("br floors w,h at 0 on negative overshoot", floored.w === 0 && floored.h === 0);
   check("br keeps x,y anchored when floored", floored.x === 100 && floored.y === 100);
+}
+
+// --- stackUnits: group open windows into draw units -------------------------
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", false, true, { container_id: "C", role: "member" }), // closed member: excluded from tabs
+      win("free", true, true, null),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("stackUnits produces one stack + one free unit", units.length === 2);
+  const stackUnit = units.find((u) => u.stack)!;
+  check("stack unit anchors on the container", stackUnit.anchor.id === "C");
+  check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "m1");
+  const freeUnit = units.find((u) => !u.stack)!;
+  check("free window is its own unit", freeUnit.key === "free" && freeUnit.tabs.length === 1);
+
+  // fanTargets: a coherent move must repeat onto every renderable member,
+  // open or closed — a closed member left out of the fan would drift out of
+  // the stack (the live "jumping" bug). tabs stay display-only (open members).
+  const fanIds = stackUnit.fanTargets.map((w) => w.id);
+  check("fanTargets include the closed member m2 (no drift)", fanIds.includes("m2"));
+  check("fanTargets include the open member m1", fanIds.includes("m1"));
+  check("fanTargets include the anchor/container C", fanIds.includes("C"));
+}
+
+// --- stackUnits: a stack whose anchor (container) is closed is dropped -----
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", false, true, { container_id: "C", role: "container" }), // anchor closed
+      win("m1", true, true, { container_id: "C", role: "member" }), // independently open+renderable
+      win("m2", false, true, { container_id: "C", role: "member" }),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("a closed-anchor stack does not appear as a stack unit", !units.some((u) => u.stack));
+  check("its open+renderable member appears as its own free unit", units.length === 1 && units[0].key === "m1");
+}
+
+// --- stackUnits: a stack with no open members is not drawn -----------------
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }), // container OPEN...
+      win("m1", false, true, { container_id: "C", role: "member" }), // ...but all members closed
+      win("m2", false, true, { container_id: "C", role: "member" }),
+      win("free", true, true, null),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("a stack with no open members is not drawn", !units.some((u) => u.stack));
+  check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
+  check("unrelated free windows still draw", units.some((u) => u.key === "free"));
 }
 
 console.log("layout: all checks passed");

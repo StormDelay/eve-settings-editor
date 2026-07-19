@@ -630,6 +630,47 @@ harmless — not yet verified).
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
   (details to be confirmed in experiment 3).
 
+### Window stacks (experiment 6: tabbed two free windows into a new stack)
+
+Tabbing two free-floating windows together in-game creates a **new stack**
+whose container is a *minted numeric-string window id*, itself a real
+positioned window. Confirmed by a before/after diff of one character file
+(synthetic ids below: the two tabbed windows `windowA`, `windowB`; the minted
+container `N`). EVE filled a **free** integer id — the observed id was a gap
+*below* other live numeric ids, so it is a free-list pick, not `max+1`.
+
+The complete set of changes under root → `b"windows"` (apart from timestamp
+churn) — the full recipe an editor needs to mint a stack:
+
+- `b"windowSizesAndPositions_1"`: **all three share one identical rect** — a
+  new entry `N → (x, y, w, h, screenW, screenH)`, and `windowA`/`windowB`
+  rewritten to that same 6-tuple (a member's prior free-floating rect is
+  discarded). The container's rect is the stack's true on-screen position.
+- `b"stacksWindows"`: `windowA → N`, `windowB → N` (member → container; a
+  previously-unstacked member's value goes `None → N`).
+- `b"preferredIdxInStack3"`: new entry `N → { windowA: 0, windowB: 1 }`
+  (container → {member → 0-based tab index}; the tab order).
+- `b"openWindows"`: `N → True`, and both members forced `→ True`.
+- Container marked a real window in three boolean state dicts, each `N →
+  False`: `b"isLightBackgroundWindows"`, `b"isOverlayedWindows"`,
+  `b"minimizedWindows"`. (A member may also gain a `False` entry in
+  `b"isOverlayedWindows"` if it lacked one.) The container did **not** need an
+  entry in `b"collapsedWindows"` / `b"compactWindows"` / `b"lockedWindows"`.
+
+Named-frame stacks (`b"ChatWindowStack"`, `b"invitestack"`) and other minted
+numeric containers (ids like `b"76"`, `b"448"`) already coexist in real files,
+each with its own geometry + flags — numeric-string containers are normal, not
+special. Stack values are window-id refs or `None`, **never Int**, so the
+`windows.rs::stack_field` Int-only check is dead on real data.
+
+**Editor implication (window-stacks milestone):** minting a stack is mechanical
+and fully specified above; the container id need only be *free in the file*
+(the free-id set is enumerable from these dicts), because the client tracks
+live window ids on load and will not reclaim one it sees in use. One residual
+unknown — whether a next-window-id counter is persisted anywhere *outside*
+`b"windows"` — is unresolved by this single capture; pick a high free id
+defensively and confirm no collision in the feature's live smoke.
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in
