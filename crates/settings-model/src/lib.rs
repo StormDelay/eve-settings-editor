@@ -16,6 +16,7 @@ pub mod overview;
 pub mod autofill;
 pub mod batch;
 mod stacks;
+mod overview_tabs;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -29,6 +30,7 @@ pub use overview::{project_overview, set_column_order, set_column_visible, set_c
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
 pub use batch::{apply_categories_to, apply_to_tree, extract_categories, full_copy_to, Category};
 pub use stacks::{add_to_stack, create_stack, reorder_stack, unstack, StackError};
+pub use overview_tabs::{rename_tab, OverviewTabError};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
