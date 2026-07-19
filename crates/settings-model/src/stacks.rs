@@ -104,6 +104,77 @@ fn container_dict<'a>(pref: &'a mut Vec<(Value, Value)>, cb: &[u8]) -> &'a mut V
     match v { Value::Dict(d) => d, other => { *other = Value::Dict(Vec::new()); let Value::Dict(d) = other else { unreachable!() }; d } }
 }
 
+/// Create a new stack from two free windows. `member1` is the window the action
+/// started from; the stack lands at its current rect. Returns the minted
+/// container id. See docs/format-notes.md ("Window stacks") for the recipe.
+pub fn create_stack(v: &mut Value, member1: &str, member2: &str) -> Result<String, StackError> {
+    inline_all(v);
+    let container = mint_free_id(windows_mut(v)?);
+    let (cb, m1b, m2b) = (container.as_bytes().to_vec(), member1.as_bytes(), member2.as_bytes());
+
+    // Geometry: C and M2 take M1's current rect.
+    let win = windows_mut(v)?;
+    let geoms = child_inner(win, b"windowSizesAndPositions_1");
+    let m1_rect = geoms.iter().find(|(k, _)| is_b(k, m1b)).map(|(_, r)| r.clone());
+    if let Some(rect) = m1_rect {
+        set_entry(geoms, &cb, rect.clone());
+        set_entry(geoms, m2b, rect);
+    }
+    // Membership.
+    let sw = child_inner(win, b"stacksWindows");
+    set_entry(sw, m1b, Value::Bytes(cb.clone()));
+    set_entry(sw, m2b, Value::Bytes(cb.clone()));
+    let pref = child_inner(win, b"preferredIdxInStack3");
+    let cdict = container_dict(pref, &cb);
+    *cdict = vec![
+        (Value::Bytes(m1b.to_vec()), Value::Int(0)),
+        (Value::Bytes(m2b.to_vec()), Value::Int(1)),
+    ];
+    // Open C + both members; mark C in the three state dicts.
+    for (dict, val) in [(b"openWindows".as_slice(), true)] {
+        let d = child_inner(win, dict);
+        set_entry(d, &cb, Value::Bool(val));
+        set_entry(d, m1b, Value::Bool(val));
+        set_entry(d, m2b, Value::Bool(val));
+    }
+    for dict in [b"isLightBackgroundWindows".as_slice(), b"isOverlayedWindows", b"minimizedWindows"] {
+        let d = child_inner(win, dict);
+        set_entry(d, &cb, Value::Bool(false));
+    }
+    Ok(container)
+}
+
+/// Lowest free integer id, at least 1000, that is not already used as a key or
+/// container value anywhere in the window dicts — a high value avoids colliding
+/// with EVE's own low counter (spec §7).
+fn mint_free_id(win: &[(Value, Value)]) -> String {
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_, v) in win {
+        collect_ids(v, &mut used);
+    }
+    let mut n: i64 = 1000;
+    while used.contains(&n.to_string()) { n += 1; }
+    n.to_string()
+}
+
+fn collect_ids(v: &Value, out: &mut std::collections::HashSet<String>) {
+    match v {
+        Value::Bytes(b) => { out.insert(String::from_utf8_lossy(b).into_owned()); }
+        Value::Tuple(t) => t.iter().for_each(|e| collect_ids(e, out)),
+        Value::Dict(d) => d.iter().for_each(|(k, val)| { collect_ids(k, out); collect_ids(val, out); }),
+        _ => {}
+    }
+}
+
+/// Insert or overwrite a byte-keyed dict entry.
+fn set_entry(d: &mut Vec<(Value, Value)>, key: &[u8], val: Value) {
+    if let Some(slot) = d.iter_mut().find(|(k, _)| is_b(k, key)) {
+        slot.1 = val;
+    } else {
+        d.push((Value::Bytes(key.to_vec()), val));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +265,71 @@ mod tests {
         // (RefBeforeStore) — this proves inline_all runs before the edit.
         let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
         assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    fn free_windows_root() -> Value {
+        // Two free windows m1 (rect x=10) and m2 (rect x=99), plus the flag dicts.
+        fn geom(x: i64) -> Value {
+            Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)])
+        }
+        let boolset = |ids: &[&str], val: bool| Value::Tuple(vec![ts(), Value::Dict(
+            ids.iter().map(|i| (b(i), Value::Bool(val))).collect())]);
+        Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("m1"), geom(10)), (b("m2"), geom(99)), (b("40"), geom(0)),
+            ])])),
+            (b("openWindows"), boolset(&["m1", "m2"], false)),
+            (b("isLightBackgroundWindows"), boolset(&[], false)),
+            (b("isOverlayedWindows"), boolset(&[], false)),
+            (b("minimizedWindows"), boolset(&[], false)),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![])])),
+        ]))])
+    }
+
+    fn geom_of(v: &Value, id: &[u8]) -> Vec<i64> {
+        let g = inner(win(v), b"windowSizesAndPositions_1");
+        let (_, t) = g.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == id)).unwrap();
+        let Value::Tuple(t) = t else { panic!() };
+        t.iter().map(|e| if let Value::Int(i) = e { *i } else { 0 }).collect()
+    }
+    fn boolval(v: &Value, dict: &[u8], id: &[u8]) -> Option<bool> {
+        let d = inner(win(v), dict);
+        d.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == id)).and_then(|(_, v)| if let Value::Bool(x) = v { Some(*x) } else { None })
+    }
+
+    #[test]
+    fn create_mints_a_free_high_id_and_lands_at_m1_rect() {
+        let mut v = free_windows_root();
+        let c = create_stack(&mut v, "m1", "m2").unwrap();
+        // "40" and "m1"/"m2" already exist; the minted id must be free (not "40").
+        assert_ne!(c, "40");
+        assert!(c.parse::<i64>().is_ok(), "container id is a numeric string");
+        // Container + both members share M1's rect (x = 10).
+        assert_eq!(geom_of(&v, c.as_bytes())[0], 10);
+        assert_eq!(geom_of(&v, b"m2")[0], 10, "m2 moved to m1's rect");
+        assert_eq!(geom_of(&v, b"m1")[0], 10);
+    }
+
+    #[test]
+    fn create_links_members_opens_and_flags_the_container() {
+        let mut v = free_windows_root();
+        let c = create_stack(&mut v, "m1", "m2").unwrap();
+        let cb = c.as_bytes();
+        // stacksWindows: both members -> C.
+        let get = |id: &[u8]| sw(&v).iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == id)).map(|(_, v)| v.clone());
+        assert_eq!(get(b"m1"), Some(Value::Bytes(cb.to_vec())));
+        assert_eq!(get(b"m2"), Some(Value::Bytes(cb.to_vec())));
+        // preferredIdxInStack3[C] = {m1:0, m2:1}.
+        let (_, cd) = pref(&v).iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == cb)).unwrap();
+        let Value::Dict(cd) = cd else { panic!() };
+        assert_eq!(keys(cd), vec!["m1".to_string(), "m2".to_string()]);
+        // Open: C, m1, m2 all true.
+        assert_eq!(boolval(&v, b"openWindows", cb), Some(true));
+        assert_eq!(boolval(&v, b"openWindows", b"m1"), Some(true));
+        // Container marked in the three state dicts (False).
+        assert_eq!(boolval(&v, b"isOverlayedWindows", cb), Some(false));
+        assert_eq!(boolval(&v, b"minimizedWindows", cb), Some(false));
+        assert_eq!(boolval(&v, b"isLightBackgroundWindows", cb), Some(false));
     }
 }
