@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
   let { userOpen, charId, characters, onLoadCharacter, onUserDirty, onCharDirty, onShowAccounts }:
@@ -23,6 +23,58 @@
   $effect(() => { void userOpen; void charId; reload(); });
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
+  // The window strip whose tab_indices contains the selected tab (null for an
+  // orphan tab that isn't listed under any window).
+  const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
+  const currentWindowIndex = $derived(currentWindow?.index ?? null);
+
+  async function createTab() {
+    if (currentWindowIndex === null) return;
+    const name = window.prompt("New tab name:");
+    if (!name?.trim()) return;
+    try {
+      data = await api.tabCreate(currentWindowIndex, name.trim(), tabIndex);
+      tabIndex = Math.max(...data.tabs.map((t) => t.index));
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function renameTab() {
+    if (!tab) return;
+    const name = window.prompt("Rename tab:", tab.name);
+    if (!name?.trim() || name.trim() === tab.name) return;
+    try { data = await api.tabRename(tab.index, name.trim()); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function deleteTab() {
+    if (!tab) return;
+    const ok = await confirm(`Delete tab "${tab.name}"? This can't be undone.`, { title: "Delete tab", kind: "warning" });
+    if (!ok) return;
+    try {
+      const result = await api.tabDelete(tab.index);
+      data = result;
+      tabIndex = result.tabs[0]?.index ?? null;
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function moveTab(toWindow: number) {
+    if (!tab || !currentWindow) return;
+    const pos = data?.windows.find((w) => w.index === toWindow)?.tab_indices.length ?? 0;
+    try { data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+
+  // Drag-reorder of tabs within the current window (same pattern as the column list below).
+  let tabDragFrom = $state<number | null>(null);
+  async function dropTab(to: number) {
+    if (tabDragFrom === null || !currentWindow) { tabDragFrom = null; return; }
+    const order = [...currentWindow.tab_indices];
+    const [moved] = order.splice(tabDragFrom, 1);
+    order.splice(to, 0, moved);
+    const windowIdx = currentWindow.index;
+    tabDragFrom = null;
+    try { data = await api.tabReorder(windowIdx, order); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
 
   async function toggle(column: string, visible: boolean) {
     try { data = await api.setOverviewVisible(tabIndex!, column, visible); onUserDirty(); }
@@ -84,6 +136,28 @@
         {/if}
       </select>
     </label>
+    <div class="tab-actions">
+      <button onclick={createTab} disabled={currentWindowIndex === null} title="New tab">+ New</button>
+      <button onclick={renameTab} disabled={!tab} title="Rename selected tab">Rename</button>
+      <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
+      {#if currentWindow && data.windows.length > 1}
+        {@const cw = currentWindow}
+        <select aria-label="Move to window" value=""
+                onchange={(e) => {
+                  const el = e.currentTarget as HTMLSelectElement;
+                  const v = el.value;
+                  el.value = "";
+                  if (v) moveTab(Number(v));
+                }}>
+          <option value="" disabled>Move to window…</option>
+          {#each data.windows as w (w.index)}
+            {#if w.index !== cw.index}
+              <option value={w.index}>Overview {w.index + 1}</option>
+            {/if}
+          {/each}
+        </select>
+      {/if}
+    </div>
     <label>Character (for widths)
       <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
         <option value="" disabled>Select…</option>
@@ -91,6 +165,26 @@
       </select>
     </label>
   </div>
+  {#if currentWindow && currentWindow.tab_indices.length > 1}
+    {@const cw = currentWindow}
+    <ul class="ov-tabs">
+      {#each cw.tab_indices as idx, i (idx)}
+        {@const t = data.tabs.find((x) => x.index === idx)}
+        <li draggable="true" class:selected={idx === tabIndex}
+            ondragstart={(e) => { tabDragFrom = i;
+              // WebView2/Chromium won't fire `drop` unless dragstart sets data.
+              e.dataTransfer?.setData("text/plain", String(i));
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
+            ondragover={(e) => { e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+            ondrop={(e) => { e.preventDefault(); dropTab(i); }}
+            ondragend={() => (tabDragFrom = null)}>
+          <span class="grip" title="Drag to reorder">⠿</span>
+          <button type="button" class="tab-chip" onclick={() => (tabIndex = idx)}>{t?.name ?? `Tab ${idx}`}</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
   {#if characters.length === 0}
     <p class="hint">No characters associated with this account yet — pair one in Accounts to edit widths.</p>
   {/if}
@@ -124,8 +218,10 @@
 {/if}
 
 <style>
-  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; }
+  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; }
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
+  .tab-actions { display: flex; gap: 0.4rem; align-items: center; }
+  button.danger { border-color: #a33; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */
   select, option, optgroup, input.w {
@@ -134,6 +230,13 @@
   }
   .ov-cols { list-style: none; padding: 0; }
   .ov-cols li { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0; }
+  .ov-tabs { list-style: none; padding: 0; margin: 0 0 0.6rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .ov-tabs li {
+    display: flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.5rem;
+    border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+  }
+  .ov-tabs li.selected { border-color: var(--accent); }
+  .ov-tabs button.tab-chip { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
   .grip { cursor: grab; opacity: 0.6; }
   input.w { width: 5rem; }
   .meta { color: var(--fg-dim); font-size: 0.85em; }
