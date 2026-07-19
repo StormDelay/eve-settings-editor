@@ -60,6 +60,10 @@ export interface DrawUnit {
   anchor: WindowRect;
   stack: Stack | null;
   tabs: WindowRect[];
+  /** Every renderable window a coherent move must repeat the rect onto: the
+   * anchor, all renderable members (open AND closed — a closed member left
+   * behind would drift out of the stack), and the container. Deduped. */
+  fanTargets: WindowRect[];
 }
 
 /**
@@ -71,6 +75,7 @@ export interface DrawUnit {
 export function stackUnits(layout: WindowLayout): DrawUnit[] {
   const drawn = openWindows(layout.windows);
   const byId = new Map(drawn.map((w) => [w.id, w]));
+  const renderableById = new Map(layout.windows.filter((w) => w.renderable).map((w) => [w.id, w]));
   const units: DrawUnit[] = [];
   const claimed = new Set<string>();
 
@@ -81,11 +86,13 @@ export function stackUnits(layout: WindowLayout): DrawUnit[] {
     // The container itself is not a tab unless it is also a member.
     for (const w of tabs) claimed.add(w.id);
     claimed.add(s.container_id);
-    units.push({ key: s.container_id, anchor, stack: s, tabs });
+    const fanIds = new Set<string>([s.anchor_id, s.container_id, ...s.members]);
+    const fanTargets = [...fanIds].map((id) => renderableById.get(id)).filter((w): w is WindowRect => !!w);
+    units.push({ key: s.container_id, anchor, stack: s, tabs, fanTargets });
   }
   for (const w of drawn) {
     if (claimed.has(w.id)) continue;
-    units.push({ key: w.id, anchor: w, stack: null, tabs: [w] });
+    units.push({ key: w.id, anchor: w, stack: null, tabs: [w], fanTargets: [w] });
   }
   return units;
 }

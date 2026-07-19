@@ -146,28 +146,6 @@
     | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number };
   let drag: Drag | null = null;
 
-  // Every renderable window a move/resize of this unit must repeat the same
-  // delta/rect onto: the anchor, its open stack members (tabs), and — for a
-  // stack — the container's own window entry if it carries geometry (the
-  // container's geom is the stack's true position on screen). De-duplicated
-  // by id since the anchor is often also one of the tabs or the container.
-  function unitWindows(unit: DrawUnit): WindowRect[] {
-    const result: WindowRect[] = [unit.anchor];
-    const ids = new Set([unit.anchor.id]);
-    for (const t of unit.tabs) {
-      if (ids.has(t.id)) continue;
-      ids.add(t.id);
-      result.push(t);
-    }
-    if (unit.stack && layout) {
-      const container = layout.windows.find((w) => w.id === unit.stack!.container_id);
-      if (container && container.renderable && !ids.has(container.id)) {
-        result.push(container);
-      }
-    }
-    return result;
-  }
-
   // Capture on the canvas (not the rectangle) so its onpointermove/up keep
   // firing even as the pointer leaves the rectangle during a drag.
   function startMove(unit: DrawUnit, e: PointerEvent) {
@@ -221,7 +199,7 @@
     // rect (not just x/y) is sent even for a move, so members also snap to the
     // anchor's w/h — geomMutations diffs per field, so the anchor's own
     // unchanged w/h emit nothing and plain single-window units are unaffected.
-    const targets = unitWindows(d.unit);
+    const targets = d.unit.fanTargets;
     const next = { x: p.x, y: p.y, w: p.w, h: p.h };
     const ms = targets.flatMap((w) => geomMutations(w, next));
     await commit(ms);
