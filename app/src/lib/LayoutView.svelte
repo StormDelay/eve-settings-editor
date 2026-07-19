@@ -129,6 +129,7 @@
   async function runStack(p: Promise<WindowLayout>) {
     try {
       layout = await p;
+      if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
     } catch (e) {
       await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
     }
@@ -216,9 +217,12 @@
     drag = null;
     if (!p) return;
     // Fan the new anchor rect out to every renderable window in the unit so a
-    // stack moves/resizes coherently and stale members are repaired.
+    // stack moves/resizes coherently and stale members are repaired. The full
+    // rect (not just x/y) is sent even for a move, so members also snap to the
+    // anchor's w/h — geomMutations diffs per field, so the anchor's own
+    // unchanged w/h emit nothing and plain single-window units are unaffected.
     const targets = unitWindows(d.unit);
-    const next = d.kind === "move" ? { x: p.x, y: p.y } : { x: p.x, y: p.y, w: p.w, h: p.h };
+    const next = { x: p.x, y: p.y, w: p.w, h: p.h };
     const ms = targets.flatMap((w) => geomMutations(w, next));
     await commit(ms);
     clearPreview(d.unit.anchor.id);
@@ -322,6 +326,11 @@
     border-color: #f59e0b;
     background: rgba(245, 158, 11, 0.25);
     z-index: 1;
+  }
+  /* A stack rectangle gets a heavier border so it reads as a group of windows,
+     not a single one — color still follows .win/.win.selected above. */
+  .win.stacked {
+    border-width: 2px;
   }
   .win-label {
     padding: 1px 3px;
