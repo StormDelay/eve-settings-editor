@@ -26,7 +26,7 @@ for (const scale of [0.5, 0.37, 1, 2]) {
   }
 }
 
-const win = (id: string, open: boolean, renderable: boolean): WindowRect => ({
+const win = (id: string, open: boolean, renderable: boolean, stack: WindowRect["stack"] = null): WindowRect => ({
   id,
   label: id,
   open,
@@ -40,7 +40,7 @@ const win = (id: string, open: boolean, renderable: boolean): WindowRect => ({
       }
     : null,
   flags: [],
-  stack: null,
+  stack,
 });
 
 const wins = [win("a", true, true), win("b", false, true), win("c", true, false)];
@@ -87,20 +87,14 @@ check("open filter keeps the right window", open[0].id === "a");
 
 // --- stackUnits: group open windows into draw units -------------------------
 {
-  const g = (x: number) => ({ x, y: 0, w: 100, h: 80, screen_w: 2560, screen_h: 1440,
-    x_path: [], y_path: [], w_path: [], h_path: [], screen_w_path: [], screen_h_path: [] });
-  const mk = (id: string, open: boolean, stack: any): WindowRect => ({
-    id, label: id, open, renderable: true, resolution_matches: true, geom: g(open ? 10 : 0),
-    flags: [], stack,
-  });
   const layout = {
     reference_w: 2560, reference_h: 1440,
     stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
     windows: [
-      mk("C", true, { container_id: "C", role: "container" }),
-      mk("m1", true, { container_id: "C", role: "member" }),
-      mk("m2", false, { container_id: "C", role: "member" }), // closed member: excluded from tabs
-      mk("free", true, null),
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", false, true, { container_id: "C", role: "member" }), // closed member: excluded from tabs
+      win("free", true, true, null),
     ],
   };
   const units = stackUnits(layout as any);
@@ -110,6 +104,22 @@ check("open filter keeps the right window", open[0].id === "a");
   check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "m1");
   const freeUnit = units.find((u) => !u.stack)!;
   check("free window is its own unit", freeUnit.key === "free" && freeUnit.tabs.length === 1);
+}
+
+// --- stackUnits: a stack whose anchor (container) is closed is dropped -----
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", false, true, { container_id: "C", role: "container" }), // anchor closed
+      win("m1", true, true, { container_id: "C", role: "member" }), // independently open+renderable
+      win("m2", false, true, { container_id: "C", role: "member" }),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("a closed-anchor stack does not appear as a stack unit", !units.some((u) => u.stack));
+  check("its open+renderable member appears as its own free unit", units.length === 1 && units[0].key === "m1");
 }
 
 console.log("layout: all checks passed");
