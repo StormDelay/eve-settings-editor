@@ -7,14 +7,14 @@
 
   let {
     slot,
-    runMutation,
+    runMutations,
     readOnly,
     refreshToken,
     selectedId = $bindable(null),
     onReveal,
   }: {
     slot: Slot;
-    runMutation: (m: Mutation, rethrow?: boolean) => Promise<void>;
+    runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
     readOnly: boolean;
     refreshToken: number;
     selectedId?: string | null;
@@ -98,7 +98,7 @@
   async function commit(ms: Mutation[]) {
     if (ms.length === 0) return;
     try {
-      for (const m of ms) await runMutation(m, true);
+      await runMutations(ms, true);
     } catch (e) {
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
     }

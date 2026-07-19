@@ -35,6 +35,15 @@ fn apply_mutation(
 }
 
 #[tauri::command]
+fn apply_mutations(
+    state: tauri::State<'_, AppState>,
+    slot: ops::Slot,
+    mutations: Vec<settings_model::Mutation>,
+) -> Result<settings_model::Node, ErrDto> {
+    ops::apply_mutations(&state, slot, &mutations)
+}
+
+#[tauri::command]
 fn save_document(
     state: tauri::State<'_, AppState>,
     slot: ops::Slot,
@@ -221,7 +230,7 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
-            apply_mutation, save_document, list_file_backups, restore_backup,
+            apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             window_layout, resolve_character_names, refresh_character_names,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
