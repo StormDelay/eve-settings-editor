@@ -70,6 +70,10 @@
 
   const freeWindows = $derived(windows.filter((w) => w.stack === null));
 
+  // Per-stack collapse of the member sub-rows (default expanded); the frame
+  // row itself always stays visible.
+  let collapsed = $state<Record<string, boolean>>({});
+
   function swapped(members: string[], i: number, j: number): string[] {
     const next = [...members];
     [next[i], next[j]] = [next[j], next[i]];
@@ -147,6 +151,12 @@
           class:selected={stack.container_id === selectedId}
           use:scrollOnSelect={stack.container_id === selectedId}>
           <div class="row-head">
+            <button
+              class="caret"
+              aria-label="Collapse stack"
+              onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
+              {collapsed[stack.container_id] ? "▸" : "▾"}
+            </button>
             <span class="frame-label" title="Stack frame">frame</span>
             {@render rowHead(containerWindow)}
             <span class="stack-count">{stack.members.length}</span>
@@ -157,56 +167,65 @@
         </div>
       {:else}
         <div class="stack-head">
+          <button
+            class="caret"
+            aria-label="Collapse stack"
+            onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
+            {collapsed[stack.container_id] ? "▸" : "▾"}
+          </button>
           <span class="stack-title">{stack.container_label}</span>
           <span class="stack-count">{stack.members.length}</span>
         </div>
       {/if}
-      {#each stack.members as memberId, i (memberId)}
-        {@const w = findWindow(memberId)}
-        {#if w}
-          <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
-            <div class="row-head">
-              {@render rowHead(w)}
-              <button
-                class="stack-btn"
-                disabled={readOnly || i === 0}
-                title="Move up in stack order"
-                aria-label="Move up in stack order"
-                onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i - 1))}>
-                ↑
-              </button>
-              <button
-                class="stack-btn"
-                disabled={readOnly || i === stack.members.length - 1}
-                title="Move down in stack order"
-                aria-label="Move down in stack order"
-                onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i + 1))}>
-                ↓
-              </button>
-              <button
-                class="stack-btn"
-                disabled={readOnly}
-                title="Remove from stack"
-                aria-label="Remove from stack"
-                onclick={() => onUnstack(w.id)}>
-                unstack
-              </button>
+      {#if !collapsed[stack.container_id]}
+        {#each stack.members as memberId, i (memberId)}
+          {@const w = findWindow(memberId)}
+          {#if w}
+            <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
+              <div class="row-head">
+                {@render rowHead(w)}
+                <button
+                  class="stack-btn"
+                  disabled={readOnly || i === 0}
+                  title="Move up in stack order"
+                  aria-label="Move up in stack order"
+                  onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i - 1))}>
+                  ↑
+                </button>
+                <button
+                  class="stack-btn"
+                  disabled={readOnly || i === stack.members.length - 1}
+                  title="Move down in stack order"
+                  aria-label="Move down in stack order"
+                  onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i + 1))}>
+                  ↓
+                </button>
+                <button
+                  class="stack-btn"
+                  disabled={readOnly}
+                  title="Remove from stack"
+                  aria-label="Remove from stack"
+                  onclick={() => onUnstack(w.id)}>
+                  unstack
+                </button>
+              </div>
+              {#if w.id === selectedId && w.geom}
+                {@render detail(w)}
+              {/if}
             </div>
-            {#if w.id === selectedId && w.geom}
-              {@render detail(w)}
-            {/if}
-          </div>
-        {/if}
-      {/each}
+          {/if}
+        {/each}
+      {/if}
     </div>
   {/each}
 
   {#each freeWindows as w (w.id)}
+    {@const stackTargets = freeWindows.filter((o) => o.id !== w.id && o.renderable)}
     <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
       <div class="row-head">
         {@render rowHead(w)}
       </div>
-      {#if stacks.length > 0 || freeWindows.length > 1}
+      {#if w.renderable && (stacks.length > 0 || stackTargets.length > 0)}
         <div class="free-controls">
           {#if stacks.length > 0}
             <select
@@ -214,7 +233,9 @@
               disabled={readOnly}
               value=""
               onchange={(e) => {
-                const v = (e.currentTarget as HTMLSelectElement).value;
+                const el = e.currentTarget as HTMLSelectElement;
+                const v = el.value;
+                el.value = "";
                 if (v) onAddToStack(w.id, v);
               }}>
               <option value="" disabled>Add to stack…</option>
@@ -223,17 +244,19 @@
               {/each}
             </select>
           {/if}
-          {#if freeWindows.length > 1}
+          {#if stackTargets.length > 0}
             <select
               aria-label="Stack with another window"
               disabled={readOnly}
               value=""
               onchange={(e) => {
-                const v = (e.currentTarget as HTMLSelectElement).value;
+                const el = e.currentTarget as HTMLSelectElement;
+                const v = el.value;
+                el.value = "";
                 if (v) onCreateStack(w.id, v);
               }}>
               <option value="" disabled>Stack with…</option>
-              {#each freeWindows.filter((o) => o.id !== w.id) as other (other.id)}
+              {#each stackTargets as other (other.id)}
                 <option value={other.id}>{other.label}</option>
               {/each}
             </select>
@@ -315,6 +338,15 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--fg-dim);
+  }
+  .caret {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 0 2px;
+    font: inherit;
   }
   .row.member {
     border-bottom: none;
