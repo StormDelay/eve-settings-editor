@@ -1,6 +1,6 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
-import type { WindowRect } from "./api";
+import type { WindowLayout, Stack, WindowRect } from "./api";
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -53,4 +53,39 @@ export function resizeRect(
     h = Math.max(0, orig.h + dy);
   }
   return { x, y, w, h };
+}
+
+export interface DrawUnit {
+  key: string;
+  anchor: WindowRect;
+  stack: Stack | null;
+  tabs: WindowRect[];
+}
+
+/**
+ * Group the open, renderable windows into draw units: one per stack (drawn at
+ * the stack's anchor, with its open members as tabs in preferred order) and one
+ * per non-stacked window. A stack whose anchor is not open/renderable is dropped
+ * (nothing to draw).
+ */
+export function stackUnits(layout: WindowLayout): DrawUnit[] {
+  const drawn = openWindows(layout.windows);
+  const byId = new Map(drawn.map((w) => [w.id, w]));
+  const units: DrawUnit[] = [];
+  const claimed = new Set<string>();
+
+  for (const s of layout.stacks) {
+    const anchor = byId.get(s.anchor_id);
+    if (!anchor) continue; // anchor not open/renderable — skip the stack
+    const tabs = s.members.map((id) => byId.get(id)).filter((w): w is WindowRect => !!w);
+    // The container itself is not a tab unless it is also a member.
+    for (const w of tabs) claimed.add(w.id);
+    claimed.add(s.container_id);
+    units.push({ key: s.container_id, anchor, stack: s, tabs });
+  }
+  for (const w of drawn) {
+    if (claimed.has(w.id)) continue;
+    units.push({ key: w.id, anchor: w, stack: null, tabs: [w] });
+  }
+  return units;
 }
