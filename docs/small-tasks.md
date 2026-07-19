@@ -29,7 +29,10 @@ Workflow:
   allocation-agnostic; (5) can't create a tab in an empty (zero-tab) overview
   window (the New-tab target derives from the selected tab's window); (6) a few
   trivial untested branches (`delete_tab`/`move_tab` own `UnknownTab` paths, the
-  `create_tab` preset-value assertion). _Added 2026-07-19._
+  `create_tab` preset-value assertion); (7) the tab-management **UI/UX is rough**
+  (flagged during the live smoke) — defer the polish/rework to the later
+  overview-depth slices (filter presets / colors / add-remove windows), which will
+  touch this same Overview view anyway. _Added 2026-07-19._
 
 - [ ] **Window-stacks follow-up: friendlier stack-frame labels.**
   `Stack.container_label` is always == `container_id` (`windows.rs`) — give a
