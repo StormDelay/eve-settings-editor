@@ -161,6 +161,27 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, preset: &str) ->
     Ok(new_idx)
 }
 
+pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    {
+        let tabs = tabs_mut(ov);
+        if !tabs.iter().any(|(k, _)| as_int(k) == Some(tab_idx)) {
+            return Err(OverviewTabError::UnknownTab { index: tab_idx });
+        }
+        if tabs.len() <= 1 {
+            return Err(OverviewTabError::LastTab);
+        }
+        tabs.retain(|(k, _)| as_int(k) != Some(tab_idx));
+    }
+    for g in groups_mut(ov).iter_mut() {
+        if let Some(inner) = list_inner_mut(g) {
+            inner.retain(|e| as_int(e) != Some(tab_idx));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +253,21 @@ mod tests {
     fn create_into_missing_window_errors() {
         let mut v = user_with_tabs();
         assert!(matches!(create_tab(&mut v, 5, "X", "P"), Err(OverviewTabError::UnknownWindow { index: 5 })));
+    }
+
+    #[test]
+    fn delete_removes_tab_and_purges_window_strips() {
+        let mut v = user_with_tabs();
+        create_tab(&mut v, 0, "Mining", "P").unwrap(); // now tabs 0,1 in window 0
+        delete_tab(&mut v, 0).unwrap();
+        assert_eq!(window_indices(&v, 0), vec![1], "0 purged from the strip");
+        assert!(matches!(rename_tab(&mut v, 0, "X"), Err(OverviewTabError::UnknownTab { index: 0 })),
+            "tab 0 is gone from tabsettings_new");
+    }
+
+    #[test]
+    fn delete_last_tab_is_refused() {
+        let mut v = user_with_tabs(); // single tab 0
+        assert!(matches!(delete_tab(&mut v, 0), Err(OverviewTabError::LastTab)));
     }
 }
