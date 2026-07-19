@@ -289,6 +289,22 @@
     }
   }
 
+  // Batched sibling of runMutation: one backend round-trip for many mutations
+  // (e.g. a layout-canvas drag fanning out to several windows' geometry).
+  async function runMutations(ms: Mutation[], rethrow = false) {
+    const doc = slots[active];
+    if (doc?.status !== "opened") return;
+    if (ms.length === 0) return;
+    try {
+      const tree = await api.mutateMany(active, ms);
+      slots[active] = { ...doc, tree };
+      dirtySlots[active] = true;
+    } catch (e) {
+      if (rethrow) throw e;
+      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+    }
+  }
+
   const handleEdit = (path: NodePath, text: string) =>
     runMutation({ op: "set_scalar", path, text });
   const handleRemove = (path: NodePath) =>
@@ -402,7 +418,7 @@
         <div class="tree-area">
           <LayoutView
             slot={active}
-            {runMutation}
+            {runMutations}
             readOnly={current.fidelity.state !== "editable"}
             refreshToken={savedAt}
             bind:selectedId={selectedWindowId}

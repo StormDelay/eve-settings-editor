@@ -16,6 +16,7 @@ use settings_model::{
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
+    unstack, add_to_stack, reorder_stack, create_stack, StackError,
 };
 
 use crate::accounts;
@@ -494,6 +495,28 @@ pub fn apply_mutation(state: &AppState, slot: Slot, mutation: &Mutation) -> Resu
     Ok(project(&doc.value))
 }
 
+/// Batched sibling of `apply_mutation`: applies every mutation to the same
+/// locked doc, then projects the tree once instead of once per mutation.
+/// Non-atomic on a mid-batch failure, matching the caller's prior per-mutation
+/// loop — geometry set_scalars on valid paths don't fail.
+pub fn apply_mutations(state: &AppState, slot: Slot, mutations: &[Mutation]) -> Result<Node, ErrDto> {
+    let mut guard = state.doc(slot).lock().unwrap();
+    let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+        return Err(ErrDto::new("read_only", reason.clone()));
+    }
+    for m in mutations {
+        apply(&mut doc.value, m).map_err(|e| {
+            let v = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(
+                v.get("code").and_then(|c| c.as_str()).unwrap_or("mutate"),
+                e.to_string(),
+            )
+        })?;
+    }
+    Ok(project(&doc.value))
+}
+
 pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveReport, ErrDto> {
     let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
@@ -673,6 +696,40 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
     edit_user_autofill(state, |v| clear_all_history(v))
 }
 
+/// Edit the CHAR slot's window stacks, reshare, then re-project the layout.
+fn edit_char_stacks<F>(state: &AppState, edit: F) -> Result<WindowLayout, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), StackError>,
+{
+    {
+        let mut guard = state.char.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(|e| {
+            let v = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("stack"), e.to_string())
+        })?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    window_layout(state, Slot::Char)
+}
+
+pub fn stack_unstack(state: &AppState, member: &str) -> Result<WindowLayout, ErrDto> {
+    edit_char_stacks(state, |v| unstack(v, member))
+}
+pub fn stack_add(state: &AppState, member: &str, container: &str) -> Result<WindowLayout, ErrDto> {
+    edit_char_stacks(state, |v| add_to_stack(v, member, container))
+}
+pub fn stack_reorder(state: &AppState, container: &str, members: Vec<String>) -> Result<WindowLayout, ErrDto> {
+    edit_char_stacks(state, |v| reorder_stack(v, container, &members))
+}
+pub fn stack_create(state: &AppState, member1: &str, member2: &str) -> Result<WindowLayout, ErrDto> {
+    // create_stack returns the id; discard it here (the re-projection carries it).
+    edit_char_stacks(state, |v| create_stack(v, member1, member2).map(|_| ()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +824,40 @@ mod tests {
             OpenOutcome::Opened { fidelity, tree, .. } => {
                 assert_eq!(fidelity, Fidelity::Editable);
                 assert_eq!(tree.children[0].children[0].display, "\"edited\"");
+            }
+            _ => panic!("expected Opened"),
+        }
+    }
+
+    #[test]
+    fn apply_mutations_applies_all_in_one_call_and_projects_once() {
+        let bytes = encode(&Value::Dict(vec![(
+            Value::Bytes(b"k".to_vec()),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        )]))
+        .unwrap();
+        let path = temp_file("batch", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+
+        let tree = apply_mutations(
+            &state,
+            Slot::Char,
+            &[
+                Mutation::SetScalar { path: vec![Step::DictValue(0), Step::List(0)], text: "10".into() },
+                Mutation::SetScalar { path: vec![Step::DictValue(0), Step::List(1)], text: "20".into() },
+            ],
+        )
+        .unwrap();
+        assert_eq!(tree.children[0].children[0].display, "10");
+        assert_eq!(tree.children[0].children[1].display, "20");
+
+        save_document(&state, Slot::Char, false).unwrap();
+        let state2 = AppState::new();
+        match open_file(&state2, Slot::Char, path.to_str().unwrap()).unwrap() {
+            OpenOutcome::Opened { tree, .. } => {
+                assert_eq!(tree.children[0].children[0].display, "10");
+                assert_eq!(tree.children[0].children[1].display, "20");
             }
             _ => panic!("expected Opened"),
         }
@@ -1193,6 +1284,33 @@ mod tests {
         res.insert(1u64, (1920i64, 1080i64)); // target differs
         let plan = plan_setup(&cp, &up, &store_2accounts(), &res, 3, &[1], &[Aspect::Layout]);
         assert!(plan.char_writes[0].resolution_mismatch);
+    }
+
+    fn stacked_char_bytes() -> Vec<u8> {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        fn geom(x: i64) -> Value { Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)]) }
+        encode(&Value::Dict(vec![(bb("windows"), Value::Dict(vec![
+            (bb("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("m1"), geom(0)), (bb("m2"), geom(0)), (bb("C"), geom(0))])])),
+            (bb("openWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("m1"), Value::Bool(true)), (bb("m2"), Value::Bool(true)), (bb("C"), Value::Bool(true))])])),
+            (bb("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("m1"), bb("C")), (bb("m2"), bb("C"))])])),
+            (bb("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("C"), Value::Dict(vec![(bb("m1"), Value::Int(0)), (bb("m2"), Value::Int(1))]))])])),
+        ]))])).unwrap()
+    }
+
+    #[test]
+    fn unstack_reprojects_and_reshares() {
+        let path = temp_file("stack-unstack", &stacked_char_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+        let wl = stack_unstack(&state, "m1").unwrap();
+        // The stack now has only m2 (m1 unstacked).
+        assert_eq!(wl.stacks.len(), 1);
+        assert_eq!(wl.stacks[0].members, vec!["m2".to_string()]);
+        // Doc still encodes/decodes (reshare ran without corrupting the tree).
+        let guard = state.char.lock().unwrap();
+        let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
     }
 
     #[test]
