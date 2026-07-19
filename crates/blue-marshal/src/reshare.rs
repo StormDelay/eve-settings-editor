@@ -93,34 +93,18 @@ fn resolve(v: &Value, table: &HashMap<u32, Value>) -> Value {
     }
 }
 
-/// Immutable in the Python sense: aliasing it can never be observed as a shared
-/// mutation. Containers that EVE could mutate in place are excluded.
-fn is_immutable(v: &Value) -> bool {
-    match v {
-        Value::None
-        | Value::Bool(_)
-        | Value::Int(_)
-        | Value::Float(_)
-        | Value::Long(_)
-        | Value::Bytes(_)
-        | Value::Str(_)
-        | Value::StrUcs2(_)
-        | Value::StrTable(_)
-        | Value::Global(_) => true,
-        Value::Tuple(xs) => xs.iter().all(is_immutable),
-        _ => false, // List, Dict, Stream, Instance, Reduce, Shared, Ref
-    }
-}
-
 /// A value that is both immutable AND may carry `SHARED_FLAG` on the opcode the
 /// encoder will choose (mirrors encode.rs `storable_with_flag`): `Bytes` len ≥ 2
-/// (len ≤ 1 emits STRING0/STRING1, which do not store), `Long`, `Global`, and a
-/// non-empty all-immutable `Tuple` (TUPLE0 does not store).
+/// (len ≤ 1 emits STRING0/STRING1, which do not store), `Long`, and `Global`.
+/// Tuples are deliberately excluded even though they are structurally immutable
+/// here: higher layers (e.g. settings-model window projection) treat
+/// structurally-equal tuples — window geometry chief among them — as
+/// independently mutable per occurrence, so aliasing them would silently break
+/// projection when one occurrence is edited and the other isn't.
 fn is_shareable(v: &Value) -> bool {
     match v {
         Value::Bytes(b) => b.len() >= 2,
         Value::Long(_) | Value::Global(_) => true,
-        Value::Tuple(xs) => !xs.is_empty() && xs.iter().all(is_immutable),
         _ => false,
     }
 }
@@ -290,8 +274,8 @@ mod tests {
     #[test]
     fn never_shares_a_repeated_tuple_containing_a_mutable() {
         // A repeated TUPLE that itself contains a List (mutable) must never be
-        // shared, even though it occurs 3x — is_shareable's Tuple arm requires
-        // every element to be immutable, and a List inside disqualifies it.
+        // shared — tuples are never shareable at all now, and a mutable-carrying
+        // tuple would be doubly disqualified even if they were.
         let tup = || Value::Tuple(vec![b("aa"), Value::List(vec![Value::Int(1)])]);
         let t = Value::List(vec![tup(), tup(), tup()]);
         let out = reshare(&t);
@@ -301,15 +285,18 @@ mod tests {
     }
 
     #[test]
-    fn shares_repeated_immutable_tuples() {
-        // Identical geometry tuples (all ints => immutable) repeated -> shared.
+    fn does_not_share_repeated_tuples() {
+        // Identical geometry-shaped tuples (all ints) repeated must NOT be
+        // shared: higher layers (window geometry) treat each occurrence as
+        // independently mutable, so aliasing them would be observably wrong.
         let g = || Value::Tuple(vec![Value::Int(16), Value::Int(714), Value::Int(450)]);
         let t = Value::List(vec![g(), g(), g()]);
         let out = reshare(&t);
         let (mut d, mut r) = (0, 0);
         count_share_nodes(&out, &mut d, &mut r);
-        assert_eq!(d, 1, "one shared tuple def");
-        assert_eq!(r, 2, "two refs");
+        assert_eq!(d, 0, "no shared tuple def");
+        assert_eq!(r, 0, "no refs");
+        assert_eq!(out, t, "tuples pass through unchanged");
         assert_eq!(decode(&encode(&out).unwrap()).unwrap(), out);
     }
 
