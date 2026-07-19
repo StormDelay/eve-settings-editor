@@ -194,6 +194,11 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
 pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // Validate the destination window exists BEFORE mutating the source strip,
+    // so an invalid to_window can't remove the tab from both windows.
+    if groups_mut(ov).get_mut(to_window).and_then(list_inner_mut).is_none() {
+        return Err(OverviewTabError::UnknownWindow { index: to_window });
+    }
     {
         let src = groups_mut(ov).get_mut(from_window).and_then(list_inner_mut)
             .ok_or(OverviewTabError::UnknownWindow { index: from_window })?;
@@ -338,5 +343,6 @@ mod tests {
     fn move_to_missing_window_errors() {
         let mut v = user_two_windows();
         assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
+        assert_eq!(window_indices(&v, 0), vec![0], "source strip unchanged when destination is invalid");
     }
 }
