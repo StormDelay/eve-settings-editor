@@ -22,6 +22,17 @@ pub enum StackError {
     SameWindow { window: String },
 }
 
+impl std::fmt::Display for StackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StackError::NoWindows => write!(f, "This file has no window layout."),
+            StackError::NotStacked { member } => write!(f, "Window {member:?} is not in a stack."),
+            StackError::MissingGeometry { window } => write!(f, "Window {window:?} has no geometry to anchor a stack."),
+            StackError::SameWindow { window } => write!(f, "Cannot stack window {window:?} with itself."),
+        }
+    }
+}
+
 fn is_b(k: &Value, name: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == name) }
 
 /// Mutable `windows` dict (the file is already inlined, so no Shared wrapper).

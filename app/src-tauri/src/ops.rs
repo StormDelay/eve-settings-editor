@@ -685,7 +685,10 @@ where
         if let Fidelity::ReadOnly { reason } = &doc.fidelity {
             return Err(ErrDto::new("read_only", reason.clone()));
         }
-        edit(&mut doc.value).map_err(|e| ErrDto::new("stack", format!("{e:?}")))?;
+        edit(&mut doc.value).map_err(|e| {
+            let v = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("stack"), e.to_string())
+        })?;
         doc.value = blue_marshal::reshare(&doc.value);
     }
     window_layout(state, Slot::Char)
