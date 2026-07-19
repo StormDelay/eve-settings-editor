@@ -31,6 +31,7 @@ pub struct WindowLayout {
     pub reference_w: i64,
     pub reference_h: i64,
     pub windows: Vec<WindowRect>,
+    pub stacks: Vec<Stack>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +43,7 @@ pub struct WindowRect {
     pub resolution_matches: bool,
     pub geom: Option<Geom>,
     pub flags: Vec<BoolFlag>,
-    pub stacks: Option<StackField>,
+    pub stack: Option<StackRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,9 +70,26 @@ pub struct BoolFlag {
 }
 
 #[derive(Debug, Serialize)]
-pub struct StackField {
-    pub text: String,
-    pub path: NodePath,
+pub struct Stack {
+    pub container_id: String,
+    pub container_label: String,
+    /// The window id whose geom the stack is drawn at (§ anchor rule).
+    pub anchor_id: String,
+    /// Member ids in tab order (preferred index, then id; absent = last).
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StackRole {
+    Container,
+    Member,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StackRef {
+    pub container_id: String,
+    pub role: StackRole,
 }
 
 /// How the UI writes a flag: overwrite an existing entry, insert a missing one,
@@ -85,23 +103,25 @@ pub enum SetTarget {
 }
 
 pub fn window_layout(root: &Value) -> WindowLayout {
-    let empty = WindowLayout { reference_w: 0, reference_h: 0, windows: Vec::new() };
+    let empty = WindowLayout { reference_w: 0, reference_h: 0, windows: Vec::new(), stacks: Vec::new() };
 
     let Some((windows_dict, windows_path)) = child_dict(root, b"windows", Vec::new()) else {
         return empty;
     };
-    let Some((geom_dict, geom_path)) =
+    // Geometry may be legitimately absent while stacksWindows/preferredIdxInStack3
+    // are still present (e.g. a stack was formed before any geom was recorded) —
+    // fall back to an empty geometry dict rather than bailing out of the whole
+    // projection, so stack grouping below still runs.
+    let no_geom: Entries = Vec::new();
+    let (geom_dict, geom_path) =
         timestamped_dict(windows_dict, &windows_path, b"windowSizesAndPositions_1")
-    else {
-        return empty;
-    };
+            .unwrap_or((&no_geom, windows_path.clone()));
 
     // Optional sibling flag dicts, resolved once (each may be absent).
     let bool_dicts: Vec<Option<(&Entries, NodePath)>> = BOOL_FLAGS
         .iter()
         .map(|name| timestamped_dict(windows_dict, &windows_path, name.as_bytes()))
         .collect();
-    let stacks_dict = timestamped_dict(windows_dict, &windows_path, b"stacksWindows");
 
     // Shared-slot table for resolving `Ref`/`Shared` window-id keys.
     let mut shared = SharedTable::new();
@@ -144,10 +164,6 @@ pub fn window_layout(root: &Value) -> WindowLayout {
             }
             flags.push(BoolFlag { name: (*name).to_string(), value, set });
         }
-        let stacks = stacks_dict
-            .as_ref()
-            .and_then(|(entries, dpath)| stack_field(entries, dpath, rkey, &shared));
-
         windows.push(WindowRect {
             id: id.clone(),
             label: id,
@@ -156,7 +172,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
             resolution_matches: true, // fixed up below
             geom,
             flags,
-            stacks,
+            stack: None, // filled in below, once grouping is computed
         });
     }
 
@@ -166,7 +182,85 @@ pub fn window_layout(root: &Value) -> WindowLayout {
             w.resolution_matches = g.screen_w == reference_w && g.screen_h == reference_h;
         }
     }
-    WindowLayout { reference_w, reference_h, windows }
+
+    // --- stacks -------------------------------------------------------------
+    // Resolve stacksWindows (member -> container) and preferredIdxInStack3
+    // (container -> {member -> idx}) through Ref/Shared, then group.
+    let mut member_container: Vec<(String, String)> = Vec::new();
+    if let Some((sw, _)) = timestamped_dict(windows_dict, &windows_path, b"stacksWindows") {
+        for (k, v) in sw {
+            let member = decode_id(effective(k, &shared));
+            match effective(v, &shared) {
+                Value::None => {}
+                cv => member_container.push((member, decode_id(cv))),
+            }
+        }
+    }
+    // pref[container][member] = idx
+    let mut pref: std::collections::HashMap<String, std::collections::HashMap<String, i64>> =
+        std::collections::HashMap::new();
+    if let Some((pd, _)) = timestamped_dict(windows_dict, &windows_path, b"preferredIdxInStack3") {
+        for (ck, cv) in pd {
+            let container = decode_id(effective(ck, &shared));
+            if let Value::Dict(inner) = effective(cv, &shared) {
+                let m = pref.entry(container).or_default();
+                for (mk, mv) in inner {
+                    if let Value::Int(i) = effective(mv, &shared) {
+                        m.insert(decode_id(effective(mk, &shared)), *i);
+                    }
+                }
+            }
+        }
+    }
+
+    // Group members by container, preserving first-seen container order.
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (member, container) in &member_container {
+        if !groups.contains_key(container) {
+            order.push(container.clone());
+        }
+        groups.entry(container.clone()).or_default().push(member.clone());
+    }
+
+    // Per-window geom/open facts, computed up front so the mutable role-tagging
+    // loop below doesn't need an immutable borrow of `windows` alongside it.
+    let has_geom: HashSet<&str> =
+        windows.iter().filter(|w| w.geom.is_some()).map(|w| w.id.as_str()).collect();
+    let open_ids: HashSet<&str> = windows.iter().filter(|w| w.open).map(|w| w.id.as_str()).collect();
+
+    let mut stacks = Vec::new();
+    for container in order {
+        let mut members = groups.remove(&container).unwrap_or_default();
+        let idx = |id: &str| pref.get(&container).and_then(|m| m.get(id)).copied().unwrap_or(i64::MAX);
+        members.sort_by(|a, b| idx(a).cmp(&idx(b)).then_with(|| a.cmp(b)));
+        // Anchor: container geom if present, else frontmost open member (first in
+        // tab order that is open), else the first member.
+        let anchor_id = if has_geom.contains(container.as_str()) {
+            container.clone()
+        } else {
+            members.iter().find(|m| open_ids.contains(m.as_str())).cloned()
+                .unwrap_or_else(|| members.first().cloned().unwrap_or_else(|| container.clone()))
+        };
+        stacks.push(Stack {
+            container_label: container.clone(),
+            anchor_id,
+            members,
+            container_id: container,
+        });
+    }
+
+    // Tag each window's role. A window is a Container if it is some stack's
+    // container_id; a Member if it is a member of a stack.
+    for w in &mut windows {
+        if let Some(s) = stacks.iter().find(|s| s.container_id == w.id) {
+            w.stack = Some(StackRef { container_id: s.container_id.clone(), role: StackRole::Container });
+        } else if let Some((_, c)) = member_container.iter().find(|(m, _)| *m == w.id) {
+            w.stack = Some(StackRef { container_id: c.clone(), role: StackRole::Member });
+        }
+    }
+
+    WindowLayout { reference_w, reference_h, windows, stacks }
 }
 
 fn decode_id(key: &Value) -> String {
@@ -224,16 +318,6 @@ fn bool_flag(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &SharedT
             None => (false, SetTarget::Unavailable),
         },
     }
-}
-
-fn stack_field(entries: &Entries, dpath: &NodePath, rkey: &Value, shared: &SharedTable) -> Option<StackField> {
-    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| effective(k, shared) == rkey)?;
-    // Editable only when the stack id is a plain integer; anything else stays
-    // raw-tree-only rather than exposing a control that cannot round-trip.
-    let Value::Int(n) = v else { return None };
-    let mut p = dpath.clone();
-    p.push(Step::DictValue(i));
-    Some(StackField { text: n.to_string(), path: p })
 }
 
 /// Reconstruct a resolved dict key as the `NewValue` an insert mutation needs.
@@ -448,18 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn stacks_is_an_editable_value_when_numeric() {
-        let doc = doc_with_flags();
-        let wl = window_layout(&doc);
-        let ov = &wl.windows[0];
-        let s = ov.stacks.as_ref().expect("overview has a stack id");
-        assert_eq!(s.text, "42");
-        assert_eq!(resolve(&doc, &s.path), Some(&Value::Int(42)));
-        // market has no stacks entry.
-        assert!(wl.windows[1].stacks.is_none());
-    }
-
-    #[test]
     fn reference_prefers_open_windows() {
         // Two closed windows at 1920x1080, one open at 2560x1440: the open one wins.
         let doc = Value::Dict(vec![(
@@ -548,5 +620,109 @@ mod tests {
         assert_eq!(wl.windows.len(), 3);
         let ids: HashSet<&String> = wl.windows.iter().map(|w| &w.id).collect();
         assert_eq!(ids.len(), 3, "ids must be unique even on fallback collision");
+    }
+
+    // Helper: a char-style root with geometry, openWindows, stacksWindows and
+    // preferredIdxInStack3 — window ids as Bytes, stack values through a Shared.
+    fn stacked_root() -> Value {
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        fn geom(x: i64) -> Value {
+            Value::Tuple(vec![
+                Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80),
+                Value::Int(2560), Value::Int(1440),
+            ])
+        }
+        // container "88" is a Shared, Ref'd from member m2 and from the pref dict.
+        let container = Value::Shared { slot: 3, value: Box::new(b("88")) };
+        let windows = Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("88"), geom(500)),   // container has its own geom
+                (b("m1"), geom(500)),   // active member shares the rect
+                (b("m2"), geom(9)),     // stale drifted member
+                (b("free"), geom(700)), // unstacked window
+            ])])),
+            (b("openWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("88"), Value::Bool(true)), (b("m1"), Value::Bool(true)),
+                (b("m2"), Value::Bool(true)), (b("free"), Value::Bool(true)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("m1"), container),           // m1 -> Shared("88")
+                (b("m2"), Value::Ref(3)),       // m2 -> Ref -> "88"
+                (b("free"), Value::None),       // explicitly unstacked
+            ])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Ref(3), Value::Dict(vec![
+                    (b("m2"), Value::Int(1)),
+                    (b("m1"), Value::Int(0)),
+                ])),
+            ])])),
+        ]);
+        Value::Dict(vec![(b("windows"), windows)])
+    }
+
+    #[test]
+    fn groups_members_by_container_through_ref_and_shared() {
+        let wl = window_layout(&stacked_root());
+        assert_eq!(wl.stacks.len(), 1);
+        let s = &wl.stacks[0];
+        assert_eq!(s.container_id, "88");
+        // members ordered by preferred index then id: m1(0), m2(1).
+        assert_eq!(s.members, vec!["m1".to_string(), "m2".to_string()]);
+    }
+
+    #[test]
+    fn per_window_stack_ref_tags_container_and_members() {
+        let wl = window_layout(&stacked_root());
+        let role = |id: &str| wl.windows.iter().find(|w| w.id == id).unwrap().stack.as_ref();
+        assert!(matches!(role("88").map(|r| &r.role), Some(StackRole::Container)));
+        assert!(matches!(role("m1").map(|r| &r.role), Some(StackRole::Member)));
+        assert_eq!(role("m2").unwrap().container_id, "88");
+        assert!(role("free").is_none(), "None value is not a member");
+    }
+
+    #[test]
+    fn anchor_is_the_container_when_it_has_geom() {
+        let wl = window_layout(&stacked_root());
+        assert_eq!(wl.stacks[0].anchor_id, "88");
+    }
+
+    #[test]
+    fn anchor_falls_back_to_frontmost_open_member_when_container_has_no_geom() {
+        // Drop the container's own geometry entry: anchor should be m1 (tab 0).
+        let mut root = stacked_root();
+        if let Value::Dict(top) = &mut root {
+            if let Value::Dict(win) = &mut top[0].1 {
+                if let Value::Tuple(t) = &mut win[0].1 { // windowSizesAndPositions_1
+                    if let Value::Dict(geoms) = &mut t[1] {
+                        geoms.retain(|(k, _)| !matches!(k, Value::Bytes(b) if b == b"88"));
+                    }
+                }
+            }
+        }
+        let wl = window_layout(&root);
+        assert_eq!(wl.stacks[0].anchor_id, "m1", "frontmost open member (tab 0)");
+    }
+
+    #[test]
+    fn colliding_and_missing_indices_still_order_deterministically() {
+        // Two members share index 0 and one is absent from the pref dict: order
+        // by (index, id) with absent treated as last.
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let windows = Value::Dict(vec![
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("zeta"), b("C")), (b("alpha"), b("C")), (b("mid"), b("C")),
+            ])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), Value::Dict(vec![
+                    (b("zeta"), Value::Int(0)),
+                    (b("alpha"), Value::Int(0)), // collides with zeta
+                    // "mid" absent -> treated as last
+                ])),
+            ])])),
+        ]);
+        let wl = window_layout(&Value::Dict(vec![(b("windows"), windows)]));
+        assert_eq!(wl.stacks[0].members, vec!["alpha".to_string(), "zeta".to_string(), "mid".to_string()]);
     }
 }
