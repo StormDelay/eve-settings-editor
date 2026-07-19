@@ -130,4 +130,22 @@ check("open filter keeps the right window", open[0].id === "a");
   check("its open+renderable member appears as its own free unit", units.length === 1 && units[0].key === "m1");
 }
 
+// --- stackUnits: a stack with no open members is not drawn -----------------
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }), // container OPEN...
+      win("m1", false, true, { container_id: "C", role: "member" }), // ...but all members closed
+      win("m2", false, true, { container_id: "C", role: "member" }),
+      win("free", true, true, null),
+    ],
+  };
+  const units = stackUnits(layout as any);
+  check("a stack with no open members is not drawn", !units.some((u) => u.stack));
+  check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
+  check("unrelated free windows still draw", units.some((u) => u.key === "free"));
+}
+
 console.log("layout: all checks passed");
