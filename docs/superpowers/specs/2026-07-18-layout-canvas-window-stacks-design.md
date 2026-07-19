@@ -1,8 +1,9 @@
 # Layout canvas — window stacks (design)
 
 Date: 2026-07-18
-Status: approved design, **deferred** — depends on the codec/refactor
-foundation (encoder-side auto-dedup) landing first. See §10.
+Status: approved design. The codec/refactor foundation this depended on has
+**shipped** (v0.7.0), and the §7 new-stack-creation experiment is **done** —
+creation is in scope. Ready for user review, then writing-plans.
 Builds on: M2 layout canvas (`windows.rs` projection, `LayoutView.svelte`,
 `WindowPanel.svelte`) and docs/format-notes.md window-geometry mapping.
 
@@ -12,7 +13,9 @@ Model EVE window stacks properly and make the layout canvas treat a stack as
 one coherent group instead of several independent rectangles: draw one tabbed
 rectangle per open stack, move/resize it as a unit, and edit membership
 (unstack, add to an existing stack, reorder tabs). Creating a brand-new stack
-from two free-floating windows is gated behind a live capture experiment (§7).
+from two free-floating windows is **included**, on the strength of the §7
+capture: the container is a free, file-determined id, not unpredictable
+runtime state.
 
 This replaces the current `stacksWindows` handling, which is dead on real data
 (see §2, finding 2).
@@ -77,8 +80,10 @@ projection — no format knowledge leaks to the UI.
 - Add to each `WindowRect`: `stack: Option<StackRef>` where
   `StackRef { container_id, role: Container | Member }`, so the frontend can
   group and know which rect is the anchor.
-- Anchor rect for a stack = the container's geom if present, else the frontmost
-  open member's geom.
+- Anchor rect for a stack = the container's geom if present, else the geom of
+  the **frontmost open member**, defined concretely as the open member with the
+  lowest normalized `preferredIdxInStack3` index (ties broken by id) — i.e. the
+  first tab. Deterministic, so the anchor never jumps between reads.
 
 Malformed/missing dicts are skipped, never panic (matches the existing
 projection contract).
@@ -94,7 +99,7 @@ Reuses the existing M2 geometry-mutation path (the projection hands over each
 window's `x/y/w/h` paths). Repairing stale member drift is a free side effect.
 No dependency on the codec work — this path could ship independently.
 
-**Membership (unstack / add / reorder)** — structural edits to `stacksWindows`
+**Membership (unstack / add / reorder / create)** — structural edits to `stacksWindows`
 + `preferredIdxInStack3`, whose keys/values are `Shared` window-id stores.
 `RemoveEntry` refuses shared subtrees, so these are not raw mutations. A
 dedicated `ops.rs` command (mirroring overview/autofill editing) that operates
@@ -105,13 +110,21 @@ on a fully-inlined `windows` subtree, edits plain values, and re-encodes:
 - **Add M to container C**: set/insert `stacksWindows[M] = C` and append
   `preferredIdxInStack3[C][M] = nextIdx`.
 - **Reorder within C**: rewrite `preferredIdxInStack3[C]` to clean 0..N indices.
+- **Create stack from M1, M2** (two free windows; M1 is the window the user
+  started the action from, M2 the one picked): mint a container id C free in the
+  file (choose a *high* id to avoid any counter reuse; see §7). The new stack
+  lands at **M1's current rect** — write C's geometry entry and M2 to that same
+  rect (M1 already has it), so the stack appears where M1 was. Set
+  `stacksWindows[M1] = stacksWindows[M2] = C`, `preferredIdxInStack3[C] = {M1:
+  0, M2: 1}` (M1 is tab 0), mark C and both members open, and add `C = False` to
+  the container's boolean state dicts (`isLightBackgroundWindows`,
+  `isOverlayedWindows`, `minimizedWindows`). Full byte-level recipe in
+  docs/format-notes.md ("Window stacks").
 
-**Codec dependency.** Post-foundation, this command inlines, edits, and lets
-the encoder re-derive correct canonical `Shared`/`Ref` sharing — no manual
-`inline_all` bloat, and the output matches what the client writes. Without the
-foundation this would fall back to the inline-first hack (valid but ~1.5× and
-reliant on the client re-deduplicating); the milestone ordering exists to avoid
-that. See §9.
+**Encoding.** These commands inline the subtree, edit plain values, and let the
+encoder re-derive canonical `Shared`/`Ref` sharing (the v0.7.0 reshare
+foundation) — so the saved file is compact and matches what the client writes,
+with no manual `inline_all` bloat.
 
 All writes go through the unchanged verify → backup → atomic-write save chain.
 
@@ -132,8 +145,8 @@ All writes go through the unchanged verify → backup → atomic-write save chai
   members listed as ordered sub-rows in tab order; non-stacked windows list
   flat as today.
 - Per-member controls: **unstack**; **reorder** (up/down) within the stack.
-- Per non-stacked window: **add to stack →** a picker of existing stacks (and,
-  if new-stack creation is enabled after §7, stack-with-another-window).
+- Per non-stacked window: **add to stack →** a picker of existing stacks, or
+  **stack with another free window** to create a new stack (§7).
 - A selected member still shows its geom/flags detail as today. Shared stack
   geometry is edited from the canvas or the container's detail.
 - Removes the dead "stack id" number input in favour of this grouping UI.
@@ -141,20 +154,28 @@ All writes go through the unchanged verify → backup → atomic-write save chai
 Membership editing lives in the panel (buttons/pickers) in V1; canvas
 drag-to-stack is deferred polish (§9).
 
-## 7. Live experiment — new-stack creation
+## 7. New-stack creation — experiment result (creation IS in scope)
 
-Before implementing "create a new stack from two free windows," run an
-exp-style capture (the docs/format-notes.md exp1–5 method): in-game, take two
-free-floating windows, tab them together, log out, diff the before/after
-`core_char` dumps. Determine:
+The live capture ran (2026-07-19; recorded in docs/format-notes.md, "Window
+stacks", experiment 6). Tabbing two free-floating windows together mints a
+**new numeric-string container id** — a *free* integer id (EVE reused a gap
+below other live ids, i.e. a free-list pick, not `max+1`) — materialized as a
+real window. The complete byte-level recipe is in format-notes.md and summarized
+in §4's create command: give the container a geometry entry, set both members to
+that same rect, link both in `stacksWindows` + `preferredIdxInStack3`, open the
+container and both members, and add the container to three boolean state dicts.
 
-- what container id is used (one of the two windows becomes the frame, vs a
-  minted numeric id), and
-- the exact `stacksWindows` + `preferredIdxInStack3` deltas.
+**Decision: include new-stack creation.** The earlier "container id is
+unpredictable runtime state" worry does not hold — the container id need only be
+*free in the file*, which is enumerable from these dicts, and the client tracks
+live window ids on load, so it will not reclaim an id it sees in use. Creation is
+the same inlined-subtree structural edit as add/reorder (§4), plus materializing
+the container window.
 
-If the container is deterministic/predictable, include new-stack creation.
-Otherwise ship unstack / add-to-existing / reorder only and defer creation.
-Record findings in docs/format-notes.md (synthetic ids only).
+**One residual to validate in the live smoke:** whether a next-window-id counter
+is persisted anywhere *outside* `b"windows"` (the single capture did not rule it
+out). Mitigate by choosing a *high* free id, and confirm in-game that creating a
+stack then tabbing another window produces no id collision.
 
 ## 8. Testing
 
@@ -163,24 +184,28 @@ Record findings in docs/format-notes.md (synthetic ids only).
   from `preferredIdxInStack3`, anchor-geom selection (container present/absent),
   `None` values skipped, colliding-index normalization. Authoring-command
   tests: unstack removes both entries; add inserts both; reorder rewrites
-  indices; and a round-trip re-encode is canonical (re-opens Editable, no
-  dangling refs, matches the encoder's dedup once the foundation lands).
+  indices; create mints a free container id, materializes it (geometry + open +
+  state-dict entries), and links both members; and a round-trip re-encode is
+  canonical (re-opens Editable, no dangling refs, matches the encoder's dedup).
 - **Frontend (`node --test`, zero-dep):** pure logic — grouping open windows by
   stack, tab-order sort, coherent-move geometry fan-out. DOM drag not unit
   tested (consistent with M2).
-- **Manual smoke (live, project norm):** stack/unstack/reorder on a real char
-  file through the app, save, reopen Editable, confirm in-game.
+- **Manual smoke (live, project norm):** unstack / add / reorder / create on a
+  real char file through the app, save, reopen Editable, confirm in-game. For
+  create, run the §7 counter check: after creating a stack, tab another window
+  in-game and confirm EVE assigns no id that collides with the minted one.
 
 ## 9. Dependencies, scope, deferred
 
-- **Depends on** the codec/refactor foundation (general encoder-side auto-dedup
-  so any editor can inline → edit → reshare). Implement stacks-B after that
-  lands. The geometry-coherent-move path (§4) has no such dependency and could
-  ship earlier if desired.
+- **Codec/refactor foundation dependency — satisfied (shipped v0.7.0).** The
+  membership commands (§4) rely on that encoder-side auto-dedup to inline → edit
+  → reshare → encode into a compact, client-matching file; it is now in place.
+  The geometry-coherent-move path (§4) never needed it.
 - **Sibling milestone item** "resize a layout window from any corner" is
   independent (no codec dependency) — it can ship separately, and its resize
   handles are what the coherent stack resize reuses.
-- **New-stack creation** gated on the §8 experiment.
+- **New-stack creation** is in scope (§7 experiment done); the one residual — a
+  possibly-persisted next-window-id counter — is validated in the live smoke.
 - **Deferred:** canvas drag-to-stack (panel-button membership editing in V1);
   authoring the exact stale-member geometry semantics beyond "sync open members
   to the anchor on move."
