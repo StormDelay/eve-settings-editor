@@ -739,17 +739,10 @@ pub fn tab_move(state: &AppState, tab_idx: i64, from_window: usize, to_window: u
 }
 
 pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: Option<i64>) -> Result<OverviewColumns, ErrDto> {
-    // Copy the preset name of the chosen sibling (else the first tab, else a
-    // safe default); a new tab must reference a valid preset.
-    let preset = {
-        let cols = overview_columns(state)?;
-        from_tab
-            .and_then(|t| cols.tabs.iter().find(|x| x.index == t))
-            .or_else(|| cols.tabs.first())
-            .map(|t| t.preset.clone())
-            .unwrap_or_else(|| "default".to_string())
-    };
-    edit_user_tabs(state, |v| create_tab(v, window_idx, &name, &preset).map(|_| ()))
+    // The codec clones the chosen sibling tab (else the first tab), so the new
+    // tab carries every key EVE requires (bracket/color/preset). No preset
+    // lookup here — cloning by index handles it.
+    edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
 }
 
 pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {

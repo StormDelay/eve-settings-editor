@@ -139,7 +139,14 @@ pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), Overvie
     Ok(())
 }
 
-pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, preset: &str) -> Result<i64, OverviewTabError> {
+/// Create a new tab by CLONING a sibling (`from_tab`, else the first tab) and
+/// overriding its name. Cloning — rather than building a minimal `{name,
+/// overview}` dict — is required: every real EVE tab carries `bracket` and
+/// `color` keys, and EVE's "reset all overview settings" iterates tabs reading
+/// them, so a tab missing them makes the reset throw. The clone also inherits
+/// the sibling's preset (`overview`) and its name-key encoding; its column
+/// lists are dropped so the new tab inherits columns.
+pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option<i64>) -> Result<i64, OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
     if window_idx >= groups_mut(ov).len() {
@@ -148,10 +155,19 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, preset: &str) ->
     let new_idx = {
         let tabs = tabs_mut(ov);
         let new_idx = tabs.iter().filter_map(|(k, _)| as_int(k)).max().map(|m| m + 1).unwrap_or(0);
-        let tab = Value::Dict(vec![
-            (Value::Str("name".into()), Value::StrUcs2(name.to_string())),
-            (Value::Bytes(b"overview".to_vec()), Value::Bytes(preset.as_bytes().to_vec())),
-        ]);
+        let template = from_tab
+            .and_then(|t| tabs.iter().position(|(k, _)| as_int(k) == Some(t)))
+            .or(if tabs.is_empty() { None } else { Some(0) });
+        let mut tab = match template {
+            Some(i) => tabs[i].1.clone(),
+            // Unreachable through the UI (an overview always keeps ≥1 tab); a
+            // last-resort minimal tab when there is no sibling to clone.
+            None => Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new()))]),
+        };
+        if let Some(fields) = dict_inner_mut(&mut tab) {
+            fields.retain(|(k, _)| !is_b(k, b"tabColumnOrder") && !is_b(k, b"tabColumns"));
+            set_name(fields, name);
+        }
         tabs.push((Value::Int(new_idx), tab));
         new_idx
     };
@@ -216,9 +232,13 @@ mod tests {
     use super::*;
     use blue_marshal::Value;
 
-    /// user tree: overview -> tabsettings_new (bare dict) -> {0:{name,overview:"P"}}
+    /// user tree: overview -> tabsettings_new (bare dict) -> {0:{bracket,color,name,overview:"P"}}
+    /// The `bracket`/`color` keys mirror real EVE tabs — every real tab carries
+    /// them, and a created tab must too (EVE's "reset overview" reads them).
     fn user_with_tabs() -> Value {
         let tab = Value::Dict(vec![
+            (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+            (Value::Bytes(b"color".to_vec()), Value::None),
             (Value::Str("name".into()), Value::Str("Main".into())),
             (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
         ]);
@@ -244,6 +264,17 @@ mod tests {
             (Value::Str(s), Value::StrUcs2(name)) if s == "name" => Some(name.clone()),
             _ => None,
         }).unwrap()
+    }
+
+    fn tab_has_key(v: &Value, idx: i64, key: &[u8]) -> bool {
+        let Value::Dict(root) = v else { return false };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { return false };
+        let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+        let Value::Dict(td) = tabs else { return false };
+        let Some((_, tab)) = td.iter().find(|(k, _)| as_int(k) == Some(idx)) else { return false };
+        let Value::Dict(fields) = tab else { return false };
+        fields.iter().any(|(k, _)| is_b(k, key))
     }
 
     fn window_indices(v: &Value, window: usize) -> Vec<i64> {
@@ -272,22 +303,26 @@ mod tests {
     #[test]
     fn create_allocates_next_index_and_joins_the_window() {
         let mut v = user_with_tabs(); // has tab 0 in window 0
-        let idx = create_tab(&mut v, 0, "Mining", "P").unwrap();
+        let idx = create_tab(&mut v, 0, "Mining", Some(0)).unwrap();
         assert_eq!(idx, 1, "next free index after 0");
         assert_eq!(tab_name(&v, 1), "Mining");
         assert_eq!(window_indices(&v, 0), vec![0, 1], "appended to window 0's strip");
+        // Regression: a created tab must clone the sibling's bracket + color,
+        // else EVE's "reset all overview settings" throws on the malformed tab.
+        assert!(tab_has_key(&v, 1, b"bracket"), "created tab clones the sibling's bracket");
+        assert!(tab_has_key(&v, 1, b"color"), "created tab clones the sibling's color");
     }
 
     #[test]
     fn create_into_missing_window_errors() {
         let mut v = user_with_tabs();
-        assert!(matches!(create_tab(&mut v, 5, "X", "P"), Err(OverviewTabError::UnknownWindow { index: 5 })));
+        assert!(matches!(create_tab(&mut v, 5, "X", Some(0)), Err(OverviewTabError::UnknownWindow { index: 5 })));
     }
 
     #[test]
     fn delete_removes_tab_and_purges_window_strips() {
         let mut v = user_with_tabs();
-        create_tab(&mut v, 0, "Mining", "P").unwrap(); // now tabs 0,1 in window 0
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap(); // now tabs 0,1 in window 0
         delete_tab(&mut v, 0).unwrap();
         assert_eq!(window_indices(&v, 0), vec![1], "0 purged from the strip");
         assert!(matches!(rename_tab(&mut v, 0, "X"), Err(OverviewTabError::UnknownTab { index: 0 })),
@@ -303,7 +338,7 @@ mod tests {
     #[test]
     fn reorder_replaces_the_window_strip() {
         let mut v = user_with_tabs();
-        create_tab(&mut v, 0, "Mining", "P").unwrap(); // window 0 = [0,1]
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap(); // window 0 = [0,1]
         reorder_tabs_in_window(&mut v, 0, &[1, 0]).unwrap();
         assert_eq!(window_indices(&v, 0), vec![1, 0]);
     }
