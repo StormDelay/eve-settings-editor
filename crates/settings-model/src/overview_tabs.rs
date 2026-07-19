@@ -191,6 +191,21 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
     Ok(())
 }
 
+pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    {
+        let src = groups_mut(ov).get_mut(from_window).and_then(list_inner_mut)
+            .ok_or(OverviewTabError::UnknownWindow { index: from_window })?;
+        src.retain(|e| as_int(e) != Some(tab_idx));
+    }
+    let dst = groups_mut(ov).get_mut(to_window).and_then(list_inner_mut)
+        .ok_or(OverviewTabError::UnknownWindow { index: to_window })?;
+    let at = pos.min(dst.len());
+    dst.insert(at, Value::Int(tab_idx));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +307,36 @@ mod tests {
     fn reorder_missing_window_errors() {
         let mut v = user_with_tabs();
         assert!(matches!(reorder_tabs_in_window(&mut v, 3, &[0]), Err(OverviewTabError::UnknownWindow { index: 3 })));
+    }
+
+    fn user_two_windows() -> Value {
+        let tab = |p: &str| Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str(p.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Dict(vec![(Value::Int(0), tab("A")), (Value::Int(1), tab("B"))])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::List(vec![
+                 Value::List(vec![Value::Int(0)]), // window 0 = [0]
+                 Value::List(vec![Value::Int(1)]), // window 1 = [1]
+             ])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
+    }
+
+    #[test]
+    fn move_relocates_tab_between_windows() {
+        let mut v = user_two_windows();
+        move_tab(&mut v, 0, 0, 1, 0).unwrap();
+        assert_eq!(window_indices(&v, 0), Vec::<i64>::new(), "removed from source");
+        assert_eq!(window_indices(&v, 1), vec![0, 1], "inserted at pos 0 of target");
+    }
+
+    #[test]
+    fn move_to_missing_window_errors() {
+        let mut v = user_two_windows();
+        assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
     }
 }
