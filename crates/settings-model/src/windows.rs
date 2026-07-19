@@ -234,9 +234,12 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         let mut members = groups.remove(&container).unwrap_or_default();
         let idx = |id: &str| pref.get(&container).and_then(|m| m.get(id)).copied().unwrap_or(i64::MAX);
         members.sort_by(|a, b| idx(a).cmp(&idx(b)).then_with(|| a.cmp(b)));
-        // Anchor: container geom if present, else frontmost open member (first in
-        // tab order that is open), else the first member.
-        let anchor_id = if has_geom.contains(container.as_str()) {
+        // Anchor: the container only if it is renderable AND open (a closed
+        // container — e.g. its frame's open box unchecked — must not anchor: the
+        // frontend's stackUnits drops any stack whose anchor isn't open+renderable,
+        // scattering the open members). Else frontmost open member (first in tab
+        // order that is open), else the first member.
+        let anchor_id = if has_geom.contains(container.as_str()) && open_ids.contains(container.as_str()) {
             container.clone()
         } else {
             members.iter().find(|m| open_ids.contains(m.as_str())).cloned()
@@ -702,6 +705,86 @@ mod tests {
         }
         let wl = window_layout(&root);
         assert_eq!(wl.stacks[0].anchor_id, "m1", "frontmost open member (tab 0)");
+    }
+
+    #[test]
+    fn anchor_falls_back_when_container_is_closed() {
+        // Container has geometry but is closed (its frame's open box unchecked):
+        // it must NOT anchor — stackUnits (frontend) requires the anchor be
+        // open+renderable and drops the whole stack otherwise, scattering the
+        // open members. Anchor should fall to the frontmost open member (m1).
+        let mut root = stacked_root();
+        if let Value::Dict(top) = &mut root {
+            if let Value::Dict(win) = &mut top[0].1 {
+                if let Value::Tuple(t) = &mut win[1].1 { // openWindows
+                    if let Value::Dict(opens) = &mut t[1] {
+                        for (k, v) in opens.iter_mut() {
+                            if matches!(k, Value::Bytes(b) if b == b"88") {
+                                *v = Value::Bool(false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let wl = window_layout(&root);
+        assert_eq!(wl.stacks[0].anchor_id, "m1", "closed container must not anchor");
+    }
+
+    #[test]
+    fn reshared_stack_geometry_still_projects_renderable() {
+        // Regression for the critical reshare bug: create_stack gives a
+        // container and its two members the IDENTICAL geometry tuple.
+        // Structural sharing (reshare) would previously collapse those
+        // identical tuples into one `Shared` def + `Ref`s; extract_geom only
+        // matches a bare `Value::Tuple` (never resolves Shared/Ref for the
+        // VALUE), so the shared/ref'd entries projected as geom: None and the
+        // stack silently vanished from the canvas. This must pass once reshare
+        // stops sharing tuples (Fix A) — and would fail without that fix.
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        fn rect() -> Value {
+            Value::Tuple(vec![
+                Value::Int(16), Value::Int(714), Value::Int(500),
+                Value::Int(400), Value::Int(2560), Value::Int(1440),
+            ])
+        }
+        let windows = Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), rect()),   // container
+                (b("m1"), rect()),  // member 1 -- identical geometry tuple
+                (b("m2"), rect()),  // member 2 -- identical geometry tuple
+            ])])),
+            (b("openWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), Value::Bool(true)),
+                (b("m1"), Value::Bool(true)),
+                (b("m2"), Value::Bool(true)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("m1"), b("C")),
+                (b("m2"), b("C")),
+            ])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), Value::Dict(vec![
+                    (b("m1"), Value::Int(0)),
+                    (b("m2"), Value::Int(1)),
+                ])),
+            ])])),
+        ]);
+        let root = Value::Dict(vec![(b("windows"), windows)]);
+
+        let reshared = blue_marshal::reshare(&root);
+        let wl = window_layout(&reshared);
+
+        assert_eq!(wl.stacks.len(), 1, "the stack still surfaces after reshare");
+        let anchor = wl.windows.iter().find(|w| w.id == "C").unwrap();
+        assert!(anchor.renderable, "anchor (container) must still project renderable");
+        assert!(anchor.geom.is_some(), "anchor geom must still resolve");
+        for id in ["m1", "m2"] {
+            let w = wl.windows.iter().find(|w| w.id == id).unwrap();
+            assert!(w.renderable, "member {id} must still project renderable");
+            assert!(w.geom.is_some(), "member {id} geom must still resolve");
+        }
     }
 
     #[test]
