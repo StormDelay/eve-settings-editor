@@ -13,6 +13,17 @@ Workflow:
 
 ## Open
 
+- [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
+  of overview tab management only lets the user remove the *last* overview window,
+  because the `tabsByWindowInstanceID` position ↔ char-file `overview_N` key link is
+  positional: removing a middle window shifts every later window's position out from
+  under its `overview_N` geometry key, which would need a re-key cascade across the
+  ~6 char `windows` subdicts (plus a promote-the-primary edge case if window 0 were
+  removable). Deferred as fiddly cross-file surgery for a rare need. Revisit if users
+  want to remove a specific middle window — either implement the re-key cascade, or
+  add window-reorder first so a middle window can be moved to the end before removal.
+  _Added 2026-07-20 (Phase B design)._
+
 - [ ] **Overview tab-management follow-ups (deferred from the milestone's final
   review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
   (1) `overview_tabs::move_tab` has no `UnknownTab` guard — moving a nonexistent
