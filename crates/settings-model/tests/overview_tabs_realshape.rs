@@ -55,6 +55,6 @@ fn edits_survive_reshare_roundtrip_and_migrate_legacy() {
     assert!(names.contains(&(2, "Mining".to_string())));
     assert!(!names.iter().any(|(i, _)| *i == 1), "tab 1 deleted");
     // Migration: the container now reads via tabsettings_new (project_overview
-    // prefers it), so all three project.
+    // prefers it); the two surviving tabs (0 and 2) project, tab 1 was deleted.
     assert_eq!(cols.tabs.len(), 2);
 }
