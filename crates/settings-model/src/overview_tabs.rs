@@ -182,6 +182,15 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
     Ok(())
 }
 
+pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
+        .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
+    *inner = order.iter().map(|&i| Value::Int(i)).collect();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +278,19 @@ mod tests {
     fn delete_last_tab_is_refused() {
         let mut v = user_with_tabs(); // single tab 0
         assert!(matches!(delete_tab(&mut v, 0), Err(OverviewTabError::LastTab)));
+    }
+
+    #[test]
+    fn reorder_replaces_the_window_strip() {
+        let mut v = user_with_tabs();
+        create_tab(&mut v, 0, "Mining", "P").unwrap(); // window 0 = [0,1]
+        reorder_tabs_in_window(&mut v, 0, &[1, 0]).unwrap();
+        assert_eq!(window_indices(&v, 0), vec![1, 0]);
+    }
+
+    #[test]
+    fn reorder_missing_window_errors() {
+        let mut v = user_with_tabs();
+        assert!(matches!(reorder_tabs_in_window(&mut v, 3, &[0]), Err(OverviewTabError::UnknownWindow { index: 3 })));
     }
 }
