@@ -32,6 +32,18 @@ Workflow:
   defensive branch in `unitWindows`, and no dedicated `.stacked` canvas CSS (the
   tab strip is the visual signal). _Added 2026-07-19._
 
+- [ ] **Profile the reshare (deduplication) pass.** Every structural editor
+  (overview / autofill / batch / window-stack membership) runs
+  `blue_marshal::reshare` over the WHOLE document after each edit to re-derive
+  canonical `Shared`/`Ref` sharing before save (inline → tally by `encode(v)`
+  bytes → rebuild — an O(tree) traversal, plus an `encode` per node for the
+  dedup key). It hasn't been profiled; on the largest real settings files it may
+  add noticeable latency to a structural edit. (The geometry drag path does NOT
+  reshare — it's plain `set_scalar` — so this is specifically the membership /
+  overview / autofill edit path.) Measure it on the biggest corpus files and, if
+  it's a bottleneck, consider caching the per-node encode key, an incremental
+  reshare, or scoping the pass to the edited subtree. _Added 2026-07-19._
+
 - [ ] **Improve the auto-derived autofill category labels.** In
   `app/src/lib/autofill.ts`, widget paths not matched by the `CURATED` substring
   map fall through to `derive()`, which just title-cases the last non-boilerplate
