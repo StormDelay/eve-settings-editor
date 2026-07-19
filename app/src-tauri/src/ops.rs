@@ -495,6 +495,28 @@ pub fn apply_mutation(state: &AppState, slot: Slot, mutation: &Mutation) -> Resu
     Ok(project(&doc.value))
 }
 
+/// Batched sibling of `apply_mutation`: applies every mutation to the same
+/// locked doc, then projects the tree once instead of once per mutation.
+/// Non-atomic on a mid-batch failure, matching the caller's prior per-mutation
+/// loop — geometry set_scalars on valid paths don't fail.
+pub fn apply_mutations(state: &AppState, slot: Slot, mutations: &[Mutation]) -> Result<Node, ErrDto> {
+    let mut guard = state.doc(slot).lock().unwrap();
+    let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
+    if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+        return Err(ErrDto::new("read_only", reason.clone()));
+    }
+    for m in mutations {
+        apply(&mut doc.value, m).map_err(|e| {
+            let v = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(
+                v.get("code").and_then(|c| c.as_str()).unwrap_or("mutate"),
+                e.to_string(),
+            )
+        })?;
+    }
+    Ok(project(&doc.value))
+}
+
 pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveReport, ErrDto> {
     let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
@@ -802,6 +824,40 @@ mod tests {
             OpenOutcome::Opened { fidelity, tree, .. } => {
                 assert_eq!(fidelity, Fidelity::Editable);
                 assert_eq!(tree.children[0].children[0].display, "\"edited\"");
+            }
+            _ => panic!("expected Opened"),
+        }
+    }
+
+    #[test]
+    fn apply_mutations_applies_all_in_one_call_and_projects_once() {
+        let bytes = encode(&Value::Dict(vec![(
+            Value::Bytes(b"k".to_vec()),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        )]))
+        .unwrap();
+        let path = temp_file("batch", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+
+        let tree = apply_mutations(
+            &state,
+            Slot::Char,
+            &[
+                Mutation::SetScalar { path: vec![Step::DictValue(0), Step::List(0)], text: "10".into() },
+                Mutation::SetScalar { path: vec![Step::DictValue(0), Step::List(1)], text: "20".into() },
+            ],
+        )
+        .unwrap();
+        assert_eq!(tree.children[0].children[0].display, "10");
+        assert_eq!(tree.children[0].children[1].display, "20");
+
+        save_document(&state, Slot::Char, false).unwrap();
+        let state2 = AppState::new();
+        match open_file(&state2, Slot::Char, path.to_str().unwrap()).unwrap() {
+            OpenOutcome::Opened { tree, .. } => {
+                assert_eq!(tree.children[0].children[0].display, "10");
+                assert_eq!(tree.children[0].children[1].display, "20");
             }
             _ => panic!("expected Opened"),
         }

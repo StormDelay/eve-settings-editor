@@ -234,6 +234,8 @@ export const api = {
   close: (slot: Slot) => invoke<void>("close_file", { slot }),
   mutate: (slot: Slot, mutation: Mutation) =>
     invoke<TreeNodeData>("apply_mutation", { slot, mutation }),
+  mutateMany: (slot: Slot, mutations: Mutation[]) =>
+    invoke<TreeNodeData>("apply_mutations", { slot, mutations }),
   save: (slot: Slot, force: boolean) => invoke<SaveReport>("save_document", { slot, force }),
   listBackups: (slot: Slot) => invoke<BackupInfo[]>("list_file_backups", { slot }),
   restoreBackup: (slot: Slot, backupPath: string) =>
