@@ -40,7 +40,7 @@ const win = (id: string, open: boolean, renderable: boolean): WindowRect => ({
       }
     : null,
   flags: [],
-  stacks: null,
+  stack: null,
 });
 
 const wins = [win("a", true, true), win("b", false, true), win("c", true, false)];

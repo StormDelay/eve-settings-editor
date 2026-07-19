@@ -161,6 +161,23 @@ fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_
 }
 
 #[tauri::command]
+fn stack_unstack(state: tauri::State<'_, AppState>, member: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_unstack(&state, &member)
+}
+#[tauri::command]
+fn stack_add(state: tauri::State<'_, AppState>, member: String, container: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_add(&state, &member, &container)
+}
+#[tauri::command]
+fn stack_reorder(state: tauri::State<'_, AppState>, container: String, members: Vec<String>) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_reorder(&state, &container, members)
+}
+#[tauri::command]
+fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: String) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_create(&state, &member1, &member2)
+}
+
+#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source_char_path: String,
@@ -210,7 +227,8 @@ pub fn run() {
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             autofill_lists, set_autofill_list, clear_all_autofill,
-            setup_preview, setup_apply
+            setup_preview, setup_apply,
+            stack_unstack, stack_add, stack_reorder, stack_create
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

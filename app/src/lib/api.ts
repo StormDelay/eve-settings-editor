@@ -124,9 +124,16 @@ export interface BoolFlag {
   set: SetTarget;
 }
 
-export interface StackField {
-  text: string;
-  path: NodePath;
+export type StackRole = "container" | "member";
+export interface StackRef {
+  container_id: string;
+  role: StackRole;
+}
+export interface Stack {
+  container_id: string;
+  container_label: string;
+  anchor_id: string;
+  members: string[];
 }
 
 export interface WindowRect {
@@ -137,13 +144,14 @@ export interface WindowRect {
   resolution_matches: boolean;
   geom: Geom | null;
   flags: BoolFlag[];
-  stacks: StackField | null;
+  stack: StackRef | null;
 }
 
 export interface WindowLayout {
   reference_w: number;
   reference_h: number;
   windows: WindowRect[];
+  stacks: Stack[];
 }
 
 export interface AccountView {
@@ -269,6 +277,10 @@ export const api = {
     allowOtherFolders: boolean,
   ) =>
     invoke<BatchTargetResult[]>("setup_apply", { sourceCharPath, targetCharPaths, aspects, allowOtherFolders }),
+  stackUnstack: (member: string) => invoke<WindowLayout>("stack_unstack", { member }),
+  stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
+  stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
+  stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
 };
 
 export function errMessage(e: unknown): string {
