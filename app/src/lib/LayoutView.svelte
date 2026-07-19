@@ -124,9 +124,6 @@
     if (m) commit([m]);
   }
 
-  const onStack = (w: WindowRect, text: string) =>
-    w.stacks && commit([{ op: "set_scalar", path: w.stacks.path, text }]);
-
   // --- Canvas drag & resize ------------------------------------------------
 
   type Drag =
@@ -234,7 +231,6 @@
       {onToggleOpen}
       {onGeom}
       {onFlag}
-      {onStack}
       {onReveal} />
   </div>
 {/if}

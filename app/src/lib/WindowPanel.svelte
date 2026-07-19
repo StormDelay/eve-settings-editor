@@ -9,7 +9,6 @@
     onToggleOpen,
     onGeom,
     onFlag,
-    onStack,
     onReveal,
   }: {
     windows: WindowRect[];
@@ -19,7 +18,6 @@
     onToggleOpen: (w: WindowRect) => void;
     onGeom: (w: WindowRect, field: "x" | "y" | "w" | "h", value: number) => void;
     onFlag: (w: WindowRect, flag: BoolFlag, value: boolean) => void;
-    onStack: (w: WindowRect, text: string) => void;
     onReveal: (path: NodePath) => void;
   } = $props();
 
@@ -115,16 +113,6 @@
               </label>
             {/each}
           </div>
-          {#if w.stacks}
-            <label class="stack" title="right-click: show in tree" oncontextmenu={reveal(w.stacks.path)}>
-              stack id
-              <input
-                type="number"
-                value={w.stacks.text}
-                disabled={readOnly}
-                onchange={(e) => onStack(w, (e.target as HTMLInputElement).value)} />
-            </label>
-          {/if}
         </div>
       {/if}
     </div>
@@ -183,8 +171,7 @@
     grid-template-columns: repeat(4, 1fr);
     gap: 0.3rem;
   }
-  .coords label,
-  .stack {
+  .coords label {
     display: grid;
     gap: 0.1rem;
     font-size: 11px;
