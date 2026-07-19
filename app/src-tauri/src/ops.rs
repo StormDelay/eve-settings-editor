@@ -314,6 +314,19 @@ fn target_ids(char_paths: &HashMap<u64, PathBuf>, target_char_paths: &[String]) 
         .collect()
 }
 
+/// True if decoding `path` and extracting `cats` yields nothing — the source has
+/// none of these categories, so a splice would be a no-op. Empty `cats` or any
+/// read/decode error returns false (never silently drop a write we can't verify).
+fn source_side_empty(path: &Path, cats: &[Category]) -> bool {
+    if cats.is_empty() {
+        return false;
+    }
+    match fs::read(path).ok().and_then(|b| blue_marshal::decode(&b).ok()) {
+        Some(v) => extract_categories(&v, cats).is_empty(),
+        None => false,
+    }
+}
+
 pub fn setup_preview(
     roots: &[PathBuf],
     dir: &Path,
@@ -335,7 +348,27 @@ pub fn setup_preview(
     } else {
         HashMap::new()
     };
-    plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects)
+    let mut plan = plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects);
+
+    // Drop no-op splice writes: a splice aspect whose categories are all absent
+    // from the source would just back up and rewrite every target for nothing and
+    // inflate the write count (e.g. an Overview copy from a char that never resized
+    // its overview columns has no SortHeadersSizes to splice). Full copies always write.
+    let w = aspect_writes(aspects);
+    if !w.char_full_copy
+        && !plan.char_writes.is_empty()
+        && source_side_empty(Path::new(source_char_path), &w.char_categories)
+    {
+        plan.char_writes.clear();
+    }
+    if !w.account_full_copy && !plan.account_writes.is_empty() {
+        if let Some(upath) = account_of(&store, src_id).and_then(|uid| user_paths.get(&uid)) {
+            if source_side_empty(upath, &w.account_categories) {
+                plan.account_writes.clear();
+            }
+        }
+    }
+    plan
 }
 
 pub fn setup_apply(
@@ -1264,6 +1297,18 @@ mod tests {
         let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 1, &[2], &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
         assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
+    }
+
+    #[test]
+    fn source_side_empty_detects_absent_category() {
+        let with = encode(&Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), Value::Dict(vec![]))])).unwrap();
+        let without = encode(&Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![]))])).unwrap();
+        let p_with = temp_file("with-windows", &with);
+        let p_without = temp_file("no-windows", &without);
+        assert!(!source_side_empty(&p_with, &[Category::Layout]), "windows present -> not a no-op");
+        assert!(source_side_empty(&p_without, &[Category::Layout]), "windows absent -> a no-op splice");
+        assert!(!source_side_empty(&p_with, &[]), "no categories -> false (guard)");
+        assert!(!source_side_empty(Path::new("does-not-exist.dat"), &[Category::Layout]), "unreadable -> false");
     }
 
     #[test]
