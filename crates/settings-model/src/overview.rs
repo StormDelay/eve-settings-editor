@@ -40,6 +40,7 @@ pub struct OverviewWindow {
 pub struct OverviewTab {
     pub index: i64,
     pub name: String,
+    pub preset: String,
     pub inherits: bool,
     pub columns: Vec<OverviewColumn>,
 }
@@ -98,6 +99,13 @@ fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&
     let index = as_int(effective(key, sh))?;
     let fields = as_dict(tab, sh)?;
     let name = str_field_r(fields, "name", sh).unwrap_or_else(|| format!("Tab {index}"));
+    let preset = find_child(fields, b"overview", sh)
+        .and_then(|v| match effective(v, sh) {
+            Value::Str(t) | Value::StrUcs2(t) => Some(t.clone()),
+            Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+            _ => None,
+        })
+        .unwrap_or_default();
 
     let own_order = token_list(fields, b"tabColumnOrder", sh);
     let own_visible = token_list(fields, b"tabColumns", sh);
@@ -128,7 +136,7 @@ fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&
             name: tok.clone(),
         })
         .collect();
-    Some(OverviewTab { index, name, inherits, columns })
+    Some(OverviewTab { index, name, preset, inherits, columns })
 }
 
 /// The account-global default columns an inheriting tab shows: `(order, visible)`
@@ -1282,5 +1290,23 @@ mod tests {
             "TYPE was already in the order list (as a Shared item) — not duplicated");
         let (_, visible) = tab_lists(&user, 0);
         assert!(visible.contains(&"TYPE".to_string()), "TYPE now reads back as visible");
+    }
+
+    #[test]
+    fn project_tab_exposes_preset_name() {
+        // A user tree: overview -> tabsettings_new (ts,dict) -> {0: {name, overview:"P"}}
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("Main".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Dict(vec![(Value::Int(0), tab)])),
+        ]);
+        let user = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+
+        let cols = project_overview(&user, None);
+        assert_eq!(cols.tabs.len(), 1);
+        assert_eq!(cols.tabs[0].preset, "P");
     }
 }
