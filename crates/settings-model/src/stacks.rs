@@ -18,6 +18,8 @@ pub enum StackError {
     NotStacked { member: String },
     /// A window to be stacked has no geometry entry — it cannot anchor a stack.
     MissingGeometry { window: String },
+    /// create_stack was called with the same window as both members.
+    SameWindow { window: String },
 }
 
 fn is_b(k: &Value, name: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == name) }
@@ -110,6 +112,9 @@ fn container_dict<'a>(pref: &'a mut Vec<(Value, Value)>, cb: &[u8]) -> &'a mut V
 /// started from; the stack lands at its current rect. Returns the minted
 /// container id. See docs/format-notes.md ("Window stacks") for the recipe.
 pub fn create_stack(v: &mut Value, member1: &str, member2: &str) -> Result<String, StackError> {
+    if member1 == member2 {
+        return Err(StackError::SameWindow { window: member1.to_string() });
+    }
     inline_all(v);
     let container = mint_free_id(windows_mut(v)?);
     let (cb, m1b, m2b) = (container.as_bytes().to_vec(), member1.as_bytes(), member2.as_bytes());
@@ -301,6 +306,12 @@ mod tests {
     fn boolval(v: &Value, dict: &[u8], id: &[u8]) -> Option<bool> {
         let d = inner(win(v), dict);
         d.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == id)).and_then(|(_, v)| if let Value::Bool(x) = v { Some(*x) } else { None })
+    }
+
+    #[test]
+    fn create_rejects_the_same_window_as_both_members() {
+        let mut v = free_windows_root();
+        assert!(matches!(create_stack(&mut v, "m1", "m1"), Err(StackError::SameWindow { .. })));
     }
 
     #[test]
