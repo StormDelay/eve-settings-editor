@@ -3,8 +3,8 @@
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, onLoadCharacter, onUserDirty, onCharDirty, onShowAccounts }:
-    { userOpen: boolean; charId: number | null; characters: number[];
+  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onShowAccounts }:
+    { userOpen: boolean; charId: number | null; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
       onShowAccounts: () => void } = $props();
 
@@ -17,10 +17,17 @@
     error = null;
     try {
       data = await api.overviewColumns();
-      if (tabIndex === null && data.tabs.length > 0) tabIndex = data.tabs[0].index;
+      // Keep the selected tab if it still exists in the (possibly just-switched)
+      // file; otherwise fall back to the first tab.
+      if (tabIndex === null || !data.tabs.some((t) => t.index === tabIndex)) {
+        tabIndex = data.tabs[0]?.index ?? null;
+      }
     } catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; void charId; reload(); });
+  // Reload when the slot's file changes (refreshToken bumps on every open/save),
+  // not only when userOpen/charId flip — switching between two account files
+  // leaves both unchanged and would otherwise show the previous file's overview.
+  $effect(() => { void userOpen; void charId; void refreshToken; reload(); });
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
   // The window strip whose tab_indices contains the selected tab (null for an
@@ -29,11 +36,14 @@
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
 
   async function createTab() {
-    if (currentWindowIndex === null) return;
+    if (!data || data.tabs.length === 0) return;
     const name = window.prompt("New tab name:");
     if (!name?.trim()) return;
+    // No overview windows (fresh account / post in-game reset): the backend
+    // materializes a default window; window 0 is a sentinel it ignores then.
+    const windowIdx = currentWindowIndex ?? 0;
     try {
-      data = await api.tabCreate(currentWindowIndex, name.trim(), tabIndex);
+      data = await api.tabCreate(windowIdx, name.trim(), tabIndex);
       tabIndex = Math.max(...data.tabs.map((t) => t.index));
       onUserDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
@@ -137,7 +147,7 @@
       </select>
     </label>
     <div class="tab-actions">
-      <button onclick={createTab} disabled={currentWindowIndex === null} title="New tab">+ New</button>
+      <button onclick={createTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
       <button onclick={renameTab} disabled={!tab} title="Rename selected tab">Rename</button>
       <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
       {#if currentWindow && data.windows.length > 1}

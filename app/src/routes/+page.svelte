@@ -429,6 +429,7 @@
             userOpen={slots.user?.status === "opened"}
             charId={openCharId}
             characters={openAccountCharacters}
+            refreshToken={savedAt}
             onLoadCharacter={loadCharacter}
             onUserDirty={() => (dirtySlots.user = true)}
             onCharDirty={() => (dirtySlots.char = true)}
