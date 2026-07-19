@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot } from "$lib/api";
-  import { canvasScale, toCanvas, toData, openWindows, resizeRect, type Corner } from "$lib/layout";
+  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, type Corner, type DrawUnit } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -34,7 +34,7 @@
   // reference dimension as "no-op", so reading through with `?? 0` is exact,
   // not an approximation.
   const scale = $derived(canvasScale(layout?.reference_w ?? 0, containerWidth));
-  const drawn = $derived(openWindows(layout?.windows ?? []));
+  const units = $derived(stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
 
   async function load() {
@@ -127,26 +127,48 @@
   // --- Canvas drag & resize ------------------------------------------------
 
   type Drag =
-    | { kind: "move"; w: WindowRect; startX: number; startY: number; ox: number; oy: number }
-    | { kind: "resize"; w: WindowRect; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number };
+    | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number }
+    | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number };
   let drag: Drag | null = null;
+
+  // Every renderable window a move/resize of this unit must repeat the same
+  // delta/rect onto: the anchor, its open stack members (tabs), and — for a
+  // stack — the container's own window entry if it carries geometry (the
+  // container's geom is the stack's true position on screen). De-duplicated
+  // by id since the anchor is often also one of the tabs or the container.
+  function unitWindows(unit: DrawUnit): WindowRect[] {
+    const result: WindowRect[] = [unit.anchor];
+    const ids = new Set([unit.anchor.id]);
+    for (const t of unit.tabs) {
+      if (ids.has(t.id)) continue;
+      ids.add(t.id);
+      result.push(t);
+    }
+    if (unit.stack && layout) {
+      const container = layout.windows.find((w) => w.id === unit.stack!.container_id);
+      if (container && container.renderable && !ids.has(container.id)) {
+        result.push(container);
+      }
+    }
+    return result;
+  }
 
   // Capture on the canvas (not the rectangle) so its onpointermove/up keep
   // firing even as the pointer leaves the rectangle during a drag.
-  function startMove(w: WindowRect, e: PointerEvent) {
+  function startMove(unit: DrawUnit, e: PointerEvent) {
     if (readOnly) return;
-    selectedId = w.id;
-    drag = { kind: "move", w, startX: e.clientX, startY: e.clientY, ox: w.geom!.x, oy: w.geom!.y };
+    selectedId = unit.anchor.id;
+    drag = { kind: "move", unit, startX: e.clientX, startY: e.clientY, ox: unit.anchor.geom!.x, oy: unit.anchor.geom!.y };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
 
-  function startResize(w: WindowRect, corner: Corner, e: PointerEvent) {
+  function startResize(unit: DrawUnit, corner: Corner, e: PointerEvent) {
     if (readOnly) return;
-    selectedId = w.id;
+    selectedId = unit.anchor.id;
     drag = {
-      kind: "resize", w, corner, startX: e.clientX, startY: e.clientY,
-      ox: w.geom!.x, oy: w.geom!.y, ow: w.geom!.w, oh: w.geom!.h,
+      kind: "resize", unit, corner, startX: e.clientX, startY: e.clientY,
+      ox: unit.anchor.geom!.x, oy: unit.anchor.geom!.y, ow: unit.anchor.geom!.w, oh: unit.anchor.geom!.h,
     };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -158,11 +180,11 @@
     const dx = toData(e.clientX - drag.startX, scale);
     const dy = toData(e.clientY - drag.startY, scale);
     if (drag.kind === "move") {
-      preview = { ...preview, [drag.w.id]: { ...rectOf(drag.w), x: drag.ox + dx, y: drag.oy + dy } };
+      preview = { ...preview, [drag.unit.anchor.id]: { ...rectOf(drag.unit.anchor), x: drag.ox + dx, y: drag.oy + dy } };
     } else {
       preview = {
         ...preview,
-        [drag.w.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
+        [drag.unit.anchor.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
       };
     }
   }
@@ -175,18 +197,17 @@
 
   async function onPointerUp() {
     if (!drag) return;
-    const w = drag.w;
-    const p = preview[w.id];
+    const p = preview[drag.unit.anchor.id];
     const d = drag;
     drag = null;
-    if (!p) {
-      clearPreview(w.id);
-      return;
-    }
-    // Keep the preview showing the dropped position through the commit + refetch,
-    // then clear it — by then `layout` holds the same value, so no snap-back blink.
-    await commit(geomMutations(w, d.kind === "move" ? { x: p.x, y: p.y } : { x: p.x, y: p.y, w: p.w, h: p.h }));
-    clearPreview(w.id);
+    if (!p) return;
+    // Fan the new anchor rect out to every renderable window in the unit so a
+    // stack moves/resizes coherently and stale members are repaired.
+    const targets = unitWindows(d.unit);
+    const next = d.kind === "move" ? { x: p.x, y: p.y } : { x: p.x, y: p.y, w: p.w, h: p.h };
+    const ms = targets.flatMap((w) => geomMutations(w, next));
+    await commit(ms);
+    clearPreview(d.unit.anchor.id);
   }
 </script>
 
@@ -202,20 +223,31 @@
         style="width: {toCanvas(layout.reference_w, scale)}px; height: {canvasHeight}px;"
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}>
-        {#each drawn as w (w.id)}
-          {@const r = rectOf(w)}
+        {#each units as unit (unit.key)}
+          {@const r = rectOf(unit.anchor)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="win"
-            class:selected={w.id === selectedId}
+            class:selected={unit.tabs.some((t) => t.id === selectedId) || unit.anchor.id === selectedId}
+            class:stacked={!!unit.stack}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
-            onpointerdown={(e) => startMove(w, e)}>
-            <span class="win-label">{w.label}</span>
-            {#if w.id === selectedId}
+            onpointerdown={(e) => startMove(unit, e)}>
+            {#if unit.stack}
+              <div class="tabs">
+                {#each unit.tabs as tab (tab.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <span class="tab" class:active={tab.id === selectedId}
+                    onpointerdown={(e) => { e.stopPropagation(); selectedId = tab.id; }}>{tab.label}</span>
+                {/each}
+              </div>
+            {:else}
+              <span class="win-label">{unit.anchor.label}</span>
+            {/if}
+            {#if unit.anchor.id === selectedId || unit.tabs.some((t) => t.id === selectedId)}
               {#each (["tl", "tr", "bl", "br"] as const) as c}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <span class="resize {c}" onpointerdown={(e) => startResize(w, c, e)}></span>
+                <span class="resize {c}" onpointerdown={(e) => startResize(unit, c, e)}></span>
               {/each}
             {/if}
           </div>
@@ -276,6 +308,25 @@
     padding: 1px 3px;
     display: inline-block;
     pointer-events: none;
+  }
+  .tabs {
+    display: flex;
+    gap: 1px;
+    background: #11141a;
+    overflow: hidden;
+  }
+  .tab {
+    padding: 1px 4px;
+    background: #2a2f3a;
+    color: #dbeafe;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tab.active {
+    background: #f59e0b;
+    color: #1b1f27;
   }
   .resize {
     position: absolute;
