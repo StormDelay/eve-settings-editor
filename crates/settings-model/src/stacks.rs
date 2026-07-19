@@ -9,13 +9,13 @@ use serde::Serialize;
 
 use crate::treewalk::inline_all;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum StackError {
     /// No `windows` dict in the file.
     NoWindows,
     /// The named member is not present in `stacksWindows`.
-    NotStacked(String),
+    NotStacked { member: String },
 }
 
 fn is_b(k: &Value, name: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == name) }
@@ -37,8 +37,11 @@ fn child_inner<'a>(win: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec
     match v {
         Value::Dict(d) => d,
         Value::Tuple(t) => {
-            let slot = t.iter_mut().find(|e| matches!(e, Value::Dict(_)));
-            match slot { Some(Value::Dict(d)) => d, _ => unreachable!("timestamped dict has a Dict") }
+            if !t.iter().any(|e| matches!(e, Value::Dict(_))) {
+                t.push(Value::Dict(Vec::new()));
+            }
+            let Some(Value::Dict(d)) = t.iter_mut().find(|e| matches!(e, Value::Dict(_))) else { unreachable!() };
+            d
         }
         other => { *other = Value::Dict(Vec::new()); let Value::Dict(d) = other else { unreachable!() }; d }
     }
@@ -52,7 +55,7 @@ pub fn unstack(v: &mut Value, member: &str) -> Result<(), StackError> {
     let before = sw.len();
     sw.retain(|(k, _)| !is_b(k, mb));
     if sw.len() == before {
-        return Err(StackError::NotStacked(member.to_string()));
+        return Err(StackError::NotStacked { member: member.to_string() });
     }
     // Remove the member from every preferredIdxInStack3[container] dict.
     let pref = child_inner(win, b"preferredIdxInStack3");
@@ -180,6 +183,16 @@ mod tests {
     #[test]
     fn unstack_a_missing_member_errors() {
         let mut v = root();
-        assert!(matches!(unstack(&mut v, "nope"), Err(StackError::NotStacked(_))));
+        assert!(matches!(unstack(&mut v, "nope"), Err(StackError::NotStacked { .. })));
+    }
+
+    #[test]
+    fn unstack_that_drops_a_shared_def_still_encodes() {
+        let mut v = root();
+        unstack(&mut v, "m1").unwrap();
+        // Without inline-first, m2's Ref to m1's dropped Shared def would dangle
+        // (RefBeforeStore) — this proves inline_all runs before the edit.
+        let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
     }
 }
