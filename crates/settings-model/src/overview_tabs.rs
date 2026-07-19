@@ -69,6 +69,18 @@ fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
     }
 }
 
+/// Read-only counterpart of `list_inner_mut`, unwrapping a `(ts, list)` tuple.
+fn list_inner(v: &Value) -> Option<&Vec<Value>> {
+    match v {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter().find_map(|e| match e {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 /// Mutable `overview` container dict (tree already inlined).
 fn overview_mut(v: &mut Value) -> Result<&mut Entries, OverviewTabError> {
     let Value::Dict(root) = v else { return Err(OverviewTabError::NoOverview) };
@@ -149,7 +161,17 @@ pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), Overvie
 pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option<i64>) -> Result<i64, OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
-    if window_idx >= groups_mut(ov).len() {
+    // How many overview windows the account maps tabs to. EVE honors an explicit
+    // tab->window mapping only when `tabsByWindowInstanceID` exists with ≥1
+    // window; absent/empty means EVE distributes tabs across its (char-side)
+    // overview windows by default. We must NOT create or touch the mapping in
+    // that case — the per-window distribution is char-side state we can't
+    // reconstruct here, and a partial/wrong mapping hides the whole overview.
+    let window_count = ov.iter()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner(wv))
+        .map_or(0, |g| g.len());
+    if window_count > 0 && window_idx >= window_count {
         return Err(OverviewTabError::UnknownWindow { index: window_idx });
     }
     let new_idx = {
@@ -160,8 +182,8 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
             .or(if tabs.is_empty() { None } else { Some(0) });
         let mut tab = match template {
             Some(i) => tabs[i].1.clone(),
-            // Unreachable through the UI (an overview always keeps ≥1 tab); a
-            // last-resort minimal tab when there is no sibling to clone.
+            // Last-resort minimal tab when there is no sibling to clone (an
+            // empty overview — only reachable when the account has no tabs).
             None => Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new()))]),
         };
         if let Some(fields) = dict_inner_mut(&mut tab) {
@@ -171,8 +193,14 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
         tabs.push((Value::Int(new_idx), tab));
         new_idx
     };
-    if let Some(inner) = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut) {
-        inner.push(Value::Int(new_idx));
+    // Attach to the named window ONLY when the account has an explicit mapping;
+    // otherwise the tab lives in tabsettings_new and EVE shows it by default.
+    if window_count > 0 {
+        if let Some((_, wv)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
+            if let Some(inner) = list_inner_mut(wv).and_then(|g| g.get_mut(window_idx)).and_then(list_inner_mut) {
+                inner.push(Value::Int(new_idx));
+            }
+        }
     }
     Ok(new_idx)
 }
@@ -317,6 +345,33 @@ mod tests {
     fn create_into_missing_window_errors() {
         let mut v = user_with_tabs();
         assert!(matches!(create_tab(&mut v, 5, "X", Some(0)), Err(OverviewTabError::UnknownWindow { index: 5 })));
+    }
+
+    #[test]
+    fn create_in_a_windowless_account_adds_the_tab_without_a_window_mapping() {
+        // An overview with tabs but NO tabsByWindowInstanceID (fresh / post-reset).
+        let tab = Value::Dict(vec![
+            (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+            (Value::Bytes(b"color".to_vec()), Value::None),
+            (Value::Str("name".into()), Value::Str("Main".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+
+        // window_idx 0 is a sentinel here (there are no windows to name).
+        let idx = create_tab(&mut v, 0, "Mining", Some(0)).unwrap();
+        assert_eq!(idx, 1);
+        assert!(tab_has_key(&v, 1, b"bracket"), "the new tab still clones bracket");
+        // No window mapping is fabricated — EVE distributes tabs by default, and a
+        // partial/wrong mapping would hide the whole overview.
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        assert!(!ovd.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")),
+            "no tabsByWindowInstanceID is fabricated for a windowless account");
     }
 
     #[test]
