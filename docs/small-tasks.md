@@ -13,6 +13,24 @@ Workflow:
 
 ## Open
 
+- [ ] **Overview tab-management follow-ups (deferred from the milestone's final
+  review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
+  (1) `overview_tabs::move_tab` has no `UnknownTab` guard — moving a nonexistent
+  tab index inserts a phantom entry into the target window strip (UI-guarded, same
+  permissiveness as `reorder_tabs_in_window`); add a `tabs contains tab_idx` check
+  to match `delete_tab`; (2) the two name-key predicates diverge —
+  `overview_tabs::key_is_name` matches `Bytes("name")` but not `StrUcs2`, while
+  `overview::key_is` matches `StrUcs2` but not `Bytes` (neither form occurs on real
+  files, which use `StrTable(52)`); unify them into one shared predicate; (3)
+  `ops::tab_create` projects the overview twice (once for the preset copy, once in
+  `edit_user_tabs`) — harmless on tiny trees; (4) the UI's new-tab selection uses
+  `Math.max(...tabs.index)` (`OverviewView.svelte`), coupling it to the backend's
+  `max+1` allocation — sound today, but a before/after index set-diff would be
+  allocation-agnostic; (5) can't create a tab in an empty (zero-tab) overview
+  window (the New-tab target derives from the selected tab's window); (6) a few
+  trivial untested branches (`delete_tab`/`move_tab` own `UnknownTab` paths, the
+  `create_tab` preset-value assertion). _Added 2026-07-19._
+
 - [ ] **Window-stacks follow-up: friendlier stack-frame labels.**
   `Stack.container_label` is always == `container_id` (`windows.rs`) — give a
   stack frame a friendlier label when a source name exists. Cosmetic. (The other
