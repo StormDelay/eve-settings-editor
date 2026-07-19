@@ -32,7 +32,25 @@ Workflow:
   `create_tab` preset-value assertion); (7) the tab-management **UI/UX is rough**
   (flagged during the live smoke) — defer the polish/rework to the later
   overview-depth slices (filter presets / colors / add-remove windows), which will
-  touch this same Overview view anyway. _Added 2026-07-19._
+  touch this same Overview view anyway. **(Item (3) tab_create double-project is
+  now RESOLVED — the tab-fix branch made create clone by index with no preset
+  lookup.)** _Added 2026-07-19._
+
+- [ ] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
+  review).** (a) **Per-window placement on a windowless account:** creating a tab
+  when the account has no `tabsByWindowInstanceID` now adds it to `tabsettings_new`
+  and leaves the window mapping to EVE's default (the tab shows, verified in-game);
+  placing it in a SPECIFIC overview window needs the char-side window↔tab mapping,
+  deferred to the Phase B overview-window capture. (b) **Align
+  `reorder_tabs_in_window` / `move_tab` to the no-fabricate read pattern** —
+  `create_tab` and `delete_tab` now avoid materializing an empty
+  `tabsByWindowInstanceID` when it's absent (an empty/partial mapping can hide the
+  whole overview), but reorder/move still go through `groups_mut`, which fabricates
+  it. They're UI-unreachable on a windowless account today, but worth aligning. (c)
+  **Orphan-tab create placement:** creating a tab while an "Other" (orphan) tab is
+  selected on an account that HAS windows lands the new tab in window 0 (via the
+  `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
+  _Added 2026-07-19._
 
 - [ ] **Window-stacks follow-up: friendlier stack-frame labels.**
   `Stack.container_label` is always == `container_id` (`windows.rs`) — give a

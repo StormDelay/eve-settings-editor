@@ -182,9 +182,15 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
             .or(if tabs.is_empty() { None } else { Some(0) });
         let mut tab = match template {
             Some(i) => tabs[i].1.clone(),
-            // Last-resort minimal tab when there is no sibling to clone (an
-            // empty overview — only reachable when the account has no tabs).
-            None => Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new()))]),
+            // Last-resort tab when there is no sibling to clone (an empty
+            // overview — only reachable when the account has no tabs). Still
+            // carries bracket/color so the "every created tab is a valid EVE
+            // tab" invariant holds on this path too.
+            None => Value::Dict(vec![
+                (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+                (Value::Bytes(b"color".to_vec()), Value::None),
+                (Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new())),
+            ]),
         };
         if let Some(fields) = dict_inner_mut(&mut tab) {
             fields.retain(|(k, _)| !is_b(k, b"tabColumnOrder") && !is_b(k, b"tabColumns"));
@@ -218,9 +224,17 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
         }
         tabs.retain(|(k, _)| as_int(k) != Some(tab_idx));
     }
-    for g in groups_mut(ov).iter_mut() {
-        if let Some(inner) = list_inner_mut(g) {
-            inner.retain(|e| as_int(e) != Some(tab_idx));
+    // Purge the index from every window strip — but only if a mapping already
+    // exists. Do NOT fabricate an (empty) `tabsByWindowInstanceID` when it's
+    // absent: EVE keys the overview off it, and an empty mapping can hide the
+    // whole overview (matches create_tab's no-fabricate behavior).
+    if let Some((_, wv)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
+        if let Some(groups) = list_inner_mut(wv) {
+            for g in groups.iter_mut() {
+                if let Some(inner) = list_inner_mut(g) {
+                    inner.retain(|e| as_int(e) != Some(tab_idx));
+                }
+            }
         }
     }
     Ok(())
@@ -372,6 +386,39 @@ mod tests {
         let Value::Dict(ovd) = ov else { panic!() };
         assert!(!ovd.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")),
             "no tabsByWindowInstanceID is fabricated for a windowless account");
+    }
+
+    #[test]
+    fn create_with_no_sibling_still_carries_bracket_and_color() {
+        // Empty tabsettings_new -> no sibling to clone -> the fallback tab.
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        let idx = create_tab(&mut v, 0, "First", None).unwrap();
+        assert_eq!(idx, 0);
+        assert!(tab_has_key(&v, 0, b"bracket"), "fallback tab carries bracket");
+        assert!(tab_has_key(&v, 0, b"color"), "fallback tab carries color");
+    }
+
+    #[test]
+    fn delete_on_a_windowless_account_does_not_fabricate_a_mapping() {
+        let mk = |n: &str| Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str(n.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Dict(vec![(Value::Int(0), mk("A")), (Value::Int(1), mk("B"))])),
+            // no tabsByWindowInstanceID
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        delete_tab(&mut v, 0).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        assert!(!ovd.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")),
+            "delete must not fabricate a window mapping on a windowless account");
     }
 
     #[test]
