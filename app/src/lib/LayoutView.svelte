@@ -151,7 +151,11 @@
   function startMove(unit: DrawUnit, e: PointerEvent) {
     if (readOnly) return;
     selectedId = unit.anchor.id;
-    drag = { kind: "move", unit, startX: e.clientX, startY: e.clientY, ox: unit.anchor.geom!.x, oy: unit.anchor.geom!.y };
+    // Origin from the DISPLAYED rect (preview if a prior drop is still
+    // committing), not the committed geom — otherwise a re-drag before the
+    // async commit lands would start from stale coordinates and jump.
+    const r = rectOf(unit.anchor);
+    drag = { kind: "move", unit, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
@@ -159,9 +163,12 @@
   function startResize(unit: DrawUnit, corner: Corner, e: PointerEvent) {
     if (readOnly) return;
     selectedId = unit.anchor.id;
+    // Origin from the displayed rect (see startMove), so a resize started
+    // before a prior drop finishes committing doesn't jump.
+    const r = rectOf(unit.anchor);
     drag = {
       kind: "resize", unit, corner, startX: e.clientX, startY: e.clientY,
-      ox: unit.anchor.geom!.x, oy: unit.anchor.geom!.y, ow: unit.anchor.geom!.w, oh: unit.anchor.geom!.h,
+      ox: r.x, oy: r.y, ow: r.w, oh: r.h,
     };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -203,7 +210,12 @@
     const next = { x: p.x, y: p.y, w: p.w, h: p.h };
     const ms = targets.flatMap((w) => geomMutations(w, next));
     await commit(ms);
-    clearPreview(d.unit.anchor.id);
+    // A re-drag on the same window may have started during the async commit and
+    // now owns the preview — don't wipe it out from under the new drag. (The
+    // cast: TS narrowed `drag` to null above and can't see the reassignment a
+    // concurrent startMove may have made across the await.)
+    const active = drag as Drag | null;
+    if (!active || active.unit.anchor.id !== d.unit.anchor.id) clearPreview(d.unit.anchor.id);
   }
 </script>
 
