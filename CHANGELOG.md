@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-19
+
+Window stacks, and resize from any corner.
+
+- The layout canvas now understands EVE window stacks: a stack of tabbed windows
+  draws as one rectangle you can move and resize as a unit, instead of a pile of
+  overlapping rectangles.
+- Edit stack membership from the window panel — unstack a window, reorder its
+  tabs, add a free window to a stack, or tab two free windows into a new stack.
+- Resize a layout window from any corner, not just the bottom-right.
+
+### Added
+- Window stacks on the layout canvas: each open stack draws as a single tabbed
+  rectangle at the stack's position, and moving or resizing it moves every window
+  in the stack together (repairing any that had drifted). Click a tab to select
+  that window.
+- Stack membership editing in the window panel: unstack, reorder tabs, add a
+  window to a stack, and create a new stack from two free windows. Stack groups
+  are collapsible to keep a long window list navigable.
+- Four-corner resize: a selected layout window can be resized from any of its
+  four corners (previously only the bottom-right).
+
+### Changed
+- Moving or resizing a stack writes all of its windows' positions in a single
+  step, so edits land quickly even for large chat stacks.
+
+### Removed
+- The dead "stack id" number field in the window panel (it never applied to real
+  files), replaced by the stack grouping UI.
+
 ## [0.7.0] - 2026-07-18
 
 Leaner settings files.
