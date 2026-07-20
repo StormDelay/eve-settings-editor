@@ -114,3 +114,4 @@ button:hover { border-color: var(--accent); }
 .viewtabs { display: flex; gap: 4px; }
 .viewtabs button { padding: 1px 10px; }
 .viewtabs button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.tree-file { display: inline-flex; margin: 0 0 0.5rem; }

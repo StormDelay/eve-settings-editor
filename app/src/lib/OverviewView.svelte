@@ -3,10 +3,10 @@
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
+  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
     { userOpen: boolean; charId: number | null; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -162,10 +162,9 @@
 </script>
 
 {#if !userOpen && charId !== null}
-  <div class="hint">
-    <p>This character isn't linked to an account yet. Overview columns live in the account
-      file — associate it to edit them.</p>
-    <button onclick={onShowAccounts}>Open Accounts</button>
+  <div class="hint pair">
+    <p>Link this character to an account to edit shared settings — overview columns live in the account file.</p>
+    <button onclick={onShowAccounts}>Pair…</button>
   </div>
 {:else if !userOpen}
   <p class="hint">Open a character or account file to edit overview columns.</p>
@@ -174,6 +173,7 @@
 {:else if data && data.tabs.length === 0}
   <p class="hint">This account file has no overview tabs.</p>
 {:else if data}
+  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
   <div class="ov-controls">
     <label>Tab
       <select bind:value={tabIndex}>
@@ -299,6 +299,15 @@
 {/if}
 
 <style>
+  .shared-banner {
+    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
+    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
+  }
+  .pair { display: flex; align-items: center; gap: 0.6rem; }
+  .pair button {
+    background: var(--bg-panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
+  }
   .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; }
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
   .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
