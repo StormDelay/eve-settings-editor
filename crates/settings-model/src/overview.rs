@@ -26,6 +26,7 @@ use crate::treewalk::{
 pub struct OverviewColumns {
     pub windows: Vec<OverviewWindow>,
     pub tabs: Vec<OverviewTab>,
+    pub presets: Vec<String>,
 }
 
 /// A physical overview window and the tab indices it shows, in order — grouped
@@ -56,14 +57,15 @@ pub struct OverviewColumn {
 pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColumns {
     let mut sh = SharedTable::new();
     collect_shared(user, &mut sh);
-    let empty = OverviewColumns { windows: vec![], tabs: vec![] };
+    let empty = OverviewColumns { windows: vec![], tabs: vec![], presets: vec![] };
     let Some(overview) = overview_container(user, &sh) else { return empty };
 
     let windows = window_groups(overview, &sh);
     let tabs = tab_dict(overview, &sh)
         .map(|d| d.iter().filter_map(|(k, v)| project_tab(k, v, overview, char_tree, &sh)).collect())
         .unwrap_or_default();
-    OverviewColumns { windows, tabs }
+    let presets = preset_names(overview, &sh);
+    OverviewColumns { windows, tabs, presets }
 }
 
 /// The `overview` container dict (key resolved through Ref/Shared).
@@ -150,6 +152,25 @@ fn default_columns(overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<St
     let order = token_list(overview, b"overviewColumnOrder", sh).unwrap_or_default();
     let visible = token_list(overview, b"overviewColumns", sh).unwrap_or_default();
     (order, visible)
+}
+
+/// Sorted (case-insensitive) preset names from `overviewProfilePresets`
+/// (a `(timestamp, dict)` keyed by preset name). Empty when the key is absent.
+fn preset_names(overview: &Entries, sh: &SharedTable) -> Vec<String> {
+    let Some(dict) = find_child(overview, b"overviewProfilePresets", sh).and_then(|v| as_dict(v, sh))
+    else { return vec![] };
+    let mut names: Vec<String> = dict.iter().filter_map(|(k, _)| preset_key_name(effective(k, sh))).collect();
+    names.sort_by_key(|s| s.to_lowercase());
+    names
+}
+
+/// A preset dict key as a string (Bytes on real files; Str/StrUcs2 defensively).
+fn preset_key_name(k: &Value) -> Option<String> {
+    match k {
+        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        Value::Str(s) | Value::StrUcs2(s) => Some(s.clone()),
+        _ => None,
+    }
 }
 
 /// String field whose key is `name` (plain or string-table), value resolved
@@ -1308,5 +1329,21 @@ mod tests {
         let cols = project_overview(&user, None);
         assert_eq!(cols.tabs.len(), 1);
         assert_eq!(cols.tabs[0].preset, "P");
+    }
+
+    #[test]
+    fn project_exposes_sorted_preset_names() {
+        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        // overview -> overviewProfilePresets -> (ts, { "Zeta": {}, "alpha": {} })
+        let presets = Value::Dict(vec![
+            (b("Zeta"), Value::Dict(vec![])),
+            (b("alpha"), Value::Dict(vec![])),
+        ]);
+        let overview = Value::Dict(vec![
+            (b("overviewProfilePresets"), Value::Tuple(vec![Value::Int(1), presets])),
+        ]);
+        let user = Value::Dict(vec![(b("overview"), overview)]);
+        let cols = project_overview(&user, None);
+        assert_eq!(cols.presets, vec!["alpha".to_string(), "Zeta".to_string()]);
     }
 }
