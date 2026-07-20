@@ -6,6 +6,7 @@ import {
   pairedFilePath,
   userSlotFor,
   charSlotFor,
+  sharedWith,
 } from "./overview.ts";
 import type { AccountRoster, Profile } from "./api.ts";
 
@@ -103,6 +104,19 @@ check(
 check(
   "charSlotFor keeps (nothing to do) when the char slot is empty",
   charSlotFor(456, null, roster).kind === "keep",
+);
+
+check(
+  "sharedWith lists the account's OTHER characters by name",
+  sharedWith(456, 123, roster, (id) => (id === 124 ? "Bravo" : String(id))).join(",") === "Bravo",
+);
+check(
+  "sharedWith returns empty when the character has no known account",
+  sharedWith(null, 123, roster, String).length === 0,
+);
+check(
+  "sharedWith excludes only the current character",
+  sharedWith(456, 999, roster, (id) => (id === 123 ? "A" : id === 124 ? "B" : String(id))).join(",") === "A,B",
 );
 
 console.log("overview: all checks passed");
