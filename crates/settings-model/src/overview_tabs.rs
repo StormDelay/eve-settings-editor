@@ -146,6 +146,16 @@ fn key_is_name(k: &Value) -> bool {
     }
 }
 
+/// How many overview windows the account's `tabsByWindowInstanceID` maps tabs to
+/// (0 when the mapping is absent — a windowless account). Reading it never
+/// fabricates the mapping.
+fn window_count(ov: &Entries) -> usize {
+    ov.iter()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner(wv))
+        .map_or(0, |g| g.len())
+}
+
 pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
@@ -173,10 +183,7 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
     // overview windows by default. We must NOT create or touch the mapping in
     // that case — the per-window distribution is char-side state we can't
     // reconstruct here, and a partial/wrong mapping hides the whole overview.
-    let window_count = ov.iter()
-        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
-        .and_then(|(_, wv)| list_inner(wv))
-        .map_or(0, |g| g.len());
+    let window_count = window_count(ov);
     if window_count > 0 && window_idx >= window_count {
         return Err(OverviewTabError::UnknownWindow { index: window_idx });
     }
@@ -279,15 +286,13 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
 /// list to `tabsByWindowInstanceID` and seeds it with one cloned tab (a window
 /// must have ≥1 tab). Refuses on a windowless account: adding positionally there
 /// would fabricate a partial mapping that hides the account's existing tabs (see
-/// `create_tab`). Returns the new window's index (its char key is `overview_{idx}`).
+/// `create_tab`). Returns the new window's index, always ≥1 here (a windowless
+/// account is refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
 pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> Result<usize, OverviewTabError> {
     inline_all(v);
     let new_window_idx = {
         let ov = overview_mut(v)?;
-        let window_count = ov.iter()
-            .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
-            .and_then(|(_, wv)| list_inner(wv))
-            .map_or(0, |g| g.len());
+        let window_count = window_count(ov);
         if window_count == 0 {
             return Err(OverviewTabError::NoWindowMapping);
         }
