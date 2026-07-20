@@ -23,6 +23,10 @@ pub enum OverviewTabError {
     LastTab,
     /// Refused: would remove the last overview window.
     LastWindow,
+    /// Refused: this overview has no window mapping to add onto (windowless account).
+    NoWindowMapping,
+    /// Refused: only the last overview window can be removed for now.
+    NotLastWindow { index: usize },
 }
 
 impl std::fmt::Display for OverviewTabError {
@@ -33,6 +37,8 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::UnknownWindow { index } => write!(f, "Overview window {index} does not exist."),
             OverviewTabError::LastTab => write!(f, "An overview must keep at least one tab."),
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
+            OverviewTabError::NoWindowMapping => write!(f, "This overview has no window layout to add to."),
+            OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
         }
     }
 }
@@ -269,6 +275,62 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     Ok(())
 }
 
+/// Add a new overview window (user-file grouping half). Appends an empty inner
+/// list to `tabsByWindowInstanceID` and seeds it with one cloned tab (a window
+/// must have ≥1 tab). Refuses on a windowless account: adding positionally there
+/// would fabricate a partial mapping that hides the account's existing tabs (see
+/// `create_tab`). Returns the new window's index (its char key is `overview_{idx}`).
+pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> Result<usize, OverviewTabError> {
+    inline_all(v);
+    let new_window_idx = {
+        let ov = overview_mut(v)?;
+        let window_count = ov.iter()
+            .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+            .and_then(|(_, wv)| list_inner(wv))
+            .map_or(0, |g| g.len());
+        if window_count == 0 {
+            return Err(OverviewTabError::NoWindowMapping);
+        }
+        let groups = groups_mut(ov);
+        groups.push(Value::List(Vec::new()));
+        groups.len() - 1
+    };
+    // Seed the new (empty) window with one cloned tab. create_tab re-inlines (a
+    // no-op on the already-plain tree) and appends the tab to window `new_window_idx`.
+    create_tab(v, new_window_idx, name, from_tab)?;
+    Ok(new_window_idx)
+}
+
+/// Remove an overview window (user-file grouping half). Reassigns the window's
+/// tabs onto window 0 (no tab loss), then drops the inner list. Last-window-only:
+/// the positional link to the char-file `overview_N` keys makes middle removal a
+/// re-key cascade (deferred).
+pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    // Read the mapping WITHOUT fabricating it (a windowless account has none).
+    let groups = ov.iter_mut()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner_mut(wv))
+        .ok_or(OverviewTabError::LastWindow)?;
+    let count = groups.len();
+    if count <= 1 {
+        return Err(OverviewTabError::LastWindow);
+    }
+    if window_idx >= count {
+        return Err(OverviewTabError::UnknownWindow { index: window_idx });
+    }
+    if window_idx != count - 1 {
+        return Err(OverviewTabError::NotLastWindow { index: window_idx });
+    }
+    let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
+    if let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) {
+        w0.extend(removed);
+    }
+    groups.remove(window_idx);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,5 +543,63 @@ mod tests {
         let mut v = user_two_windows();
         assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
         assert_eq!(window_indices(&v, 0), vec![0], "source strip unchanged when destination is invalid");
+    }
+
+    #[test]
+    fn add_window_appends_a_group_with_a_cloned_tab() {
+        let mut v = user_with_tabs(); // one window [0]
+        let widx = add_overview_window(&mut v, "Scan", Some(0)).unwrap();
+        assert_eq!(widx, 1, "new window appended at index 1");
+        let new_tabs = window_indices(&v, 1);
+        assert_eq!(new_tabs.len(), 1, "new window seeded with exactly one tab");
+        assert_eq!(tab_name(&v, new_tabs[0]), "Scan");
+        // Seeded via create_tab -> carries bracket/color like every valid EVE tab.
+        assert!(tab_has_key(&v, new_tabs[0], b"bracket"), "seeded tab clones bracket");
+        assert!(tab_has_key(&v, new_tabs[0], b"color"), "seeded tab clones color");
+        assert_eq!(window_indices(&v, 0), vec![0], "window 0 untouched");
+    }
+
+    #[test]
+    fn add_window_on_a_windowless_account_is_refused() {
+        // Overview with tabs but no tabsByWindowInstanceID: positional add can't
+        // fabricate a base mapping without hiding the account's existing tabs.
+        let tab = Value::Dict(vec![
+            (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+            (Value::Bytes(b"color".to_vec()), Value::None),
+            (Value::Str("name".into()), Value::Str("Main".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        assert!(matches!(add_overview_window(&mut v, "X", Some(0)), Err(OverviewTabError::NoWindowMapping)));
+    }
+
+    #[test]
+    fn remove_last_window_reassigns_its_tabs_to_window_zero() {
+        let mut v = user_two_windows(); // window 0 = [0], window 1 = [1]
+        remove_overview_window(&mut v, 1).unwrap();
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "removed window's tab moved to window 0");
+        // Only one window remains.
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let Value::List(outer) = g else { panic!() };
+        assert_eq!(outer.len(), 1, "one window left");
+        assert_eq!(tab_name(&v, 1), "B", "no tab deleted");
+    }
+
+    #[test]
+    fn remove_non_last_window_is_refused() {
+        let mut v = user_two_windows();
+        assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::NotLastWindow { index: 0 })));
+    }
+
+    #[test]
+    fn remove_the_only_window_is_refused() {
+        let mut v = user_with_tabs(); // one window
+        assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::LastWindow)));
     }
 }
