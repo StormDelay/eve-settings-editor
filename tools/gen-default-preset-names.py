@@ -110,6 +110,12 @@ def main():
         else:
             unresolved.append(i)
 
+    # Refuse to clobber the committed snapshot with nothing — a mismatched/stale
+    # pickle or an unexpected table shape resolves 0 ids, which would otherwise
+    # silently blank the file.
+    if not names:
+        sys.exit(f"resolved 0/{len(ids)} ids (wrong pickle or table shape?) — refusing to overwrite {args.out}")
+
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(names, fh, ensure_ascii=False, indent=2, sort_keys=True)
