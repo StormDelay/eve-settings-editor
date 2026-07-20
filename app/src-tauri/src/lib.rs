@@ -189,6 +189,10 @@ fn preset_create(state: tauri::State<'_, AppState>, from: String, new_name: Stri
     ops::preset_create(&state, from, new_name)
 }
 #[tauri::command]
+fn preset_rename(state: tauri::State<'_, AppState>, old_name: String, new_name: String) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::preset_rename(&state, old_name, new_name)
+}
+#[tauri::command]
 fn tab_set_preset(state: tauri::State<'_, AppState>, tab_idx: i64, preset: String) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::tab_set_preset(&state, tab_idx, preset)
 }
@@ -274,7 +278,7 @@ pub fn run() {
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove,
-            preset_create, tab_set_preset,
+            preset_create, preset_rename, tab_set_preset,
             autofill_lists, set_autofill_list, clear_all_autofill,
             setup_preview, setup_apply,
             stack_unstack, stack_add, stack_reorder, stack_create

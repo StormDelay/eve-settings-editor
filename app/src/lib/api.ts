@@ -279,6 +279,8 @@ export const api = {
     invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
   presetCreate: (from: string, newName: string) =>
     invoke<OverviewColumns>("preset_create", { from, newName }),
+  presetRename: (oldName: string, newName: string) =>
+    invoke<OverviewColumns>("preset_rename", { oldName, newName }),
   tabSetPreset: (tabIdx: number, preset: string) =>
     invoke<OverviewColumns>("tab_set_preset", { tabIdx, preset }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
