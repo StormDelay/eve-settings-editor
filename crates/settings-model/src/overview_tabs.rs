@@ -176,6 +176,23 @@ pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), Overvie
     Ok(())
 }
 
+/// Point a tab at a filter preset by name (its `overview` field). Stores the
+/// name as `Bytes`, matching real files; inserts the key if the tab lacks it.
+pub fn set_tab_preset(v: &mut Value, tab_idx: i64, preset: &str) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let tabs = tabs_mut(ov);
+    let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(tab_idx))
+        .ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+    let fields = dict_inner_mut(tab).ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| is_b(k, b"overview")) {
+        *val = Value::Bytes(preset.as_bytes().to_vec());
+    } else {
+        fields.push((Value::Bytes(b"overview".to_vec()), Value::Bytes(preset.as_bytes().to_vec())));
+    }
+    Ok(())
+}
+
 /// Create a new tab by CLONING a sibling (`from_tab`, else the first tab) and
 /// overriding its name. Cloning — rather than building a minimal `{name,
 /// overview}` dict — is required: every real EVE tab carries `bracket` and
@@ -763,5 +780,33 @@ mod tests {
         assert!(!win_keys(&v, b"openWindows").iter().any(|k| k == b"overview_1"));
         assert!(win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview"),
             "primary untouched");
+    }
+
+    fn tab_preset(v: &Value, idx: i64) -> String {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+        let Value::Dict(td) = tabs else { panic!() };
+        let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
+        let Value::Dict(fields) = tab else { panic!() };
+        let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        match val { Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(), _ => panic!() }
+    }
+
+    #[test]
+    fn set_tab_preset_changes_the_field() {
+        let mut v = user_with_tabs();
+        set_tab_preset(&mut v, 0, "combat").unwrap();
+        assert_eq!(tab_preset(&v, 0), "combat");
+    }
+
+    #[test]
+    fn set_tab_preset_unknown_tab_errors() {
+        let mut v = user_with_tabs();
+        assert!(matches!(
+            set_tab_preset(&mut v, 9, "combat"),
+            Err(OverviewTabError::UnknownTab { index: 9 })
+        ));
     }
 }
