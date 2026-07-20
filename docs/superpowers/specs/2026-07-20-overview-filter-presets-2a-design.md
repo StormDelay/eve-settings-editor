@@ -39,9 +39,17 @@ In the `core_user` file, under the `overview` container:
   - `alwaysShownStates` — same domain, usually empty.
   On real files these three keys are `Shared`/`Ref` (interned across presets), so
   edits go through the standard inline-first idiom.
-- Session-state siblings — `overviewProfilePresets_notSaved`, `presetHistoryKeys`,
-  `restoreData` — hold EVE's unsaved-edit buffer, MRU history, and restore data.
-  **2a does not touch them** (see §7).
+- **`overviewProfilePresets_notSaved`** — a `(timestamp, dict)` **keyed by preset
+  name**, parallel to `overviewProfilePresets`, holding EVE's *unsaved working
+  copy* of a preset being edited in-game (same three-list shape). Measured across
+  132 unique corpus files it is **non-empty in 64% (84) of them**, empty in 29,
+  absent in 19 — so it is commonly populated, typically with one entry. Because it
+  is name-keyed, rename/delete **must mirror into it** (§4), or a stale buffer
+  under the old/deleted name can resurrect a phantom preset on next load.
+- Other siblings — `presetHistoryKeys` (imported-*pack* MRU, keyed by content
+  hash; its `overviewName` is a pack name, not a preset name) and `restoreData` (a
+  state-order snapshot of `filteredState` ints) — do **not** reference preset
+  names and are unaffected by 2a. Left untouched.
 - A **tab** references its preset by name in its `overview` field, inside
   `tabsettings_new` (modern) / `tabsettings` (legacy) — already projected as
   `OverviewTab.preset`.
@@ -98,14 +106,20 @@ needed. Reads stay format-blind via the existing `treewalk` helpers; the
   `UnknownPreset` if `from` is absent; `PresetExists` if `new_name` already
   exists.
 - `rename_preset(v, old, new) -> ()` — rename the `overviewProfilePresets` key
-  `old`→`new`, **and retarget every tab whose `overview == old` to `new`** so no
-  tab is left dangling. `UnknownPreset` if `old` absent; `PresetExists` if `new`
-  already exists; no-op-safe if `old == new`.
+  `old`→`new`, **retarget every tab whose `overview == old` to `new`**, and
+  **rename any `overviewProfilePresets_notSaved` entry keyed `old`→`new`** so the
+  unsaved buffer stays attached (§2). `UnknownPreset` if `old` absent;
+  `PresetExists` if `new` already exists; no-op-safe if `old == new`.
 - `delete_preset(v, name) -> ()` — remove the key. **Refuse when it is the last
   preset** (`LastPreset`). Otherwise **reassign every tab using it to the
   immediately-preceding preset** in sorted order (the successor when deleting the
-  first), then remove the key — deterministic, no target prompt. `UnknownPreset`
-  if absent.
+  first), remove the key, **and remove any `_notSaved` entry keyed `name`** —
+  deterministic, no target prompt. `UnknownPreset` if absent.
+
+The `_notSaved` mirroring is best-effort: the buffer is a `(timestamp, dict)` that
+may be absent or empty (do nothing then); when present, edit its inner dict the
+same way. A shared helper does the "find `_notSaved`'s inner dict if any" lookup
+for both functions.
 
 Extend `OverviewTabError` with `UnknownPreset { name }`, `PresetExists { name }`,
 `LastPreset` (one enum, one `tab_err` mapping in `ops.rs` — less wiring than a
@@ -149,11 +163,13 @@ dialog.
 - **Create = Duplicate only.** A blank preset shows nothing and can't be filled
   until 2b, so 2a offers no "New blank" — you duplicate an existing preset. 2b
   adds blank-create once contents are editable.
-- **Session-state siblings untouched.** `overviewProfilePresets_notSaved` /
-  `presetHistoryKeys` / `restoreData` may also name a preset. 2a leaves them to
-  EVE's own reconciliation. **Live-smoke check:** after a rename/delete, confirm
-  the client shows no phantom preset in its dropdown/history; if it does, add
-  targeted sibling sync then — not before.
+- **`_notSaved` mirroring, but not the other siblings.** rename/delete keep the
+  name-keyed `overviewProfilePresets_notSaved` buffer in sync (§2, §4);
+  `presetHistoryKeys` and `restoreData` don't reference preset names and are left
+  untouched. The live smoke still gates final EVE acceptance — after a
+  rename/delete, confirm no phantom/duplicate preset appears in the client's
+  dropdown — but the buffer is handled up front rather than deferred, since it is
+  populated in most real files.
 
 ## 8. Testing
 
@@ -163,6 +179,9 @@ dialog.
   delete reassigns in-use tabs to the preceding preset and removes the key; delete
   refuses the last preset (`LastPreset`); `set_tab_preset` sets the field and
   errors on an unknown tab.
+- `_notSaved` mirroring: rename with a matching `_notSaved` entry renames that
+  entry too; delete removes it; both are no-ops when `_notSaved` is absent/empty
+  (all three cases on synthetic trees).
 - Projection test: `presets` is populated and sorted; a realshape case with the
   `(timestamp, dict)` wrapper and `Shared`/`Ref` preset keys.
 - Round-trip guard: every edit path `reshare`s and re-decodes equal (standard
