@@ -49,7 +49,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "app"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "blue-marshal",
  "reqwest 0.12.28",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "blue-marshal"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "brotli"
@@ -3279,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "settings-model"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "blue-marshal",
  "serde",
