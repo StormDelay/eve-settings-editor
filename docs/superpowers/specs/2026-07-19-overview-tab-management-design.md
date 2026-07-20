@@ -1,7 +1,8 @@
 # Overview tab management (design)
 
-Date: 2026-07-19
-Status: approved design. Ready for user review, then writing-plans.
+Date: 2026-07-19 (Phase B recipe resolved 2026-07-20)
+Status: Phase A shipped (PRs #11, #12). Phase B recipe resolved from existing
+corpus data (§6) — no in-game capture needed; ready for writing-plans.
 Builds on: the overview-columns editor (`overview.rs` projection + edits,
 `OverviewView.svelte`), the window-stacks structural-edit idiom (`stacks.rs`,
 inline-first → edit → `reshare`), and the M2 layout canvas (`windows.rs`) that
@@ -116,21 +117,23 @@ Tab-only edits (Phase A — no client capture needed):
 - `move_tab_between_windows(user, tab_idx, from_idx, to_idx, pos)` — remove from
   the source inner list, insert into the target at `pos`.
 
-Overview-window edits (Phase B — depends on §6 capture):
+Overview-window edits (Phase B — recipe resolved in §6):
 
-- `add_overview_window(user, char)` — cross-file: append a new inner list to
-  `tabsByWindowInstanceID` (account-global, user file) **and** write a
-  full default window instance into the `core_char` `windows` dict (per-character
-  geometry) so the Layout canvas shows it immediately. The window key/name and
-  the list↔instance linkage come from §6. Default geometry: a sensible on-screen
-  rect at the stored reference resolution (e.g. offset from the primary overview
-  window). Only the open character gets geometry; siblings on the account inherit
-  the grouping and position their own copy later — matching EVE's per-character
-  window behavior.
-- `remove_overview_window(user, char, window_idx)` — remove the inner list and
-  its window instance; its tabs are either reassigned to another window
-  (preferred: append to window 0) or deleted with the window — decided in §6
-  once the linkage is known. Guard: refuse removing the last overview window.
+- `add_overview_window(user, name, from_tab)` — model half edits the user file
+  only: append a new inner list to `tabsByWindowInstanceID` (new index = old
+  length) and seed it by cloning `from_tab` via `create_tab` (a window must have
+  ≥1 tab). The paired `core_char` geometry write — clone the primary `overview`
+  window's value in every `windows` subdict into `overview_{new_idx}`, position
+  cascade-offset from the primary — is orchestrated by `ops.rs` (§5), which holds
+  both slots. Only the open character gets geometry; siblings on the account
+  inherit the grouping and self-heal their own copy on next login (EVE recreates a
+  missing overview window at default geometry — `format-notes.md`).
+- `remove_overview_window(user, window_idx)` — model half edits the user file:
+  reassign the window's tabs onto window 0's strip (no tab loss), then remove the
+  inner list. `ops.rs` deletes the paired `overview_{window_idx}` key from every
+  char `windows` subdict. **Last-window-only** this slice (the positional link
+  makes middle removal a re-key cascade — deferred, see §6). Guard: refuse
+  removing the last overview window.
 
 Error type `OverviewTabError` mirrors `StackError`: variants for no overview
 container, unknown tab index, unknown window index, and the last-tab /
@@ -151,28 +154,67 @@ slot(s), running `reshare`, and re-projecting the overview so the UI updates:
 The user/char slot pairing and read-only guards already exist (the column editor
 uses them); these reuse `edit_user_*` / char-slot helpers.
 
-## 6. Phase B — overview-window capture experiment
+## 6. Phase B — overview-window representation (RESOLVED from existing data)
 
 Goal: learn the exact representation of a second overview window so
 `add_overview_window` produces a byte-plausible, EVE-accepted instance.
 
-Method (mirrors window-stacks §7): a throwaway `--bin` capture/diff tool
-(inlined, sorted `windows` + overview dicts) run over two snapshots — before and
-after **tabbing out / creating a second overview window in-game** — plus a
-before/after around **creating the first extra tab** to confirm the tab-creation
-shape. Answer:
+**Resolved 2026-07-20 without a fresh in-game capture.** The gap this section
+feared (fresh files have a single overview window) does not apply: the local
+corpus already contains multi-overview-window accounts (2 and 3 windows). The
+`overviewdiff` scratch bin over the exp5 corpus pair answers all three questions
+directly:
 
-1. The `windows`-dict key/name of a second overview window (e.g. `overview2`, an
-   instance-suffixed name, or a numeric instance id) and its minimal required
-   fields for EVE to accept it.
-2. How a `tabsByWindowInstanceID` position maps to that window key (positional,
-   or an explicit instance id stored elsewhere).
-3. The default preset-name a brand-new tab / overview receives, to seed
-   `create_tab`'s fallback.
+1. **Second-window key = `overview_1`, `overview_2`, …** — plain byte-string
+   window ids in the char file's `windows` dict, the primary being `overview`
+   (already recorded in `format-notes.md` "Window ids"). Confirmed by a
+   3-overview-window char whose `windowSizesAndPositions_1` holds `overview`,
+   `overview_1`, `overview_2`.
+2. **The link is POSITIONAL.** `tabsByWindowInstanceID` carries no window id — it
+   is a list of tab-index lists, and position `i` maps to window key `overview`
+   (i=0) / `overview_{i}` (i≥1). Confirmed: the same account's
+   `tabsByWindowInstanceID` has exactly 3 inner lists ↔ its 3 `overview*`
+   geometry keys. (This is already how `project_overview` reads windows — by list
+   position.)
+3. **New-tab preset is moot.** `create_tab` clones a sibling tab (Phase A), so the
+   new tab inherits a valid `overview` preset name; no default-fallback needed.
 
-The capture tool is scratch tooling (built, used, deleted — it is not shipped),
-and its findings are recorded back into this section before Phase B is
-implemented. Phase A does not depend on it and can ship first.
+A real second overview window carries entries in the same `windows` subdicts as
+the primary — `windowSizesAndPositions_1`, `openWindows`, `minimizedWindows`,
+`lockedWindows`, `compactWindows`, `isLightBackgroundWindows` (and the other
+boolean state dicts). So the **mint recipe is: clone the primary `overview`
+window's value in every `windows` subdict into key `overview_{N}` and override its
+geometry** — the same "clone a sibling, don't fabricate" idiom Phase A uses for
+tabs, which makes the required-flag set correct by construction rather than
+guessed. (`overviewdiff` is untracked scratch tooling — built, used, not shipped.)
+
+**Design decisions (approved 2026-07-20):**
+
+- **`add_overview_window(user, name, from_tab) -> new_idx`** (user file): inline →
+  push an empty inner list to `tabsByWindowInstanceID` (new index = old length) →
+  reuse `create_tab` to clone `from_tab` into it (a new window must have ≥1 tab;
+  real second windows carry exactly one) → return the index. The paired char-file
+  geometry (clone-primary → `overview_{new_idx}`, cascade-offset position) is
+  written by `ops.rs`, which already pairs the user+char slots.
+- **`remove_overview_window(user, window_idx)`** (user file): guard `LastWindow`
+  (≤1 window) → append the window's tab indices onto window 0's strip (reassign,
+  no tab loss) → remove the inner list. `ops.rs` deletes the paired
+  `overview_{window_idx}` key from every char `windows` subdict.
+- **Remove is last-window-only for this slice.** Because the link is positional,
+  removing a middle window shifts later windows out from under their `overview_N`
+  keys, forcing a re-key cascade across the char subdicts (plus a promote-primary
+  edge case). Lazy-correct first cut: the UI offers Remove only on the last
+  overview window and the model guards it. Middle-window removal (re-key cascade,
+  or window-reorder-then-remove) is a documented deferral (small-tasks ledger).
+- **Windowless account** (no char open): the user-file grouping edit still
+  applies; the geometry write is skipped, and EVE self-heals the window at default
+  geometry on that character's next login — matching Phase A's windowless handling.
+- `reshare` both edited slots on save; the encoder's Tuple-non-sharing fix already
+  keeps cloned geometry tuples from aliasing.
+
+**Final validation** is a live smoke (add a window in-app → save → confirm EVE
+renders a real, positionable second overview window), the same gate every prior
+milestone used — not a blocker on building against the confirmed shapes.
 
 ## 7. Frontend — Overview view (`OverviewView.svelte`)
 
@@ -204,13 +246,16 @@ op, matching the stacks panel.
   first structural edit.
 - Round-trip guard: every edit path `reshare`s and the result re-decodes equal
   (the standard reshare regression check).
-- Phase B: the in-game capture is manual; its result is asserted by a realshape
-  fixture built from the captured shape.
+- Phase B: `add`/`remove` unit tests (new inner list + cloned tab lands in the new
+  window; remove reassigns tabs to window 0 and pops the list; last-window guard),
+  plus a realshape test that mints `overview_{N}` geometry by cloning the primary
+  and round-trips through `reshare`. Final EVE acceptance is a manual live smoke.
 
 ## 9. Dependencies, scope, non-goals
 
-- **Depends on:** nothing new for Phase A. Phase B depends on the §6 capture and
-  reuses the M2 `windows.rs` geometry write path.
+- **Depends on:** nothing new for Phase A. Phase B's window representation is
+  resolved from the corpus (§6); it reuses the M2 `windows.rs` geometry write path
+  and the Phase A `create_tab` clone path.
 - **Cross-file:** window add/remove writes both the user (grouping) and char
   (geometry) slots; the read-only / pairing guards already used by the column
   editor apply.
@@ -218,6 +263,6 @@ op, matching the stacks panel.
   a positionable instance), filter-preset *editing* (slice 2 — tab creation only
   copies an existing preset name), standing/state colors (slice 3), and
   import/export packs (slice 4).
-- **Deferred / open:** the new-tab default-preset fallback and the
-  window↔list linkage are pinned by §6 before Phase B lands; Phase A can ship
-  independently if we choose to stage the release.
+- **Deferred / open:** middle-overview-window removal (remove is last-window-only
+  this slice — the positional link makes it a re-key cascade; see §6 and the
+  small-tasks ledger). Phase A has already shipped independently (PRs #11, #12).
