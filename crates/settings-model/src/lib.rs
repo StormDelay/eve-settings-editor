@@ -31,8 +31,9 @@ pub use autofill::{clear_all_history, project_edit_history, set_list_entries, Au
 pub use batch::{apply_categories_to, apply_to_tree, extract_categories, full_copy_to, Category};
 pub use stacks::{add_to_stack, create_stack, reorder_stack, unstack, StackError};
 pub use overview_tabs::{
-    add_overview_window, create_tab, delete_tab, move_tab, remove_overview_window, rename_tab,
-    reorder_tabs_in_window, OverviewTabError,
+    add_overview_window, add_overview_window_geometry, create_tab, delete_tab, move_tab,
+    remove_overview_window, remove_overview_window_geometry, rename_tab, reorder_tabs_in_window,
+    OverviewTabError,
 };
 
 /// Kind name for error messages; mirrors projection::Node.kind.
