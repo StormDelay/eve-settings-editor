@@ -13,6 +13,11 @@ Workflow:
 
 ## Open
 
+- [ ] **Add a search/filter to the window list in the Layout editor.** The Layout
+  view's window list can get long (many windows on a real char); a filter box to
+  narrow it by name would help find a specific window. Mirror the autofill-search
+  pattern. _Added 2026-07-20._
+
 - [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
   because the `tabsByWindowInstanceID` position ↔ char-file `overview_N` key link is
