@@ -18,6 +18,7 @@ use settings_model::{
     apply_categories_to, extract_categories, full_copy_to, Category,
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
     create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, OverviewTabError,
+    add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
 };
 
 use crate::accounts;
@@ -699,6 +700,15 @@ pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width:
     overview_columns(state)
 }
 
+/// Map an `OverviewTabError` to a frontend `ErrDto`, carrying its `code` tag.
+fn tab_err(e: OverviewTabError) -> ErrDto {
+    let jv = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(
+        jv.get("code").and_then(|c| c.as_str()).unwrap_or("tab"),
+        e.to_string(),
+    )
+}
+
 /// Edit the user slot's overview tab structure, reshare, then re-project.
 fn edit_user_tabs<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
 where
@@ -710,13 +720,7 @@ where
         if let Fidelity::ReadOnly { reason } = &doc.fidelity {
             return Err(ErrDto::new("read_only", reason.clone()));
         }
-        edit(&mut doc.value).map_err(|e| {
-            let jv = serde_json::to_value(&e).unwrap_or_default();
-            ErrDto::new(
-                jv.get("code").and_then(|c| c.as_str()).unwrap_or("tab"),
-                e.to_string(),
-            )
-        })?;
+        edit(&mut doc.value).map_err(tab_err)?;
         doc.value = blue_marshal::reshare(&doc.value);
     }
     overview_columns(state)
@@ -743,6 +747,57 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
     // tab carries every key EVE requires (bracket/color/preset). No preset
     // lookup here — cloning by index handles it.
     edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
+}
+
+/// Add an overview window: append the grouping (+ a cloned tab) in the user file,
+/// then mint the paired `overview_N` geometry in the char file. The char write is
+/// best-effort — skipped when no character is open or it is read-only; EVE
+/// self-heals the window at default geometry on that character's next login.
+pub fn overview_window_add(state: &AppState, name: String, from_tab: Option<i64>) -> Result<OverviewColumns, ErrDto> {
+    let new_window_idx = {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        let idx = add_overview_window(&mut doc.value, &name, from_tab).map_err(tab_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+        idx
+    };
+    {
+        let mut guard = state.char.lock().unwrap();
+        if let Some(doc) = guard.as_mut() {
+            if !matches!(doc.fidelity, Fidelity::ReadOnly { .. }) {
+                add_overview_window_geometry(&mut doc.value, new_window_idx);
+                doc.value = blue_marshal::reshare(&doc.value);
+            }
+        }
+    }
+    overview_columns(state)
+}
+
+/// Remove the last overview window: drop the grouping in the user file and the
+/// paired `overview_N` geometry in the char file (best-effort, as above).
+pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<OverviewColumns, ErrDto> {
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        remove_overview_window(&mut doc.value, window_idx).map_err(tab_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    {
+        let mut guard = state.char.lock().unwrap();
+        if let Some(doc) = guard.as_mut() {
+            if !matches!(doc.fidelity, Fidelity::ReadOnly { .. }) {
+                remove_overview_window_geometry(&mut doc.value, window_idx);
+                doc.value = blue_marshal::reshare(&doc.value);
+            }
+        }
+    }
+    overview_columns(state)
 }
 
 pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
@@ -1185,6 +1240,38 @@ mod tests {
 
         let cols = tab_rename(&state, 0, "Combat".into()).unwrap();
         assert_eq!(cols.tabs[0].name, "Combat");
+    }
+
+    #[test]
+    fn overview_window_add_then_remove_roundtrips_the_projection() {
+        // A user file with one overview window [0] holding tab 0.
+        let user = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(
+                Value::Int(0),
+                Value::Dict(vec![
+                    (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+                    (Value::Bytes(b"color".to_vec()), Value::None),
+                    (Value::Str("name".into()), Value::Str("Main".into())),
+                    (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+                ]),
+            )])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]))]);
+        let path = temp_file("ovwin", &encode(&user).unwrap());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        // Add a window -> two windows, the new one seeded with a cloned tab.
+        let cols = overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        assert_eq!(cols.windows.len(), 2, "window added");
+        assert_eq!(cols.tabs.len(), 2, "new window seeded with one cloned tab");
+
+        // Remove the last window -> back to one, its tab reassigned to window 0.
+        let cols = overview_window_remove(&state, 1).unwrap();
+        assert_eq!(cols.windows.len(), 1, "window removed");
+        assert_eq!(cols.windows[0].tab_indices.len(), 2, "removed window's tab moved to window 0");
+        assert_eq!(cols.tabs.len(), 2, "no tabs deleted");
     }
 
     fn autofill_user_bytes() -> Vec<u8> {
