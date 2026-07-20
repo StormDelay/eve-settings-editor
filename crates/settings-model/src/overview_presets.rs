@@ -295,4 +295,32 @@ mod tests {
         let mut v = user_with_presets();
         assert!(matches!(delete_preset(&mut v, "nope"), Err(OverviewTabError::UnknownPreset { .. })));
     }
+
+    #[test]
+    fn rename_and_delete_no_op_when_notsaved_absent() {
+        // Like user_with_presets but WITHOUT overviewProfilePresets_notSaved.
+        let tab0 = Value::Dict(vec![(b("overview"), b("alpha"))]);
+        let tab1 = Value::Dict(vec![(b("overview"), b("beta"))]);
+        let preset = |g: i64| Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(g)]))]);
+        let overview = Value::Dict(vec![
+            (b("tabsettings_new"), Value::Dict(vec![
+                (Value::Int(0), tab0), (Value::Int(1), tab1),
+            ])),
+            (b("overviewProfilePresets"), Value::Tuple(vec![
+                Value::Int(1),
+                Value::Dict(vec![(b("alpha"), preset(1)), (b("beta"), preset(2))]),
+            ])),
+            // deliberately no overviewProfilePresets_notSaved
+        ]);
+        let mut v = Value::Dict(vec![(b("overview"), overview)]);
+        // rename succeeds; the _notSaved mirror is a no-op (buffer absent).
+        rename_preset(&mut v, "alpha", "alpha2").unwrap();
+        assert!(preset_names(&v).contains(&"alpha2".to_string()));
+        assert_eq!(tab_preset(&v, 0), "alpha2");
+        // delete succeeds; the _notSaved removal is a no-op. Presets now {alpha2, beta};
+        // deleting "beta" reassigns its tab to the preceding preset "alpha2".
+        delete_preset(&mut v, "beta").unwrap();
+        assert!(!preset_names(&v).contains(&"beta".to_string()));
+        assert_eq!(tab_preset(&v, 1), "alpha2");
+    }
 }
