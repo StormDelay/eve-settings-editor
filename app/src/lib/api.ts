@@ -189,6 +189,7 @@ export interface OverviewWindow {
 export interface OverviewColumns {
   tabs: OverviewTab[];
   windows: OverviewWindow[];
+  presets: string[];
 }
 
 export interface RememberedList {
