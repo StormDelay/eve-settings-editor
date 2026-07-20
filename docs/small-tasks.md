@@ -24,6 +24,27 @@ Workflow:
   add window-reorder first so a middle window can be moved to the end before removal.
   _Added 2026-07-20 (Phase B design)._
 
+- [ ] **Overview tab-management Phase B follow-ups (whole-branch review, all
+  ship-as-debt).** Non-blocking minors from the Phase B (add/remove overview
+  window) final review: (1) `remove_overview_window` reassigns tabs via
+  `groups.get_mut(0).and_then(list_inner_mut)` — if window 0's value is somehow a
+  non-list, the `if let Some(..)` silently drops the reassigned tabs (mirrors
+  `delete_tab` house style; theoretical, window 0 is always a list on real files) —
+  an `else` error branch would be more defensive; (2) `remove_overview_window`'s
+  `UnknownWindow` branch (`window_idx >= count` with `count >= 2`) has no test — the
+  UI only ever passes the last index so it's unreachable in practice, but a
+  one-liner would close the guard (**the reviewer's pick as the most worth doing
+  next**); (3) the `40`px cascade offset in `add_overview_window_geometry`
+  (`overview_tabs.rs`) is a bare magic number at a single call site — a named
+  `const OVERVIEW_WINDOW_OFFSET: i64 = 40` would document intent; (4)
+  `ops::overview_window_add`/`overview_window_remove` duplicate the char-slot
+  best-effort boilerplate (lock / `if let Some(doc)` / read-only check / reshare)
+  across two sites — extract an `edit_char_geometry` helper IF a third cross-file op
+  appears (borderline premature for two); (5) cosmetic — a windowless
+  `remove_overview_window` returns `LastWindow` ("must keep at least one window")
+  rather than a "no mapping" message (harmless, the UI never surfaces it).
+  _Added 2026-07-20._
+
 - [ ] **Overview tab-management follow-ups (deferred from the milestone's final
   review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
   (1) `overview_tabs::move_tab` has no `UnknownTab` guard — moving a nonexistent
