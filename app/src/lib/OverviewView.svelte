@@ -72,6 +72,30 @@
     try { data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
+  async function addWindow() {
+    if (!data || data.windows.length === 0) return;
+    const name = window.prompt("Name for the new overview window's first tab:", "Overview");
+    if (!name?.trim()) return;
+    try {
+      data = await api.overviewWindowAdd(name.trim(), tabIndex);
+      // Select the newly created tab (highest index) so the new window shows.
+      tabIndex = Math.max(...data.tabs.map((t) => t.index));
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function removeWindow() {
+    if (!data || data.windows.length <= 1 || !currentWindow) return;
+    const ok = await confirm(
+      `Remove Overview ${currentWindow.index + 1}? Its tabs move to Overview 1.`,
+      { title: "Remove overview window", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      data = await api.overviewWindowRemove(currentWindow.index);
+      tabIndex = data.tabs[0]?.index ?? null;
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
 
   // Drag-reorder of tabs within the current window (same pattern as the column list below).
   let tabDragFrom = $state<number | null>(null);
@@ -166,6 +190,12 @@
             {/if}
           {/each}
         </select>
+      {/if}
+      {#if data.windows.length >= 1}
+        <button onclick={addWindow} title="Add a new overview window">+ Window</button>
+      {/if}
+      {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
+        <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
       {/if}
     </div>
     <label>Character (for widths)
