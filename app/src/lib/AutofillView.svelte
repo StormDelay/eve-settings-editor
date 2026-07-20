@@ -3,7 +3,9 @@
   import { labelFor } from "./autofill";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
 
-  let { userOpen, onUserDirty }: { userOpen: boolean; onUserDirty: () => void } = $props();
+  let { userOpen, onUserDirty, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
+    { userOpen: boolean; onUserDirty: () => void;
+      charName?: string | null; sharedLabel?: string; onShowAccounts?: () => void } = $props();
 
   let lists = $state<RememberedList[] | null>(null);
   let error = $state<string | null>(null);
@@ -72,12 +74,20 @@
 </script>
 
 {#if !userOpen}
-  <p class="hint">Open an account file to edit its remembered text.</p>
+  {#if charName}
+    <div class="hint pair">
+      <p>Link <strong>{charName}</strong> to an account to edit shared settings.</p>
+      <button onclick={onShowAccounts}>Pair…</button>
+    </div>
+  {:else}
+    <p class="hint">Open a character to edit its account's remembered text.</p>
+  {/if}
 {:else if error}
   <p class="error">{error}</p>
 {:else if lists && lists.length === 0}
   <p class="hint">No remembered text in this account file yet.</p>
 {:else if lists}
+  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
   <div class="af-top">
     <input class="af-filter" type="text" placeholder="Filter lists…" bind:value={query} />
     <button class="danger" onclick={clearAll}>Clear all remembered text</button>
@@ -139,6 +149,15 @@
   }
   .af-list li input { flex: 1; }
   button.danger { border-color: #a33; }
+  .shared-banner {
+    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
+    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
+  }
+  .pair { display: flex; align-items: center; gap: 0.6rem; }
+  .pair button {
+    background: var(--bg-panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
+  }
   .hint, .error { color: var(--fg-dim); }
   .error { color: #e66; }
 </style>
