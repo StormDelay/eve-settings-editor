@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-20
+
+Overview tab management.
+
+- Manage overview tabs from the Overview editor: create, rename, delete,
+  reorder, and move tabs between overview windows.
+- Add and remove overview windows. A window you add appears immediately in the
+  Layout editor, ready to position — no need to launch EVE first.
+
+### Added
+- Overview tab management: create a tab (cloned from a sibling so it carries the
+  brackets and colour a real EVE tab needs), rename it, delete it, drag-reorder
+  tabs within a window, and move a tab to another overview window.
+- Add and remove overview windows. Adding one drops you into the Layout editor
+  with the new window selected so you can place it; removing the last window
+  moves its tabs back to the first window.
+
+### Changed
+- Naming a new tab or window now uses an inline field instead of a browser
+  prompt dialog.
+
+### Fixed
+- Switching between account or character files no longer briefly flashes the tree
+  view before restoring your editor tab.
+- A batch category copy skips the backup and write for a category the source
+  file has nothing in, so the preview's write count is honest.
+
 ## [0.8.0] - 2026-07-19
 
 Window stacks, and resize from any corner.
