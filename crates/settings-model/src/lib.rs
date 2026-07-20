@@ -34,7 +34,7 @@ pub use stacks::{add_to_stack, create_stack, reorder_stack, unstack, StackError}
 pub use overview_tabs::{
     add_overview_window, add_overview_window_geometry, create_tab, delete_tab, move_tab,
     remove_overview_window, remove_overview_window_geometry, rename_tab, reorder_tabs_in_window,
-    OverviewTabError,
+    set_tab_preset, OverviewTabError,
 };
 pub use overview_presets::create_preset;
 
