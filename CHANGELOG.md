@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-20
+
+Character-centric editing.
+
+- The tool is now organised around characters, not files. The sidebar lists your
+  characters (with their account shown alongside), and opening one loads its
+  account file automatically — so you edit account-wide settings through a
+  character instead of picking account files yourself.
+
+### Added
+- Account-scoped editors (Autofill and Overview columns) show a "shared account
+  settings" note naming the other characters on the same account that an edit
+  also affects.
+- An unpaired character shows a prompt to link it to an account; once linked, the
+  account editors appear without reopening the character.
+- The raw Tree view has a Character-file / Account-file switch when an account
+  file is loaded.
+
+### Changed
+- The sidebar lists characters only; account files are no longer separate entry
+  points (open one directly with "Open file…" if you need to).
+- The editor no longer has a Character/Account toggle — the tab you are in
+  (Layout, Overview, Autofill, or Tree) determines which file you are editing.
+
 ## [0.9.0] - 2026-07-20
 
 Overview tab management.
