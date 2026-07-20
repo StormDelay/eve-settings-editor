@@ -43,12 +43,27 @@ In the `core_user` file, under the `overview` container:
   `restoreData` — hold EVE's unsaved-edit buffer, MRU history, and restore data.
   **2a does not touch them** (see §7).
 - A **tab** references its preset by name in its `overview` field, inside
-  `tabsettings_new` — already projected as `OverviewTab.preset`.
+  `tabsettings_new` (modern) / `tabsettings` (legacy) — already projected as
+  `OverviewTab.preset`.
+
+**Every tab always references exactly one real preset** (verified across both the
+modern and legacy shapes, and across sparse tabs that omit most other keys). A
+tab's entire "what to display" lives in that named preset; there is **no inline,
+on-the-tab filter and no preset-less tab**. The per-tab `showAll` / `showNone` /
+`showSpecials` / `color` fields are display *modifiers*, not the filter. So a
+projected `preset == ""` (field absent / non-string) is a defensive case that
+does not occur on real files.
+
+The preset name is **interned as a shared string** used by BOTH the preset's dict
+key and the tab's `overview` value. The inline-first edit pass drops that sharing
+into independent copies, which is exactly why `rename_preset` / `delete_preset`
+must update the tab fields explicitly (§4), not rely on the sharing.
 
 Slice 2a treats a preset's three lists as an **opaque blob** it copies wholesale
-(duplicate) but never inspects — no group/state knowledge is needed until 2b. No
-character/account ids or real preset names appear in this document, per the repo
-data rule.
+(duplicate) but never inspects — no group/state knowledge is needed until 2b.
+Bracket presets (a separate per-tab `bracket` reference into their own store) are
+out of scope. No character/account ids or real preset names appear in this
+document, per the repo data rule.
 
 ## 3. Backend — read projection (`overview.rs`)
 
@@ -58,11 +73,12 @@ Add one field to `OverviewColumns`:
   (case-insensitive)**. Empty when the container or key is absent.
 
 This is all 2a needs: the per-tab picker offers these names, and the management
-UI lists them. Each tab's current preset is already in `OverviewTab.preset`. The
-picker's option set is `presets ∪ {tab.preset}` so a tab pointing at a name not
-in the dict (a stale reference, or an empty `""` = account default) still shows
-and isn't silently lost. Reads stay format-blind via the existing `treewalk`
-helpers; the `(timestamp, dict)` wrapper is unwrapped as elsewhere.
+UI lists them. Each tab's current preset is already in `OverviewTab.preset` and,
+per §2, is always one of `presets` on a real file. Defensively the picker's
+option set is `presets ∪ {tab.preset}`, so even a hypothetical stale/empty
+reference still shows and isn't silently lost — but no special "(default)" UI is
+needed. Reads stay format-blind via the existing `treewalk` helpers; the
+`(timestamp, dict)` wrapper is unwrapped as elsewhere.
 
 ## 4. Backend — authoring
 
@@ -113,16 +129,16 @@ All user-file only:
 Additions around the existing controls:
 
 - **Per-tab preset picker** — a `<select>` bound to the selected tab's preset,
-  options = the sorted `presets` (plus the current value if not among them, and a
-  `(default)` entry when the tab's preset is empty). Changing it calls
-  `tabSetPreset(tabIndex, name)` and `onUserDirty()`.
+  options = the sorted `presets` (defensively including the current value if it is
+  somehow not among them, per §3). Changing it calls `tabSetPreset(tabIndex,
+  name)` and `onUserDirty()`.
 - **Preset management** — a small control cluster: **Duplicate** (clones the
-  selected tab's current preset, prompting for a new name via the existing inline
-  `pending` name-entry flow — extend its union with `duplicatePreset` /
-  `renamePreset` kinds), **Rename**, and **Delete** (a `confirm` dialog that names
-  the preceding preset the in-use tabs will move to, e.g. *"Delete 'PvP'? 3 tabs
-  will move to 'Mining'."*; the UI computes that neighbour from the same sorted
-  `presets` list the backend uses).
+  selected tab's current preset — always a valid source, per §2 — prompting for a
+  new name via the existing inline `pending` name-entry flow, extended with
+  `duplicatePreset` / `renamePreset` kinds), **Rename**, and **Delete** (a
+  `confirm` dialog that names the preceding preset the in-use tabs will move to,
+  e.g. *"Delete 'PvP'? 3 tabs will move to 'Mining'."*; the UI computes that
+  neighbour from the same sorted `presets` list the backend uses).
 
 Native `<select>`/`<input>` get explicit dark styling (the WebView2 gotcha, per
 the existing block). Failed edits surface via the existing `message()` error
