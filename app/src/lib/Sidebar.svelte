@@ -2,7 +2,8 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, errMessage, type Profile } from "./api";
   import { resolveNames, refreshNames } from "./names.svelte";
-  import { loadRoster } from "./accounts.svelte";
+  import { loadRoster, aliasFor, accountsStore } from "./accounts.svelte";
+  import { accountOf } from "./overview";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
   import { primaryProfileDir, profileLabels } from "./profiles";
 
@@ -109,7 +110,7 @@
     <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
       >«</button>
   </div>
-  <label class="toggle" title="Show only EVE's own core_char_<id>.dat / core_user_<id>.dat files">
+  <label class="toggle" title="Show only EVE's own core_char_<id>.dat files">
     <input type="checkbox" bind:checked={hideNonStandard} />
     Hide non-standard files
   </label>
@@ -119,37 +120,30 @@
     <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
   {/if}
   {#each rows as { p, label, primary } (p.dir)}
-    {@const visible = p.files.filter((f) => !hideNonStandard || isStandardName(f.file_name))}
-    {@const groups = [
-      { title: "Characters", files: visible.filter((f) => f.kind === "char").sort(byName) },
-      { title: "Accounts", files: visible.filter((f) => f.kind === "user").sort(byName) },
-      { title: "Other", files: visible.filter((f) => f.kind === "other").sort(byName) },
-    ]}
-    <details open={primary}>
-      <summary title={p.dir}>
-        {label}
-        {#if primary}<span class="meta">most recent</span>{/if}
-      </summary>
-      <!-- Group by file kind so an account alias and a character with the same
-           displayed name are never ambiguous. -->
-      {#each groups as g (g.title)}
-        {#if g.files.length > 0}
-          <details class="group-fold" open>
-            <summary class="group">{g.title}</summary>
-            <ul>
-              {#each g.files as f (f.path)}
-                <li>
-                  <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
-                    {resolvedName(f.kind, f.id) ?? f.file_name}
-                    <span class="meta">{Math.round(f.size / 1024)} KB</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          </details>
-        {/if}
-      {/each}
-    </details>
+    {@const chars = p.files
+      .filter((f) => f.kind === "char" && (!hideNonStandard || isStandardName(f.file_name)))
+      .sort(byName)}
+    {#if chars.length > 0}
+      <details open={primary}>
+        <summary title={p.dir}>
+          {label}
+          {#if primary}<span class="meta">most recent</span>{/if}
+        </summary>
+        <ul>
+          {#each chars as f (f.path)}
+            {@const userId = f.id === null ? null : accountOf(f.id, accountsStore.roster)}
+            {@const alias = userId === null ? null : aliasFor(userId)}
+            <li>
+              <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+                {resolvedName(f.kind, f.id) ?? f.file_name}
+                {#if alias}<span class="acct">· {alias}</span>{/if}
+                <span class="meta">{Math.round(f.size / 1024)} KB</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
   {/each}
 </aside>
 
@@ -166,15 +160,7 @@
   .toggle input {
     cursor: pointer;
   }
-  .group {
-    margin: 0.4rem 0 0.1rem;
-    font-size: 0.72em;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--fg-dim);
-    opacity: 0.85;
-    cursor: pointer;
-  }
+  .acct { color: var(--fg-dim); font-size: 0.85em; margin: 0 0.3em; }
   /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
      takes the remaining width and wraps within it. */
   .sidebar-top {
