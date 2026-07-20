@@ -13,6 +13,28 @@ Workflow:
 
 ## Open
 
+- [ ] **Overview filter-presets slice 2a follow-ups (whole-branch review, all
+  ship-as-debt).** Non-blocking minors from the slice-2a (preset management +
+  tab→preset mapping) final review: (1) `overview.rs` `preset_key_name`'s
+  `Str`/`StrUcs2` branches are dead on real files (preset keys are always `Bytes`)
+  — plan-mandated defensive parity, mirrors the existing `str_field_r`; (2)
+  `overview_presets.rs` `create_preset` checks `PresetExists` before
+  `UnknownPreset`, so a typo'd source + already-taken target reports the wrong one
+  — inert because the UI feeds `from` from a live preset list; (3)
+  `set_tab_preset`'s insert-when-`overview`-absent branch is untested (real tabs
+  always carry the field); (4) `rename_preset` writes an identical-bytes value
+  before the `old == new` early return, and there's no dedicated `old == new`
+  test (the frontend guards `name === old` so it's never reached); (5) the
+  `overview_presets` `user_with_presets` fixture uses `alpha`/`beta`, which don't
+  exercise the `to_lowercase` tie-break at `delete_preset`'s neighbour call site
+  (parity with the projection sort holds by construction; Task-1 covers the
+  case-insensitive sort); (6) `overview_presets_realshape.rs` uses `Value::Int(1)`
+  as the `(ts, dict)` timestamp vs the sibling test's `Long` helper — functionally
+  irrelevant (the wrapper is unwrapped by position). Also noted (no action):
+  `overview.rs` `preset_key_name` and `overview_presets.rs` `as_str` are
+  byte-identical key→String converters in the read vs authoring modules —
+  deliberately separate, not worth coupling. _Added 2026-07-20._
+
 - [ ] **Character-centric entry-point follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the character-centric rework final
   review: (1) the reconcile `$effect` in `+page.svelte` and `openFile`'s explicit
