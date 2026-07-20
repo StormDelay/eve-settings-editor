@@ -336,6 +336,69 @@ pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), Ov
     Ok(())
 }
 
+/// Char-file: mint the window `overview_{window_idx}` by cloning the primary
+/// `overview` window's value in every `windows` subdict (geometry + all flag
+/// dicts) and offsetting the new window's on-screen position so it doesn't sit
+/// exactly on the primary. Cloning the primary makes the required-flag set
+/// correct by construction. `window_idx` must be ≥1 (0 IS the primary key). No-op
+/// when there is no `windows` dict, or no primary entry in a given subdict;
+/// idempotent (skips a subdict that already has the key).
+pub fn add_overview_window_geometry(v: &mut Value, window_idx: usize) {
+    if window_idx == 0 {
+        return;
+    }
+    inline_all(v);
+    let key = format!("overview_{window_idx}");
+    let Value::Dict(root) = v else { return };
+    let Some((_, wins)) = root.iter_mut().find(|(k, _)| is_b(k, b"windows")) else { return };
+    let Value::Dict(subdicts) = wins else { return };
+    for (subkey, subval) in subdicts.iter_mut() {
+        let is_geom = is_b(subkey, b"windowSizesAndPositions_1");
+        let Some(entries) = dict_inner_mut(subval) else { continue };
+        if entries.iter().any(|(k, _)| is_b(k, key.as_bytes())) {
+            continue;
+        }
+        let Some(prim) = entries.iter()
+            .find(|(k, _)| is_b(k, b"overview"))
+            .map(|(_, val)| val.clone()) else { continue };
+        let mut newval = prim;
+        if is_geom {
+            if let Value::Tuple(items) = &mut newval {
+                if let Some(x) = items.get_mut(0) { offset_coord(x, 40); }
+                if let Some(y) = items.get_mut(1) { offset_coord(y, 40); }
+            }
+        }
+        entries.push((Value::Bytes(key.as_bytes().to_vec()), newval));
+    }
+}
+
+/// Char-file inverse of `add_overview_window_geometry`: drop `overview_{window_idx}`
+/// from every `windows` subdict. No-op for `window_idx == 0` or when absent.
+pub fn remove_overview_window_geometry(v: &mut Value, window_idx: usize) {
+    if window_idx == 0 {
+        return;
+    }
+    inline_all(v);
+    let key = format!("overview_{window_idx}");
+    let Value::Dict(root) = v else { return };
+    let Some((_, wins)) = root.iter_mut().find(|(k, _)| is_b(k, b"windows")) else { return };
+    let Value::Dict(subdicts) = wins else { return };
+    for (_, subval) in subdicts.iter_mut() {
+        if let Some(entries) = dict_inner_mut(subval) {
+            entries.retain(|(k, _)| !is_b(k, key.as_bytes()));
+        }
+    }
+}
+
+/// Bump an integer geometry coordinate by `delta`. Coords are `Int` on real
+/// files; any other variant is left unchanged (the window overlaps the primary
+/// and the user drags it — acceptable, never wrong).
+fn offset_coord(v: &mut Value, delta: i64) {
+    if let Value::Int(n) = v {
+        *n += delta;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +669,90 @@ mod tests {
     fn remove_the_only_window_is_refused() {
         let mut v = user_with_tabs(); // one window
         assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::LastWindow)));
+    }
+
+    /// A char tree: `windows` (plain dict) -> two `(ts,dict)` subdicts, each with
+    /// a primary `overview` entry (geometry tuple / bool flag), mirroring real files.
+    fn char_with_primary_overview() -> Value {
+        let geom = |x: i64| Value::Tuple(vec![
+            Value::Int(x), Value::Int(100), Value::Int(400), Value::Int(300),
+            Value::Int(2560), Value::Int(1440),
+        ]);
+        let sub = |entries: Vec<(Value, Value)>|
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(entries)]);
+        let windows = Value::Dict(vec![
+            (Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+             sub(vec![(Value::Bytes(b"overview".to_vec()), geom(1000))])),
+            (Value::Bytes(b"openWindows".to_vec()),
+             sub(vec![(Value::Bytes(b"overview".to_vec()), Value::Bool(true))])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), windows)])
+    }
+
+    /// The window-id keys present in one `windows` subdict (tree already plain).
+    fn win_keys(v: &Value, subdict: &[u8]) -> Vec<Vec<u8>> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
+        let Value::Dict(subs) = wins else { panic!() };
+        let (_, sv) = subs.iter().find(|(k, _)| is_b(k, subdict)).unwrap();
+        let d = dict_inner_ref(sv).unwrap();
+        d.iter().filter_map(|(k, _)| if let Value::Bytes(b) = k { Some(b.clone()) } else { None }).collect()
+    }
+
+    /// The (x, y) of a window's geometry tuple in `windowSizesAndPositions_1`.
+    fn geom_xy(v: &Value, key: &[u8]) -> (i64, i64) {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
+        let Value::Dict(subs) = wins else { panic!() };
+        let (_, sv) = subs.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")).unwrap();
+        let d = dict_inner_ref(sv).unwrap();
+        let (_, g) = d.iter().find(|(k, _)| is_b(k, key)).unwrap();
+        let Value::Tuple(items) = g else { panic!() };
+        let Value::Int(x) = items[0] else { panic!() };
+        let Value::Int(y) = items[1] else { panic!() };
+        (x, y)
+    }
+
+    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above.
+    fn dict_inner_ref(v: &Value) -> Option<&Entries> {
+        match v {
+            Value::Dict(d) => Some(d),
+            Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn add_geometry_clones_primary_into_overview_n_with_offset() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        assert!(win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview_1"),
+            "overview_1 minted in the geometry subdict");
+        assert!(win_keys(&v, b"openWindows").iter().any(|k| k == b"overview_1"),
+            "overview_1 minted in the flags subdict too");
+        assert_eq!(geom_xy(&v, b"overview"), (1000, 100), "primary unchanged");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1040, 140), "clone offset by (40, 40)");
+    }
+
+    #[test]
+    fn add_geometry_is_idempotent() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        add_overview_window_geometry(&mut v, 1);
+        let count = win_keys(&v, b"windowSizesAndPositions_1")
+            .iter().filter(|k| k.as_slice() == b"overview_1").count();
+        assert_eq!(count, 1, "not double-added");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1040, 140), "not offset twice");
+    }
+
+    #[test]
+    fn remove_geometry_drops_overview_n_everywhere() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        remove_overview_window_geometry(&mut v, 1);
+        assert!(!win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview_1"));
+        assert!(!win_keys(&v, b"openWindows").iter().any(|k| k == b"overview_1"));
+        assert!(win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview"),
+            "primary untouched");
     }
 }
