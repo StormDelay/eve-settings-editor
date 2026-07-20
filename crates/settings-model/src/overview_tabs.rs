@@ -23,6 +23,10 @@ pub enum OverviewTabError {
     LastTab,
     /// Refused: would remove the last overview window.
     LastWindow,
+    /// Refused: this overview has no window mapping to add onto (windowless account).
+    NoWindowMapping,
+    /// Refused: only the last overview window can be removed for now.
+    NotLastWindow { index: usize },
 }
 
 impl std::fmt::Display for OverviewTabError {
@@ -33,6 +37,8 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::UnknownWindow { index } => write!(f, "Overview window {index} does not exist."),
             OverviewTabError::LastTab => write!(f, "An overview must keep at least one tab."),
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
+            OverviewTabError::NoWindowMapping => write!(f, "This overview has no window layout to add to."),
+            OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
         }
     }
 }
@@ -140,6 +146,16 @@ fn key_is_name(k: &Value) -> bool {
     }
 }
 
+/// How many overview windows the account's `tabsByWindowInstanceID` maps tabs to
+/// (0 when the mapping is absent — a windowless account). Reading it never
+/// fabricates the mapping.
+fn window_count(ov: &Entries) -> usize {
+    ov.iter()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner(wv))
+        .map_or(0, |g| g.len())
+}
+
 pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
@@ -167,10 +183,7 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
     // overview windows by default. We must NOT create or touch the mapping in
     // that case — the per-window distribution is char-side state we can't
     // reconstruct here, and a partial/wrong mapping hides the whole overview.
-    let window_count = ov.iter()
-        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
-        .and_then(|(_, wv)| list_inner(wv))
-        .map_or(0, |g| g.len());
+    let window_count = window_count(ov);
     if window_count > 0 && window_idx >= window_count {
         return Err(OverviewTabError::UnknownWindow { index: window_idx });
     }
@@ -267,6 +280,123 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     let at = pos.min(dst.len());
     dst.insert(at, Value::Int(tab_idx));
     Ok(())
+}
+
+/// Add a new overview window (user-file grouping half). Appends an empty inner
+/// list to `tabsByWindowInstanceID` and seeds it with one cloned tab (a window
+/// must have ≥1 tab). Refuses on a windowless account: adding positionally there
+/// would fabricate a partial mapping that hides the account's existing tabs (see
+/// `create_tab`). Returns the new window's index, always ≥1 here (a windowless
+/// account is refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
+pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> Result<usize, OverviewTabError> {
+    inline_all(v);
+    let new_window_idx = {
+        let ov = overview_mut(v)?;
+        let window_count = window_count(ov);
+        if window_count == 0 {
+            return Err(OverviewTabError::NoWindowMapping);
+        }
+        let groups = groups_mut(ov);
+        groups.push(Value::List(Vec::new()));
+        groups.len() - 1
+    };
+    // Seed the new (empty) window with one cloned tab. create_tab re-inlines (a
+    // no-op on the already-plain tree) and appends the tab to window `new_window_idx`.
+    create_tab(v, new_window_idx, name, from_tab)?;
+    Ok(new_window_idx)
+}
+
+/// Remove an overview window (user-file grouping half). Reassigns the window's
+/// tabs onto window 0 (no tab loss), then drops the inner list. Last-window-only:
+/// the positional link to the char-file `overview_N` keys makes middle removal a
+/// re-key cascade (deferred).
+pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    // Read the mapping WITHOUT fabricating it (a windowless account has none).
+    let groups = ov.iter_mut()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner_mut(wv))
+        .ok_or(OverviewTabError::LastWindow)?;
+    let count = groups.len();
+    if count <= 1 {
+        return Err(OverviewTabError::LastWindow);
+    }
+    if window_idx >= count {
+        return Err(OverviewTabError::UnknownWindow { index: window_idx });
+    }
+    if window_idx != count - 1 {
+        return Err(OverviewTabError::NotLastWindow { index: window_idx });
+    }
+    let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
+    if let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) {
+        w0.extend(removed);
+    }
+    groups.remove(window_idx);
+    Ok(())
+}
+
+/// Char-file: mint the window `overview_{window_idx}` by cloning the primary
+/// `overview` window's value in every `windows` subdict (geometry + all flag
+/// dicts) and offsetting the new window's on-screen position so it doesn't sit
+/// exactly on the primary. Cloning the primary makes the required-flag set
+/// correct by construction. `window_idx` must be ≥1 (0 IS the primary key). No-op
+/// when there is no `windows` dict, or no primary entry in a given subdict;
+/// idempotent (skips a subdict that already has the key).
+pub fn add_overview_window_geometry(v: &mut Value, window_idx: usize) {
+    if window_idx == 0 {
+        return;
+    }
+    inline_all(v);
+    let key = format!("overview_{window_idx}");
+    let Value::Dict(root) = v else { return };
+    let Some((_, wins)) = root.iter_mut().find(|(k, _)| is_b(k, b"windows")) else { return };
+    let Value::Dict(subdicts) = wins else { return };
+    for (subkey, subval) in subdicts.iter_mut() {
+        let is_geom = is_b(subkey, b"windowSizesAndPositions_1");
+        let Some(entries) = dict_inner_mut(subval) else { continue };
+        if entries.iter().any(|(k, _)| is_b(k, key.as_bytes())) {
+            continue;
+        }
+        let Some(prim) = entries.iter()
+            .find(|(k, _)| is_b(k, b"overview"))
+            .map(|(_, val)| val.clone()) else { continue };
+        let mut newval = prim;
+        if is_geom {
+            if let Value::Tuple(items) = &mut newval {
+                if let Some(x) = items.get_mut(0) { offset_coord(x, 40); }
+                if let Some(y) = items.get_mut(1) { offset_coord(y, 40); }
+            }
+        }
+        entries.push((Value::Bytes(key.as_bytes().to_vec()), newval));
+    }
+}
+
+/// Char-file inverse of `add_overview_window_geometry`: drop `overview_{window_idx}`
+/// from every `windows` subdict. No-op for `window_idx == 0` or when absent.
+pub fn remove_overview_window_geometry(v: &mut Value, window_idx: usize) {
+    if window_idx == 0 {
+        return;
+    }
+    inline_all(v);
+    let key = format!("overview_{window_idx}");
+    let Value::Dict(root) = v else { return };
+    let Some((_, wins)) = root.iter_mut().find(|(k, _)| is_b(k, b"windows")) else { return };
+    let Value::Dict(subdicts) = wins else { return };
+    for (_, subval) in subdicts.iter_mut() {
+        if let Some(entries) = dict_inner_mut(subval) {
+            entries.retain(|(k, _)| !is_b(k, key.as_bytes()));
+        }
+    }
+}
+
+/// Bump an integer geometry coordinate by `delta`. Coords are `Int` on real
+/// files; any other variant is left unchanged (the window overlaps the primary
+/// and the user drags it — acceptable, never wrong).
+fn offset_coord(v: &mut Value, delta: i64) {
+    if let Value::Int(n) = v {
+        *n += delta;
+    }
 }
 
 #[cfg(test)]
@@ -481,5 +611,148 @@ mod tests {
         let mut v = user_two_windows();
         assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
         assert_eq!(window_indices(&v, 0), vec![0], "source strip unchanged when destination is invalid");
+    }
+
+    #[test]
+    fn add_window_appends_a_group_with_a_cloned_tab() {
+        let mut v = user_with_tabs(); // one window [0]
+        let widx = add_overview_window(&mut v, "Scan", Some(0)).unwrap();
+        assert_eq!(widx, 1, "new window appended at index 1");
+        let new_tabs = window_indices(&v, 1);
+        assert_eq!(new_tabs.len(), 1, "new window seeded with exactly one tab");
+        assert_eq!(tab_name(&v, new_tabs[0]), "Scan");
+        // Seeded via create_tab -> carries bracket/color like every valid EVE tab.
+        assert!(tab_has_key(&v, new_tabs[0], b"bracket"), "seeded tab clones bracket");
+        assert!(tab_has_key(&v, new_tabs[0], b"color"), "seeded tab clones color");
+        assert_eq!(window_indices(&v, 0), vec![0], "window 0 untouched");
+    }
+
+    #[test]
+    fn add_window_on_a_windowless_account_is_refused() {
+        // Overview with tabs but no tabsByWindowInstanceID: positional add can't
+        // fabricate a base mapping without hiding the account's existing tabs.
+        let tab = Value::Dict(vec![
+            (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+            (Value::Bytes(b"color".to_vec()), Value::None),
+            (Value::Str("name".into()), Value::Str("Main".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        assert!(matches!(add_overview_window(&mut v, "X", Some(0)), Err(OverviewTabError::NoWindowMapping)));
+    }
+
+    #[test]
+    fn remove_last_window_reassigns_its_tabs_to_window_zero() {
+        let mut v = user_two_windows(); // window 0 = [0], window 1 = [1]
+        remove_overview_window(&mut v, 1).unwrap();
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "removed window's tab moved to window 0");
+        // Only one window remains.
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let Value::List(outer) = g else { panic!() };
+        assert_eq!(outer.len(), 1, "one window left");
+        assert_eq!(tab_name(&v, 1), "B", "no tab deleted");
+    }
+
+    #[test]
+    fn remove_non_last_window_is_refused() {
+        let mut v = user_two_windows();
+        assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::NotLastWindow { index: 0 })));
+    }
+
+    #[test]
+    fn remove_the_only_window_is_refused() {
+        let mut v = user_with_tabs(); // one window
+        assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::LastWindow)));
+    }
+
+    /// A char tree: `windows` (plain dict) -> two `(ts,dict)` subdicts, each with
+    /// a primary `overview` entry (geometry tuple / bool flag), mirroring real files.
+    fn char_with_primary_overview() -> Value {
+        let geom = |x: i64| Value::Tuple(vec![
+            Value::Int(x), Value::Int(100), Value::Int(400), Value::Int(300),
+            Value::Int(2560), Value::Int(1440),
+        ]);
+        let sub = |entries: Vec<(Value, Value)>|
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(entries)]);
+        let windows = Value::Dict(vec![
+            (Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+             sub(vec![(Value::Bytes(b"overview".to_vec()), geom(1000))])),
+            (Value::Bytes(b"openWindows".to_vec()),
+             sub(vec![(Value::Bytes(b"overview".to_vec()), Value::Bool(true))])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), windows)])
+    }
+
+    /// The window-id keys present in one `windows` subdict (tree already plain).
+    fn win_keys(v: &Value, subdict: &[u8]) -> Vec<Vec<u8>> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
+        let Value::Dict(subs) = wins else { panic!() };
+        let (_, sv) = subs.iter().find(|(k, _)| is_b(k, subdict)).unwrap();
+        let d = dict_inner_ref(sv).unwrap();
+        d.iter().filter_map(|(k, _)| if let Value::Bytes(b) = k { Some(b.clone()) } else { None }).collect()
+    }
+
+    /// The (x, y) of a window's geometry tuple in `windowSizesAndPositions_1`.
+    fn geom_xy(v: &Value, key: &[u8]) -> (i64, i64) {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
+        let Value::Dict(subs) = wins else { panic!() };
+        let (_, sv) = subs.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")).unwrap();
+        let d = dict_inner_ref(sv).unwrap();
+        let (_, g) = d.iter().find(|(k, _)| is_b(k, key)).unwrap();
+        let Value::Tuple(items) = g else { panic!() };
+        let Value::Int(x) = items[0] else { panic!() };
+        let Value::Int(y) = items[1] else { panic!() };
+        (x, y)
+    }
+
+    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above.
+    fn dict_inner_ref(v: &Value) -> Option<&Entries> {
+        match v {
+            Value::Dict(d) => Some(d),
+            Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn add_geometry_clones_primary_into_overview_n_with_offset() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        assert!(win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview_1"),
+            "overview_1 minted in the geometry subdict");
+        assert!(win_keys(&v, b"openWindows").iter().any(|k| k == b"overview_1"),
+            "overview_1 minted in the flags subdict too");
+        assert_eq!(geom_xy(&v, b"overview"), (1000, 100), "primary unchanged");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1040, 140), "clone offset by (40, 40)");
+    }
+
+    #[test]
+    fn add_geometry_is_idempotent() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        add_overview_window_geometry(&mut v, 1);
+        let count = win_keys(&v, b"windowSizesAndPositions_1")
+            .iter().filter(|k| k.as_slice() == b"overview_1").count();
+        assert_eq!(count, 1, "not double-added");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1040, 140), "not offset twice");
+    }
+
+    #[test]
+    fn remove_geometry_drops_overview_n_everywhere() {
+        let mut v = char_with_primary_overview();
+        add_overview_window_geometry(&mut v, 1);
+        remove_overview_window_geometry(&mut v, 1);
+        assert!(!win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview_1"));
+        assert!(!win_keys(&v, b"openWindows").iter().any(|k| k == b"overview_1"));
+        assert!(win_keys(&v, b"windowSizesAndPositions_1").iter().any(|k| k == b"overview"),
+            "primary untouched");
     }
 }

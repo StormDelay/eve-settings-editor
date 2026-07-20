@@ -272,6 +272,10 @@ export const api = {
     invoke<OverviewColumns>("tab_reorder", { windowIdx, order }),
   tabMove: (tabIdx: number, fromWindow: number, toWindow: number, pos: number) =>
     invoke<OverviewColumns>("tab_move", { tabIdx, fromWindow, toWindow, pos }),
+  overviewWindowAdd: (name: string, fromTab: number | null) =>
+    invoke<OverviewColumns>("overview_window_add", { name, fromTab }),
+  overviewWindowRemove: (windowIdx: number) =>
+    invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
