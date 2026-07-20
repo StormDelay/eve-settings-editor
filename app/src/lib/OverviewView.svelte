@@ -3,8 +3,8 @@
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
-    { userOpen: boolean; charId: number | null; characters: number[]; refreshToken: number;
+  let { userOpen, userId, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
+    { userOpen: boolean; userId: number | null; charId: number | null; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
       onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
 
@@ -27,7 +27,7 @@
   // Reload when the slot's file changes (refreshToken bumps on every open/save),
   // not only when userOpen/charId flip — switching between two account files
   // leaves both unchanged and would otherwise show the previous file's overview.
-  $effect(() => { void userOpen; void charId; void refreshToken; reload(); });
+  $effect(() => { void userOpen; void userId; void charId; void refreshToken; reload(); });
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
   // The window strip whose tab_indices contains the selected tab (null for an
