@@ -115,7 +115,10 @@
         data = await api.presetCreate(p.from, name);
         onUserDirty();
       } else if (p.kind === "renamePreset") {
-        if (name === p.old) return;
+        // Compare against the shown label: the rename box is prefilled with
+        // labelFor(old), so an unedited submit on a DefaultPreset_<id> (label
+        // "Carriers") must be a no-op, not a rename of the raw key to "Carriers".
+        if (name === labelFor(p.old)) return;
         data = await api.presetRename(p.old, name);
         onUserDirty();
       }
