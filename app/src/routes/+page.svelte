@@ -18,6 +18,7 @@
     associatedCharacters,
     userSlotFor,
     charSlotFor,
+    sharedWith,
   } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -34,7 +35,22 @@
     user: null,
   });
   const dirtySlots = $state<{ char: boolean; user: boolean }>({ char: false, user: false });
-  let active = $state<Slot>("char");
+  // Which file the raw Tree view shows; a Tree-local switch flips it to the
+  // account file when one is loaded. Reset on every open.
+  let treeFile = $state<Slot>("char");
+  type View = "tree" | "layout" | "overview" | "autofill";
+  let view = $state<View>("tree");
+  // The active document is a consequence of the current view — NOT a manual
+  // toggle: Autofill edits the account file, the Tree view honors its file
+  // switch, everything else (Layout, Overview, search, backups) follows the
+  // character.
+  const active = $derived<Slot>(
+    view === "autofill" && slots.user?.status === "opened"
+      ? "user"
+      : view === "tree" && treeFile === "user" && slots.user?.status === "opened"
+        ? "user"
+        : "char",
+  );
   const current = $derived(slots[active]);
 
   function slotSaveable(o: OpenOutcome | null, dirty: boolean): boolean {
@@ -55,8 +71,6 @@
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
-  type View = "tree" | "layout" | "overview" | "autofill";
-  let view: View = $state("tree");
   let layoutAvailable = $state(false);
   // Whether a view has anything to show for the currently open file(s) — the same
   // conditions that gate each view's tab button below. Used to keep the user on
@@ -65,7 +79,7 @@
     v === "tree" ||
     (v === "layout" && layoutAvailable) ||
     (v === "overview" && (openCharId !== null || slots.user?.status === "opened")) ||
-    (v === "autofill" && slots.user?.status === "opened");
+    (v === "autofill" && (openCharId !== null || slots.user?.status === "opened"));
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
@@ -121,6 +135,26 @@
   // Resolve names so the width selector shows character names, not bare ids.
   $effect(() => { if (openAccountCharacters.length) void resolveNames(openAccountCharacters); });
 
+  // The account's other characters an account-scoped edit also touches, and the
+  // banner text shown above Autofill / Overview (spec §6).
+  const sharedNames = $derived(
+    sharedWith(openUserId, openCharId, accountsStore.roster, (id) => names[id]?.name ?? String(id)),
+  );
+  const sharedLabel = $derived(
+    "Shared account settings" +
+      (sharedNames.length ? ` — also applies to ${sharedNames.join(", ")}` : ""),
+  );
+
+  // If the open character becomes paired while its account slot is empty — e.g.
+  // the user just paired it in the Accounts view — load the account file so the
+  // account-scoped editors light up without a manual re-open (spec §5). Guarded
+  // on an empty user slot, so it never re-loads an already-open account.
+  $effect(() => {
+    const o = slots.char;
+    void accountsStore.roster; // track roster changes
+    if (o?.status === "opened" && slots.user === null) void reconcileUserSlot(o);
+  });
+
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
     view = "tree";
@@ -175,7 +209,7 @@
         if (m) void resolveNames([Number(m[1])]);
       }
       dirtySlots[slot] = false;
-      active = slot;
+      treeFile = slot;
       savedAt += 1;
       // Hold the tab the user was on across the load (switching between two chars
       // shouldn't bounce you out of Layout), falling back to Tree only if the new
@@ -393,18 +427,12 @@
         {/if}
         {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
         {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
-        {#if slots.char && slots.user}
-          <span class="viewtabs">
-            <button class:active={active === "char"} onclick={() => (active = "char")}>Character</button>
-            <button class:active={active === "user"} onclick={() => (active = "user")}>Account</button>
-          </span>
-        {/if}
         {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
             {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
-            {#if slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
+            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -430,6 +458,7 @@
             charId={openCharId}
             characters={openAccountCharacters}
             refreshToken={savedAt}
+            sharedLabel={sharedLabel}
             onLoadCharacter={loadCharacter}
             onUserDirty={() => (dirtySlots.user = true)}
             onCharDirty={() => (dirtySlots.char = true)}
@@ -440,9 +469,18 @@
         <div class="tree-area">
           <AutofillView
             userOpen={slots.user?.status === "opened"}
+            charName={openCharName}
+            sharedLabel={sharedLabel}
+            onShowAccounts={() => (mainView = "accounts")}
             onUserDirty={() => (dirtySlots.user = true)} />
         </div>
       {:else}
+        {#if slots.user?.status === "opened"}
+          <span class="viewtabs tree-file">
+            <button class:active={treeFile === "char"} onclick={() => (treeFile = "char")}>Character file</button>
+            <button class:active={treeFile === "user"} onclick={() => (treeFile = "user")}>Account file</button>
+          </span>
+        {/if}
         <div class="searchbar">
           <input
             class="search"
