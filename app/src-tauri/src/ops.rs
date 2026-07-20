@@ -19,6 +19,7 @@ use settings_model::{
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
     create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
+    create_preset,
 };
 
 use crate::accounts;
@@ -747,6 +748,10 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
     // tab carries every key EVE requires (bracket/color/preset). No preset
     // lookup here — cloning by index handles it.
     edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
+}
+
+pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| create_preset(v, &from, &new_name))
 }
 
 /// Add an overview window: append the grouping (+ a cloned tab) in the user file,
