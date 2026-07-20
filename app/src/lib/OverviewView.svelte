@@ -3,10 +3,10 @@
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onShowAccounts }:
+  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
     { userOpen: boolean; charId: number | null; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onShowAccounts: () => void } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -35,25 +35,60 @@
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
 
-  async function createTab() {
+  // Name entry is an inline input (see the markup below), NOT window.prompt —
+  // which the WebView2 renders as an ugly "localhost:1420 says …" dialog. One
+  // pending action drives all three name-entry flows.
+  let pending = $state<
+    | { kind: "createTab"; value: string }
+    | { kind: "renameTab"; value: string; tabIdx: number }
+    | { kind: "addWindow"; value: string }
+    | null
+  >(null);
+  function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
+
+  function startCreateTab() {
     if (!data || data.tabs.length === 0) return;
-    const name = window.prompt("New tab name:");
-    if (!name?.trim()) return;
-    // No overview windows (fresh account / post in-game reset): the backend
-    // materializes a default window; window 0 is a sentinel it ignores then.
-    const windowIdx = currentWindowIndex ?? 0;
-    try {
-      data = await api.tabCreate(windowIdx, name.trim(), tabIndex);
-      tabIndex = Math.max(...data.tabs.map((t) => t.index));
-      onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    pending = { kind: "createTab", value: "" };
   }
-  async function renameTab() {
+  function startRenameTab() {
     if (!tab) return;
-    const name = window.prompt("Rename tab:", tab.name);
-    if (!name?.trim() || name.trim() === tab.name) return;
-    try { data = await api.tabRename(tab.index, name.trim()); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    pending = { kind: "renameTab", value: tab.name, tabIdx: tab.index };
+  }
+  function startAddWindow() {
+    if (!data || data.windows.length === 0) return;
+    pending = { kind: "addWindow", value: "Overview" };
+  }
+  async function submitPending() {
+    if (!pending) return;
+    const p = pending;
+    const name = p.value.trim();
+    pending = null;
+    if (!name) return;
+    try {
+      if (p.kind === "createTab") {
+        // No overview windows: currentWindowIndex is null; window 0 is a sentinel
+        // the backend ignores for a windowless account (it distributes by default).
+        data = await api.tabCreate(currentWindowIndex ?? 0, name, tabIndex);
+        tabIndex = Math.max(...data.tabs.map((t) => t.index));
+        onUserDirty();
+      } else if (p.kind === "renameTab") {
+        if (name === data?.tabs.find((t) => t.index === p.tabIdx)?.name) return;
+        data = await api.tabRename(p.tabIdx, name);
+        onUserDirty();
+      } else {
+        // Add window writes the user grouping AND the char-file geometry, so mark
+        // BOTH slots dirty — otherwise saveFile skips the char slot and the new
+        // window's position never persists. Then hand the new window's id up so
+        // the Layout editor selects it: it defaults offset on top of window 0, so
+        // without selecting it it's easy to miss.
+        data = await api.overviewWindowAdd(name, tabIndex);
+        tabIndex = Math.max(...data.tabs.map((t) => t.index));
+        onUserDirty();
+        onCharDirty();
+        const w = data.windows[data.windows.length - 1];
+        if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
+      }
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   async function deleteTab() {
     if (!tab) return;
@@ -71,6 +106,22 @@
     const pos = data?.windows.find((w) => w.index === toWindow)?.tab_indices.length ?? 0;
     try { data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function removeWindow() {
+    if (!data || data.windows.length <= 1 || !currentWindow) return;
+    const ok = await confirm(
+      `Remove Overview ${currentWindow.index + 1}? Its tabs move to Overview 1.`,
+      { title: "Remove overview window", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      // Edits both slots (grouping + geometry) — mark both dirty so saveFile
+      // doesn't skip the char slot.
+      data = await api.overviewWindowRemove(currentWindow.index);
+      tabIndex = data.tabs[0]?.index ?? null;
+      onUserDirty();
+      onCharDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
 
   // Drag-reorder of tabs within the current window (same pattern as the column list below).
@@ -147,8 +198,8 @@
       </select>
     </label>
     <div class="tab-actions">
-      <button onclick={createTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
-      <button onclick={renameTab} disabled={!tab} title="Rename selected tab">Rename</button>
+      <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
+      <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
       <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
       {#if currentWindow && data.windows.length > 1}
         {@const cw = currentWindow}
@@ -167,7 +218,27 @@
           {/each}
         </select>
       {/if}
+      {#if data.windows.length >= 1}
+        <button onclick={startAddWindow} title="Add a new overview window">+ Window</button>
+      {/if}
+      {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
+        <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
+      {/if}
     </div>
+    {#if pending}
+      <div class="name-entry">
+        <input type="text" bind:value={pending.value} use:focusInput
+               placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
+               onkeydown={(e) => {
+                 if (e.key === "Enter") { e.preventDefault(); submitPending(); }
+                 else if (e.key === "Escape") pending = null;
+               }} />
+        <button onclick={submitPending}>
+          {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
+        </button>
+        <button onclick={() => (pending = null)}>Cancel</button>
+      </div>
+    {/if}
     <label>Character (for widths)
       <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
         <option value="" disabled>Select…</option>
@@ -230,11 +301,13 @@
 <style>
   .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; }
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
-  .tab-actions { display: flex; gap: 0.4rem; align-items: center; }
+  .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
+  .name-entry input { flex: 1; max-width: 16rem; }
   button.danger { border-color: #a33; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, input.w {
+  select, option, optgroup, input.w, .name-entry input {
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
   }

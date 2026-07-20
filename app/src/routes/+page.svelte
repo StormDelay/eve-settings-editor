@@ -433,6 +433,7 @@
             onLoadCharacter={loadCharacter}
             onUserDirty={() => (dirtySlots.user = true)}
             onCharDirty={() => (dirtySlots.char = true)}
+            onWindowAdded={(id) => { if (layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
             onShowAccounts={() => (mainView = "accounts")} />
         </div>
       {:else if view === "autofill"}
