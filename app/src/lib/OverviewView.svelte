@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
+  import defaultPresetNames from "./data/default-preset-names.json";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
@@ -44,6 +45,17 @@
   // Preset-management actions operate on the selected tab's current preset; they
   // are meaningful only when that preset is a real (listed) account preset.
   const presetIsReal = $derived(!!tab && (data?.presets.includes(tab.preset) ?? false));
+
+  // Display label for a preset. EVE's built-in presets are keyed
+  // `DefaultPreset_<localizationId>` with no readable name in the file; map the id
+  // to its en-US label from the bundled snapshot (see tools/gen-default-preset-names.py).
+  // The raw key is still what every edit/API call uses — this only changes shown text.
+  function labelFor(name: string): string {
+    if (!name) return "(default)";
+    const m = /^DefaultPreset_(\d+)$/.exec(name);
+    const friendly = m ? (defaultPresetNames as Record<string, string>)[m[1]] : undefined;
+    return friendly ?? name;
+  }
 
   // Name entry is an inline input (see the markup below), NOT window.prompt —
   // which the WebView2 renders as an ugly "localhost:1420 says …" dialog. One
@@ -127,11 +139,11 @@
   }
   function startDuplicatePreset() {
     if (!tab) return;
-    pending = { kind: "duplicatePreset", value: `${tab.preset} copy`, from: tab.preset };
+    pending = { kind: "duplicatePreset", value: `${labelFor(tab.preset)} copy`, from: tab.preset };
   }
   function startRenamePreset() {
     if (!tab) return;
-    pending = { kind: "renamePreset", value: tab.preset, old: tab.preset };
+    pending = { kind: "renamePreset", value: labelFor(tab.preset), old: tab.preset };
   }
   async function deletePreset() {
     if (!tab || !data) return;
@@ -141,7 +153,7 @@
     if (pos < 0 || list.length <= 1) return;
     const neighbour = pos > 0 ? list[pos - 1] : list[pos + 1];
     const ok = await confirm(
-      `Delete preset "${name}"? Tabs using it will move to "${neighbour}".`,
+      `Delete preset "${labelFor(name)}"? Tabs using it will move to "${labelFor(neighbour)}".`,
       { title: "Delete preset", kind: "warning" },
     );
     if (!ok) return;
@@ -275,7 +287,7 @@
     {#if tab}
       <label>Preset
         <select value={tab.preset} onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}>
-          {#each presetOptions as p (p)}<option value={p}>{p || "(default)"}</option>{/each}
+          {#each presetOptions as p (p)}<option value={p}>{labelFor(p)}</option>{/each}
         </select>
       </label>
       <div class="preset-actions">
