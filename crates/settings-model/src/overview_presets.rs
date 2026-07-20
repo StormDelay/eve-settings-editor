@@ -81,6 +81,32 @@ pub fn create_preset(v: &mut Value, from: &str, new_name: &str) -> Result<(), Ov
     Ok(())
 }
 
+/// Rename a preset: the `overviewProfilePresets` key, every tab that references
+/// it, and any matching `overviewProfilePresets_notSaved` buffer entry.
+pub fn rename_preset(v: &mut Value, old: &str, new: &str) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    {
+        let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: old.to_string() })?;
+        if old != new && presets.iter().any(|(k, _)| as_str(k).as_deref() == Some(new)) {
+            return Err(OverviewTabError::PresetExists { name: new.to_string() });
+        }
+        let entry = presets.iter_mut().find(|(k, _)| as_str(k).as_deref() == Some(old))
+            .ok_or(OverviewTabError::UnknownPreset { name: old.to_string() })?;
+        entry.0 = Value::Bytes(new.as_bytes().to_vec());
+    }
+    if old == new {
+        return Ok(());
+    }
+    if let Some(ns) = not_saved_mut(ov) {
+        if let Some(entry) = ns.iter_mut().find(|(k, _)| as_str(k).as_deref() == Some(old)) {
+            entry.0 = Value::Bytes(new.as_bytes().to_vec());
+        }
+    }
+    retarget_tabs(tabs_mut(ov), old, new);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +183,50 @@ mod tests {
             create_preset(&mut v, "alpha", "beta"),
             Err(OverviewTabError::PresetExists { .. })
         ));
+    }
+
+    fn tab_preset(v: &Value, idx: i64) -> String {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+        let Value::Dict(td) = tabs else { panic!() };
+        let (_, tab) = td.iter().find(|(k, _)| matches!(k, Value::Int(i) if *i == idx)).unwrap();
+        let Value::Dict(fields) = tab else { panic!() };
+        let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        as_str(val).unwrap()
+    }
+
+    fn not_saved_names(v: &Value) -> Vec<String> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets_notSaved")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Value::Dict(pd) = &items[1] else { panic!() };
+        pd.iter().filter_map(|(k, _)| as_str(k)).collect()
+    }
+
+    #[test]
+    fn rename_renames_key_retargets_tabs_and_mirrors_notsaved() {
+        let mut v = user_with_presets();
+        rename_preset(&mut v, "alpha", "alpha2").unwrap();
+        let names = preset_names(&v);
+        assert!(names.contains(&"alpha2".to_string()) && !names.contains(&"alpha".to_string()));
+        assert_eq!(tab_preset(&v, 0), "alpha2", "tab 0 followed the rename");
+        assert_eq!(tab_preset(&v, 1), "beta", "tab 1 unaffected");
+        assert!(not_saved_names(&v).contains(&"alpha2".to_string()), "notSaved buffer followed");
+    }
+
+    #[test]
+    fn rename_unknown_source_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(rename_preset(&mut v, "nope", "x"), Err(OverviewTabError::UnknownPreset { .. })));
+    }
+
+    #[test]
+    fn rename_to_existing_name_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(rename_preset(&mut v, "alpha", "beta"), Err(OverviewTabError::PresetExists { .. })));
     }
 }
