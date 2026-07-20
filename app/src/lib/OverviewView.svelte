@@ -375,7 +375,7 @@
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
   }
-  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; }
+  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
   .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
   .preset-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
