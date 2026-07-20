@@ -27,6 +27,12 @@ pub enum OverviewTabError {
     NoWindowMapping,
     /// Refused: only the last overview window can be removed for now.
     NotLastWindow { index: usize },
+    /// No preset with this name in `overviewProfilePresets`.
+    UnknownPreset { name: String },
+    /// A preset with the target name already exists.
+    PresetExists { name: String },
+    /// Refused: would delete the last remaining preset.
+    LastPreset,
 }
 
 impl std::fmt::Display for OverviewTabError {
@@ -39,6 +45,9 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
             OverviewTabError::NoWindowMapping => write!(f, "This overview has no window layout to add to."),
             OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
+            OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
+            OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
+            OverviewTabError::LastPreset => write!(f, "An overview must keep at least one preset."),
         }
     }
 }
@@ -52,7 +61,7 @@ pub(crate) fn as_int(v: &Value) -> Option<i64> {
 }
 
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
-fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
+pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     match v {
         Value::Dict(d) => Some(d),
         Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
@@ -88,7 +97,7 @@ fn list_inner(v: &Value) -> Option<&Vec<Value>> {
 }
 
 /// Mutable `overview` container dict (tree already inlined).
-fn overview_mut(v: &mut Value) -> Result<&mut Entries, OverviewTabError> {
+pub(crate) fn overview_mut(v: &mut Value) -> Result<&mut Entries, OverviewTabError> {
     let Value::Dict(root) = v else { return Err(OverviewTabError::NoOverview) };
     let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).ok_or(OverviewTabError::NoOverview)?;
     dict_inner_mut(ov).ok_or(OverviewTabError::NoOverview)
@@ -97,7 +106,7 @@ fn overview_mut(v: &mut Value) -> Result<&mut Entries, OverviewTabError> {
 /// Mutable tab dict under `tabsettings_new`, migrating a legacy `tabsettings`
 /// key first (the two are structurally identical; EVE reads `tabsettings_new`).
 /// Created empty if neither key exists.
-fn tabs_mut(ov: &mut Entries) -> &mut Entries {
+pub(crate) fn tabs_mut(ov: &mut Entries) -> &mut Entries {
     if !ov.iter().any(|(k, _)| is_b(k, b"tabsettings_new")) {
         if let Some((k, _)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsettings")) {
             *k = Value::Bytes(b"tabsettings_new".to_vec());
