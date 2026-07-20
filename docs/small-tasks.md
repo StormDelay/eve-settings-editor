@@ -13,6 +13,24 @@ Workflow:
 
 ## Open
 
+- [ ] **Character-centric entry-point follow-ups (whole-branch review, all
+  ship-as-debt).** Non-blocking minors from the character-centric rework final
+  review: (1) the reconcile `$effect` in `+page.svelte` and `openFile`'s explicit
+  `reconcileUserSlot` can, in a rare scheduler-flush-during-`await` window, both
+  pass the `slots.user === null` guard and issue one redundant, idempotent
+  `api.open("user", <same path>)` — self-heals to the correct state, not a loop;
+  add an "in-flight" flag only if the double backend open ever shows as noise;
+  (2) `overview.test.ts`'s "excludes only the current character" `sharedWith` case
+  uses `currentCharId=999` (a non-member), so it's really a no-op-filter check —
+  the genuine exclusion is already covered by the first case; rename or drop it;
+  (3) `AutofillView`'s generic "Open a character…" hint is unreachable for an
+  anomalous `id==None` char (the Overview/Autofill tabs don't render when
+  `openCharId===null` and unpaired) — dead-but-harmless copy; (4) a profile
+  containing only account files (no local char file) now renders no sidebar header
+  at all (`Sidebar.svelte` wraps each profile in `{#if chars.length > 0}`) — matches
+  the model (reach via Open file…), but no "nothing here" hint fires in the
+  all-hidden case. _Added 2026-07-20._
+
 - [ ] **Add a search/filter to the window list in the Layout editor.** The Layout
   view's window list can get long (many windows on a real char); a filter box to
   narrow it by name would help find a specific window. Mirror the autofill-search
