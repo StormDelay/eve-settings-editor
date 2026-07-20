@@ -6,6 +6,22 @@ export function associatedCharacters(userId: number, roster: AccountRoster): num
   return roster.accounts.find((a) => a.user_id === userId)?.characters ?? [];
 }
 
+// The account's OTHER characters — the ones a shared account-scoped edit (made
+// through the current character) also affects — mapped to display names. Empty
+// when the character has no known account. Powers the "shared account settings"
+// banner (§6).
+export function sharedWith(
+  userId: number | null,
+  currentCharId: number | null,
+  roster: AccountRoster,
+  nameOf: (id: number) => string,
+): string[] {
+  if (userId === null) return [];
+  return associatedCharacters(userId, roster)
+    .filter((c) => c !== currentCharId)
+    .map(nameOf);
+}
+
 export function accountOf(charId: number, roster: AccountRoster): number | null {
   return roster.accounts.find((a) => a.characters.includes(charId))?.user_id ?? null;
 }
