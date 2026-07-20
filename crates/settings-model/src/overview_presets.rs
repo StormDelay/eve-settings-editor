@@ -107,6 +107,34 @@ pub fn rename_preset(v: &mut Value, old: &str, new: &str) -> Result<(), Overview
     Ok(())
 }
 
+/// Delete a preset, reassigning every tab that used it to the immediately
+/// preceding preset in sorted order (the successor when deleting the first).
+/// Refuses the last preset. Also drops any matching `_notSaved` buffer entry.
+pub fn delete_preset(v: &mut Value, name: &str) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let target = {
+        let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+        if !presets.iter().any(|(k, _)| as_str(k).as_deref() == Some(name)) {
+            return Err(OverviewTabError::UnknownPreset { name: name.to_string() });
+        }
+        if presets.len() <= 1 {
+            return Err(OverviewTabError::LastPreset);
+        }
+        let names = sorted_names(presets);
+        let pos = names.iter().position(|n| n == name).expect("name is present");
+        if pos > 0 { names[pos - 1].clone() } else { names[pos + 1].clone() }
+    };
+    retarget_tabs(tabs_mut(ov), name, &target);
+    if let Some(ns) = not_saved_mut(ov) {
+        ns.retain(|(k, _)| as_str(k).as_deref() != Some(name));
+    }
+    if let Some(presets) = presets_mut(ov) {
+        presets.retain(|(k, _)| as_str(k).as_deref() != Some(name));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +256,43 @@ mod tests {
     fn rename_to_existing_name_errors() {
         let mut v = user_with_presets();
         assert!(matches!(rename_preset(&mut v, "alpha", "beta"), Err(OverviewTabError::PresetExists { .. })));
+    }
+
+    #[test]
+    fn delete_reassigns_tabs_to_preceding_preset_and_pops_notsaved() {
+        // Delete "beta" (pos 1) -> preceding is "alpha"; tab 1 moves to "alpha".
+        let mut v = user_with_presets();
+        delete_preset(&mut v, "beta").unwrap();
+        let names = preset_names(&v);
+        assert!(!names.contains(&"beta".to_string()));
+        assert_eq!(tab_preset(&v, 1), "alpha", "tab moved to the preceding preset");
+    }
+
+    #[test]
+    fn delete_first_reassigns_to_successor() {
+        // Delete "alpha" (pos 0) -> successor "beta"; tab 0 moves to "beta".
+        let mut v = user_with_presets();
+        delete_preset(&mut v, "alpha").unwrap();
+        assert!(!preset_names(&v).contains(&"alpha".to_string()));
+        assert_eq!(tab_preset(&v, 0), "beta");
+        assert!(!not_saved_names(&v).contains(&"alpha".to_string()), "notSaved entry removed");
+    }
+
+    #[test]
+    fn delete_last_preset_is_refused() {
+        // A tree with a single preset.
+        let overview = Value::Dict(vec![
+            (b("overviewProfilePresets"), Value::Tuple(vec![
+                Value::Int(1), Value::Dict(vec![(b("only"), Value::Dict(vec![]))]),
+            ])),
+        ]);
+        let mut v = Value::Dict(vec![(b("overview"), overview)]);
+        assert!(matches!(delete_preset(&mut v, "only"), Err(OverviewTabError::LastPreset)));
+    }
+
+    #[test]
+    fn delete_unknown_preset_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(delete_preset(&mut v, "nope"), Err(OverviewTabError::UnknownPreset { .. })));
     }
 }

@@ -19,7 +19,7 @@ use settings_model::{
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
     create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
-    create_preset, rename_preset,
+    create_preset, delete_preset, rename_preset,
 };
 
 use crate::accounts;
@@ -756,6 +756,10 @@ pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result
 
 pub fn preset_rename(state: &AppState, old_name: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
     edit_user_tabs(state, |v| rename_preset(v, &old_name, &new_name))
+}
+
+pub fn preset_delete(state: &AppState, name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| delete_preset(v, &name))
 }
 
 pub fn tab_set_preset(state: &AppState, tab_idx: i64, preset: String) -> Result<OverviewColumns, ErrDto> {
