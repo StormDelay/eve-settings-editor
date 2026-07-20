@@ -2,7 +2,10 @@
 //! Shared/Ref tokens, legacy tabsettings migration. Edits must survive an
 //! encode -> decode round-trip after reshare (the save-chain boundary).
 use blue_marshal::{decode, encode, inline, reshare, Value};
-use settings_model::{create_tab, delete_tab, project_overview, rename_tab};
+use settings_model::{
+    add_overview_window, add_overview_window_geometry, create_tab, delete_tab, project_overview,
+    rename_tab,
+};
 
 fn b(s: &[u8]) -> Value { Value::Bytes(s.to_vec()) }
 fn ts() -> Value { Value::Long(vec![0u8; 8]) }
@@ -86,4 +89,71 @@ fn edits_survive_reshare_roundtrip_and_migrate_legacy() {
     // Migration: the container now reads via tabsettings_new (project_overview
     // prefers it); the two surviving tabs (0 and 2) project, tab 1 was deleted.
     assert_eq!(cols.tabs.len(), 2);
+}
+
+/// A char tree with two windows aliasing one geometry tuple via Shared/Ref (real
+/// files dedupe identical rects), a `(ts,dict)` wrapper, and a flags subdict.
+fn char_realshape() -> Value {
+    let geom = Value::Shared {
+        slot: 5,
+        value: Box::new(Value::Tuple(vec![
+            Value::Int(1707), Value::Int(288), Value::Int(853), Value::Int(1152),
+            Value::Int(2560), Value::Int(1440),
+        ])),
+    };
+    let sizes = Value::Tuple(vec![ts(), Value::Dict(vec![
+        (b(b"overview"), geom),
+        (b(b"market"), Value::Ref(5)),
+    ])]);
+    let opens = Value::Tuple(vec![ts(), Value::Dict(vec![
+        (b(b"overview"), Value::Bool(true)),
+    ])]);
+    let windows = Value::Dict(vec![
+        (b(b"windowSizesAndPositions_1"), sizes),
+        (b(b"openWindows"), opens),
+    ]);
+    Value::Dict(vec![(b(b"windows"), windows)])
+}
+
+/// True if window `key` is present in char `windows` subdict `subdict` (inlined).
+fn char_win_has(v: &Value, subdict: &[u8], key: &[u8]) -> bool {
+    fn isb(k: &Value, n: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == n) }
+    fn inner(v: &Value) -> Option<&Vec<(Value, Value)>> {
+        match v {
+            Value::Dict(d) => Some(d),
+            Value::Tuple(t) => t.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+            _ => None,
+        }
+    }
+    let Value::Dict(root) = v else { return false };
+    let Some((_, wins)) = root.iter().find(|(k, _)| isb(k, b"windows")) else { return false };
+    let Value::Dict(subs) = wins else { return false };
+    let Some((_, sv)) = subs.iter().find(|(k, _)| isb(k, subdict)) else { return false };
+    let Some(d) = inner(sv) else { return false };
+    d.iter().any(|(k, _)| isb(k, key))
+}
+
+#[test]
+fn add_window_survives_reshare_roundtrip_user_and_char() {
+    // USER half: add a window (clones a sibling tab into a fresh group).
+    let mut user = legacy_user(); // one window [0, 1]
+    let widx = add_overview_window(&mut user, "Scan", Some(0)).unwrap();
+    assert_eq!(widx, 1);
+    user = reshare(&user);
+    let uround = decode(&encode(&user).expect("user encodes")).expect("user re-decodes");
+    assert_eq!(uround, user, "user grouping add round-trips after reshare");
+    let cols = project_overview(&uround, None);
+    assert_eq!(cols.windows.len(), 2, "two overview windows after add");
+
+    // CHAR half: mint overview_1 geometry by cloning primary; survives reshare.
+    let mut charf = char_realshape();
+    add_overview_window_geometry(&mut charf, 1);
+    charf = reshare(&charf);
+    let cround = decode(&encode(&charf).expect("char encodes")).expect("char re-decodes");
+    assert_eq!(cround, charf, "char geometry mint round-trips after reshare");
+    let flat = inline(&cround);
+    assert!(char_win_has(&flat, b"windowSizesAndPositions_1", b"overview_1"),
+        "overview_1 geometry present through the save path");
+    assert!(char_win_has(&flat, b"openWindows", b"overview_1"),
+        "overview_1 flag present through the save path");
 }
