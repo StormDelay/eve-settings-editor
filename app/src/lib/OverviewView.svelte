@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
   import defaultPresetNames from "./data/default-preset-names.json";
+  import overviewGroups from "./data/overview-groups.json";
+  import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type Category, type CatalogBundle } from "./groups";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
@@ -45,6 +47,30 @@
   // Preset-management actions operate on the selected tab's current preset; they
   // are meaningful only when that preset is a real (listed) account preset.
   const presetIsReal = $derived(!!tab && (data?.presets.some((p) => p.name === tab.preset) ?? false));
+
+  // Preset-contents catalog: load once on mount (the backend server_version-gates
+  // the ESI sync, so a repeat call is cheap), merging the bundled tree with any
+  // synced additions; fall back to the bundle alone if the sync fails.
+  let catalog = $state<Category[]>([]);
+  $effect(() => {
+    const b = overviewGroups as CatalogBundle;
+    api
+      .syncGroupCatalog(b.all_group_ids, b.categories.map((c) => c.id))
+      .then((additions) => (catalog = mergeCatalog(b, additions)))
+      .catch(() => (catalog = mergeCatalog(b, [])));
+  });
+
+  let groupFilter = $state("");
+  const presetGroups = $derived(data?.presets.find((p) => p.name === tab?.preset)?.groups ?? []);
+  const presetGroupSet = $derived(new Set(presetGroups));
+  const visibleCategories = $derived(filterCatalog(catalog, groupFilter));
+  const unknownIds = $derived(unknownGroups(catalog, presetGroups));
+
+  async function setPresetGroup(id: number, on: boolean) {
+    if (!tab) return;
+    try { data = await api.presetSetGroups(tab.preset, toggleGroup(presetGroups, id, on)); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
 
   // Display label for a preset. EVE's built-in presets are keyed
   // `DefaultPreset_<localizationId>` with no readable name in the file; map the id
@@ -301,6 +327,38 @@
                 title="Delete this preset">Delete preset</button>
       </div>
     {/if}
+    {#if presetIsReal && tab}
+      <div class="preset-contents">
+        <div class="contents-head">
+          <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
+          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={groupFilter} />
+        </div>
+
+        {#if unknownIds.length}
+          <div class="unknown-groups">
+            Unrecognized groups (not in the catalog):
+            {#each unknownIds as id}
+              <label><input type="checkbox" checked onchange={() => setPresetGroup(id, false)} /> #{id}</label>
+            {/each}
+          </div>
+        {/if}
+
+        {#each visibleCategories as cat (cat.id)}
+          <details class="group-cat" open={!!groupFilter.trim()}>
+            <summary>{cat.name}</summary>
+            <div class="group-grid">
+              {#each cat.groups as g (g.id)}
+                <label class="group-item">
+                  <input type="checkbox" checked={presetGroupSet.has(g.id)}
+                         onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
+                  {g.name}
+                </label>
+              {/each}
+            </div>
+          </details>
+        {/each}
+      </div>
+    {/if}
     {#if pending}
       <div class="name-entry">
         <input type="text" bind:value={pending.value} use:focusInput
@@ -399,10 +457,20 @@
   button.danger { border-color: #a33; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, input.w, .name-entry input {
+  select, option, optgroup, input.w, .name-entry input, .group-filter {
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
   }
+  /* Full-width so the box below can size a real column grid — it's a flex item
+     inside the wrapping .ov-controls row otherwise. */
+  .preset-contents { flex-basis: 100%; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .contents-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  .contents-title { font-weight: 600; }
+  .group-cat > summary { cursor: pointer; padding: 0.2rem 0; }
+  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.15rem 0.8rem; padding: 0.2rem 0 0.4rem 1rem; }
+  .group-item { display: flex; gap: 0.35rem; align-items: center; }
+  .preset-contents input[type="checkbox"] { accent-color: var(--accent); }
+  .unknown-groups { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; color: var(--warn); }
   .ov-cols { list-style: none; padding: 0; }
   .ov-cols li { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0; }
   .ov-tabs { list-style: none; padding: 0; margin: 0 0 0.6rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
