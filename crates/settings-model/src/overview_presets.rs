@@ -13,7 +13,7 @@
 
 use blue_marshal::Value;
 
-use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, tabs_mut, OverviewTabError};
+use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, set_tab_preset, tabs_mut, OverviewTabError};
 use crate::treewalk::{inline_all, Entries};
 
 /// String form of a preset dict key or a tab's `overview` value (Bytes on real
@@ -74,6 +74,26 @@ pub fn create_preset_from_lists(
     ]);
     presets.push((Value::Bytes(name.as_bytes().to_vec()), blob));
     Ok(())
+}
+
+/// Fork a built-in default into a NEW user preset `name` from explicit lists AND
+/// retarget tab `tab_idx` to it. Validates the tab index BEFORE creating anything,
+/// so a bad index cannot strand a half-made preset (create-then-retarget is
+/// otherwise non-atomic). `PresetExists` if `name` is taken; `UnknownTab` if the
+/// tab is absent (checked first — nothing is created in that case).
+pub fn fork_preset(
+    v: &mut Value, tab_idx: i64, name: &str,
+    groups: &[i64], filtered_states: &[i64], always_shown_states: &[i64],
+) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    {
+        let ov = overview_mut(v)?;
+        if !tabs_mut(ov).iter().any(|(k, _)| matches!(k, Value::Int(i) if *i == tab_idx)) {
+            return Err(OverviewTabError::UnknownTab { index: tab_idx });
+        }
+    }
+    create_preset_from_lists(v, name, groups, filtered_states, always_shown_states)?;
+    set_tab_preset(v, tab_idx, name)
 }
 
 /// Mutable inner dict of `overviewProfilePresets_notSaved`, if present (it may be
@@ -437,7 +457,7 @@ mod tests {
         // A clean account: overview has tabs but NO overviewProfilePresets.
         let tab0 = Value::Dict(vec![(b("overview"), b("DefaultPreset_1"))]);
         let overview = Value::Dict(vec![
-            (b("tabsettings_new"), Value::Tuple(vec![Value::Int(1), Value::Dict(vec![(Value::Int(0), tab0)])])),
+            (b("tabsettings_new"), Value::Dict(vec![(Value::Int(0), tab0)])),
         ]);
         Value::Dict(vec![(b("overview"), overview)])
     }
@@ -461,7 +481,7 @@ mod tests {
     #[test]
     fn create_from_lists_stores_state_lists() {
         let mut v = overview_container_absent_presets();
-        create_preset_from_lists(&mut v, "PvP copy", &[1], &[7, 8], &[9]).unwrap();
+        create_preset_from_lists(&mut v, "PvP copy", &[1], &[8, 7], &[9]).unwrap();
         // read filteredStates back
         let Value::Dict(root) = &v else { panic!() };
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
@@ -471,6 +491,30 @@ mod tests {
         let (_, blob) = inner.iter().find(|(k, _)| as_str(k).as_deref() == Some("PvP copy")).unwrap();
         let Value::Dict(bf) = blob else { panic!() };
         let (_, fs) = bf.iter().find(|(k, _)| is_b(k, b"filteredStates")).unwrap();
-        assert_eq!(fs, &Value::List(vec![Value::Int(7), Value::Int(8)]));
+        // stored as-given, NOT sorted: [8, 7] stays [8, 7].
+        assert_eq!(fs, &Value::List(vec![Value::Int(8), Value::Int(7)]));
+    }
+
+    #[test]
+    fn fork_creates_preset_and_retargets_the_tab() {
+        let mut v = overview_container_absent_presets(); // tab 0 -> a default; NO presets container
+        fork_preset(&mut v, 0, "All copy", &[9, 1], &[], &[]).unwrap();
+        assert_eq!(preset_groups(&v, "All copy"), vec![1, 9]); // sorted
+        assert_eq!(tab_preset(&v, 0), "All copy");             // tab now uses the fork
+    }
+
+    #[test]
+    fn fork_with_unknown_tab_creates_no_preset() {
+        let mut v = overview_container_absent_presets();
+        assert!(matches!(fork_preset(&mut v, 99, "X", &[1], &[], &[]), Err(OverviewTabError::UnknownTab { .. })));
+        // atomicity: a failed fork must NOT strand a preset "X".
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let stranded = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).is_some_and(|(_, p)| {
+            let inner = match p { Value::Tuple(it) => it.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }), Value::Dict(d) => Some(d), _ => None };
+            inner.is_some_and(|d| d.iter().any(|(k, _)| as_str(k).as_deref() == Some("X")))
+        });
+        assert!(!stranded, "a failed fork must not strand a preset");
     }
 }

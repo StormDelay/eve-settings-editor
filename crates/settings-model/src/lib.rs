@@ -36,7 +36,7 @@ pub use overview_tabs::{
     remove_overview_window, remove_overview_window_geometry, rename_tab, reorder_tabs_in_window,
     set_tab_preset, OverviewTabError,
 };
-pub use overview_presets::{create_preset, create_preset_from_lists, delete_preset, rename_preset, set_preset_groups};
+pub use overview_presets::{create_preset, create_preset_from_lists, delete_preset, fork_preset, rename_preset, set_preset_groups};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {

@@ -19,7 +19,7 @@ use settings_model::{
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
     create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
-    create_preset, create_preset_from_lists, delete_preset, rename_preset, set_preset_groups,
+    create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
 };
 
 use crate::accounts;
@@ -776,10 +776,7 @@ pub fn preset_fork(
     state: &AppState, tab_idx: i64, name: String,
     groups: Vec<i64>, filtered_states: Vec<i64>, always_shown_states: Vec<i64>,
 ) -> Result<OverviewColumns, ErrDto> {
-    edit_user_tabs(state, |v| {
-        create_preset_from_lists(v, &name, &groups, &filtered_states, &always_shown_states)?;
-        set_tab_preset(v, tab_idx, &name)
-    })
+    edit_user_tabs(state, |v| fork_preset(v, tab_idx, &name, &groups, &filtered_states, &always_shown_states))
 }
 
 /// Add an overview window: append the grouping (+ a cloned tab) in the user file,
