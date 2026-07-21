@@ -38,13 +38,13 @@
   // The preset dropdown options: the sorted account presets, plus the tab's
   // current value if (defensively) it isn't among them. Empty "" shows as (default).
   const presetOptions = $derived.by(() => {
-    const list = data?.presets ?? [];
+    const list = (data?.presets ?? []).map((p) => p.name);
     const cur = tab?.preset ?? "";
     return list.includes(cur) ? list : [cur, ...list];
   });
   // Preset-management actions operate on the selected tab's current preset; they
   // are meaningful only when that preset is a real (listed) account preset.
-  const presetIsReal = $derived(!!tab && (data?.presets.includes(tab.preset) ?? false));
+  const presetIsReal = $derived(!!tab && (data?.presets.some((p) => p.name === tab.preset) ?? false));
 
   // Display label for a preset. EVE's built-in presets are keyed
   // `DefaultPreset_<localizationId>` with no readable name in the file; map the id
@@ -151,7 +151,7 @@
   async function deletePreset() {
     if (!tab || !data) return;
     const name = tab.preset;
-    const list = data.presets;
+    const list = data.presets.map((p) => p.name);
     const pos = list.indexOf(name);
     if (pos < 0 || list.length <= 1) return;
     const neighbour = pos > 0 ? list[pos - 1] : list[pos + 1];
