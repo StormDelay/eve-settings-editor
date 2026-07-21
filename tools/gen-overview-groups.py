@@ -2,16 +2,27 @@
 """Regenerate app/src/lib/data/overview-groups.json.
 
 The overview filter presets store entity *group IDs*. This dev tool builds the
-bundled catalog the app uses to name and browse those groups: the overview-
-relevant category -> group tree (with names) plus a flat list of ALL current
-group IDs (the sync-diff baseline; the app resolves anything newer from ESI).
+bundled catalog the app uses to name and browse those groups: the overview
+category -> group tree (with names) plus a flat list of ALL current group IDs
+(the sync-diff baseline; the app resolves anything newer from ESI).
 
-Relevance is a hardcoded allowlist of "in-space" category IDs — the categories
-whose items appear on the overview. Tune RELEVANT_CATEGORIES if CCP adds a new
-in-space category. A category id that no longer resolves (renamed/removed) is
-skipped with a warning rather than failing the whole run.
+WHICH groups appear on the overview is a hand-curated EVE client definition that
+is NOT derivable from any ESI flag (`published`, type-presence, brackets, and the
+SDE all fail to reproduce the in-game Types tab — see the slice-2b investigation).
+So the group SET comes from EVE's own data: `tools/overview-group-ids.json`, the
+union of the `groups` lists across the real Tranquility settings files in
+`testdata/corpus` (which includes CCP's built-in "All" preset plus the groups real
+players actually put on overviews). Regenerate that id file with the
+`overview_dump` bin (see crates/settings-model/src/bin/overview_dump.rs):
+    find testdata -name 'core_user*.dat' | grep tq_tranquility \\
+        | cargo run -q -p settings-model --bin overview_dump
+    # take the UNION_IDS=[...] line -> tools/overview-group-ids.json
 
-Not shipped to users. Rerun and re-commit on an app release when CCP adds groups.
+This tool then resolves each id's name + category from ESI and groups them. A few
+corpus ids no longer resolve on TQ (removed groups) and are skipped.
+
+Not shipped to users. Rerun and re-commit on an app release, refreshing the id
+file first if the corpus has grown.
 
 Usage:  python tools/gen-overview-groups.py
 Requires Python 3 (stdlib only) and network access to ESI.
@@ -24,24 +35,8 @@ import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "app", "src", "lib", "data", "overview-groups.json")
+GROUP_IDS = os.path.join(REPO, "tools", "overview-group-ids.json")
 BASE = "https://esi.evetech.net/latest"
-
-# In-space categories shown on the overview. IDs are stable across EVE versions.
-# The labels here are only for the skip-warning; the bundle uses ESI's own name.
-RELEVANT_CATEGORIES = {
-    2: "Celestial",
-    3: "Station",
-    6: "Ship",
-    11: "Entity",
-    18: "Drone",
-    22: "Deployable",
-    23: "Starbase",
-    25: "Asteroid",
-    40: "Sovereignty Structures",
-    46: "Orbitals",
-    65: "Structure",
-    87: "Fighter",
-}
 
 
 def get(url):
@@ -65,29 +60,30 @@ def all_group_ids():
 
 
 def main():
-    categories = []
-    for cat_id in sorted(RELEVANT_CATEGORIES):
+    with open(GROUP_IDS, encoding="utf-8") as fh:
+        overview_ids = json.load(fh)
+
+    cat_names = {}      # category id -> name
+    by_cat = {}         # category id -> [ {id, name} ]
+    skipped = []
+    for gid in overview_ids:
         try:
-            cat = get(f"{BASE}/universe/categories/{cat_id}/")
-        except urllib.error.HTTPError as e:
-            print(f"warning: category {cat_id} ({RELEVANT_CATEGORIES[cat_id]}) failed: "
-                  f"{e.code} {e.reason} — skipping", file=sys.stderr)
-            continue
-        groups = []
-        for gid in cat.get("groups", []):
             g = get(f"{BASE}/universe/groups/{gid}/")
-            # NOT filtered by `published`: the core in-space overview entries —
-            # Stargate, Station, Planet, Moon, Asteroid Belt, Wreck — are all
-            # `published: false` in ESI yet appear on every overview. Filtering
-            # them out left the catalog unable to name them. Any named group in
-            # an in-space category is includable; only nameless internals are cut.
-            name = g.get("name")
-            if not name:
-                continue
-            groups.append({"id": gid, "name": name})
-        groups.sort(key=lambda x: x["name"].lower())
-        categories.append({"id": cat_id, "name": cat["name"], "groups": groups})
-        print(f"  category {cat_id}: {cat['name']!r} -> {len(groups)} groups")
+        except urllib.error.HTTPError:
+            skipped.append(gid)  # removed from TQ since the corpus was captured
+            continue
+        name = g.get("name")
+        if not name:
+            continue
+        cid = g["category_id"]
+        if cid not in cat_names:
+            cat_names[cid] = get(f"{BASE}/universe/categories/{cid}/").get("name", str(cid))
+        by_cat.setdefault(cid, []).append({"id": gid, "name": name})
+
+    categories = []
+    for cid in sorted(by_cat, key=lambda c: cat_names[c].lower()):
+        groups = sorted(by_cat[cid], key=lambda x: x["name"].lower())
+        categories.append({"id": cid, "name": cat_names[cid], "groups": groups})
 
     ids = sorted(set(all_group_ids()))
 
@@ -101,7 +97,10 @@ def main():
         fh.write("\n")
 
     total = sum(len(c["groups"]) for c in categories)
-    print(f"wrote {len(categories)} categories, {total} groups, {len(ids)} total ids -> {OUT}")
+    for c in categories:
+        print(f"  {c['name']}: {len(c['groups'])} groups")
+    print(f"wrote {len(categories)} categories, {total} groups, {len(ids)} total ids "
+          f"({len(skipped)} corpus ids skipped as removed-from-TQ) -> {OUT}")
 
 
 if __name__ == "__main__":
