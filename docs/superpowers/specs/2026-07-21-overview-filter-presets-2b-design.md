@@ -112,11 +112,23 @@ never changes), so the catalog only ever *grows*.
 
 ### 6.1 Bundle (frontend JSON, cut at build time)
 
-A committed JSON asset under `app/src/lib/` carrying two things:
+A committed JSON asset under `app/src/lib/data/overview-groups.json` carrying two
+things:
 
-- The **overview-relevant category→group tree with names** — what the checklist
-  renders: `[{ category_id, category_name, groups: [{ id, name }] }]`.
+- The **overview category→group tree with names** — what the checklist renders:
+  `[{ id (category), name, groups: [{ id, name }] }]`.
 - A flat list of **all** group IDs known at cut time (just ints).
+
+**Which groups are "overview groups" is NOT ESI-derivable** (established during
+build — see §7): the in-game overview Types tree is a hand-curated client
+definition that matches neither the `published` flag, nor type-presence, nor the
+`bracketsbygroup` static data, nor the published SDE. So the group **set** is
+taken from EVE's own data — the built-in **"All" default preset** (CCP's
+show-everything overview), extracted from real settings files with our own
+blue-marshal decoder — and each id is resolved to a name + category via ESI. This
+matches the in-game Types tab on 13 of 14 categories; only Entity (NPCs) is
+broader (~398 vs the picker's ~253), because CCP's "All" preset itself includes
+granular NPC-context groups the picker doesn't surface but that are valid filters.
 
 The all-IDs list is what keeps the sync cheap (§6.2): diffing current ESI groups
 against the *full* known-ID set — not just the relevant subset — means the delta
@@ -166,25 +178,39 @@ new in-space categories.
 
 ## 7. Bundle generation (dev-time, committed)
 
-A small committed dev script (`tools/gen-overview-groups.py`, python stdlib —
-mirroring the existing `tools/gen-default-preset-names.py`) that hits ESI once and
-writes the bundle JSON to `app/src/lib/data/overview-groups.json`. **Relevance is
-a documented, hardcoded allowlist of overview-relevant ("in-space") category
-IDs** — the categories whose items appear on the overview (Ship, Drone,
-Celestial, Structure, Deployable, Fighter, Entity/NPC, Orbital, …). For each
-allowlisted category: `/universe/categories/{id}` → name + group IDs;
-`/universe/groups/{id}` → group name + `published`; bundle the **published**
-groups under each category. Also enumerate `/universe/groups/` for the flat
-**all-group-IDs** list (the §6.1 sync-diff baseline). Refuse to overwrite the
-committed snapshot with an empty result (mirrors the sibling script). Re-run and
-re-commit on an app release when CCP adds groups, tuning the allowlist there if a
-new in-space category appears.
+Two committed pieces:
 
-*(A corpus-derived allowlist was considered but rejected: corpus group IDs are
-binary-encoded marshal ints — not raw-byte-scannable like the `DefaultPreset_<id>`
-text tokens the sibling script keys on — so deriving them in a python byte-scan
-isn't practical, and the hardcoded in-space set is in any case more complete than
-"categories some corpus file happened to filter on".)*
+1. **The overview group-ID set** `tools/overview-group-ids.json` — the union of
+   the `groups` lists across the real **Tranquility** settings files in
+   `testdata/corpus`, extracted by the `overview_dump` bin
+   (`crates/settings-model/src/bin/overview_dump.rs`) using our own blue-marshal
+   decoder + `project_overview`. In practice this is dominated by CCP's built-in
+   "All" default preset (`DefaultPreset_639443`, ~629 groups); the single largest
+   preset is the best Types-tab match, so the committed id file uses its
+   `BEST_IDS` output.
+2. **The generator** `tools/gen-overview-groups.py` (python stdlib, mirroring
+   `tools/gen-default-preset-names.py`) reads that id file, resolves each id's
+   name + `category_id` from ESI (`/universe/groups/{id}`), groups them by
+   category (`/universe/categories/{id}` for the name), and also enumerates
+   `/universe/groups/` for the flat **all-group-IDs** list (§6.1 sync baseline).
+   IDs that no longer resolve on TQ are skipped; it refuses to overwrite the
+   snapshot with an empty result. Output committed to
+   `app/src/lib/data/overview-groups.json`.
+
+Re-run on an app release: refresh the id file with `overview_dump` first (if the
+corpus grew), then run the generator.
+
+**Why this, not an ESI rule** (the load-bearing finding of the build): the in-game
+overview Types tree is a hand-curated **client** definition. It matches *no*
+computable rule — not `published` (drops the unpublished Stargate/Station/Planet/
+Belt/Wreck the overview shows; and Charge lists 79 groups where the overview shows
+7), not "has published types", not the client's `bracketsbygroup.static` (that is
+the in-space *marker* set — it under-counts Asteroid 6/46, Celestial 28/54, Ship
+44/50), and not the published YAML SDE (which carries no overview data). EVE's own
+"All" preset is the closest reproducible source (13/14 categories exact). Exact
+Entity fidelity (the picker's ~253 vs the preset's ~398) would require
+implementing EVE's FSD-binary reader and replicating the client's Types-tab
+curation — deferred as disproportionate.
 
 ## 8. Frontend — the contents editor (`OverviewView.svelte`, new `groups.ts`, bundle JSON)
 
