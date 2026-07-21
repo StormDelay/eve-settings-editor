@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-21
+
+Overview filter presets.
+
+- The Overview editor can now manage the account's overview filter presets and
+  choose which preset each tab uses — assign a preset to a tab, and duplicate,
+  rename, or delete presets. (Editing what a preset shows — its ship/entity types
+  and state filters — comes in a later release.)
+
+### Added
+- A per-tab preset picker in the Overview editor, plus Duplicate / Rename /
+  Delete controls for the account's presets. Renaming a preset re-points every
+  tab that used it; deleting one moves its tabs to the neighbouring preset and
+  won't remove your last preset.
+- EVE's built-in presets (stored with internal ids like `DefaultPreset_639431`)
+  now show their real names — Carriers, Fleet, Mining, and so on — resolved from
+  the client's localisation data.
+
+### Fixed
+- Switching between characters on different accounts now refreshes the Overview
+  and Autofill editors, so they no longer show the previous account's presets or
+  remembered-text lists.
+
 ## [0.10.0] - 2026-07-20
 
 Character-centric editing.
