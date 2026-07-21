@@ -18,6 +18,14 @@ fn main() {
         let Ok(bytes) = std::fs::read(&path) else { continue };
         let Ok(v) = blue_marshal::decode(&bytes) else { continue };
         let cols = settings_model::project_overview(&v, None);
+        if std::env::var("DIAG").is_ok() {
+            eprintln!("FILE {} : {} presets, {} tabs", path, cols.presets.len(), cols.tabs.len());
+            let names: Vec<String> = cols.presets.iter().map(|p| format!("{}({})", p.name, p.groups.len())).collect();
+            eprintln!("  presets: {}", names.join(", "));
+            for t in &cols.tabs {
+                eprintln!("  tab[{}] name={:?} preset={:?} in_presets={}", t.index, t.name, t.preset, cols.presets.iter().any(|p| p.name == t.preset));
+            }
+        }
         for p in &cols.presets {
             for &g in &p.groups {
                 union.insert(g);
