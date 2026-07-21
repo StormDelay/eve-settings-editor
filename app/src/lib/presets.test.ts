@@ -16,6 +16,7 @@ check("isDefaultKey modern", isDefaultKey("DefaultPreset_639443"));
 check("isDefaultKey legacy", isDefaultKey("defaultpvp"));
 check("isDefaultKey user is false", !isDefaultKey("my pvp"));
 check("isDefaultKey rejects a user preset that merely starts with 'default'", !isDefaultKey("Default Faves"));
+check("isDefaultKey ignores Object.prototype keys (no 'in' prototype leak)", !isDefaultKey("constructor") && !isDefaultKey("__proto__"));
 
 check("accountFormat modern from a DefaultPreset ref", accountFormat(["DefaultPreset_639452", "x"]) === "modern");
 check("accountFormat legacy from a default* ref", accountFormat(["defaultall"]) === "legacy");
