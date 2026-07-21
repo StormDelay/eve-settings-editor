@@ -20,7 +20,7 @@ export const LEGACY_NAMES: Record<string, string> = {
 // Matches the known legacy names exactly rather than any "default*" prefix, so
 // a user preset merely named e.g. "Default Faves" isn't swept in as built-in.
 export function isDefaultKey(key: string): boolean {
-  return /^DefaultPreset_\d+$/.test(key) || key.toLowerCase() in LEGACY_NAMES;
+  return /^DefaultPreset_\d+$/.test(key) || Object.hasOwn(LEGACY_NAMES, key.toLowerCase());
 }
 
 // The account's on-disk regime, inferred from the default profiles its tabs
@@ -28,7 +28,7 @@ export function isDefaultKey(key: string): boolean {
 // to modern when no tab references a default (the offered defaults are a nicety).
 export function accountFormat(tabPresets: string[]): "modern" | "legacy" {
   if (tabPresets.some((p) => /^DefaultPreset_\d+$/.test(p))) return "modern";
-  if (tabPresets.some((p) => p.toLowerCase() in LEGACY_NAMES)) return "legacy";
+  if (tabPresets.some((p) => Object.hasOwn(LEGACY_NAMES, p.toLowerCase()))) return "legacy";
   return "modern";
 }
 
