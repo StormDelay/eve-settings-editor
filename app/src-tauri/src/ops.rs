@@ -17,8 +17,9 @@ use settings_model::{
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
     unstack, add_to_stack, reorder_stack, create_stack, StackError,
-    create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, OverviewTabError,
+    create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
+    create_preset, delete_preset, rename_preset,
 };
 
 use crate::accounts;
@@ -747,6 +748,22 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
     // tab carries every key EVE requires (bracket/color/preset). No preset
     // lookup here — cloning by index handles it.
     edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
+}
+
+pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| create_preset(v, &from, &new_name))
+}
+
+pub fn preset_rename(state: &AppState, old_name: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| rename_preset(v, &old_name, &new_name))
+}
+
+pub fn preset_delete(state: &AppState, name: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| delete_preset(v, &name))
+}
+
+pub fn tab_set_preset(state: &AppState, tab_idx: i64, preset: String) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| set_tab_preset(v, tab_idx, &preset))
 }
 
 /// Add an overview window: append the grouping (+ a cloned tab) in the user file,

@@ -189,6 +189,7 @@ export interface OverviewWindow {
 export interface OverviewColumns {
   tabs: OverviewTab[];
   windows: OverviewWindow[];
+  presets: string[];
 }
 
 export interface RememberedList {
@@ -276,6 +277,14 @@ export const api = {
     invoke<OverviewColumns>("overview_window_add", { name, fromTab }),
   overviewWindowRemove: (windowIdx: number) =>
     invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
+  presetCreate: (from: string, newName: string) =>
+    invoke<OverviewColumns>("preset_create", { from, newName }),
+  presetRename: (oldName: string, newName: string) =>
+    invoke<OverviewColumns>("preset_rename", { oldName, newName }),
+  presetDelete: (name: string) =>
+    invoke<OverviewColumns>("preset_delete", { name }),
+  tabSetPreset: (tabIdx: number, preset: string) =>
+    invoke<OverviewColumns>("tab_set_preset", { tabIdx, preset }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
+  import defaultPresetNames from "./data/default-preset-names.json";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
-  let { userOpen, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
-    { userOpen: boolean; charId: number | null; characters: number[]; refreshToken: number;
+  let { userOpen, userId, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
+    { userOpen: boolean; userId: number | null; charId: number | null; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
       onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
 
@@ -27,13 +28,34 @@
   // Reload when the slot's file changes (refreshToken bumps on every open/save),
   // not only when userOpen/charId flip — switching between two account files
   // leaves both unchanged and would otherwise show the previous file's overview.
-  $effect(() => { void userOpen; void charId; void refreshToken; reload(); });
+  $effect(() => { void userOpen; void userId; void charId; void refreshToken; reload(); });
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
   // The window strip whose tab_indices contains the selected tab (null for an
   // orphan tab that isn't listed under any window).
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
+  // The preset dropdown options: the sorted account presets, plus the tab's
+  // current value if (defensively) it isn't among them. Empty "" shows as (default).
+  const presetOptions = $derived.by(() => {
+    const list = data?.presets ?? [];
+    const cur = tab?.preset ?? "";
+    return list.includes(cur) ? list : [cur, ...list];
+  });
+  // Preset-management actions operate on the selected tab's current preset; they
+  // are meaningful only when that preset is a real (listed) account preset.
+  const presetIsReal = $derived(!!tab && (data?.presets.includes(tab.preset) ?? false));
+
+  // Display label for a preset. EVE's built-in presets are keyed
+  // `DefaultPreset_<localizationId>` with no readable name in the file; map the id
+  // to its en-US label from the bundled snapshot (see tools/gen-default-preset-names.py).
+  // The raw key is still what every edit/API call uses — this only changes shown text.
+  function labelFor(name: string): string {
+    if (!name) return "(default)";
+    const m = /^DefaultPreset_(\d+)$/.exec(name);
+    const friendly = m ? (defaultPresetNames as Record<string, string>)[m[1]] : undefined;
+    return friendly ?? name;
+  }
 
   // Name entry is an inline input (see the markup below), NOT window.prompt —
   // which the WebView2 renders as an ugly "localhost:1420 says …" dialog. One
@@ -42,6 +64,8 @@
     | { kind: "createTab"; value: string }
     | { kind: "renameTab"; value: string; tabIdx: number }
     | { kind: "addWindow"; value: string }
+    | { kind: "duplicatePreset"; value: string; from: string }
+    | { kind: "renamePreset"; value: string; old: string }
     | null
   >(null);
   function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
@@ -75,7 +99,7 @@
         if (name === data?.tabs.find((t) => t.index === p.tabIdx)?.name) return;
         data = await api.tabRename(p.tabIdx, name);
         onUserDirty();
-      } else {
+      } else if (p.kind === "addWindow") {
         // Add window writes the user grouping AND the char-file geometry, so mark
         // BOTH slots dirty — otherwise saveFile skips the char slot and the new
         // window's position never persists. Then hand the new window's id up so
@@ -87,6 +111,16 @@
         onCharDirty();
         const w = data.windows[data.windows.length - 1];
         if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
+      } else if (p.kind === "duplicatePreset") {
+        data = await api.presetCreate(p.from, name);
+        onUserDirty();
+      } else if (p.kind === "renamePreset") {
+        // Compare against the shown label: the rename box is prefilled with
+        // labelFor(old), so an unedited submit on a DefaultPreset_<id> (label
+        // "Carriers") must be a no-op, not a rename of the raw key to "Carriers".
+        if (name === labelFor(p.old)) return;
+        data = await api.presetRename(p.old, name);
+        onUserDirty();
       }
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
@@ -100,6 +134,34 @@
       tabIndex = result.tabs[0]?.index ?? null;
       onUserDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  async function setTabPreset(preset: string) {
+    if (!tab || preset === tab.preset) return;
+    try { data = await api.tabSetPreset(tab.index, preset); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+  function startDuplicatePreset() {
+    if (!tab) return;
+    pending = { kind: "duplicatePreset", value: `${labelFor(tab.preset)} copy`, from: tab.preset };
+  }
+  function startRenamePreset() {
+    if (!tab) return;
+    pending = { kind: "renamePreset", value: labelFor(tab.preset), old: tab.preset };
+  }
+  async function deletePreset() {
+    if (!tab || !data) return;
+    const name = tab.preset;
+    const list = data.presets;
+    const pos = list.indexOf(name);
+    if (pos < 0 || list.length <= 1) return;
+    const neighbour = pos > 0 ? list[pos - 1] : list[pos + 1];
+    const ok = await confirm(
+      `Delete preset "${labelFor(name)}"? Tabs using it will move to "${labelFor(neighbour)}".`,
+      { title: "Delete preset", kind: "warning" },
+    );
+    if (!ok) return;
+    try { data = await api.presetDelete(name); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   async function moveTab(toWindow: number) {
     if (!tab || !currentWindow) return;
@@ -225,16 +287,36 @@
         <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
       {/if}
     </div>
+    {#if tab}
+      <label>Preset
+        <select value={tab.preset} onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}>
+          {#each presetOptions as p (p)}<option value={p}>{labelFor(p)}</option>{/each}
+        </select>
+      </label>
+      <div class="preset-actions">
+        <button onclick={startDuplicatePreset} disabled={!presetIsReal} title="Duplicate this preset">Duplicate preset</button>
+        <button onclick={startRenamePreset} disabled={!presetIsReal} title="Rename this preset">Rename preset</button>
+        <button class="danger" onclick={deletePreset}
+                disabled={!presetIsReal || (data?.presets.length ?? 0) <= 1}
+                title="Delete this preset">Delete preset</button>
+      </div>
+    {/if}
     {#if pending}
       <div class="name-entry">
         <input type="text" bind:value={pending.value} use:focusInput
-               placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
+               placeholder={pending.kind === "addWindow" ? "First tab name"
+                 : pending.kind === "duplicatePreset" || pending.kind === "renamePreset" ? "Preset name"
+                 : "Tab name"}
                onkeydown={(e) => {
                  if (e.key === "Enter") { e.preventDefault(); submitPending(); }
                  else if (e.key === "Escape") pending = null;
                }} />
         <button onclick={submitPending}>
-          {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
+          {pending.kind === "addWindow" ? "Add window"
+            : pending.kind === "renameTab" ? "Rename"
+            : pending.kind === "duplicatePreset" ? "Duplicate"
+            : pending.kind === "renamePreset" ? "Rename preset"
+            : "Add tab"}
         </button>
         <button onclick={() => (pending = null)}>Cancel</button>
       </div>
@@ -308,9 +390,10 @@
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
   }
-  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; }
+  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
   .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
   .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .preset-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
   .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
   .name-entry input { flex: 1; max-width: 16rem; }
   button.danger { border-color: #a33; }

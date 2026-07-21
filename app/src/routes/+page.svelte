@@ -455,6 +455,7 @@
         <div class="tree-area">
           <OverviewView
             userOpen={slots.user?.status === "opened"}
+            userId={openUserId}
             charId={openCharId}
             characters={openAccountCharacters}
             refreshToken={savedAt}
@@ -469,6 +470,7 @@
         <div class="tree-area">
           <AutofillView
             userOpen={slots.user?.status === "opened"}
+            userId={openUserId}
             charName={openCharName}
             sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
