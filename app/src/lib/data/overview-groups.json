@@ -9,6 +9,10 @@
           "name": "AIR Ore Asteroid Resources"
         },
         {
+          "id": 903,
+          "name": "Ancient Compressed Ice"
+        },
+        {
           "id": 450,
           "name": "Arkonor"
         },
@@ -163,6 +167,10 @@
         {
           "id": 2022,
           "name": "Temporal Resources"
+        },
+        {
+          "id": 519,
+          "name": "Terran Artifacts"
         },
         {
           "id": 4857,
@@ -363,6 +371,10 @@
           "name": "Shipcaster Beacon Constructor"
         },
         {
+          "id": 4745,
+          "name": "Skyhook Reagent Silo"
+        },
+        {
           "id": 10,
           "name": "Stargate"
         },
@@ -485,8 +497,16 @@
           "name": "Mobile Cynosural Beacon"
         },
         {
+          "id": 1274,
+          "name": "Mobile Decoy Unit"
+        },
+        {
           "id": 1246,
           "name": "Mobile Depot"
+        },
+        {
+          "id": 1149,
+          "name": "Mobile Jump Disruptor"
         },
         {
           "id": 1276,
@@ -513,8 +533,16 @@
           "name": "Mobile Tractor Unit"
         },
         {
+          "id": 1297,
+          "name": "Mobile Vault"
+        },
+        {
           "id": 361,
           "name": "Mobile Warp Disruptor"
+        },
+        {
+          "id": 1312,
+          "name": "Observatory Structures"
         }
       ]
     },
@@ -551,12 +579,28 @@
           "name": "Mining Drone"
         },
         {
+          "id": 97,
+          "name": "Proximity Drone"
+        },
+        {
+          "id": 299,
+          "name": "Repair Drone"
+        },
+        {
           "id": 1159,
           "name": "Salvage Drone"
         },
         {
           "id": 641,
           "name": "Stasis Webifying Drone"
+        },
+        {
+          "id": 470,
+          "name": "Unanchoring Drone"
+        },
+        {
+          "id": 545,
+          "name": "Warp Scrambling Drone"
         }
       ]
     },
@@ -2053,6 +2097,10 @@
           "name": "Structure Entities"
         },
         {
+          "id": 335,
+          "name": "Temporary Cloud"
+        },
+        {
           "id": 4073,
           "name": "Temporary Collidable Structure"
         },
@@ -2107,6 +2155,10 @@
         {
           "id": 5102,
           "name": "Warpath Invaders - Frigates"
+        },
+        {
+          "id": 934,
+          "name": "Zombie Entities"
         },
         {
           "id": 1909,
@@ -2203,6 +2255,20 @@
         {
           "id": 4736,
           "name": "Skyhook"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "name": "Planetary Industry",
+      "groups": [
+        {
+          "id": 1082,
+          "name": "Capsuleer Bases"
+        },
+        {
+          "id": 1081,
+          "name": "Mercenary Bases"
         }
       ]
     },
@@ -2417,6 +2483,10 @@
       "name": "Sovereignty Structures",
       "groups": [
         {
+          "id": 1004,
+          "name": "Defense Bunkers"
+        },
+        {
           "id": 1005,
           "name": "Sovereignty Blockade Unit"
         },
@@ -2555,12 +2625,28 @@
       "name": "Structure",
       "groups": [
         {
+          "id": 1409,
+          "name": "Administration Hub"
+        },
+        {
+          "id": 1410,
+          "name": "Advertisement Center"
+        },
+        {
           "id": 1657,
           "name": "Citadel"
         },
         {
           "id": 1404,
           "name": "Engineering Complex"
+        },
+        {
+          "id": 1405,
+          "name": "Laboratory"
+        },
+        {
+          "id": 1407,
+          "name": "Observatory Array"
         },
         {
           "id": 4644,
