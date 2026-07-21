@@ -1,8 +1,10 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
   import defaultPresetNames from "./data/default-preset-names.json";
+  import defaultPresetsBundle from "./data/default-presets.json";
   import overviewGroups from "./data/overview-groups.json";
   import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type Category, type CatalogBundle } from "./groups";
+  import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
@@ -37,16 +39,17 @@
   // orphan tab that isn't listed under any window).
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
-  // The preset dropdown options: the sorted account presets, plus the tab's
-  // current value if (defensively) it isn't among them. Empty "" shows as (default).
-  const presetOptions = $derived.by(() => {
-    const list = (data?.presets ?? []).map((p) => p.name);
-    const cur = tab?.preset ?? "";
-    return list.includes(cur) ? list : [cur, ...list];
-  });
   // Preset-management actions operate on the selected tab's current preset; they
   // are meaningful only when that preset is a real (listed) account preset.
   const presetIsReal = $derived(!!tab && (data?.presets.some((p) => p.name === tab.preset) ?? false));
+
+  // The preset dropdown's default-profile options: EVE's built-in bundle for
+  // this account's on-disk regime (modern DefaultPreset_<id> vs legacy
+  // default* literals), merged with any stored presets so nothing is missed.
+  const fmt = $derived(accountFormat((data?.tabs ?? []).map((t) => t.preset)));
+  const bundledDefaults = $derived(defaultsForFormat(defaultPresetsBundle as DefaultsBundle, fmt));
+  const storedNames = $derived((data?.presets ?? []).map((p) => p.name));
+  const grouped = $derived(mergePresetOptions(storedNames, bundledDefaults));
 
   // Preset-contents catalog: seed synchronously from the bundled tree so the
   // checklist renders immediately (the app's core path is editing files offline);
@@ -80,8 +83,8 @@
   function labelFor(name: string): string {
     if (!name) return "(default)";
     const m = /^DefaultPreset_(\d+)$/.exec(name);
-    const friendly = m ? (defaultPresetNames as Record<string, string>)[m[1]] : undefined;
-    return friendly ?? name;
+    if (m) return (defaultPresetNames as Record<string, string>)[m[1]] ?? name;
+    return LEGACY_NAMES[name.toLowerCase()] ?? name;
   }
 
   // Name entry is an inline input (see the markup below), NOT window.prompt —
@@ -317,7 +320,17 @@
     {#if tab}
       <label>Preset
         <select value={tab.preset} onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}>
-          {#each presetOptions as p (p)}<option value={p}>{labelFor(p)}</option>{/each}
+          {#if !grouped.defaults.includes(tab.preset) && !grouped.user.includes(tab.preset)}
+            <option value={tab.preset}>{labelFor(tab.preset)}</option>
+          {/if}
+          <optgroup label="Default profiles">
+            {#each grouped.defaults as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
+          </optgroup>
+          {#if grouped.user.length}
+            <optgroup label="Your profiles">
+              {#each grouped.user as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
+            </optgroup>
+          {/if}
         </select>
       </label>
       <div class="preset-actions">
