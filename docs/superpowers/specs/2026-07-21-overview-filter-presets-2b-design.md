@@ -166,15 +166,25 @@ new in-space categories.
 
 ## 7. Bundle generation (dev-time, committed)
 
-A small committed dev script (node — no new runtime dependency) that hits ESI
-once and writes the bundle JSON. **Relevance is data-driven, not hand-guessed:**
-take the union of `groups` across the corpus preset files → resolve their
-categories via ESI → those categories are the overview-relevant set → bundle
-*all* published groups in each such category (so un-used-but-addable groups still
-appear in the tree, not only ones some corpus file happened to use). The script's
-output is committed; it is re-run and the bundle re-committed on an app release
-when CCP has added groups. The exact category allowlist is finalized during
-implementation from the corpus scan.
+A small committed dev script (`tools/gen-overview-groups.py`, python stdlib —
+mirroring the existing `tools/gen-default-preset-names.py`) that hits ESI once and
+writes the bundle JSON to `app/src/lib/data/overview-groups.json`. **Relevance is
+a documented, hardcoded allowlist of overview-relevant ("in-space") category
+IDs** — the categories whose items appear on the overview (Ship, Drone,
+Celestial, Structure, Deployable, Fighter, Entity/NPC, Orbital, …). For each
+allowlisted category: `/universe/categories/{id}` → name + group IDs;
+`/universe/groups/{id}` → group name + `published`; bundle the **published**
+groups under each category. Also enumerate `/universe/groups/` for the flat
+**all-group-IDs** list (the §6.1 sync-diff baseline). Refuse to overwrite the
+committed snapshot with an empty result (mirrors the sibling script). Re-run and
+re-commit on an app release when CCP adds groups, tuning the allowlist there if a
+new in-space category appears.
+
+*(A corpus-derived allowlist was considered but rejected: corpus group IDs are
+binary-encoded marshal ints — not raw-byte-scannable like the `DefaultPreset_<id>`
+text tokens the sibling script keys on — so deriving them in a python byte-scan
+isn't practical, and the hardcoded in-space set is in any case more complete than
+"categories some corpus file happened to filter on".)*
 
 ## 8. Frontend — the contents editor (`OverviewView.svelte`, new `groups.ts`, bundle JSON)
 
