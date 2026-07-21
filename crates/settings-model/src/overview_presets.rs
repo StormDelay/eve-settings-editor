@@ -135,6 +135,30 @@ pub fn delete_preset(v: &mut Value, name: &str) -> Result<(), OverviewTabError> 
     Ok(())
 }
 
+/// Replace the named preset's `groups` list with `groups`, sorted ascending for a
+/// deterministic on-disk order (EVE re-sorts for display). Inserts the `groups`
+/// key if somehow absent (real presets always carry it). The two state lists
+/// (`filteredStates` / `alwaysShownStates`) are untouched — slice 3.
+pub fn set_preset_groups(v: &mut Value, name: &str, groups: &[i64]) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let (_, blob) = presets
+        .iter_mut()
+        .find(|(k, _)| as_str(k).as_deref() == Some(name))
+        .ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let fields = dict_inner_mut(blob).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let mut sorted = groups.to_vec();
+    sorted.sort_unstable();
+    let list = Value::List(sorted.into_iter().map(Value::Int).collect());
+    if let Some((_, g)) = fields.iter_mut().find(|(k, _)| is_b(k, b"groups")) {
+        *g = list;
+    } else {
+        fields.push((Value::Bytes(b"groups".to_vec()), list));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +318,48 @@ mod tests {
     fn delete_unknown_preset_errors() {
         let mut v = user_with_presets();
         assert!(matches!(delete_preset(&mut v, "nope"), Err(OverviewTabError::UnknownPreset { .. })));
+    }
+
+    fn preset_groups(v: &Value, name: &str) -> Vec<i64> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Value::Dict(pd) = &items[1] else { panic!() };
+        let (_, blob) = pd.iter().find(|(k, _)| as_str(k).as_deref() == Some(name)).unwrap();
+        let Value::Dict(bf) = blob else { panic!() };
+        let (_, groups) = bf.iter().find(|(k, _)| is_b(k, b"groups")).unwrap();
+        let Value::List(l) = groups else { panic!() };
+        l.iter().filter_map(|e| if let Value::Int(n) = e { Some(*n) } else { None }).collect()
+    }
+
+    #[test]
+    fn set_groups_replaces_with_sorted_list() {
+        let mut v = user_with_presets();
+        set_preset_groups(&mut v, "alpha", &[30, 10, 20]).unwrap();
+        assert_eq!(preset_groups(&v, "alpha"), vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn set_groups_unknown_preset_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(
+            set_preset_groups(&mut v, "nope", &[1]),
+            Err(OverviewTabError::UnknownPreset { .. })
+        ));
+    }
+
+    #[test]
+    fn set_groups_inserts_groups_key_when_absent() {
+        // A preset blob with no `groups` key at all.
+        let overview = Value::Dict(vec![(b("overviewProfilePresets"), Value::Tuple(vec![
+            Value::Int(1),
+            Value::Dict(vec![(b("solo"), Value::Dict(vec![]))]),
+        ]))]);
+        let mut v = Value::Dict(vec![(b("overview"), overview)]);
+        set_preset_groups(&mut v, "solo", &[5, 1]).unwrap();
+        assert_eq!(preset_groups(&v, "solo"), vec![1, 5]);
     }
 
     #[test]

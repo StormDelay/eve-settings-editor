@@ -289,6 +289,8 @@ export const api = {
     invoke<OverviewColumns>("preset_delete", { name }),
   tabSetPreset: (tabIdx: number, preset: string) =>
     invoke<OverviewColumns>("tab_set_preset", { tabIdx, preset }),
+  presetSetGroups: (name: string, groups: number[]) =>
+    invoke<OverviewColumns>("preset_set_groups", { name, groups }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
