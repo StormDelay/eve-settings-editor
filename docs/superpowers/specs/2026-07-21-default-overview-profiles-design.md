@@ -82,8 +82,12 @@ appears once, using the file's stored copy). Rendered with `<optgroup>`:
 - **"Default profiles"** — the default keys (bundled or stored-but-default).
 - **"Your profiles"** — user-created keys.
 
-Account format = modern if the overview uses `tabsettings_new`, legacy if
-`tabsettings` (the projection already distinguishes these). Offer the matching
+Account format is inferred from the **tabs' own preset keys** (`accountFormat`):
+modern if any tab references a `DefaultPreset_<id>`, legacy if any references a
+legacy `default*` literal, defaulting to modern. (This keys off what the tabs
+actually reference — the projection doesn't expose the `tabsettings_new` vs
+`tabsettings` variant — and on real files the key-regime and the file format move
+together, so it's an equivalent, arguably more direct signal.) Offer the matching
 default set only. Labels via `labelFor`, extended to resolve the legacy literals
 (§3) — this alone also makes the defaults **recognizable** in the dropdown
 (previously shown as raw "defaultall").
