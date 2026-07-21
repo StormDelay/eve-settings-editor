@@ -48,10 +48,11 @@
   // are meaningful only when that preset is a real (listed) account preset.
   const presetIsReal = $derived(!!tab && (data?.presets.some((p) => p.name === tab.preset) ?? false));
 
-  // Preset-contents catalog: load once on mount (the backend server_version-gates
-  // the ESI sync, so a repeat call is cheap), merging the bundled tree with any
-  // synced additions; fall back to the bundle alone if the sync fails.
-  let catalog = $state<Category[]>([]);
+  // Preset-contents catalog: seed synchronously from the bundled tree so the
+  // checklist renders immediately (the app's core path is editing files offline);
+  // then upgrade it once on mount with any ESI-synced additions (the backend
+  // server_version-gates the sync, so a repeat call is cheap).
+  let catalog = $state<Category[]>(mergeCatalog(overviewGroups as CatalogBundle, []));
   $effect(() => {
     const b = overviewGroups as CatalogBundle;
     api
