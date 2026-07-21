@@ -3,8 +3,8 @@
   import { labelFor } from "./autofill";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
 
-  let { userOpen, onUserDirty, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
-    { userOpen: boolean; onUserDirty: () => void;
+  let { userOpen, userId = null, onUserDirty, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
+    { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
       charName?: string | null; sharedLabel?: string; onShowAccounts?: () => void } = $props();
 
   let lists = $state<RememberedList[] | null>(null);
@@ -16,7 +16,7 @@
     try { lists = await api.autofillLists(); }
     catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; reload(); });
+  $effect(() => { void userOpen; void userId; reload(); });
 
   // Sort by friendly label for findability; the raw path is shown per row.
   const sorted = $derived(

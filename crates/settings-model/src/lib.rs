@@ -17,6 +17,7 @@ pub mod autofill;
 pub mod batch;
 mod stacks;
 mod overview_tabs;
+mod overview_presets;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -33,8 +34,9 @@ pub use stacks::{add_to_stack, create_stack, reorder_stack, unstack, StackError}
 pub use overview_tabs::{
     add_overview_window, add_overview_window_geometry, create_tab, delete_tab, move_tab,
     remove_overview_window, remove_overview_window_geometry, rename_tab, reorder_tabs_in_window,
-    OverviewTabError,
+    set_tab_preset, OverviewTabError,
 };
+pub use overview_presets::{create_preset, delete_preset, rename_preset};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
