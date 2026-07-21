@@ -27,17 +27,20 @@ OUT = os.path.join(REPO, "app", "src", "lib", "data", "overview-groups.json")
 BASE = "https://esi.evetech.net/latest"
 
 # In-space categories shown on the overview. IDs are stable across EVE versions.
+# The labels here are only for the skip-warning; the bundle uses ESI's own name.
 RELEVANT_CATEGORIES = {
     2: "Celestial",
+    3: "Station",
     6: "Ship",
+    11: "Entity",
     18: "Drone",
     22: "Deployable",
     23: "Starbase",
-    40: "Sovereignty Structure",
-    46: "Orbital",
+    25: "Asteroid",
+    40: "Sovereignty Structures",
+    46: "Orbitals",
     65: "Structure",
     87: "Fighter",
-    11: "Entity",
 }
 
 
@@ -73,9 +76,15 @@ def main():
         groups = []
         for gid in cat.get("groups", []):
             g = get(f"{BASE}/universe/groups/{gid}/")
-            if not g.get("published", False):
+            # NOT filtered by `published`: the core in-space overview entries —
+            # Stargate, Station, Planet, Moon, Asteroid Belt, Wreck — are all
+            # `published: false` in ESI yet appear on every overview. Filtering
+            # them out left the catalog unable to name them. Any named group in
+            # an in-space category is includable; only nameless internals are cut.
+            name = g.get("name")
+            if not name:
                 continue
-            groups.append({"id": gid, "name": g["name"]})
+            groups.append({"id": gid, "name": name})
         groups.sort(key=lambda x: x["name"].lower())
         categories.append({"id": cat_id, "name": cat["name"], "groups": groups})
         print(f"  category {cat_id}: {cat['name']!r} -> {len(groups)} groups")

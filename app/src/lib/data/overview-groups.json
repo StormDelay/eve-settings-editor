@@ -5,8 +5,36 @@
       "name": "Celestial",
       "groups": [
         {
+          "id": 1983,
+          "name": "Abyssal Environment"
+        },
+        {
+          "id": 1971,
+          "name": "Abyssal Hazards"
+        },
+        {
+          "id": 517,
+          "name": "Agents in Space"
+        },
+        {
+          "id": 9,
+          "name": "Asteroid Belt"
+        },
+        {
+          "id": 4430,
+          "name": "Asteroid Belt"
+        },
+        {
+          "id": 11,
+          "name": "Asteroid OLD"
+        },
+        {
           "id": 448,
           "name": "Audit Log Secure Container"
+        },
+        {
+          "id": 310,
+          "name": "Beacon"
         },
         {
           "id": 14,
@@ -17,44 +45,252 @@
           "name": "Cargo Container"
         },
         {
+          "id": 227,
+          "name": "Cloud"
+        },
+        {
+          "id": 305,
+          "name": "Comet"
+        },
+        {
           "id": 4168,
           "name": "Compressed Gas"
+        },
+        {
+          "id": 4,
+          "name": "Constellation"
         },
         {
           "id": 307,
           "name": "Construction Platform"
         },
         {
+          "id": 885,
+          "name": "Cosmic Anomaly"
+        },
+        {
+          "id": 502,
+          "name": "Cosmic Signature"
+        },
+        {
+          "id": 897,
+          "name": "Covert Cynosural Field"
+        },
+        {
+          "id": 2020,
+          "name": "Cynosural Fields"
+        },
+        {
+          "id": 4033,
+          "name": "Destructible Effect Beacon"
+        },
+        {
+          "id": 874,
+          "name": "Disruptable Station Services"
+        },
+        {
+          "id": 4081,
+          "name": "Disrupted Gate"
+        },
+        {
+          "id": 920,
+          "name": "Effect Beacon"
+        },
+        {
           "id": 4079,
           "name": "Encounter Surveillance System"
+        },
+        {
+          "id": 1316,
+          "name": "Entosis Command Node"
         },
         {
           "id": 4070,
           "name": "Exotic Artefact"
         },
         {
+          "id": 1991,
+          "name": "Filament Trace"
+        },
+        {
           "id": 1071,
           "name": "Flashpoint"
+        },
+        {
+          "id": 411,
+          "name": "Force Field"
         },
         {
           "id": 649,
           "name": "Freight Container"
         },
         {
+          "id": 368,
+          "name": "Global Warp Disruptor"
+        },
+        {
+          "id": 4713,
+          "name": "Guidance Objectives"
+        },
+        {
           "id": 711,
           "name": "Harvestable Cloud"
+        },
+        {
+          "id": 4935,
+          "name": "Ice Belt"
+        },
+        {
+          "id": 1978,
+          "name": "Industrial Support Facility"
+        },
+        {
+          "id": 4549,
+          "name": "Interstellar Shipcaster"
+        },
+        {
+          "id": 4547,
+          "name": "Interstellar Shipcaster Beacon"
+        },
+        {
+          "id": 4055,
+          "name": "Invisible Beacon"
+        },
+        {
+          "id": 318,
+          "name": "Landmark"
+        },
+        {
+          "id": 226,
+          "name": "Large Collidable Object"
+        },
+        {
+          "id": 4825,
+          "name": "Local Beacon"
+        },
+        {
+          "id": 1973,
+          "name": "Locators"
+        },
+        {
+          "id": 4100,
+          "name": "Logo Display Monument"
+        },
+        {
+          "id": 4930,
+          "name": "Managed Asteroid Belt"
+        },
+        {
+          "id": 1882,
+          "name": "MassiveEnvironments"
+        },
+        {
+          "id": 336,
+          "name": "Mobile Sentry Gun"
+        },
+        {
+          "id": 8,
+          "name": "Moon"
+        },
+        {
+          "id": 1940,
+          "name": "Moon Chunk"
+        },
+        {
+          "id": 1915,
+          "name": "Moon Mining Beacon"
+        },
+        {
+          "id": 1975,
+          "name": "Non-Interactable Object"
+        },
+        {
+          "id": 1980,
+          "name": "Non-Scalable Clouds"
         },
         {
           "id": 1198,
           "name": "Orbital Target"
         },
         {
+          "id": 4938,
+          "name": "Ore Deposit"
+        },
+        {
+          "id": 4918,
+          "name": "Phased Asteroid"
+        },
+        {
+          "id": 4936,
+          "name": "Phased Asteroid Field"
+        },
+        {
+          "id": 4828,
+          "name": "Pirate Spawners"
+        },
+        {
+          "id": 7,
+          "name": "Planet"
+        },
+        {
+          "id": 312,
+          "name": "Planetary Cloud"
+        },
+        {
+          "id": 4937,
+          "name": "Rare Asteroid Field"
+        },
+        {
+          "id": 3,
+          "name": "Region"
+        },
+        {
+          "id": 4719,
+          "name": "Rift"
+        },
+        {
+          "id": 13,
+          "name": "Ring"
+        },
+        {
           "id": 1165,
           "name": "Satellite"
         },
         {
+          "id": 4579,
+          "name": "Scalable Non-Interactable Object"
+        },
+        {
+          "id": 995,
+          "name": "Secondary Sun"
+        },
+        {
           "id": 340,
           "name": "Secure Cargo Container"
+        },
+        {
+          "id": 4548,
+          "name": "Shipcaster Beacon Constructor"
+        },
+        {
+          "id": 382,
+          "name": "Shipping Crates"
+        },
+        {
+          "id": 4745,
+          "name": "Skyhook Reagent Silo"
+        },
+        {
+          "id": 5,
+          "name": "Solar System"
+        },
+        {
+          "id": 10,
+          "name": "Stargate"
+        },
+        {
+          "id": 1998,
+          "name": "Station Conversion Monuments"
         },
         {
           "id": 836,
@@ -63,6 +299,44 @@
         {
           "id": 835,
           "name": "Station Upgrade Platform"
+        },
+        {
+          "id": 6,
+          "name": "Sun"
+        },
+        {
+          "id": 1704,
+          "name": "Super Weapon Beacon"
+        },
+        {
+          "id": 1981,
+          "name": "Triglavian Support Pylons"
+        },
+        {
+          "id": 366,
+          "name": "Warp Gate"
+        },
+        {
+          "id": 988,
+          "name": "Wormhole"
+        },
+        {
+          "id": 186,
+          "name": "Wreck"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Station",
+      "groups": [
+        {
+          "id": 15,
+          "name": "Station"
+        },
+        {
+          "id": 16,
+          "name": "Station Services"
         }
       ]
     },
@@ -101,6 +375,10 @@
         {
           "id": 547,
           "name": "Carrier"
+        },
+        {
+          "id": 2001,
+          "name": "Citizen Ships"
         },
         {
           "id": 419,
@@ -149,6 +427,10 @@
         {
           "id": 893,
           "name": "Electronic Attack Ship"
+        },
+        {
+          "id": 381,
+          "name": "Elite Battleship"
         },
         {
           "id": 543,
@@ -269,8 +551,692 @@
       "name": "Entity",
       "groups": [
         {
+          "id": 1997,
+          "name": "Abyssal Drone Entities"
+        },
+        {
+          "id": 1982,
+          "name": "Abyssal Spaceship Entities"
+        },
+        {
+          "id": 4106,
+          "name": "AIR Entities I"
+        },
+        {
+          "id": 4128,
+          "name": "AIR Entities II"
+        },
+        {
+          "id": 5119,
+          "name": "AIR Holo-Drone Actors"
+        },
+        {
+          "id": 1402,
+          "name": "Amarr Navy Roaming Battleship"
+        },
+        {
+          "id": 1412,
+          "name": "Amarr Navy Roaming Capital"
+        },
+        {
+          "id": 1411,
+          "name": "Amarr Navy Roaming Cruiser"
+        },
+        {
+          "id": 1414,
+          "name": "Amarr Navy Roaming Frigate"
+        },
+        {
+          "id": 1413,
+          "name": "Amarr Navy Roaming Logistics"
+        },
+        {
+          "id": 576,
+          "name": "Asteroid Angel Cartel BattleCruiser"
+        },
+        {
+          "id": 552,
+          "name": "Asteroid Angel Cartel Battleship"
+        },
+        {
+          "id": 793,
+          "name": "Asteroid Angel Cartel Commander BattleCruiser"
+        },
+        {
+          "id": 848,
+          "name": "Asteroid Angel Cartel Commander Battleship"
+        },
+        {
+          "id": 790,
+          "name": "Asteroid Angel Cartel Commander Cruiser"
+        },
+        {
+          "id": 794,
+          "name": "Asteroid Angel Cartel Commander Destroyer"
+        },
+        {
+          "id": 789,
+          "name": "Asteroid Angel Cartel Commander Frigate"
+        },
+        {
+          "id": 551,
+          "name": "Asteroid Angel Cartel Cruiser"
+        },
+        {
+          "id": 575,
+          "name": "Asteroid Angel Cartel Destroyer"
+        },
+        {
+          "id": 1681,
+          "name": "Asteroid Angel Cartel Dreadnought"
+        },
+        {
+          "id": 550,
+          "name": "Asteroid Angel Cartel Frigate"
+        },
+        {
+          "id": 554,
+          "name": "Asteroid Angel Cartel Hauler"
+        },
+        {
+          "id": 553,
+          "name": "Asteroid Angel Cartel Officer"
+        },
+        {
+          "id": 4795,
+          "name": "Asteroid Angel Cartel Officer Cruiser"
+        },
+        {
+          "id": 4796,
+          "name": "Asteroid Angel Cartel Officer Frigate"
+        },
+        {
+          "id": 1682,
+          "name": "Asteroid Angel Cartel Titan"
+        },
+        {
+          "id": 1683,
+          "name": "Asteroid Blood Raider Dreadnought"
+        },
+        {
+          "id": 1684,
+          "name": "Asteroid Blood Raider Titan"
+        },
+        {
+          "id": 578,
+          "name": "Asteroid Blood Raiders BattleCruiser"
+        },
+        {
+          "id": 556,
+          "name": "Asteroid Blood Raiders Battleship"
+        },
+        {
+          "id": 795,
+          "name": "Asteroid Blood Raiders Commander BattleCruiser"
+        },
+        {
+          "id": 849,
+          "name": "Asteroid Blood Raiders Commander Battleship"
+        },
+        {
+          "id": 791,
+          "name": "Asteroid Blood Raiders Commander Cruiser"
+        },
+        {
+          "id": 796,
+          "name": "Asteroid Blood Raiders Commander Destroyer"
+        },
+        {
+          "id": 792,
+          "name": "Asteroid Blood Raiders Commander Frigate"
+        },
+        {
+          "id": 555,
+          "name": "Asteroid Blood Raiders Cruiser"
+        },
+        {
+          "id": 577,
+          "name": "Asteroid Blood Raiders Destroyer"
+        },
+        {
+          "id": 557,
+          "name": "Asteroid Blood Raiders Frigate"
+        },
+        {
+          "id": 558,
+          "name": "Asteroid Blood Raiders Hauler"
+        },
+        {
+          "id": 559,
+          "name": "Asteroid Blood Raiders Officer"
+        },
+        {
+          "id": 4797,
+          "name": "Asteroid Blood Raiders Officer Cruiser"
+        },
+        {
+          "id": 4798,
+          "name": "Asteroid Blood Raiders Officer Frigate"
+        },
+        {
+          "id": 580,
+          "name": "Asteroid Guristas BattleCruiser"
+        },
+        {
+          "id": 560,
+          "name": "Asteroid Guristas Battleship"
+        },
+        {
+          "id": 797,
+          "name": "Asteroid Guristas Commander BattleCruiser"
+        },
+        {
+          "id": 850,
+          "name": "Asteroid Guristas Commander Battleship"
+        },
+        {
+          "id": 798,
+          "name": "Asteroid Guristas Commander Cruiser"
+        },
+        {
+          "id": 799,
+          "name": "Asteroid Guristas Commander Destroyer"
+        },
+        {
+          "id": 800,
+          "name": "Asteroid Guristas Commander Frigate"
+        },
+        {
+          "id": 561,
+          "name": "Asteroid Guristas Cruiser"
+        },
+        {
+          "id": 579,
+          "name": "Asteroid Guristas Destroyer"
+        },
+        {
+          "id": 1685,
+          "name": "Asteroid Guristas Dreadnought"
+        },
+        {
+          "id": 562,
+          "name": "Asteroid Guristas Frigate"
+        },
+        {
+          "id": 563,
+          "name": "Asteroid Guristas Hauler"
+        },
+        {
+          "id": 564,
+          "name": "Asteroid Guristas Officer"
+        },
+        {
+          "id": 4799,
+          "name": "Asteroid Guristas Officer Cruiser"
+        },
+        {
+          "id": 4800,
+          "name": "Asteroid Guristas Officer Frigate"
+        },
+        {
+          "id": 1686,
+          "name": "Asteroid Guristas Titan"
+        },
+        {
+          "id": 1287,
+          "name": "Asteroid Mordus Legion Commander Battleship"
+        },
+        {
+          "id": 1286,
+          "name": "Asteroid Mordus Legion Commander Cruiser"
+        },
+        {
+          "id": 1285,
+          "name": "Asteroid Mordus Legion Commander Frigate"
+        },
+        {
+          "id": 755,
+          "name": "Asteroid Rogue Drone BattleCruiser"
+        },
+        {
+          "id": 756,
+          "name": "Asteroid Rogue Drone Battleship"
+        },
+        {
+          "id": 1691,
+          "name": "Asteroid Rogue Drone Carrier"
+        },
+        {
+          "id": 843,
+          "name": "Asteroid Rogue Drone Commander BattleCruiser"
+        },
+        {
+          "id": 844,
+          "name": "Asteroid Rogue Drone Commander Battleship"
+        },
+        {
+          "id": 845,
+          "name": "Asteroid Rogue Drone Commander Cruiser"
+        },
+        {
+          "id": 846,
+          "name": "Asteroid Rogue Drone Commander Destroyer"
+        },
+        {
+          "id": 847,
+          "name": "Asteroid Rogue Drone Commander Frigate"
+        },
+        {
+          "id": 757,
+          "name": "Asteroid Rogue Drone Cruiser"
+        },
+        {
+          "id": 758,
+          "name": "Asteroid Rogue Drone Destroyer"
+        },
+        {
+          "id": 759,
+          "name": "Asteroid Rogue Drone Frigate"
+        },
+        {
+          "id": 760,
+          "name": "Asteroid Rogue Drone Hauler"
+        },
+        {
+          "id": 1174,
+          "name": "Asteroid Rogue Drone Officer"
+        },
+        {
+          "id": 1692,
+          "name": "Asteroid Rogue Drone Supercarrier"
+        },
+        {
+          "id": 761,
+          "name": "Asteroid Rogue Drone Swarm"
+        },
+        {
+          "id": 582,
+          "name": "Asteroid Sansha's Nation BattleCruiser"
+        },
+        {
+          "id": 565,
+          "name": "Asteroid Sansha's Nation Battleship"
+        },
+        {
+          "id": 807,
+          "name": "Asteroid Sansha's Nation Commander BattleCruiser"
+        },
+        {
+          "id": 851,
+          "name": "Asteroid Sansha's Nation Commander Battleship"
+        },
+        {
+          "id": 808,
+          "name": "Asteroid Sansha's Nation Commander Cruiser"
+        },
+        {
+          "id": 809,
+          "name": "Asteroid Sansha's Nation Commander Destroyer"
+        },
+        {
+          "id": 810,
+          "name": "Asteroid Sansha's Nation Commander Frigate"
+        },
+        {
+          "id": 566,
+          "name": "Asteroid Sansha's Nation Cruiser"
+        },
+        {
+          "id": 581,
+          "name": "Asteroid Sansha's Nation Destroyer"
+        },
+        {
+          "id": 1687,
+          "name": "Asteroid Sansha's Nation Dreadnought"
+        },
+        {
+          "id": 567,
+          "name": "Asteroid Sansha's Nation Frigate"
+        },
+        {
+          "id": 568,
+          "name": "Asteroid Sansha's Nation Hauler"
+        },
+        {
+          "id": 569,
+          "name": "Asteroid Sansha's Nation Officer"
+        },
+        {
+          "id": 4801,
+          "name": "Asteroid Sansha's Nation Officer Cruiser"
+        },
+        {
+          "id": 4802,
+          "name": "Asteroid Sansha's Nation Officer Frigate"
+        },
+        {
+          "id": 1688,
+          "name": "Asteroid Sansha's Nation Supercarrier"
+        },
+        {
+          "id": 584,
+          "name": "Asteroid Serpentis BattleCruiser"
+        },
+        {
+          "id": 570,
+          "name": "Asteroid Serpentis Battleship"
+        },
+        {
+          "id": 811,
+          "name": "Asteroid Serpentis Commander BattleCruiser"
+        },
+        {
+          "id": 852,
+          "name": "Asteroid Serpentis Commander Battleship"
+        },
+        {
+          "id": 812,
+          "name": "Asteroid Serpentis Commander Cruiser"
+        },
+        {
+          "id": 813,
+          "name": "Asteroid Serpentis Commander Destroyer"
+        },
+        {
+          "id": 814,
+          "name": "Asteroid Serpentis Commander Frigate"
+        },
+        {
+          "id": 571,
+          "name": "Asteroid Serpentis Cruiser"
+        },
+        {
+          "id": 583,
+          "name": "Asteroid Serpentis Destroyer"
+        },
+        {
+          "id": 1689,
+          "name": "Asteroid Serpentis Dreadnought"
+        },
+        {
+          "id": 572,
+          "name": "Asteroid Serpentis Frigate"
+        },
+        {
+          "id": 573,
+          "name": "Asteroid Serpentis Hauler"
+        },
+        {
+          "id": 574,
+          "name": "Asteroid Serpentis Officer"
+        },
+        {
+          "id": 4803,
+          "name": "Asteroid Serpentis Officer Cruiser"
+        },
+        {
+          "id": 4804,
+          "name": "Asteroid Serpentis Officer Frigate"
+        },
+        {
+          "id": 1690,
+          "name": "Asteroid Serpentis Titan"
+        },
+        {
+          "id": 323,
+          "name": "Billboard"
+        },
+        {
+          "id": 922,
+          "name": "Capture Point"
+        },
+        {
+          "id": 301,
+          "name": "Concord Drone"
+        },
+        {
+          "id": 4494,
+          "name": "Control Point"
+        },
+        {
+          "id": 297,
+          "name": "Convoy"
+        },
+        {
+          "id": 298,
+          "name": "Convoy Drone"
+        },
+        {
+          "id": 446,
+          "name": "Customs Official"
+        },
+        {
+          "id": 593,
+          "name": "Deadspace Angel Cartel BattleCruiser"
+        },
+        {
+          "id": 594,
+          "name": "Deadspace Angel Cartel Battleship"
+        },
+        {
+          "id": 595,
+          "name": "Deadspace Angel Cartel Cruiser"
+        },
+        {
+          "id": 596,
+          "name": "Deadspace Angel Cartel Destroyer"
+        },
+        {
+          "id": 597,
+          "name": "Deadspace Angel Cartel Frigate"
+        },
+        {
+          "id": 602,
+          "name": "Deadspace Blood Raiders BattleCruiser"
+        },
+        {
+          "id": 603,
+          "name": "Deadspace Blood Raiders Battleship"
+        },
+        {
+          "id": 604,
+          "name": "Deadspace Blood Raiders Cruiser"
+        },
+        {
+          "id": 605,
+          "name": "Deadspace Blood Raiders Destroyer"
+        },
+        {
+          "id": 606,
+          "name": "Deadspace Blood Raiders Frigate"
+        },
+        {
+          "id": 611,
+          "name": "Deadspace Guristas BattleCruiser"
+        },
+        {
+          "id": 612,
+          "name": "Deadspace Guristas Battleship"
+        },
+        {
+          "id": 613,
+          "name": "Deadspace Guristas Cruiser"
+        },
+        {
+          "id": 614,
+          "name": "Deadspace Guristas Destroyer"
+        },
+        {
+          "id": 615,
+          "name": "Deadspace Guristas Frigate"
+        },
+        {
+          "id": 435,
+          "name": "Deadspace Overseer"
+        },
+        {
+          "id": 821,
+          "name": "Deadspace Overseer Battleship"
+        },
+        {
+          "id": 820,
+          "name": "Deadspace Overseer Cruiser"
+        },
+        {
+          "id": 819,
+          "name": "Deadspace Overseer Frigate"
+        },
+        {
+          "id": 496,
+          "name": "Deadspace Overseer's Belongings"
+        },
+        {
+          "id": 495,
+          "name": "Deadspace Overseer's Sentry"
+        },
+        {
+          "id": 494,
+          "name": "Deadspace Overseer's Structure"
+        },
+        {
+          "id": 801,
+          "name": "Deadspace Rogue Drone BattleCruiser"
+        },
+        {
+          "id": 802,
+          "name": "Deadspace Rogue Drone Battleship"
+        },
+        {
+          "id": 803,
+          "name": "Deadspace Rogue Drone Cruiser"
+        },
+        {
+          "id": 804,
+          "name": "Deadspace Rogue Drone Destroyer"
+        },
+        {
+          "id": 805,
+          "name": "Deadspace Rogue Drone Frigate"
+        },
+        {
+          "id": 806,
+          "name": "Deadspace Rogue Drone Swarm"
+        },
+        {
+          "id": 620,
+          "name": "Deadspace Sansha's Nation BattleCruiser"
+        },
+        {
+          "id": 621,
+          "name": "Deadspace Sansha's Nation Battleship"
+        },
+        {
+          "id": 622,
+          "name": "Deadspace Sansha's Nation Cruiser"
+        },
+        {
+          "id": 623,
+          "name": "Deadspace Sansha's Nation Destroyer"
+        },
+        {
+          "id": 624,
+          "name": "Deadspace Sansha's Nation Frigate"
+        },
+        {
+          "id": 629,
+          "name": "Deadspace Serpentis BattleCruiser"
+        },
+        {
+          "id": 630,
+          "name": "Deadspace Serpentis Battleship"
+        },
+        {
+          "id": 631,
+          "name": "Deadspace Serpentis Cruiser"
+        },
+        {
+          "id": 632,
+          "name": "Deadspace Serpentis Destroyer"
+        },
+        {
+          "id": 633,
+          "name": "Deadspace Serpentis Frigate"
+        },
+        {
+          "id": 984,
+          "name": "Deadspace Sleeper Awakened Defender"
+        },
+        {
+          "id": 985,
+          "name": "Deadspace Sleeper Awakened Patroller"
+        },
+        {
+          "id": 960,
+          "name": "Deadspace Sleeper Awakened Sentinel"
+        },
+        {
+          "id": 986,
+          "name": "Deadspace Sleeper Emergent Defender"
+        },
+        {
+          "id": 987,
+          "name": "Deadspace Sleeper Emergent Patroller"
+        },
+        {
+          "id": 961,
+          "name": "Deadspace Sleeper Emergent Sentinel"
+        },
+        {
+          "id": 982,
+          "name": "Deadspace Sleeper Sleepless Defender"
+        },
+        {
+          "id": 983,
+          "name": "Deadspace Sleeper Sleepless Patroller"
+        },
+        {
+          "id": 959,
+          "name": "Deadspace Sleeper Sleepless Sentinel"
+        },
+        {
+          "id": 1529,
+          "name": "Deadspace Sleeper Upgraded Avenger"
+        },
+        {
+          "id": 715,
+          "name": "Destructible Agents In Space"
+        },
+        {
+          "id": 383,
+          "name": "Destructible Sentry Gun"
+        },
+        {
           "id": 1310,
           "name": "Drifter Battleship"
+        },
+        {
+          "id": 4035,
+          "name": "Drifter Entities"
+        },
+        {
+          "id": 1956,
+          "name": "Drifter Reinforcements"
+        },
+        {
+          "id": 1530,
+          "name": "Drifter Response Battleship"
+        },
+        {
+          "id": 4034,
+          "name": "EDENCOM Entities"
+        },
+        {
+          "id": 5032,
+          "name": "Fabricator Rogue Drones"
+        },
+        {
+          "id": 288,
+          "name": "Faction Drone"
         },
         {
           "id": 1183,
@@ -293,6 +1259,10 @@
           "name": "FW Amarr Empire Frigate"
         },
         {
+          "id": 5063,
+          "name": "FW Amarr Empire Hauler"
+        },
+        {
           "id": 1184,
           "name": "FW Caldari State Battlecruiser"
         },
@@ -311,6 +1281,10 @@
         {
           "id": 1167,
           "name": "FW Caldari State Frigate"
+        },
+        {
+          "id": 5064,
+          "name": "FW Caldari State Hauler"
         },
         {
           "id": 1185,
@@ -333,6 +1307,14 @@
           "name": "FW Gallente Federation Frigate"
         },
         {
+          "id": 5065,
+          "name": "FW Gallente Federation Hauler"
+        },
+        {
+          "id": 925,
+          "name": "FW Infrastructure Hub"
+        },
+        {
           "id": 1186,
           "name": "FW Minmatar Republic Battlecruiser"
         },
@@ -351,6 +1333,10 @@
         {
           "id": 1166,
           "name": "FW Minmatar Republic Frigate"
+        },
+        {
+          "id": 5066,
+          "name": "FW Minmatar Republic Hauler"
         },
         {
           "id": 1252,
@@ -375,6 +1361,138 @@
         {
           "id": 1262,
           "name": "Ghost Sites Serpentis Cruiser"
+        },
+        {
+          "id": 4712,
+          "name": "Guided Entities"
+        },
+        {
+          "id": 1789,
+          "name": "Hidden Zenith Amarr Battleship"
+        },
+        {
+          "id": 1804,
+          "name": "Hidden Zenith Amarr Capital"
+        },
+        {
+          "id": 1790,
+          "name": "Hidden Zenith Amarr Cruiser"
+        },
+        {
+          "id": 1791,
+          "name": "Hidden Zenith Amarr Frigate"
+        },
+        {
+          "id": 1792,
+          "name": "Hidden Zenith Caldari Battleship"
+        },
+        {
+          "id": 1805,
+          "name": "Hidden Zenith Caldari Capital"
+        },
+        {
+          "id": 1793,
+          "name": "Hidden Zenith Caldari Cruiser"
+        },
+        {
+          "id": 1794,
+          "name": "Hidden Zenith Caldari Frigate"
+        },
+        {
+          "id": 1788,
+          "name": "Hidden Zenith Drifters"
+        },
+        {
+          "id": 1795,
+          "name": "Hidden Zenith Gallente Battleship"
+        },
+        {
+          "id": 1806,
+          "name": "Hidden Zenith Gallente Capital"
+        },
+        {
+          "id": 1796,
+          "name": "Hidden Zenith Gallente Cruiser"
+        },
+        {
+          "id": 1797,
+          "name": "Hidden Zenith Gallente Frigate"
+        },
+        {
+          "id": 1798,
+          "name": "Hidden Zenith Minmatar Battleship"
+        },
+        {
+          "id": 1807,
+          "name": "Hidden Zenith Minmatar Capital"
+        },
+        {
+          "id": 1799,
+          "name": "Hidden Zenith Minmatar Cruiser"
+        },
+        {
+          "id": 1800,
+          "name": "Hidden Zenith Minmatar Frigate"
+        },
+        {
+          "id": 4572,
+          "name": "Homefront Operations Allied Dreadnought"
+        },
+        {
+          "id": 4573,
+          "name": "Homefront Operations Enemy Battlecruiser"
+        },
+        {
+          "id": 4574,
+          "name": "Homefront Operations Enemy Battleship"
+        },
+        {
+          "id": 4571,
+          "name": "Homefront Operations Enemy Cruiser"
+        },
+        {
+          "id": 4570,
+          "name": "Homefront Operations Enemy Destroyer"
+        },
+        {
+          "id": 4569,
+          "name": "Homefront Operations Enemy Frigate"
+        },
+        {
+          "id": 4577,
+          "name": "Homefront Operations Hauler"
+        },
+        {
+          "id": 4771,
+          "name": "Homefront Operations Noncombatant"
+        },
+        {
+          "id": 4737,
+          "name": "Homefront Operations Shuttle"
+        },
+        {
+          "id": 4576,
+          "name": "Homefront Operations Structure"
+        },
+        {
+          "id": 1056,
+          "name": "Incursion Sansha's Nation Battleship"
+        },
+        {
+          "id": 1052,
+          "name": "Incursion Sansha's Nation Capital"
+        },
+        {
+          "id": 1054,
+          "name": "Incursion Sansha's Nation Cruiser"
+        },
+        {
+          "id": 1053,
+          "name": "Incursion Sansha's Nation Frigate"
+        },
+        {
+          "id": 1051,
+          "name": "Incursion Sansha's Nation Industrial"
         },
         {
           "id": 4673,
@@ -421,12 +1539,656 @@
           "name": "Insurgency Pirate Frigate"
         },
         {
+          "id": 4638,
+          "name": "Insurgency Roaming Enforcers"
+        },
+        {
+          "id": 4637,
+          "name": "Insurgency Roaming Pirates"
+        },
+        {
+          "id": 4949,
+          "name": "InterBus Yoiul LADs"
+        },
+        {
+          "id": 1929,
+          "name": "Irregular - Unidentified"
+        },
+        {
+          "id": 1666,
+          "name": "Irregular Battlecruiser"
+        },
+        {
+          "id": 1667,
+          "name": "Irregular Battleship"
+        },
+        {
+          "id": 4975,
+          "name": "Irregular Capital Industrial Ship"
+        },
+        {
+          "id": 4053,
+          "name": "Irregular Capsule"
+        },
+        {
+          "id": 1726,
+          "name": "Irregular Carrier"
+        },
+        {
+          "id": 1928,
+          "name": "Irregular Container"
+        },
+        {
+          "id": 1567,
+          "name": "Irregular Corvette"
+        },
+        {
+          "id": 1665,
+          "name": "Irregular Cruiser"
+        },
+        {
+          "id": 1664,
+          "name": "Irregular Destroyer"
+        },
+        {
+          "id": 1724,
+          "name": "Irregular Dreadnought"
+        },
+        {
+          "id": 1452,
+          "name": "Irregular Drone"
+        },
+        {
+          "id": 1453,
+          "name": "Irregular EW Drone"
+        },
+        {
+          "id": 4945,
+          "name": "Irregular Expedition Command Ship"
+        },
+        {
+          "id": 1454,
+          "name": "Irregular Fighter"
+        },
+        {
+          "id": 1455,
+          "name": "Irregular Fighter Squadron"
+        },
+        {
+          "id": 1725,
+          "name": "Irregular Force Auxiliary"
+        },
+        {
+          "id": 1926,
+          "name": "Irregular Freighter"
+        },
+        {
+          "id": 1568,
+          "name": "Irregular Frigate"
+        },
+        {
+          "id": 1895,
+          "name": "Irregular Industrial"
+        },
+        {
+          "id": 1925,
+          "name": "Irregular Industrial Command Ship"
+        },
+        {
+          "id": 1762,
+          "name": "Irregular Mining Barge"
+        },
+        {
+          "id": 1761,
+          "name": "Irregular Mining Frigate"
+        },
+        {
+          "id": 1566,
+          "name": "Irregular Shuttle"
+        },
+        {
+          "id": 1927,
+          "name": "Irregular Structure"
+        },
+        {
+          "id": 1731,
+          "name": "Irregular Super Carrier"
+        },
+        {
+          "id": 1759,
+          "name": "Irregular Titan"
+        },
+        {
+          "id": 784,
+          "name": "Large Collidable Ship"
+        },
+        {
+          "id": 319,
+          "name": "Large Collidable Structure"
+        },
+        {
+          "id": 279,
+          "name": "LCO Drone"
+        },
+        {
+          "id": 286,
+          "name": "Minor Threat"
+        },
+        {
+          "id": 666,
+          "name": "Mission Amarr Empire Battlecruiser"
+        },
+        {
+          "id": 667,
+          "name": "Mission Amarr Empire Battleship"
+        },
+        {
+          "id": 865,
+          "name": "Mission Amarr Empire Carrier"
+        },
+        {
+          "id": 668,
+          "name": "Mission Amarr Empire Cruiser"
+        },
+        {
+          "id": 669,
+          "name": "Mission Amarr Empire Destroyer"
+        },
+        {
+          "id": 665,
+          "name": "Mission Amarr Empire Frigate"
+        },
+        {
+          "id": 670,
+          "name": "Mission Amarr Empire Other"
+        },
+        {
+          "id": 672,
+          "name": "Mission Caldari State Battlecruiser"
+        },
+        {
+          "id": 674,
+          "name": "Mission Caldari State Battleship"
+        },
+        {
+          "id": 866,
+          "name": "Mission Caldari State Carrier"
+        },
+        {
+          "id": 673,
+          "name": "Mission Caldari State Cruiser"
+        },
+        {
+          "id": 676,
+          "name": "Mission Caldari State Destroyer"
+        },
+        {
+          "id": 671,
+          "name": "Mission Caldari State Frigate"
+        },
+        {
+          "id": 675,
+          "name": "Mission Caldari State Other"
+        },
+        {
+          "id": 696,
+          "name": "Mission CONCORD Battlecruiser"
+        },
+        {
+          "id": 697,
+          "name": "Mission CONCORD Battleship"
+        },
+        {
+          "id": 695,
+          "name": "Mission CONCORD Cruiser"
+        },
+        {
+          "id": 694,
+          "name": "Mission CONCORD Destroyer"
+        },
+        {
+          "id": 693,
+          "name": "Mission CONCORD Frigate"
+        },
+        {
+          "id": 698,
+          "name": "Mission CONCORD Other"
+        },
+        {
+          "id": 952,
+          "name": "Mission Container"
+        },
+        {
+          "id": 337,
+          "name": "Mission Drone"
+        },
+        {
+          "id": 924,
+          "name": "Mission Faction Battleship"
+        },
+        {
+          "id": 1006,
+          "name": "Mission Faction Cruiser"
+        },
+        {
+          "id": 1007,
+          "name": "Mission Faction Frigate"
+        },
+        {
+          "id": 927,
+          "name": "Mission Faction Haulers"
+        },
+        {
+          "id": 875,
+          "name": "Mission Faction Transports"
+        },
+        {
+          "id": 861,
+          "name": "Mission Fighter Drone"
+        },
+        {
+          "id": 681,
+          "name": "Mission Gallente Federation Battlecruiser"
+        },
+        {
+          "id": 680,
+          "name": "Mission Gallente Federation Battleship"
+        },
+        {
+          "id": 867,
+          "name": "Mission Gallente Federation Carrier"
+        },
+        {
+          "id": 678,
+          "name": "Mission Gallente Federation Cruiser"
+        },
+        {
+          "id": 679,
+          "name": "Mission Gallente Federation Destroyer"
+        },
+        {
+          "id": 677,
+          "name": "Mission Gallente Federation Frigate"
+        },
+        {
+          "id": 682,
+          "name": "Mission Gallente Federation Other"
+        },
+        {
+          "id": 828,
+          "name": "Mission Generic Battle Cruisers"
+        },
+        {
+          "id": 816,
+          "name": "Mission Generic Battleships"
+        },
+        {
+          "id": 4501,
+          "name": "Mission Generic Capsules"
+        },
+        {
+          "id": 817,
+          "name": "Mission Generic Cruisers"
+        },
+        {
+          "id": 829,
+          "name": "Mission Generic Destroyers"
+        },
+        {
+          "id": 818,
+          "name": "Mission Generic Frigates"
+        },
+        {
+          "id": 1465,
+          "name": "Mission Generic Supercarrier"
+        },
+        {
+          "id": 690,
+          "name": "Mission Khanid Battlecruiser"
+        },
+        {
+          "id": 691,
+          "name": "Mission Khanid Battleship"
+        },
+        {
+          "id": 689,
+          "name": "Mission Khanid Cruiser"
+        },
+        {
+          "id": 688,
+          "name": "Mission Khanid Destroyer"
+        },
+        {
+          "id": 687,
+          "name": "Mission Khanid Frigate"
+        },
+        {
+          "id": 692,
+          "name": "Mission Khanid Other"
+        },
+        {
+          "id": 685,
+          "name": "Mission Minmatar Republic Battlecruiser"
+        },
+        {
+          "id": 706,
+          "name": "Mission Minmatar Republic Battleship"
+        },
+        {
+          "id": 868,
+          "name": "Mission Minmatar Republic Carrier"
+        },
+        {
+          "id": 705,
+          "name": "Mission Minmatar Republic Cruiser"
+        },
+        {
+          "id": 684,
+          "name": "Mission Minmatar Republic Destroyer"
+        },
+        {
+          "id": 683,
+          "name": "Mission Minmatar Republic Frigate"
+        },
+        {
+          "id": 686,
+          "name": "Mission Minmatar Republic Other"
+        },
+        {
+          "id": 702,
+          "name": "Mission Mordu Battlecruiser"
+        },
+        {
+          "id": 703,
+          "name": "Mission Mordu Battleship"
+        },
+        {
+          "id": 701,
+          "name": "Mission Mordu Cruiser"
+        },
+        {
+          "id": 700,
+          "name": "Mission Mordu Destroyer"
+        },
+        {
+          "id": 699,
+          "name": "Mission Mordu Frigate"
+        },
+        {
+          "id": 704,
+          "name": "Mission Mordu Other"
+        },
+        {
+          "id": 822,
+          "name": "Mission Thukker Battlecruiser"
+        },
+        {
+          "id": 823,
+          "name": "Mission Thukker Battleship"
+        },
+        {
+          "id": 824,
+          "name": "Mission Thukker Cruiser"
+        },
+        {
+          "id": 825,
+          "name": "Mission Thukker Destroyer"
+        },
+        {
+          "id": 826,
+          "name": "Mission Thukker Frigate"
+        },
+        {
+          "id": 827,
+          "name": "Mission Thukker Other"
+        },
+        {
+          "id": 5078,
+          "name": "Moreau’s Capsuleer Outreach Center Entities"
+        },
+        {
+          "id": 185,
+          "name": "Pirate Drone"
+        },
+        {
+          "id": 4636,
+          "name": "Pirate Entities"
+        },
+        {
+          "id": 182,
+          "name": "Police Drone"
+        },
+        {
+          "id": 2009,
+          "name": "Precursor Cache"
+        },
+        {
+          "id": 180,
+          "name": "Protective Sentry Gun"
+        },
+        {
+          "id": 1727,
+          "name": "Roaming Angel Cartel Battleship"
+        },
+        {
+          "id": 1728,
+          "name": "Roaming Angel Cartel Cruiser"
+        },
+        {
+          "id": 1729,
+          "name": "Roaming Angel Cartel Frigate"
+        },
+        {
+          "id": 1736,
+          "name": "Roaming Blood Raider Battlecruiser"
+        },
+        {
+          "id": 1737,
+          "name": "Roaming Blood Raider Battleship"
+        },
+        {
+          "id": 1735,
+          "name": "Roaming Blood Raider Cruiser"
+        },
+        {
+          "id": 1734,
+          "name": "Roaming Blood Raider Frigate"
+        },
+        {
+          "id": 1720,
+          "name": "Roaming Serpentis Battleship"
+        },
+        {
+          "id": 1721,
+          "name": "Roaming Serpentis Cruiser"
+        },
+        {
+          "id": 1722,
+          "name": "Roaming Serpentis Frigate"
+        },
+        {
           "id": 1307,
           "name": "Roaming Sleepers Cruiser"
         },
         {
+          "id": 5080,
+          "name": "Roden’s Capsuleer Outreach Center Entities"
+        },
+        {
+          "id": 287,
+          "name": "Rogue Drone"
+        },
+        {
+          "id": 4037,
+          "name": "Rogue Drone Entities"
+        },
+        {
           "id": 1207,
           "name": "Scatter Container"
+        },
+        {
+          "id": 1768,
+          "name": "Seeker Scouts"
+        },
+        {
+          "id": 99,
+          "name": "Sentry Gun"
+        },
+        {
+          "id": 4036,
+          "name": "Sleeper Entities"
+        },
+        {
+          "id": 306,
+          "name": "Spawn Container"
+        },
+        {
+          "id": 523,
+          "name": "Storyline Battleship"
+        },
+        {
+          "id": 522,
+          "name": "Storyline Cruiser"
+        },
+        {
+          "id": 520,
+          "name": "Storyline Frigate"
+        },
+        {
+          "id": 534,
+          "name": "Storyline Mission Battleship"
+        },
+        {
+          "id": 533,
+          "name": "Storyline Mission Cruiser"
+        },
+        {
+          "id": 527,
+          "name": "Storyline Mission Frigate"
+        },
+        {
+          "id": 1872,
+          "name": "Structure Entities"
+        },
+        {
+          "id": 335,
+          "name": "Temporary Cloud"
+        },
+        {
+          "id": 4073,
+          "name": "Temporary Collidable Structure"
+        },
+        {
+          "id": 5079,
+          "name": "Tenzin’s Capsuleer Outreach Center Entities"
+        },
+        {
+          "id": 4028,
+          "name": "Triglavian Entities"
+        },
+        {
+          "id": 4105,
+          "name": "Unidentified Entities"
+        },
+        {
+          "id": 4130,
+          "name": "Unidentified Entities II"
+        },
+        {
+          "id": 4909,
+          "name": "Vanguard Entities"
+        },
+        {
+          "id": 5090,
+          "name": "Warpath Defenders -  Battlecruisers"
+        },
+        {
+          "id": 5099,
+          "name": "Warpath Defenders - Cruisers"
+        },
+        {
+          "id": 5101,
+          "name": "Warpath Defenders - Frigates"
+        },
+        {
+          "id": 5096,
+          "name": "Warpath Elite Mercenaries - Battleships"
+        },
+        {
+          "id": 5097,
+          "name": "Warpath Elite Mercenaries - Cruisers"
+        },
+        {
+          "id": 5098,
+          "name": "Warpath Elite Mercenaries - Frigates"
+        },
+        {
+          "id": 5089,
+          "name": "Warpath Invaders - Battlecruisers"
+        },
+        {
+          "id": 5100,
+          "name": "Warpath Invaders - Cruisers"
+        },
+        {
+          "id": 5102,
+          "name": "Warpath Invaders - Frigates"
+        },
+        {
+          "id": 934,
+          "name": "Zombie Entities"
+        },
+        {
+          "id": 1909,
+          "name": "♦ Battlecruiser"
+        },
+        {
+          "id": 1814,
+          "name": "♦ Battleship"
+        },
+        {
+          "id": 1813,
+          "name": "♦ Cruiser"
+        },
+        {
+          "id": 1880,
+          "name": "♦ Dreadnought"
+        },
+        {
+          "id": 1879,
+          "name": "♦ Force Auxiliary"
+        },
+        {
+          "id": 1803,
+          "name": "♦ Frigate"
+        },
+        {
+          "id": 1896,
+          "name": "♦ Industrial Command"
+        },
+        {
+          "id": 4917,
+          "name": "♦ Industrial Command Ship"
+        },
+        {
+          "id": 1765,
+          "name": "♦ Mining Barge"
+        },
+        {
+          "id": 1766,
+          "name": "♦ Mining Exhumer"
+        },
+        {
+          "id": 1764,
+          "name": "♦ Mining Frigate"
+        },
+        {
+          "id": 1767,
+          "name": "♦ Mining Hauler"
+        },
+        {
+          "id": 1878,
+          "name": "♦ Titan"
         }
       ]
     },
@@ -447,6 +2209,14 @@
           "name": "Energy Neutralizer Drone"
         },
         {
+          "id": 1023,
+          "name": "Fighter Bomber"
+        },
+        {
+          "id": 549,
+          "name": "Fighter Drone"
+        },
+        {
           "id": 640,
           "name": "Logistic Drone"
         },
@@ -455,12 +2225,28 @@
           "name": "Mining Drone"
         },
         {
+          "id": 97,
+          "name": "Proximity Drone"
+        },
+        {
+          "id": 299,
+          "name": "Repair Drone"
+        },
+        {
           "id": 1159,
           "name": "Salvage Drone"
         },
         {
           "id": 641,
           "name": "Stasis Webifying Drone"
+        },
+        {
+          "id": 470,
+          "name": "Unanchoring Drone"
+        },
+        {
+          "id": 545,
+          "name": "Warp Scrambling Drone"
         }
       ]
     },
@@ -501,8 +2287,16 @@
           "name": "Mobile Cynosural Beacon"
         },
         {
+          "id": 1274,
+          "name": "Mobile Decoy Unit"
+        },
+        {
           "id": 1246,
           "name": "Mobile Depot"
+        },
+        {
+          "id": 1149,
+          "name": "Mobile Jump Disruptor"
         },
         {
           "id": 1276,
@@ -579,12 +2373,20 @@
           "name": "Energy Neutralizing Battery"
         },
         {
+          "id": 445,
+          "name": "Force Field Array"
+        },
+        {
           "id": 707,
           "name": "Jump Portal Array"
         },
         {
           "id": 413,
           "name": "Laboratory"
+        },
+        {
+          "id": 710,
+          "name": "Logistics Array"
         },
         {
           "id": 449,
@@ -599,12 +2401,24 @@
           "name": "Mobile Missile Sentry"
         },
         {
+          "id": 414,
+          "name": "Mobile Power Core"
+        },
+        {
           "id": 426,
           "name": "Mobile Projectile Sentry"
         },
         {
           "id": 438,
           "name": "Mobile Reactor"
+        },
+        {
+          "id": 418,
+          "name": "Mobile Shield Generator"
+        },
+        {
+          "id": 364,
+          "name": "Mobile Storage"
         },
         {
           "id": 416,
@@ -643,6 +2457,18 @@
           "name": "Stasis Webification Battery"
         },
         {
+          "id": 480,
+          "name": "Stealth Emitter Array"
+        },
+        {
+          "id": 840,
+          "name": "Structure Repair Array"
+        },
+        {
+          "id": 877,
+          "name": "Target Painting Battery"
+        },
+        {
           "id": 473,
           "name": "Tracking Array"
         },
@@ -653,9 +2479,219 @@
       ]
     },
     {
+      "id": 25,
+      "name": "Asteroid",
+      "groups": [
+        {
+          "id": 4161,
+          "name": "AIR Ore Asteroid Resources"
+        },
+        {
+          "id": 903,
+          "name": "Ancient Compressed Ice"
+        },
+        {
+          "id": 450,
+          "name": "Arkonor"
+        },
+        {
+          "id": 4031,
+          "name": "Bezdnacine"
+        },
+        {
+          "id": 451,
+          "name": "Bistot"
+        },
+        {
+          "id": 1920,
+          "name": "Common Moon Asteroids"
+        },
+        {
+          "id": 452,
+          "name": "Crokite"
+        },
+        {
+          "id": 453,
+          "name": "Dark Ochre"
+        },
+        {
+          "id": 2006,
+          "name": "Deadspace Asteroids"
+        },
+        {
+          "id": 4516,
+          "name": "Ducinium"
+        },
+        {
+          "id": 4515,
+          "name": "Eifyrium"
+        },
+        {
+          "id": 1911,
+          "name": "Empire Asteroids"
+        },
+        {
+          "id": 1923,
+          "name": "Exceptional Moon Asteroids"
+        },
+        {
+          "id": 2024,
+          "name": "Fluorite"
+        },
+        {
+          "id": 467,
+          "name": "Gneiss"
+        },
+        {
+          "id": 4759,
+          "name": "Griemeer"
+        },
+        {
+          "id": 454,
+          "name": "Hedbergite"
+        },
+        {
+          "id": 455,
+          "name": "Hemorphite"
+        },
+        {
+          "id": 4758,
+          "name": "Hezorime"
+        },
+        {
+          "id": 465,
+          "name": "Ice"
+        },
+        {
+          "id": 456,
+          "name": "Jaspet"
+        },
+        {
+          "id": 5086,
+          "name": "Kangite"
+        },
+        {
+          "id": 457,
+          "name": "Kernite"
+        },
+        {
+          "id": 4755,
+          "name": "Kylixium"
+        },
+        {
+          "id": 468,
+          "name": "Mercoxit"
+        },
+        {
+          "id": 5085,
+          "name": "Moissanite"
+        },
+        {
+          "id": 4513,
+          "name": "Mordunium"
+        },
+        {
+          "id": 4568,
+          "name": "Mutanite"
+        },
+        {
+          "id": 4756,
+          "name": "Nocxite"
+        },
+        {
+          "id": 4714,
+          "name": "Non-Interactable Asteroids"
+        },
+        {
+          "id": 469,
+          "name": "Omber"
+        },
+        {
+          "id": 458,
+          "name": "Plagioclase"
+        },
+        {
+          "id": 5084,
+          "name": "Polycrase"
+        },
+        {
+          "id": 459,
+          "name": "Pyroxeres"
+        },
+        {
+          "id": 4030,
+          "name": "Rakovene"
+        },
+        {
+          "id": 1922,
+          "name": "Rare Moon Asteroids"
+        },
+        {
+          "id": 5083,
+          "name": "Raspite"
+        },
+        {
+          "id": 4094,
+          "name": "Scalable Decorative Asteroid"
+        },
+        {
+          "id": 460,
+          "name": "Scordite"
+        },
+        {
+          "id": 461,
+          "name": "Spodumain"
+        },
+        {
+          "id": 4029,
+          "name": "Talassonite"
+        },
+        {
+          "id": 2022,
+          "name": "Temporal Resources"
+        },
+        {
+          "id": 519,
+          "name": "Terran Artifacts"
+        },
+        {
+          "id": 4857,
+          "name": "Tyranite"
+        },
+        {
+          "id": 1884,
+          "name": "Ubiquitous Moon Asteroids"
+        },
+        {
+          "id": 4757,
+          "name": "Ueganite"
+        },
+        {
+          "id": 1921,
+          "name": "Uncommon Moon Asteroids"
+        },
+        {
+          "id": 462,
+          "name": "Veldspar"
+        },
+        {
+          "id": 4514,
+          "name": "Ytirium"
+        }
+      ]
+    },
+    {
       "id": 40,
       "name": "Sovereignty Structures",
       "groups": [
+        {
+          "id": 1004,
+          "name": "Defense Bunkers"
+        },
+        {
+          "id": 1005,
+          "name": "Sovereignty Blockade Unit"
+        },
         {
           "id": 1012,
           "name": "Sovereignty Hub"
@@ -675,8 +2711,16 @@
           "name": "Orbital Construction Platform"
         },
         {
+          "id": 1025,
+          "name": "Orbital Infrastructure"
+        },
+        {
           "id": 4736,
           "name": "Skyhook"
+        },
+        {
+          "id": 1073,
+          "name": "Test Orbitals"
         }
       ]
     },
@@ -685,12 +2729,32 @@
       "name": "Structure",
       "groups": [
         {
+          "id": 1409,
+          "name": "Administration Hub"
+        },
+        {
+          "id": 1410,
+          "name": "Advertisement Center"
+        },
+        {
           "id": 1657,
           "name": "Citadel"
         },
         {
           "id": 1404,
           "name": "Engineering Complex"
+        },
+        {
+          "id": 1405,
+          "name": "Laboratory"
+        },
+        {
+          "id": 1407,
+          "name": "Observatory Array"
+        },
+        {
+          "id": 4644,
+          "name": "Pirate Forward Operating Base"
         },
         {
           "id": 1406,
@@ -709,8 +2773,20 @@
           "name": "Upwell Jump Bridge"
         },
         {
+          "id": 2015,
+          "name": "Upwell Monument"
+        },
+        {
           "id": 4744,
           "name": "Upwell Moon Drill"
+        },
+        {
+          "id": 1876,
+          "name": "♦ Engineering Complex"
+        },
+        {
+          "id": 1924,
+          "name": "♦ Stronghold"
         }
       ]
     },
