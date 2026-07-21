@@ -196,6 +196,13 @@ export interface OverviewColumns {
   presets: Preset[];
 }
 
+export interface GroupEntry {
+  id: number;
+  name: string;
+  category_id: number;
+  category_name: string;
+}
+
 export interface RememberedList {
   widget: string;
   entries: string[];
@@ -251,6 +258,8 @@ export const api = {
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
     invoke<NameMap>("refresh_character_names", { ids }),
+  syncGroupCatalog: (knownIds: number[], relevantCategories: number[]) =>
+    invoke<GroupEntry[]>("sync_group_catalog", { knownIds, relevantCategories }),
   accountRoster: () => invoke<AccountRoster>("account_roster"),
   setAccountAlias: (userId: number, alias: string | null) =>
     invoke<AccountRoster>("set_account_alias", { userId, alias }),
