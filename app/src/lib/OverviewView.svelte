@@ -39,10 +39,6 @@
   // orphan tab that isn't listed under any window).
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
-  // Preset-management actions operate on the selected tab's current preset; they
-  // are meaningful only when that preset is a real (listed) account preset.
-  const presetIsReal = $derived(!!tab && (data?.presets.some((p) => p.name === tab.preset) ?? false));
-
   // The preset dropdown's default-profile options: EVE's built-in bundle for
   // this account's on-disk regime (modern DefaultPreset_<id> vs legacy
   // default* literals), merged with any stored presets so nothing is missed.
@@ -65,15 +61,31 @@
   });
 
   let groupFilter = $state("");
-  const presetGroups = $derived(data?.presets.find((p) => p.name === tab?.preset)?.groups ?? []);
+  // A default profile that isn't (yet) stored on the account resolves its
+  // contents from the bundled snapshot instead — that's what lets a clean
+  // account edit a built-in's groups before any fork exists.
+  const storedPreset = $derived(data?.presets.find((p) => p.name === tab?.preset));
+  const currentDefault = $derived(tab ? findDefault(bundledDefaults, tab.preset) : undefined);
+  const presetGroups = $derived(storedPreset?.groups ?? currentDefault?.groups ?? []);
+  const editable = $derived(!!tab && (!!storedPreset || !!currentDefault));
   const presetGroupSet = $derived(new Set(presetGroups));
   const visibleCategories = $derived(filterCatalog(catalog, groupFilter));
   const unknownIds = $derived(unknownGroups(catalog, presetGroups));
 
   async function setPresetGroup(id: number, on: boolean) {
     if (!tab) return;
-    try { data = await api.presetSetGroups(tab.preset, toggleGroup(presetGroups, id, on)); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    const t = tab;
+    const next = toggleGroup(presetGroups, id, on);
+    try {
+      if (isDefaultKey(t.preset)) {
+        const def = currentDefault;
+        const name = forkName(labelFor(t.preset), storedNames);
+        data = await api.presetFork(t.index, name, next, def?.filteredStates ?? [], def?.alwaysShownStates ?? []);
+      } else {
+        data = await api.presetSetGroups(t.preset, next);
+      }
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
 
   // Display label for a preset. EVE's built-in presets are keyed
@@ -94,7 +106,6 @@
     | { kind: "createTab"; value: string }
     | { kind: "renameTab"; value: string; tabIdx: number }
     | { kind: "addWindow"; value: string }
-    | { kind: "duplicatePreset"; value: string; from: string }
     | { kind: "renamePreset"; value: string; old: string }
     | null
   >(null);
@@ -141,9 +152,6 @@
         onCharDirty();
         const w = data.windows[data.windows.length - 1];
         if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
-      } else if (p.kind === "duplicatePreset") {
-        data = await api.presetCreate(p.from, name);
-        onUserDirty();
       } else if (p.kind === "renamePreset") {
         // Compare against the shown label: the rename box is prefilled with
         // labelFor(old), so an unedited submit on a DefaultPreset_<id> (label
@@ -170,9 +178,20 @@
     try { data = await api.tabSetPreset(tab.index, preset); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
-  function startDuplicatePreset() {
+  async function duplicatePreset() {
     if (!tab) return;
-    pending = { kind: "duplicatePreset", value: `${labelFor(tab.preset)} copy`, from: tab.preset };
+    const t = tab;
+    const name = forkName(labelFor(t.preset), storedNames);
+    try {
+      if (isDefaultKey(t.preset)) {
+        const def = currentDefault;
+        data = await api.presetFork(t.index, name, presetGroups, def?.filteredStates ?? [], def?.alwaysShownStates ?? []);
+      } else {
+        data = await api.presetCreate(t.preset, name);
+        data = await api.tabSetPreset(t.index, name);
+      }
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   function startRenamePreset() {
     if (!tab) return;
@@ -334,14 +353,14 @@
         </select>
       </label>
       <div class="preset-actions">
-        <button onclick={startDuplicatePreset} disabled={!presetIsReal} title="Duplicate this preset">Duplicate preset</button>
-        <button onclick={startRenamePreset} disabled={!presetIsReal} title="Rename this preset">Rename preset</button>
+        <button onclick={duplicatePreset} disabled={!editable} title="Duplicate this preset">Duplicate preset</button>
+        <button onclick={startRenamePreset} disabled={!storedPreset || isDefaultKey(tab.preset)} title="Rename this preset">Rename preset</button>
         <button class="danger" onclick={deletePreset}
-                disabled={!presetIsReal || (data?.presets.length ?? 0) <= 1}
+                disabled={!storedPreset || isDefaultKey(tab.preset) || (data?.presets.length ?? 0) <= 1}
                 title="Delete this preset">Delete preset</button>
       </div>
     {/if}
-    {#if presetIsReal && tab}
+    {#if editable && tab}
       <div class="preset-contents">
         <div class="contents-head">
           <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
@@ -377,7 +396,7 @@
       <div class="name-entry">
         <input type="text" bind:value={pending.value} use:focusInput
                placeholder={pending.kind === "addWindow" ? "First tab name"
-                 : pending.kind === "duplicatePreset" || pending.kind === "renamePreset" ? "Preset name"
+                 : pending.kind === "renamePreset" ? "Preset name"
                  : "Tab name"}
                onkeydown={(e) => {
                  if (e.key === "Enter") { e.preventDefault(); submitPending(); }
@@ -386,7 +405,6 @@
         <button onclick={submitPending}>
           {pending.kind === "addWindow" ? "Add window"
             : pending.kind === "renameTab" ? "Rename"
-            : pending.kind === "duplicatePreset" ? "Duplicate"
             : pending.kind === "renamePreset" ? "Rename preset"
             : "Add tab"}
         </button>
