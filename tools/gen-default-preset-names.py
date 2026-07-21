@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Regenerate app/src/lib/data/default-preset-names.json.
 
+DO NOT RE-RUN BLINDLY — this tool is UNRELIABLE and the committed
+default-preset-names.json is HAND-CORRECTED. It assumes the number in
+``DefaultPreset_<id>`` is the preset name's localization message id, but that is
+only coincidentally true: it produced e.g. 639437="All" (really "Target
+Capsuleer: All") and 639448="Escape" (a stale filter) and dropped the "Category:"
+prefix EVE shows in-game ("General: All", "Target Capsuleer: Carriers", …). The
+authoritative names come from the client's overview *filter* list (screenshot of
+the in-game "Select filter to edit" dropdown); the committed JSON was corrected
+against that. If you must regenerate, re-verify every entry against the live
+client dropdown before committing.
+
+
 EVE's built-in overview presets are stored under keys like ``DefaultPreset_639431``
 where the number is a localization message id, not a readable name (the settings
 file carries no label). This dev tool resolves those ids to their en-US labels
