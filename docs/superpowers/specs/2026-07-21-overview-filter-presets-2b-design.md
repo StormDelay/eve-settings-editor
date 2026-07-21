@@ -229,9 +229,13 @@ dark styling per the standing WebView2 gotcha. **State filters are not rendered*
 
 - **A.** `OverviewColumns.presets` enriched to `Vec<{name, groups}>` (chosen) vs.
   a separate parallel `preset_groups` field. → **Enrich.**
-- **B.** Catalog sync fires **on app startup** (chosen), alongside the existing
-  character-name resolution, vs. on first open of the Overview editor. →
-  **Startup.**
+- **B.** Catalog sync timing. Original default was **on app startup**; the
+  implementation instead fires it **on first mount of the Overview view** (its
+  only consumer) — chosen during build as the better trade (no ESI hit if the
+  user never opens Overview; the backend `server_version` gate makes remounts
+  cheap). The checklist is seeded synchronously from the static bundle so it
+  renders instantly offline; the sync only *upgrades* it with additions. →
+  **On Overview-view mount, bundle-seeded.**
 
 ## 11. Dependencies, scope, non-goals
 
