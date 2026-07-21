@@ -1,4 +1,5 @@
 mod accounts;
+mod groups;
 mod names;
 mod ops;
 
@@ -96,6 +97,18 @@ async fn refresh_character_names(
 ) -> HashMap<u64, names::ResolvedName> {
     let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
     tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, true))
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn sync_group_catalog(
+    app: tauri::AppHandle,
+    known_ids: Vec<i64>,
+    relevant_categories: Vec<i64>,
+) -> Vec<groups::GroupEntry> {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    tauri::async_runtime::spawn_blocking(move || groups::sync_blocking(&dir, &known_ids, &relevant_categories))
         .await
         .unwrap_or_default()
 }
@@ -280,7 +293,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
-            window_layout, resolve_character_names, refresh_character_names,
+            window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
