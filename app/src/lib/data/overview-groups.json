@@ -1,17 +1,199 @@
 {
   "categories": [
     {
+      "id": 25,
+      "name": "Asteroid",
+      "groups": [
+        {
+          "id": 4161,
+          "name": "AIR Ore Asteroid Resources"
+        },
+        {
+          "id": 450,
+          "name": "Arkonor"
+        },
+        {
+          "id": 4031,
+          "name": "Bezdnacine"
+        },
+        {
+          "id": 451,
+          "name": "Bistot"
+        },
+        {
+          "id": 1920,
+          "name": "Common Moon Asteroids"
+        },
+        {
+          "id": 452,
+          "name": "Crokite"
+        },
+        {
+          "id": 453,
+          "name": "Dark Ochre"
+        },
+        {
+          "id": 2006,
+          "name": "Deadspace Asteroids"
+        },
+        {
+          "id": 4516,
+          "name": "Ducinium"
+        },
+        {
+          "id": 4515,
+          "name": "Eifyrium"
+        },
+        {
+          "id": 1911,
+          "name": "Empire Asteroids"
+        },
+        {
+          "id": 1923,
+          "name": "Exceptional Moon Asteroids"
+        },
+        {
+          "id": 2024,
+          "name": "Fluorite"
+        },
+        {
+          "id": 467,
+          "name": "Gneiss"
+        },
+        {
+          "id": 4759,
+          "name": "Griemeer"
+        },
+        {
+          "id": 454,
+          "name": "Hedbergite"
+        },
+        {
+          "id": 455,
+          "name": "Hemorphite"
+        },
+        {
+          "id": 4758,
+          "name": "Hezorime"
+        },
+        {
+          "id": 465,
+          "name": "Ice"
+        },
+        {
+          "id": 456,
+          "name": "Jaspet"
+        },
+        {
+          "id": 5086,
+          "name": "Kangite"
+        },
+        {
+          "id": 457,
+          "name": "Kernite"
+        },
+        {
+          "id": 4755,
+          "name": "Kylixium"
+        },
+        {
+          "id": 468,
+          "name": "Mercoxit"
+        },
+        {
+          "id": 5085,
+          "name": "Moissanite"
+        },
+        {
+          "id": 4513,
+          "name": "Mordunium"
+        },
+        {
+          "id": 4568,
+          "name": "Mutanite"
+        },
+        {
+          "id": 4756,
+          "name": "Nocxite"
+        },
+        {
+          "id": 469,
+          "name": "Omber"
+        },
+        {
+          "id": 458,
+          "name": "Plagioclase"
+        },
+        {
+          "id": 5084,
+          "name": "Polycrase"
+        },
+        {
+          "id": 459,
+          "name": "Pyroxeres"
+        },
+        {
+          "id": 4030,
+          "name": "Rakovene"
+        },
+        {
+          "id": 1922,
+          "name": "Rare Moon Asteroids"
+        },
+        {
+          "id": 5083,
+          "name": "Raspite"
+        },
+        {
+          "id": 4094,
+          "name": "Scalable Decorative Asteroid"
+        },
+        {
+          "id": 460,
+          "name": "Scordite"
+        },
+        {
+          "id": 461,
+          "name": "Spodumain"
+        },
+        {
+          "id": 4029,
+          "name": "Talassonite"
+        },
+        {
+          "id": 2022,
+          "name": "Temporal Resources"
+        },
+        {
+          "id": 4857,
+          "name": "Tyranite"
+        },
+        {
+          "id": 1884,
+          "name": "Ubiquitous Moon Asteroids"
+        },
+        {
+          "id": 4757,
+          "name": "Ueganite"
+        },
+        {
+          "id": 1921,
+          "name": "Uncommon Moon Asteroids"
+        },
+        {
+          "id": 462,
+          "name": "Veldspar"
+        },
+        {
+          "id": 4514,
+          "name": "Ytirium"
+        }
+      ]
+    },
+    {
       "id": 2,
       "name": "Celestial",
       "groups": [
-        {
-          "id": 1983,
-          "name": "Abyssal Environment"
-        },
-        {
-          "id": 1971,
-          "name": "Abyssal Hazards"
-        },
         {
           "id": 517,
           "name": "Agents in Space"
@@ -19,14 +201,6 @@
         {
           "id": 9,
           "name": "Asteroid Belt"
-        },
-        {
-          "id": 4430,
-          "name": "Asteroid Belt"
-        },
-        {
-          "id": 11,
-          "name": "Asteroid OLD"
         },
         {
           "id": 448,
@@ -45,32 +219,12 @@
           "name": "Cargo Container"
         },
         {
-          "id": 227,
-          "name": "Cloud"
-        },
-        {
-          "id": 305,
-          "name": "Comet"
-        },
-        {
           "id": 4168,
           "name": "Compressed Gas"
         },
         {
-          "id": 4,
-          "name": "Constellation"
-        },
-        {
           "id": 307,
           "name": "Construction Platform"
-        },
-        {
-          "id": 885,
-          "name": "Cosmic Anomaly"
-        },
-        {
-          "id": 502,
-          "name": "Cosmic Signature"
         },
         {
           "id": 897,
@@ -125,10 +279,6 @@
           "name": "Freight Container"
         },
         {
-          "id": 368,
-          "name": "Global Warp Disruptor"
-        },
-        {
           "id": 4713,
           "name": "Guidance Objectives"
         },
@@ -153,24 +303,12 @@
           "name": "Interstellar Shipcaster Beacon"
         },
         {
-          "id": 4055,
-          "name": "Invisible Beacon"
-        },
-        {
           "id": 318,
           "name": "Landmark"
         },
         {
           "id": 226,
           "name": "Large Collidable Object"
-        },
-        {
-          "id": 4825,
-          "name": "Local Beacon"
-        },
-        {
-          "id": 1973,
-          "name": "Locators"
         },
         {
           "id": 4100,
@@ -181,10 +319,6 @@
           "name": "Managed Asteroid Belt"
         },
         {
-          "id": 1882,
-          "name": "MassiveEnvironments"
-        },
-        {
           "id": 336,
           "name": "Mobile Sentry Gun"
         },
@@ -193,24 +327,8 @@
           "name": "Moon"
         },
         {
-          "id": 1940,
-          "name": "Moon Chunk"
-        },
-        {
           "id": 1915,
           "name": "Moon Mining Beacon"
-        },
-        {
-          "id": 1975,
-          "name": "Non-Interactable Object"
-        },
-        {
-          "id": 1980,
-          "name": "Non-Scalable Clouds"
-        },
-        {
-          "id": 1198,
-          "name": "Orbital Target"
         },
         {
           "id": 4938,
@@ -225,44 +343,16 @@
           "name": "Phased Asteroid Field"
         },
         {
-          "id": 4828,
-          "name": "Pirate Spawners"
-        },
-        {
           "id": 7,
           "name": "Planet"
-        },
-        {
-          "id": 312,
-          "name": "Planetary Cloud"
         },
         {
           "id": 4937,
           "name": "Rare Asteroid Field"
         },
         {
-          "id": 3,
-          "name": "Region"
-        },
-        {
-          "id": 4719,
-          "name": "Rift"
-        },
-        {
-          "id": 13,
-          "name": "Ring"
-        },
-        {
           "id": 1165,
           "name": "Satellite"
-        },
-        {
-          "id": 4579,
-          "name": "Scalable Non-Interactable Object"
-        },
-        {
-          "id": 995,
-          "name": "Secondary Sun"
         },
         {
           "id": 340,
@@ -271,18 +361,6 @@
         {
           "id": 4548,
           "name": "Shipcaster Beacon Constructor"
-        },
-        {
-          "id": 382,
-          "name": "Shipping Crates"
-        },
-        {
-          "id": 4745,
-          "name": "Skyhook Reagent Silo"
-        },
-        {
-          "id": 5,
-          "name": "Solar System"
         },
         {
           "id": 10,
@@ -327,222 +405,158 @@
       ]
     },
     {
-      "id": 3,
-      "name": "Station",
+      "id": 8,
+      "name": "Charge",
       "groups": [
         {
-          "id": 15,
-          "name": "Station"
+          "id": 90,
+          "name": "Bomb"
         },
         {
-          "id": 16,
-          "name": "Station Services"
+          "id": 863,
+          "name": "Bomb ECM"
+        },
+        {
+          "id": 864,
+          "name": "Bomb Energy"
+        },
+        {
+          "id": 1548,
+          "name": "Guided Bomb"
+        },
+        {
+          "id": 4088,
+          "name": "Interdiction Burst Probes"
+        },
+        {
+          "id": 548,
+          "name": "Interdiction Probe"
+        },
+        {
+          "id": 479,
+          "name": "Scanner Probe"
+        },
+        {
+          "id": 492,
+          "name": "Survey Probe"
         }
       ]
     },
     {
-      "id": 6,
-      "name": "Ship",
+      "id": 17,
+      "name": "Commodity",
       "groups": [
         {
-          "id": 324,
-          "name": "Assault Frigate"
+          "id": 4575,
+          "name": "Homefront Operations Commodity"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "name": "Deployable",
+      "groups": [
+        {
+          "id": 2005,
+          "name": "Deployable Advertisement"
         },
         {
-          "id": 1201,
-          "name": "Attack Battlecruiser"
+          "id": 1273,
+          "name": "Encounter Surveillance System"
         },
         {
-          "id": 27,
-          "name": "Battleship"
+          "id": 4499,
+          "name": "FW Listening Outpost"
         },
         {
-          "id": 898,
-          "name": "Black Ops"
+          "id": 4477,
+          "name": "FW Propaganda Broadcast Structure"
         },
         {
-          "id": 1202,
-          "name": "Blockade Runner"
+          "id": 4137,
+          "name": "Mobile Analysis Beacon"
         },
         {
-          "id": 883,
-          "name": "Capital Industrial Ship"
+          "id": 1249,
+          "name": "Mobile Cyno Inhibitor"
         },
         {
-          "id": 29,
-          "name": "Capsule"
+          "id": 4093,
+          "name": "Mobile Cynosural Beacon"
         },
         {
-          "id": 547,
-          "name": "Carrier"
+          "id": 1246,
+          "name": "Mobile Depot"
         },
         {
-          "id": 2001,
-          "name": "Citizen Ships"
+          "id": 1276,
+          "name": "Mobile Micro Jump Unit"
         },
         {
-          "id": 419,
-          "name": "Combat Battlecruiser"
+          "id": 4107,
+          "name": "Mobile Observatory"
         },
         {
-          "id": 906,
-          "name": "Combat Recon Ship"
+          "id": 4913,
+          "name": "Mobile Phase Anchor"
         },
         {
-          "id": 5120,
-          "name": "Command Carrier"
+          "id": 1275,
+          "name": "Mobile Scan Inhibitor"
         },
         {
-          "id": 1534,
-          "name": "Command Destroyer"
+          "id": 1247,
+          "name": "Mobile Siphon Unit"
         },
         {
-          "id": 540,
-          "name": "Command Ship"
+          "id": 1250,
+          "name": "Mobile Tractor Unit"
         },
         {
-          "id": 237,
-          "name": "Corvette"
+          "id": 361,
+          "name": "Mobile Warp Disruptor"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "name": "Drone",
+      "groups": [
+        {
+          "id": 100,
+          "name": "Combat Drone"
         },
         {
-          "id": 830,
-          "name": "Covert Ops"
+          "id": 639,
+          "name": "Electronic Warfare Drone"
         },
         {
-          "id": 26,
-          "name": "Cruiser"
+          "id": 544,
+          "name": "Energy Neutralizer Drone"
         },
         {
-          "id": 380,
-          "name": "Deep Space Transport"
+          "id": 1023,
+          "name": "Fighter Bomber"
         },
         {
-          "id": 420,
-          "name": "Destroyer"
+          "id": 549,
+          "name": "Fighter Drone"
         },
         {
-          "id": 485,
-          "name": "Dreadnought"
+          "id": 640,
+          "name": "Logistic Drone"
         },
         {
-          "id": 893,
-          "name": "Electronic Attack Ship"
+          "id": 101,
+          "name": "Mining Drone"
         },
         {
-          "id": 381,
-          "name": "Elite Battleship"
+          "id": 1159,
+          "name": "Salvage Drone"
         },
         {
-          "id": 543,
-          "name": "Exhumer"
-        },
-        {
-          "id": 4902,
-          "name": "Expedition Command Ship"
-        },
-        {
-          "id": 1283,
-          "name": "Expedition Frigate"
-        },
-        {
-          "id": 1972,
-          "name": "Flag Cruiser"
-        },
-        {
-          "id": 1538,
-          "name": "Force Auxiliary"
-        },
-        {
-          "id": 833,
-          "name": "Force Recon Ship"
-        },
-        {
-          "id": 513,
-          "name": "Freighter"
-        },
-        {
-          "id": 25,
-          "name": "Frigate"
-        },
-        {
-          "id": 28,
-          "name": "Hauler"
-        },
-        {
-          "id": 358,
-          "name": "Heavy Assault Cruiser"
-        },
-        {
-          "id": 894,
-          "name": "Heavy Interdiction Cruiser"
-        },
-        {
-          "id": 941,
-          "name": "Industrial Command Ship"
-        },
-        {
-          "id": 831,
-          "name": "Interceptor"
-        },
-        {
-          "id": 541,
-          "name": "Interdictor"
-        },
-        {
-          "id": 902,
-          "name": "Jump Freighter"
-        },
-        {
-          "id": 4594,
-          "name": "Lancer Dreadnought"
-        },
-        {
-          "id": 832,
-          "name": "Logistics"
-        },
-        {
-          "id": 1527,
-          "name": "Logistics Frigate"
-        },
-        {
-          "id": 900,
-          "name": "Marauder"
-        },
-        {
-          "id": 463,
-          "name": "Mining Barge"
-        },
-        {
-          "id": 1022,
-          "name": "Prototype Exploration Ship"
-        },
-        {
-          "id": 31,
-          "name": "Shuttle"
-        },
-        {
-          "id": 5087,
-          "name": "Special Edition Yachts"
-        },
-        {
-          "id": 834,
-          "name": "Stealth Bomber"
-        },
-        {
-          "id": 963,
-          "name": "Strategic Cruiser"
-        },
-        {
-          "id": 659,
-          "name": "Supercarrier"
-        },
-        {
-          "id": 1305,
-          "name": "Tactical Destroyer"
-        },
-        {
-          "id": 30,
-          "name": "Titan"
+          "id": 641,
+          "name": "Stasis Webifying Drone"
         }
       ]
     },
@@ -565,10 +579,6 @@
         {
           "id": 4128,
           "name": "AIR Entities II"
-        },
-        {
-          "id": 5119,
-          "name": "AIR Holo-Drone Actors"
         },
         {
           "id": 1402,
@@ -1463,14 +1473,6 @@
           "name": "Homefront Operations Hauler"
         },
         {
-          "id": 4771,
-          "name": "Homefront Operations Noncombatant"
-        },
-        {
-          "id": 4737,
-          "name": "Homefront Operations Shuttle"
-        },
-        {
           "id": 4576,
           "name": "Homefront Operations Structure"
         },
@@ -1547,10 +1549,6 @@
           "name": "Insurgency Roaming Pirates"
         },
         {
-          "id": 4949,
-          "name": "InterBus Yoiul LADs"
-        },
-        {
           "id": 1929,
           "name": "Irregular - Unidentified"
         },
@@ -1561,10 +1559,6 @@
         {
           "id": 1667,
           "name": "Irregular Battleship"
-        },
-        {
-          "id": 4975,
-          "name": "Irregular Capital Industrial Ship"
         },
         {
           "id": 4053,
@@ -1601,10 +1595,6 @@
         {
           "id": 1453,
           "name": "Irregular EW Drone"
-        },
-        {
-          "id": 4945,
-          "name": "Irregular Expedition Command Ship"
         },
         {
           "id": 1454,
@@ -1943,10 +1933,6 @@
           "name": "Mission Thukker Other"
         },
         {
-          "id": 5078,
-          "name": "Moreau’s Capsuleer Outreach Center Entities"
-        },
-        {
           "id": 185,
           "name": "Pirate Drone"
         },
@@ -2011,10 +1997,6 @@
           "name": "Roaming Sleepers Cruiser"
         },
         {
-          "id": 5080,
-          "name": "Roden’s Capsuleer Outreach Center Entities"
-        },
-        {
           "id": 287,
           "name": "Rogue Drone"
         },
@@ -2071,16 +2053,8 @@
           "name": "Structure Entities"
         },
         {
-          "id": 335,
-          "name": "Temporary Cloud"
-        },
-        {
           "id": 4073,
           "name": "Temporary Collidable Structure"
-        },
-        {
-          "id": 5079,
-          "name": "Tenzin’s Capsuleer Outreach Center Entities"
         },
         {
           "id": 4028,
@@ -2135,10 +2109,6 @@
           "name": "Warpath Invaders - Frigates"
         },
         {
-          "id": 934,
-          "name": "Zombie Entities"
-        },
-        {
           "id": 1909,
           "name": "♦ Battlecruiser"
         },
@@ -2167,10 +2137,6 @@
           "name": "♦ Industrial Command"
         },
         {
-          "id": 4917,
-          "name": "♦ Industrial Command Ship"
-        },
-        {
           "id": 1765,
           "name": "♦ Mining Barge"
         },
@@ -2193,146 +2159,274 @@
       ]
     },
     {
-      "id": 18,
-      "name": "Drone",
+      "id": 87,
+      "name": "Fighter",
       "groups": [
         {
-          "id": 100,
-          "name": "Combat Drone"
+          "id": 1653,
+          "name": "Heavy Fighter"
         },
         {
-          "id": 639,
-          "name": "Electronic Warfare Drone"
+          "id": 1652,
+          "name": "Light Fighter"
         },
         {
-          "id": 544,
-          "name": "Energy Neutralizer Drone"
+          "id": 4779,
+          "name": "Structure Heavy Fighter"
         },
         {
-          "id": 1023,
-          "name": "Fighter Bomber"
+          "id": 4777,
+          "name": "Structure Light Fighter"
         },
         {
-          "id": 549,
-          "name": "Fighter Drone"
+          "id": 4778,
+          "name": "Structure Support Fighter"
         },
         {
-          "id": 640,
-          "name": "Logistic Drone"
-        },
-        {
-          "id": 101,
-          "name": "Mining Drone"
-        },
-        {
-          "id": 97,
-          "name": "Proximity Drone"
-        },
-        {
-          "id": 299,
-          "name": "Repair Drone"
-        },
-        {
-          "id": 1159,
-          "name": "Salvage Drone"
-        },
-        {
-          "id": 641,
-          "name": "Stasis Webifying Drone"
-        },
-        {
-          "id": 470,
-          "name": "Unanchoring Drone"
-        },
-        {
-          "id": 545,
-          "name": "Warp Scrambling Drone"
+          "id": 1537,
+          "name": "Support Fighter"
         }
       ]
     },
     {
-      "id": 22,
-      "name": "Deployable",
+      "id": 46,
+      "name": "Orbitals",
       "groups": [
         {
-          "id": 2005,
-          "name": "Deployable Advertisement"
+          "id": 1106,
+          "name": "Orbital Construction Platform"
         },
         {
-          "id": 1273,
-          "name": "Encounter Surveillance System"
+          "id": 1025,
+          "name": "Orbital Infrastructure"
         },
         {
-          "id": 4499,
-          "name": "FW Listening Outpost"
+          "id": 4736,
+          "name": "Skyhook"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Ship",
+      "groups": [
+        {
+          "id": 324,
+          "name": "Assault Frigate"
         },
         {
-          "id": 4477,
-          "name": "FW Propaganda Broadcast Structure"
+          "id": 1201,
+          "name": "Attack Battlecruiser"
         },
         {
-          "id": 4810,
-          "name": "Mercenary Den"
+          "id": 27,
+          "name": "Battleship"
         },
         {
-          "id": 4137,
-          "name": "Mobile Analysis Beacon"
+          "id": 898,
+          "name": "Black Ops"
         },
         {
-          "id": 1249,
-          "name": "Mobile Cyno Inhibitor"
+          "id": 1202,
+          "name": "Blockade Runner"
         },
         {
-          "id": 4093,
-          "name": "Mobile Cynosural Beacon"
+          "id": 883,
+          "name": "Capital Industrial Ship"
         },
         {
-          "id": 1274,
-          "name": "Mobile Decoy Unit"
+          "id": 29,
+          "name": "Capsule"
         },
         {
-          "id": 1246,
-          "name": "Mobile Depot"
+          "id": 547,
+          "name": "Carrier"
         },
         {
-          "id": 1149,
-          "name": "Mobile Jump Disruptor"
+          "id": 2001,
+          "name": "Citizen Ships"
         },
         {
-          "id": 1276,
-          "name": "Mobile Micro Jump Unit"
+          "id": 419,
+          "name": "Combat Battlecruiser"
         },
         {
-          "id": 4107,
-          "name": "Mobile Observatory"
+          "id": 906,
+          "name": "Combat Recon Ship"
         },
         {
-          "id": 4913,
-          "name": "Mobile Phase Anchor"
+          "id": 5120,
+          "name": "Command Carrier"
         },
         {
-          "id": 1275,
-          "name": "Mobile Scan Inhibitor"
+          "id": 1534,
+          "name": "Command Destroyer"
         },
         {
-          "id": 1247,
-          "name": "Mobile Siphon Unit"
+          "id": 540,
+          "name": "Command Ship"
         },
         {
-          "id": 1250,
-          "name": "Mobile Tractor Unit"
+          "id": 237,
+          "name": "Corvette"
         },
         {
-          "id": 1297,
-          "name": "Mobile Vault"
+          "id": 830,
+          "name": "Covert Ops"
         },
         {
-          "id": 361,
-          "name": "Mobile Warp Disruptor"
+          "id": 26,
+          "name": "Cruiser"
         },
         {
-          "id": 1312,
-          "name": "Observatory Structures"
+          "id": 380,
+          "name": "Deep Space Transport"
+        },
+        {
+          "id": 420,
+          "name": "Destroyer"
+        },
+        {
+          "id": 485,
+          "name": "Dreadnought"
+        },
+        {
+          "id": 893,
+          "name": "Electronic Attack Ship"
+        },
+        {
+          "id": 381,
+          "name": "Elite Battleship"
+        },
+        {
+          "id": 543,
+          "name": "Exhumer"
+        },
+        {
+          "id": 4902,
+          "name": "Expedition Command Ship"
+        },
+        {
+          "id": 1283,
+          "name": "Expedition Frigate"
+        },
+        {
+          "id": 1972,
+          "name": "Flag Cruiser"
+        },
+        {
+          "id": 1538,
+          "name": "Force Auxiliary"
+        },
+        {
+          "id": 833,
+          "name": "Force Recon Ship"
+        },
+        {
+          "id": 513,
+          "name": "Freighter"
+        },
+        {
+          "id": 25,
+          "name": "Frigate"
+        },
+        {
+          "id": 28,
+          "name": "Hauler"
+        },
+        {
+          "id": 358,
+          "name": "Heavy Assault Cruiser"
+        },
+        {
+          "id": 894,
+          "name": "Heavy Interdiction Cruiser"
+        },
+        {
+          "id": 941,
+          "name": "Industrial Command Ship"
+        },
+        {
+          "id": 831,
+          "name": "Interceptor"
+        },
+        {
+          "id": 541,
+          "name": "Interdictor"
+        },
+        {
+          "id": 902,
+          "name": "Jump Freighter"
+        },
+        {
+          "id": 4594,
+          "name": "Lancer Dreadnought"
+        },
+        {
+          "id": 832,
+          "name": "Logistics"
+        },
+        {
+          "id": 1527,
+          "name": "Logistics Frigate"
+        },
+        {
+          "id": 900,
+          "name": "Marauder"
+        },
+        {
+          "id": 463,
+          "name": "Mining Barge"
+        },
+        {
+          "id": 1022,
+          "name": "Prototype Exploration Ship"
+        },
+        {
+          "id": 31,
+          "name": "Shuttle"
+        },
+        {
+          "id": 5087,
+          "name": "Special Edition Yachts"
+        },
+        {
+          "id": 834,
+          "name": "Stealth Bomber"
+        },
+        {
+          "id": 963,
+          "name": "Strategic Cruiser"
+        },
+        {
+          "id": 659,
+          "name": "Supercarrier"
+        },
+        {
+          "id": 1305,
+          "name": "Tactical Destroyer"
+        },
+        {
+          "id": 30,
+          "name": "Titan"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "name": "Sovereignty Structures",
+      "groups": [
+        {
+          "id": 1005,
+          "name": "Sovereignty Blockade Unit"
+        },
+        {
+          "id": 1012,
+          "name": "Sovereignty Hub"
+        },
+        {
+          "id": 1003,
+          "name": "Territorial Claim Unit"
         }
       ]
     },
@@ -2373,20 +2467,12 @@
           "name": "Energy Neutralizing Battery"
         },
         {
-          "id": 445,
-          "name": "Force Field Array"
-        },
-        {
           "id": 707,
           "name": "Jump Portal Array"
         },
         {
           "id": 413,
           "name": "Laboratory"
-        },
-        {
-          "id": 710,
-          "name": "Logistics Array"
         },
         {
           "id": 449,
@@ -2401,24 +2487,12 @@
           "name": "Mobile Missile Sentry"
         },
         {
-          "id": 414,
-          "name": "Mobile Power Core"
-        },
-        {
           "id": 426,
           "name": "Mobile Projectile Sentry"
         },
         {
           "id": 438,
           "name": "Mobile Reactor"
-        },
-        {
-          "id": 418,
-          "name": "Mobile Shield Generator"
-        },
-        {
-          "id": 364,
-          "name": "Mobile Storage"
         },
         {
           "id": 416,
@@ -2457,18 +2531,6 @@
           "name": "Stasis Webification Battery"
         },
         {
-          "id": 480,
-          "name": "Stealth Emitter Array"
-        },
-        {
-          "id": 840,
-          "name": "Structure Repair Array"
-        },
-        {
-          "id": 877,
-          "name": "Target Painting Battery"
-        },
-        {
           "id": 473,
           "name": "Tracking Array"
         },
@@ -2479,248 +2541,12 @@
       ]
     },
     {
-      "id": 25,
-      "name": "Asteroid",
+      "id": 3,
+      "name": "Station",
       "groups": [
         {
-          "id": 4161,
-          "name": "AIR Ore Asteroid Resources"
-        },
-        {
-          "id": 903,
-          "name": "Ancient Compressed Ice"
-        },
-        {
-          "id": 450,
-          "name": "Arkonor"
-        },
-        {
-          "id": 4031,
-          "name": "Bezdnacine"
-        },
-        {
-          "id": 451,
-          "name": "Bistot"
-        },
-        {
-          "id": 1920,
-          "name": "Common Moon Asteroids"
-        },
-        {
-          "id": 452,
-          "name": "Crokite"
-        },
-        {
-          "id": 453,
-          "name": "Dark Ochre"
-        },
-        {
-          "id": 2006,
-          "name": "Deadspace Asteroids"
-        },
-        {
-          "id": 4516,
-          "name": "Ducinium"
-        },
-        {
-          "id": 4515,
-          "name": "Eifyrium"
-        },
-        {
-          "id": 1911,
-          "name": "Empire Asteroids"
-        },
-        {
-          "id": 1923,
-          "name": "Exceptional Moon Asteroids"
-        },
-        {
-          "id": 2024,
-          "name": "Fluorite"
-        },
-        {
-          "id": 467,
-          "name": "Gneiss"
-        },
-        {
-          "id": 4759,
-          "name": "Griemeer"
-        },
-        {
-          "id": 454,
-          "name": "Hedbergite"
-        },
-        {
-          "id": 455,
-          "name": "Hemorphite"
-        },
-        {
-          "id": 4758,
-          "name": "Hezorime"
-        },
-        {
-          "id": 465,
-          "name": "Ice"
-        },
-        {
-          "id": 456,
-          "name": "Jaspet"
-        },
-        {
-          "id": 5086,
-          "name": "Kangite"
-        },
-        {
-          "id": 457,
-          "name": "Kernite"
-        },
-        {
-          "id": 4755,
-          "name": "Kylixium"
-        },
-        {
-          "id": 468,
-          "name": "Mercoxit"
-        },
-        {
-          "id": 5085,
-          "name": "Moissanite"
-        },
-        {
-          "id": 4513,
-          "name": "Mordunium"
-        },
-        {
-          "id": 4568,
-          "name": "Mutanite"
-        },
-        {
-          "id": 4756,
-          "name": "Nocxite"
-        },
-        {
-          "id": 4714,
-          "name": "Non-Interactable Asteroids"
-        },
-        {
-          "id": 469,
-          "name": "Omber"
-        },
-        {
-          "id": 458,
-          "name": "Plagioclase"
-        },
-        {
-          "id": 5084,
-          "name": "Polycrase"
-        },
-        {
-          "id": 459,
-          "name": "Pyroxeres"
-        },
-        {
-          "id": 4030,
-          "name": "Rakovene"
-        },
-        {
-          "id": 1922,
-          "name": "Rare Moon Asteroids"
-        },
-        {
-          "id": 5083,
-          "name": "Raspite"
-        },
-        {
-          "id": 4094,
-          "name": "Scalable Decorative Asteroid"
-        },
-        {
-          "id": 460,
-          "name": "Scordite"
-        },
-        {
-          "id": 461,
-          "name": "Spodumain"
-        },
-        {
-          "id": 4029,
-          "name": "Talassonite"
-        },
-        {
-          "id": 2022,
-          "name": "Temporal Resources"
-        },
-        {
-          "id": 519,
-          "name": "Terran Artifacts"
-        },
-        {
-          "id": 4857,
-          "name": "Tyranite"
-        },
-        {
-          "id": 1884,
-          "name": "Ubiquitous Moon Asteroids"
-        },
-        {
-          "id": 4757,
-          "name": "Ueganite"
-        },
-        {
-          "id": 1921,
-          "name": "Uncommon Moon Asteroids"
-        },
-        {
-          "id": 462,
-          "name": "Veldspar"
-        },
-        {
-          "id": 4514,
-          "name": "Ytirium"
-        }
-      ]
-    },
-    {
-      "id": 40,
-      "name": "Sovereignty Structures",
-      "groups": [
-        {
-          "id": 1004,
-          "name": "Defense Bunkers"
-        },
-        {
-          "id": 1005,
-          "name": "Sovereignty Blockade Unit"
-        },
-        {
-          "id": 1012,
-          "name": "Sovereignty Hub"
-        },
-        {
-          "id": 1003,
-          "name": "Territorial Claim Unit"
-        }
-      ]
-    },
-    {
-      "id": 46,
-      "name": "Orbitals",
-      "groups": [
-        {
-          "id": 1106,
-          "name": "Orbital Construction Platform"
-        },
-        {
-          "id": 1025,
-          "name": "Orbital Infrastructure"
-        },
-        {
-          "id": 4736,
-          "name": "Skyhook"
-        },
-        {
-          "id": 1073,
-          "name": "Test Orbitals"
+          "id": 15,
+          "name": "Station"
         }
       ]
     },
@@ -2729,28 +2555,12 @@
       "name": "Structure",
       "groups": [
         {
-          "id": 1409,
-          "name": "Administration Hub"
-        },
-        {
-          "id": 1410,
-          "name": "Advertisement Center"
-        },
-        {
           "id": 1657,
           "name": "Citadel"
         },
         {
           "id": 1404,
           "name": "Engineering Complex"
-        },
-        {
-          "id": 1405,
-          "name": "Laboratory"
-        },
-        {
-          "id": 1407,
-          "name": "Observatory Array"
         },
         {
           "id": 4644,
@@ -2787,36 +2597,6 @@
         {
           "id": 1924,
           "name": "♦ Stronghold"
-        }
-      ]
-    },
-    {
-      "id": 87,
-      "name": "Fighter",
-      "groups": [
-        {
-          "id": 1653,
-          "name": "Heavy Fighter"
-        },
-        {
-          "id": 1652,
-          "name": "Light Fighter"
-        },
-        {
-          "id": 4779,
-          "name": "Structure Heavy Fighter"
-        },
-        {
-          "id": 4777,
-          "name": "Structure Light Fighter"
-        },
-        {
-          "id": 4778,
-          "name": "Structure Support Fighter"
-        },
-        {
-          "id": 1537,
-          "name": "Support Fighter"
         }
       ]
     }
