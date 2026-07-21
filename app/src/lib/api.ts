@@ -186,10 +186,14 @@ export interface OverviewWindow {
   index: number;
   tab_indices: number[];
 }
+export interface Preset {
+  name: string;
+  groups: number[];
+}
 export interface OverviewColumns {
   tabs: OverviewTab[];
   windows: OverviewWindow[];
-  presets: string[];
+  presets: Preset[];
 }
 
 export interface RememberedList {

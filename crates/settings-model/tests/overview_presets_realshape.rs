@@ -51,8 +51,12 @@ fn rename_across_shared_name_reshares_and_reprojects() {
     rename_preset(&mut v, "pvp", "pvp2").unwrap();
     let v = reshare_roundtrips(&v);
     let cols = project_overview(&v, None);
-    assert!(cols.presets.contains(&"pvp2".to_string()));
-    assert!(!cols.presets.contains(&"pvp".to_string()));
+    assert!(cols.presets.iter().any(|p| p.name == "pvp2"));
+    assert!(!cols.presets.iter().any(|p| p.name == "pvp"));
+    // 2b: the projection now carries each preset's group IDs. The fixture's "pvp"
+    // preset (renamed to "pvp2") has groups:[25]; it survives reshare.
+    let pvp2 = cols.presets.iter().find(|p| p.name == "pvp2").unwrap();
+    assert_eq!(pvp2.groups, vec![25]);
     assert_eq!(cols.tabs[0].preset, "pvp2", "the Ref'd tab followed the rename after inline");
 }
 
@@ -63,6 +67,6 @@ fn duplicate_then_delete_reshares_clean() {
     delete_preset(&mut v, "pve").unwrap();
     let v = reshare_roundtrips(&v);
     let cols = project_overview(&v, None);
-    assert!(cols.presets.contains(&"pvp copy".to_string()));
-    assert!(!cols.presets.contains(&"pve".to_string()));
+    assert!(cols.presets.iter().any(|p| p.name == "pvp copy"));
+    assert!(!cols.presets.iter().any(|p| p.name == "pve"));
 }
