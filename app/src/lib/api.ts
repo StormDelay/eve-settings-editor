@@ -300,6 +300,8 @@ export const api = {
     invoke<OverviewColumns>("tab_set_preset", { tabIdx, preset }),
   presetSetGroups: (name: string, groups: number[]) =>
     invoke<OverviewColumns>("preset_set_groups", { name, groups }),
+  presetFork: (tabIdx: number, name: string, groups: number[], filteredStates: number[], alwaysShownStates: number[]) =>
+    invoke<OverviewColumns>("preset_fork", { tabIdx, name, groups, filteredStates, alwaysShownStates }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
