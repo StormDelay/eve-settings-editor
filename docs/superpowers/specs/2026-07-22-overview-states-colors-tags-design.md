@@ -189,15 +189,15 @@ pub enum StateList { Background, BackgroundOrder, Flag, FlagOrder }
 /// convention in the corpus, and what set_preset_groups does for `groups`.
 /// Order lists are written in the caller's order. Preserves the (ts, _)
 /// wrapper; materialises the key (and its siblings) if absent.
-pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<(), OverviewError>;
+pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<(), OverviewTabError>;
 
 /// Set or clear one state's background colour. `None` removes the entry,
 /// restoring EVE's built-in default for that state. Entries whose surface is
 /// not `b"background"` are preserved untouched.
-pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result<(), OverviewError>;
+pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result<(), OverviewTabError>;
 
 /// Set one of the overview container's simple boolean settings.
-pub fn set_overview_bool(v: &mut Value, key: &str, on: bool) -> Result<(), OverviewError>;
+pub fn set_overview_bool(v: &mut Value, key: &str, on: bool) -> Result<(), OverviewTabError>;
 ```
 
 `set_overview_bool` takes the key as a string validated against an allow-list of
@@ -244,20 +244,24 @@ rather than silently presenting bundled data as though it came from the file.
 
 ### 3.4 `ops.rs`
 
-Thin commands over the two existing edit wrappers — no new plumbing, since both
-already do lock → read-only check → edit → `reshare` → re-project. They differ
-only in the error type they accept, so each command uses the one matching its
-module:
+Thin commands over the existing `edit_user_tabs` wrapper — no new plumbing, since
+it already does lock → read-only check → edit → `reshare` → re-project:
 
-| Command | Wrapper | Error type |
-|---|---|---|
-| `overview_state_list_set(state, which, ids)` | `edit_user_overview` | `OverviewError` |
-| `overview_state_color_set(state, id, rgba: Option<[f64; 4]>)` | `edit_user_overview` | `OverviewError` |
-| `overview_bool_set(state, key, on)` | `edit_user_overview` | `OverviewError` |
-| `overview_preset_states_set(state, name, filtered, always_shown)` | `edit_user_tabs` | `OverviewTabError` |
+- `overview_set_states(state, which, ids)`
+- `overview_set_state_color(state, id, rgba: Option<[f64; 4]>)`
+- `overview_set_bool(state, key, on)`
+- `preset_set_states(state, name, filtered, always_shown)`
 
-The preset command follows `set_preset_groups`, which is already wired through
-`edit_user_tabs`.
+**All four use `edit_user_tabs`, not `edit_user_overview`.** The two wrappers are
+identical apart from the error type they accept, and every function here reaches
+the container through `overview_tabs::overview_mut`, which returns
+`OverviewTabError` — the same path `set_preset_groups` already takes.
+`OverviewError` is a two-variant enum belonging to the column editor and is not
+extended by this slice.
+
+Command names follow the established convention (`preset_set_groups` →
+`preset_set_states`), and the TypeScript wrappers follow theirs
+(`presetSetGroups` → `presetSetStates`).
 
 ### 3.5 Approaches considered and rejected
 
