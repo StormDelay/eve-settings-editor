@@ -12,6 +12,26 @@ export function stateLabel(id: number): string | null {
  *  two Wreck states. Excludes 68, which the client never renders. */
 export const EXCEPTION_STATES: number[] = bundle.exceptionStates;
 
+/** EVE's Exceptions tab offers exactly three choices per state. The two stored
+ *  lists are disjoint on real files, and this tri-state is what keeps them so. */
+export type Exception = "show" | "hide" | "always";
+
+export function exceptionOf(filtered: number[], alwaysShown: number[], id: number): Exception {
+  if (filtered.includes(id)) return "hide";
+  if (alwaysShown.includes(id)) return "always";
+  return "show";
+}
+
+export function applyException(
+  filtered: number[], alwaysShown: number[], id: number, choice: Exception,
+): { filtered: number[]; alwaysShown: number[] } {
+  const f = filtered.filter((n) => n !== id);
+  const a = alwaysShown.filter((n) => n !== id);
+  if (choice === "hide") f.push(id);
+  if (choice === "always") a.push(id);
+  return { filtered: f, alwaysShown: a };
+}
+
 export const DEFAULT_BACKGROUND_ORDER: number[] = bundle.defaultBackgroundOrder;
 export const DEFAULT_BACKGROUND_STATES: number[] = bundle.defaultBackgroundStates;
 export const DEFAULT_FLAG_ORDER: number[] = bundle.defaultFlagOrder;

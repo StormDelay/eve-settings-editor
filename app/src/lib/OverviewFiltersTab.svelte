@@ -5,6 +5,7 @@
   import overviewGroups from "./data/overview-groups.json";
   import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type Category, type CatalogBundle } from "./groups";
   import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
+  import { stateLabel, EXCEPTION_STATES, exceptionOf, applyException, type Exception } from "./states";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
 
   let { data, tabIndex, onChanged, onUserDirty }:
@@ -46,6 +47,18 @@
   const visibleCategories = $derived(filterCatalog(catalog, groupFilter));
   const unknownIds = $derived(unknownGroups(catalog, presetGroups));
 
+  // Exceptions: EVE's own Filters sub-tab renders these sorted alphabetically
+  // by label (not priority order — that's the account-wide Appearance lists).
+  // Any id a preset stores but EXCEPTION_STATES doesn't know about (raw
+  // #<id>) is still included so it round-trips instead of being dropped.
+  const presetFiltered = $derived(storedPreset?.filtered_states ?? currentDefault?.filteredStates ?? []);
+  const presetAlwaysShown = $derived(storedPreset?.always_shown_states ?? currentDefault?.alwaysShownStates ?? []);
+  const exceptionRows = $derived(
+    Array.from(new Set([...EXCEPTION_STATES, ...presetFiltered, ...presetAlwaysShown]))
+      .map((id) => ({ id, label: stateLabel(id) ?? `#${id}` }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  );
+
   async function setPresetGroup(id: number, on: boolean) {
     if (!tab) return;
     const t = tab;
@@ -57,6 +70,21 @@
         onChanged(await api.presetFork(t.index, name, next, def?.filteredStates ?? [], def?.alwaysShownStates ?? []));
       } else {
         onChanged(await api.presetSetGroups(t.preset, next));
+      }
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+
+  async function setException(id: number, choice: Exception) {
+    if (!tab) return;
+    const t = tab;
+    const next = applyException(presetFiltered, presetAlwaysShown, id, choice);
+    try {
+      if (isDefaultKey(t.preset)) {
+        const name = forkName(labelFor(t.preset), storedNames);
+        onChanged(await api.presetFork(t.index, name, presetGroups, next.filtered, next.alwaysShown));
+      } else {
+        onChanged(await api.presetSetStates(t.preset, next.filtered, next.alwaysShown));
       }
       onUserDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
@@ -190,6 +218,22 @@
             </div>
           </details>
         {/each}
+
+        <h4 class="section-heading">Exceptions</h4>
+        <div class="exceptions-list">
+          {#each exceptionRows as row (row.id)}
+            {@const choice = exceptionOf(presetFiltered, presetAlwaysShown, row.id)}
+            <div class="exception-row">
+              <span class="exception-label">{row.label}</span>
+              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "show"}
+                            onchange={() => setException(row.id, "show")} /> Show</label>
+              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "hide"}
+                            onchange={() => setException(row.id, "hide")} /> Hide</label>
+              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "always"}
+                            onchange={() => setException(row.id, "always")} /> Always show</label>
+            </div>
+          {/each}
+        </div>
       </div>
     {/if}
     {#if pending}
@@ -232,4 +276,13 @@
   .group-item { display: flex; gap: 0.35rem; align-items: center; }
   .preset-contents input[type="checkbox"] { accent-color: var(--accent); }
   .unknown-groups { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; color: var(--warn); }
+  .exceptions-list { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.2rem 0 0.4rem 1rem; }
+  .exception-row { display: flex; gap: 0.8rem; align-items: center; }
+  .exception-label { min-width: 14rem; }
+  .exception-row label { display: flex; gap: 0.3rem; align-items: center; }
+  /* Radios render as a light circle in this app's dark WebView2 shell unless
+     given explicit dark colors (see the dark-native-controls memo). */
+  .exceptions-list input[type="radio"] {
+    background: var(--bg-panel); color: var(--fg); accent-color: var(--accent);
+  }
 </style>
