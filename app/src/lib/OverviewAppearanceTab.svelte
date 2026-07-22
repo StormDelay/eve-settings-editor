@@ -30,16 +30,20 @@
   let surface = $state<"Background" | "Colortag">("Background");
 
   const appearance = $derived(data?.appearance ?? null);
-  // A clean account carries none of the four state keys. Show EVE's bundled
-  // defaults so the lists aren't blank; the first edit materialises the key.
-  const defaulted = $derived(appearance?.defaulted ?? false);
   const isBg = $derived(surface === "Background");
   const stored = $derived(isBg ? appearance?.background : appearance?.flag);
+  // Fall back to EVE's bundled defaults PER SURFACE, not on `appearance.defaulted`
+  // (which is true only while all four keys are absent): editing Background
+  // materialises its two keys and flips that flag false, and a global fallback
+  // would then render Colortag as an empty, un-tickable list. A surface counts as
+  // un-materialised only when BOTH its lists are empty — unticking every state
+  // leaves `enabled` empty but `order` intact, which must not re-show defaults.
+  const surfaceUnset = $derived(!stored?.order.length && !stored?.enabled.length);
   const order = $derived(
-    defaulted ? (isBg ? DEFAULT_BACKGROUND_ORDER : DEFAULT_FLAG_ORDER) : (stored?.order ?? []),
+    surfaceUnset ? (isBg ? DEFAULT_BACKGROUND_ORDER : DEFAULT_FLAG_ORDER) : (stored?.order ?? []),
   );
   const enabled = $derived(
-    defaulted ? (isBg ? DEFAULT_BACKGROUND_STATES : DEFAULT_FLAG_STATES) : (stored?.enabled ?? []),
+    surfaceUnset ? (isBg ? DEFAULT_BACKGROUND_STATES : DEFAULT_FLAG_STATES) : (stored?.enabled ?? []),
   );
   // Render `order` verbatim — it's a priority list and carries ids the client
   // never draws (68), which must keep their slots. An enabled id somehow absent
@@ -104,8 +108,8 @@
     {/each}
   </div>
 
-  {#if defaulted}
-    <p class="meta">This account has never customised its overview states, so these are EVE's
+  {#if surfaceUnset}
+    <p class="meta">This account has never customised its {surface} states, so these are EVE's
       defaults and aren't saved yet. Your first change here writes them to the file.</p>
   {/if}
 
