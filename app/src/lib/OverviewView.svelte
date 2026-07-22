@@ -1,6 +1,10 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
   import defaultPresetNames from "./data/default-preset-names.json";
+  import defaultPresetsBundle from "./data/default-presets.json";
+  import overviewGroups from "./data/overview-groups.json";
+  import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type Category, type CatalogBundle } from "./groups";
+  import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
   import { names } from "./names.svelte";
 
@@ -35,16 +39,54 @@
   // orphan tab that isn't listed under any window).
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
-  // The preset dropdown options: the sorted account presets, plus the tab's
-  // current value if (defensively) it isn't among them. Empty "" shows as (default).
-  const presetOptions = $derived.by(() => {
-    const list = data?.presets ?? [];
-    const cur = tab?.preset ?? "";
-    return list.includes(cur) ? list : [cur, ...list];
+  // The preset dropdown's default-profile options: EVE's built-in bundle for
+  // this account's on-disk regime (modern DefaultPreset_<id> vs legacy
+  // default* literals), merged with any stored presets so nothing is missed.
+  const fmt = $derived(accountFormat((data?.tabs ?? []).map((t) => t.preset)));
+  const bundledDefaults = $derived(defaultsForFormat(defaultPresetsBundle as DefaultsBundle, fmt));
+  const storedNames = $derived((data?.presets ?? []).map((p) => p.name));
+  const grouped = $derived(mergePresetOptions(storedNames, bundledDefaults));
+
+  // Preset-contents catalog: seed synchronously from the bundled tree so the
+  // checklist renders immediately (the app's core path is editing files offline);
+  // then upgrade it once on mount with any ESI-synced additions (the backend
+  // server_version-gates the sync, so a repeat call is cheap).
+  let catalog = $state<Category[]>(mergeCatalog(overviewGroups as CatalogBundle, []));
+  $effect(() => {
+    const b = overviewGroups as CatalogBundle;
+    api
+      .syncGroupCatalog(b.all_group_ids, b.categories.map((c) => c.id))
+      .then((additions) => (catalog = mergeCatalog(b, additions)))
+      .catch(() => (catalog = mergeCatalog(b, [])));
   });
-  // Preset-management actions operate on the selected tab's current preset; they
-  // are meaningful only when that preset is a real (listed) account preset.
-  const presetIsReal = $derived(!!tab && (data?.presets.includes(tab.preset) ?? false));
+
+  let groupFilter = $state("");
+  // A default profile that isn't (yet) stored on the account resolves its
+  // contents from the bundled snapshot instead — that's what lets a clean
+  // account edit a built-in's groups before any fork exists.
+  const storedPreset = $derived(data?.presets.find((p) => p.name === tab?.preset));
+  const currentDefault = $derived(tab ? findDefault(bundledDefaults, tab.preset) : undefined);
+  const presetGroups = $derived(storedPreset?.groups ?? currentDefault?.groups ?? []);
+  const editable = $derived(!!tab && (!!storedPreset || !!currentDefault));
+  const presetGroupSet = $derived(new Set(presetGroups));
+  const visibleCategories = $derived(filterCatalog(catalog, groupFilter));
+  const unknownIds = $derived(unknownGroups(catalog, presetGroups));
+
+  async function setPresetGroup(id: number, on: boolean) {
+    if (!tab) return;
+    const t = tab;
+    const next = toggleGroup(presetGroups, id, on);
+    try {
+      if (isDefaultKey(t.preset)) {
+        const def = currentDefault;
+        const name = forkName(labelFor(t.preset), storedNames);
+        data = await api.presetFork(t.index, name, next, def?.filteredStates ?? [], def?.alwaysShownStates ?? []);
+      } else {
+        data = await api.presetSetGroups(t.preset, next);
+      }
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
 
   // Display label for a preset. EVE's built-in presets are keyed
   // `DefaultPreset_<localizationId>` with no readable name in the file; map the id
@@ -53,8 +95,8 @@
   function labelFor(name: string): string {
     if (!name) return "(default)";
     const m = /^DefaultPreset_(\d+)$/.exec(name);
-    const friendly = m ? (defaultPresetNames as Record<string, string>)[m[1]] : undefined;
-    return friendly ?? name;
+    if (m) return (defaultPresetNames as Record<string, string>)[m[1]] ?? name;
+    return LEGACY_NAMES[name.toLowerCase()] ?? name;
   }
 
   // Name entry is an inline input (see the markup below), NOT window.prompt —
@@ -64,7 +106,6 @@
     | { kind: "createTab"; value: string }
     | { kind: "renameTab"; value: string; tabIdx: number }
     | { kind: "addWindow"; value: string }
-    | { kind: "duplicatePreset"; value: string; from: string }
     | { kind: "renamePreset"; value: string; old: string }
     | null
   >(null);
@@ -111,9 +152,6 @@
         onCharDirty();
         const w = data.windows[data.windows.length - 1];
         if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
-      } else if (p.kind === "duplicatePreset") {
-        data = await api.presetCreate(p.from, name);
-        onUserDirty();
       } else if (p.kind === "renamePreset") {
         // Compare against the shown label: the rename box is prefilled with
         // labelFor(old), so an unedited submit on a DefaultPreset_<id> (label
@@ -140,9 +178,20 @@
     try { data = await api.tabSetPreset(tab.index, preset); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
-  function startDuplicatePreset() {
+  async function duplicatePreset() {
     if (!tab) return;
-    pending = { kind: "duplicatePreset", value: `${labelFor(tab.preset)} copy`, from: tab.preset };
+    const t = tab;
+    const name = forkName(labelFor(t.preset), storedNames);
+    try {
+      if (isDefaultKey(t.preset)) {
+        const def = currentDefault;
+        data = await api.presetFork(t.index, name, presetGroups, def?.filteredStates ?? [], def?.alwaysShownStates ?? []);
+      } else {
+        data = await api.presetCreate(t.preset, name);
+        data = await api.tabSetPreset(t.index, name);
+      }
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   function startRenamePreset() {
     if (!tab) return;
@@ -151,7 +200,7 @@
   async function deletePreset() {
     if (!tab || !data) return;
     const name = tab.preset;
-    const list = data.presets;
+    const list = data.presets.map((p) => p.name);
     const pos = list.indexOf(name);
     if (pos < 0 || list.length <= 1) return;
     const neighbour = pos > 0 ? list[pos - 1] : list[pos + 1];
@@ -290,22 +339,64 @@
     {#if tab}
       <label>Preset
         <select value={tab.preset} onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}>
-          {#each presetOptions as p (p)}<option value={p}>{labelFor(p)}</option>{/each}
+          {#if !grouped.defaults.includes(tab.preset) && !grouped.user.includes(tab.preset)}
+            <option value={tab.preset}>{labelFor(tab.preset)}</option>
+          {/if}
+          <optgroup label="Default profiles">
+            {#each grouped.defaults as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
+          </optgroup>
+          {#if grouped.user.length}
+            <optgroup label="Your profiles">
+              {#each grouped.user as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
+            </optgroup>
+          {/if}
         </select>
       </label>
       <div class="preset-actions">
-        <button onclick={startDuplicatePreset} disabled={!presetIsReal} title="Duplicate this preset">Duplicate preset</button>
-        <button onclick={startRenamePreset} disabled={!presetIsReal} title="Rename this preset">Rename preset</button>
+        <button onclick={duplicatePreset} disabled={!editable} title="Duplicate this preset">Duplicate preset</button>
+        <button onclick={startRenamePreset} disabled={!storedPreset || isDefaultKey(tab.preset)} title="Rename this preset">Rename preset</button>
         <button class="danger" onclick={deletePreset}
-                disabled={!presetIsReal || (data?.presets.length ?? 0) <= 1}
+                disabled={!storedPreset || isDefaultKey(tab.preset) || (data?.presets.length ?? 0) <= 1}
                 title="Delete this preset">Delete preset</button>
+      </div>
+    {/if}
+    {#if editable && tab}
+      <div class="preset-contents">
+        <div class="contents-head">
+          <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
+          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={groupFilter} />
+        </div>
+
+        {#if unknownIds.length}
+          <div class="unknown-groups">
+            Unrecognized groups (not in the catalog):
+            {#each unknownIds as id}
+              <label><input type="checkbox" checked onchange={() => setPresetGroup(id, false)} /> #{id}</label>
+            {/each}
+          </div>
+        {/if}
+
+        {#each visibleCategories as cat (cat.id)}
+          <details class="group-cat" open={!!groupFilter.trim()}>
+            <summary>{cat.name}</summary>
+            <div class="group-grid">
+              {#each cat.groups as g (g.id)}
+                <label class="group-item">
+                  <input type="checkbox" checked={presetGroupSet.has(g.id)}
+                         onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
+                  {g.name}
+                </label>
+              {/each}
+            </div>
+          </details>
+        {/each}
       </div>
     {/if}
     {#if pending}
       <div class="name-entry">
         <input type="text" bind:value={pending.value} use:focusInput
                placeholder={pending.kind === "addWindow" ? "First tab name"
-                 : pending.kind === "duplicatePreset" || pending.kind === "renamePreset" ? "Preset name"
+                 : pending.kind === "renamePreset" ? "Preset name"
                  : "Tab name"}
                onkeydown={(e) => {
                  if (e.key === "Enter") { e.preventDefault(); submitPending(); }
@@ -314,7 +405,6 @@
         <button onclick={submitPending}>
           {pending.kind === "addWindow" ? "Add window"
             : pending.kind === "renameTab" ? "Rename"
-            : pending.kind === "duplicatePreset" ? "Duplicate"
             : pending.kind === "renamePreset" ? "Rename preset"
             : "Add tab"}
         </button>
@@ -399,10 +489,20 @@
   button.danger { border-color: #a33; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, input.w, .name-entry input {
+  select, option, optgroup, input.w, .name-entry input, .group-filter {
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
   }
+  /* Full-width so the box below can size a real column grid — it's a flex item
+     inside the wrapping .ov-controls row otherwise. */
+  .preset-contents { flex-basis: 100%; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .contents-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  .contents-title { font-weight: 600; }
+  .group-cat > summary { cursor: pointer; padding: 0.2rem 0; }
+  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.15rem 0.8rem; padding: 0.2rem 0 0.4rem 1rem; }
+  .group-item { display: flex; gap: 0.35rem; align-items: center; }
+  .preset-contents input[type="checkbox"] { accent-color: var(--accent); }
+  .unknown-groups { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; color: var(--warn); }
   .ov-cols { list-style: none; padding: 0; }
   .ov-cols li { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0; }
   .ov-tabs { list-style: none; padding: 0; margin: 0 0 0.6rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }

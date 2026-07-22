@@ -13,7 +13,7 @@
 
 use blue_marshal::Value;
 
-use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, tabs_mut, OverviewTabError};
+use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, set_tab_preset, tabs_mut, OverviewTabError};
 use crate::treewalk::{inline_all, Entries};
 
 /// String form of a preset dict key or a tab's `overview` value (Bytes on real
@@ -31,6 +31,69 @@ pub(crate) fn as_str(v: &Value) -> Option<String> {
 pub(crate) fn presets_mut(ov: &mut Entries) -> Option<&mut Entries> {
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"overviewProfilePresets"))?;
     dict_inner_mut(v)
+}
+
+/// Mutable inner dict of `overviewProfilePresets`, MINTING an empty
+/// `(timestamp, dict)` container if the key is absent (a clean account stores no
+/// presets at all). The timestamp is a zero `Long`, matching how the codebase
+/// mints fresh `(ts, dict)` containers; EVE re-timestamps on its next save.
+pub(crate) fn presets_mut_or_create(ov: &mut Entries) -> &mut Entries {
+    if !ov.iter().any(|(k, _)| is_b(k, b"overviewProfilePresets")) {
+        ov.push((
+            Value::Bytes(b"overviewProfilePresets".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
+    }
+    let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+    dict_inner_mut(v).expect("just-created or existing (ts, dict)")
+}
+
+/// Create a NEW user preset `name` from explicit lists — used to fork a built-in
+/// default that may not be stored in the file (so `create_preset`, which clones
+/// an existing key, cannot be used). Groups are sorted ascending; the state lists
+/// are stored as given (opaque; slice 3 edits them).
+pub fn create_preset_from_lists(
+    v: &mut Value, name: &str,
+    groups: &[i64], filtered_states: &[i64], always_shown_states: &[i64],
+) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let presets = presets_mut_or_create(ov);
+    if presets.iter().any(|(k, _)| as_str(k).as_deref() == Some(name)) {
+        return Err(OverviewTabError::PresetExists { name: name.to_string() });
+    }
+    let list = |xs: &[i64], sorted: bool| {
+        let mut xs = xs.to_vec();
+        if sorted { xs.sort_unstable(); }
+        Value::List(xs.into_iter().map(Value::Int).collect())
+    };
+    let blob = Value::Dict(vec![
+        (Value::Bytes(b"groups".to_vec()), list(groups, true)),
+        (Value::Bytes(b"filteredStates".to_vec()), list(filtered_states, false)),
+        (Value::Bytes(b"alwaysShownStates".to_vec()), list(always_shown_states, false)),
+    ]);
+    presets.push((Value::Bytes(name.as_bytes().to_vec()), blob));
+    Ok(())
+}
+
+/// Fork a built-in default into a NEW user preset `name` from explicit lists AND
+/// retarget tab `tab_idx` to it. Validates the tab index BEFORE creating anything,
+/// so a bad index cannot strand a half-made preset (create-then-retarget is
+/// otherwise non-atomic). `PresetExists` if `name` is taken; `UnknownTab` if the
+/// tab is absent (checked first — nothing is created in that case).
+pub fn fork_preset(
+    v: &mut Value, tab_idx: i64, name: &str,
+    groups: &[i64], filtered_states: &[i64], always_shown_states: &[i64],
+) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    {
+        let ov = overview_mut(v)?;
+        if !tabs_mut(ov).iter().any(|(k, _)| matches!(k, Value::Int(i) if *i == tab_idx)) {
+            return Err(OverviewTabError::UnknownTab { index: tab_idx });
+        }
+    }
+    create_preset_from_lists(v, name, groups, filtered_states, always_shown_states)?;
+    set_tab_preset(v, tab_idx, name)
 }
 
 /// Mutable inner dict of `overviewProfilePresets_notSaved`, if present (it may be
@@ -131,6 +194,30 @@ pub fn delete_preset(v: &mut Value, name: &str) -> Result<(), OverviewTabError> 
     }
     if let Some(presets) = presets_mut(ov) {
         presets.retain(|(k, _)| as_str(k).as_deref() != Some(name));
+    }
+    Ok(())
+}
+
+/// Replace the named preset's `groups` list with `groups`, sorted ascending for a
+/// deterministic on-disk order (EVE re-sorts for display). Inserts the `groups`
+/// key if somehow absent (real presets always carry it). The two state lists
+/// (`filteredStates` / `alwaysShownStates`) are untouched — slice 3.
+pub fn set_preset_groups(v: &mut Value, name: &str, groups: &[i64]) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let (_, blob) = presets
+        .iter_mut()
+        .find(|(k, _)| as_str(k).as_deref() == Some(name))
+        .ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let fields = dict_inner_mut(blob).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let mut sorted = groups.to_vec();
+    sorted.sort_unstable();
+    let list = Value::List(sorted.into_iter().map(Value::Int).collect());
+    if let Some((_, g)) = fields.iter_mut().find(|(k, _)| is_b(k, b"groups")) {
+        *g = list;
+    } else {
+        fields.push((Value::Bytes(b"groups".to_vec()), list));
     }
     Ok(())
 }
@@ -296,6 +383,48 @@ mod tests {
         assert!(matches!(delete_preset(&mut v, "nope"), Err(OverviewTabError::UnknownPreset { .. })));
     }
 
+    fn preset_groups(v: &Value, name: &str) -> Vec<i64> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Value::Dict(pd) = &items[1] else { panic!() };
+        let (_, blob) = pd.iter().find(|(k, _)| as_str(k).as_deref() == Some(name)).unwrap();
+        let Value::Dict(bf) = blob else { panic!() };
+        let (_, groups) = bf.iter().find(|(k, _)| is_b(k, b"groups")).unwrap();
+        let Value::List(l) = groups else { panic!() };
+        l.iter().filter_map(|e| if let Value::Int(n) = e { Some(*n) } else { None }).collect()
+    }
+
+    #[test]
+    fn set_groups_replaces_with_sorted_list() {
+        let mut v = user_with_presets();
+        set_preset_groups(&mut v, "alpha", &[30, 10, 20]).unwrap();
+        assert_eq!(preset_groups(&v, "alpha"), vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn set_groups_unknown_preset_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(
+            set_preset_groups(&mut v, "nope", &[1]),
+            Err(OverviewTabError::UnknownPreset { .. })
+        ));
+    }
+
+    #[test]
+    fn set_groups_inserts_groups_key_when_absent() {
+        // A preset blob with no `groups` key at all.
+        let overview = Value::Dict(vec![(b("overviewProfilePresets"), Value::Tuple(vec![
+            Value::Int(1),
+            Value::Dict(vec![(b("solo"), Value::Dict(vec![]))]),
+        ]))]);
+        let mut v = Value::Dict(vec![(b("overview"), overview)]);
+        set_preset_groups(&mut v, "solo", &[5, 1]).unwrap();
+        assert_eq!(preset_groups(&v, "solo"), vec![1, 5]);
+    }
+
     #[test]
     fn rename_and_delete_no_op_when_notsaved_absent() {
         // Like user_with_presets but WITHOUT overviewProfilePresets_notSaved.
@@ -322,5 +451,70 @@ mod tests {
         delete_preset(&mut v, "beta").unwrap();
         assert!(!preset_names(&v).contains(&"beta".to_string()));
         assert_eq!(tab_preset(&v, 1), "alpha2");
+    }
+
+    fn overview_container_absent_presets() -> Value {
+        // A clean account: overview has tabs but NO overviewProfilePresets.
+        let tab0 = Value::Dict(vec![(b("overview"), b("DefaultPreset_1"))]);
+        let overview = Value::Dict(vec![
+            (b("tabsettings_new"), Value::Dict(vec![(Value::Int(0), tab0)])),
+        ]);
+        Value::Dict(vec![(b("overview"), overview)])
+    }
+
+    #[test]
+    fn create_from_lists_materializes_absent_container() {
+        let mut v = overview_container_absent_presets();
+        create_preset_from_lists(&mut v, "All copy", &[30, 10], &[5], &[]).unwrap();
+        assert_eq!(preset_groups(&v, "All copy"), vec![10, 30]); // sorted
+    }
+
+    #[test]
+    fn create_from_lists_errors_on_existing_name() {
+        let mut v = user_with_presets(); // has "alpha"
+        assert!(matches!(
+            create_preset_from_lists(&mut v, "alpha", &[1], &[], &[]),
+            Err(OverviewTabError::PresetExists { .. })
+        ));
+    }
+
+    #[test]
+    fn create_from_lists_stores_state_lists() {
+        let mut v = overview_container_absent_presets();
+        create_preset_from_lists(&mut v, "PvP copy", &[1], &[8, 7], &[9]).unwrap();
+        // read filteredStates back
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let inner = match p { Value::Tuple(it) => it.iter().find_map(|e| if let Value::Dict(d)=e {Some(d)} else {None}).unwrap(), Value::Dict(d)=>d, _=>panic!() };
+        let (_, blob) = inner.iter().find(|(k, _)| as_str(k).as_deref() == Some("PvP copy")).unwrap();
+        let Value::Dict(bf) = blob else { panic!() };
+        let (_, fs) = bf.iter().find(|(k, _)| is_b(k, b"filteredStates")).unwrap();
+        // stored as-given, NOT sorted: [8, 7] stays [8, 7].
+        assert_eq!(fs, &Value::List(vec![Value::Int(8), Value::Int(7)]));
+    }
+
+    #[test]
+    fn fork_creates_preset_and_retargets_the_tab() {
+        let mut v = overview_container_absent_presets(); // tab 0 -> a default; NO presets container
+        fork_preset(&mut v, 0, "All copy", &[9, 1], &[], &[]).unwrap();
+        assert_eq!(preset_groups(&v, "All copy"), vec![1, 9]); // sorted
+        assert_eq!(tab_preset(&v, 0), "All copy");             // tab now uses the fork
+    }
+
+    #[test]
+    fn fork_with_unknown_tab_creates_no_preset() {
+        let mut v = overview_container_absent_presets();
+        assert!(matches!(fork_preset(&mut v, 99, "X", &[1], &[], &[]), Err(OverviewTabError::UnknownTab { .. })));
+        // atomicity: a failed fork must NOT strand a preset "X".
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let stranded = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).is_some_and(|(_, p)| {
+            let inner = match p { Value::Tuple(it) => it.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }), Value::Dict(d) => Some(d), _ => None };
+            inner.is_some_and(|d| d.iter().any(|(k, _)| as_str(k).as_deref() == Some("X")))
+        });
+        assert!(!stranded, "a failed fork must not strand a preset");
     }
 }

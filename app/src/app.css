@@ -110,7 +110,9 @@ button:hover { border-color: var(--accent); }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .spacer { flex: 1; }
 .save { border-color: var(--accent); }
-.save:disabled { opacity: 0.4; cursor: default; }
+/* Disabled buttons read as greyed everywhere (e.g. Rename/Delete on a read-only
+   built-in preset), not just the Save button. */
+button:disabled { opacity: 0.4; cursor: default; }
 .viewtabs { display: flex; gap: 4px; }
 .viewtabs button { padding: 1px 10px; }
 .viewtabs button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }

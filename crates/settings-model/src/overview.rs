@@ -26,7 +26,13 @@ use crate::treewalk::{
 pub struct OverviewColumns {
     pub windows: Vec<OverviewWindow>,
     pub tabs: Vec<OverviewTab>,
-    pub presets: Vec<String>,
+    pub presets: Vec<Preset>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Preset {
+    pub name: String,
+    pub groups: Vec<i64>,
 }
 
 /// A physical overview window and the tab indices it shows, in order — grouped
@@ -64,7 +70,7 @@ pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColu
     let tabs = tab_dict(overview, &sh)
         .map(|d| d.iter().filter_map(|(k, v)| project_tab(k, v, overview, char_tree, &sh)).collect())
         .unwrap_or_default();
-    let presets = preset_names(overview, &sh);
+    let presets = presets_with_groups(overview, &sh);
     OverviewColumns { windows, tabs, presets }
 }
 
@@ -154,14 +160,26 @@ fn default_columns(overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<St
     (order, visible)
 }
 
-/// Sorted (case-insensitive) preset names from `overviewProfilePresets`
-/// (a `(timestamp, dict)` keyed by preset name). Empty when the key is absent.
-fn preset_names(overview: &Entries, sh: &SharedTable) -> Vec<String> {
+/// Each preset's name and its group IDs, sorted case-insensitively by name (the
+/// SAME order the picker/neighbour logic uses). `groups` is the preset's `groups`
+/// list (empty if absent); the two state lists are not read here (slice 3).
+fn presets_with_groups(overview: &Entries, sh: &SharedTable) -> Vec<Preset> {
     let Some(dict) = find_child(overview, b"overviewProfilePresets", sh).and_then(|v| as_dict(v, sh))
     else { return vec![] };
-    let mut names: Vec<String> = dict.iter().filter_map(|(k, _)| preset_key_name(effective(k, sh))).collect();
-    names.sort_by_key(|s| s.to_lowercase());
-    names
+    let mut out: Vec<Preset> = dict
+        .iter()
+        .filter_map(|(k, v)| {
+            let name = preset_key_name(effective(k, sh))?;
+            let groups = as_dict(v, sh)
+                .and_then(|d| find_child(d, b"groups", sh))
+                .and_then(|g| as_list_r(g, sh))
+                .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
+                .unwrap_or_default();
+            Some(Preset { name, groups })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
 }
 
 /// A preset dict key as a string (Bytes on real files; Str/StrUcs2 defensively).
@@ -1344,6 +1362,9 @@ mod tests {
         ]);
         let user = Value::Dict(vec![(b("overview"), overview)]);
         let cols = project_overview(&user, None);
-        assert_eq!(cols.presets, vec!["alpha".to_string(), "Zeta".to_string()]);
+        assert_eq!(
+            cols.presets.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
+            vec!["alpha".to_string(), "Zeta".to_string()]
+        );
     }
 }

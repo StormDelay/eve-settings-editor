@@ -1,4 +1,5 @@
 mod accounts;
+mod groups;
 mod names;
 mod ops;
 
@@ -96,6 +97,18 @@ async fn refresh_character_names(
 ) -> HashMap<u64, names::ResolvedName> {
     let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
     tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, true))
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn sync_group_catalog(
+    app: tauri::AppHandle,
+    known_ids: Vec<i64>,
+    relevant_categories: Vec<i64>,
+) -> Vec<groups::GroupEntry> {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    tauri::async_runtime::spawn_blocking(move || groups::sync_blocking(&dir, &known_ids, &relevant_categories))
         .await
         .unwrap_or_default()
 }
@@ -200,6 +213,14 @@ fn preset_delete(state: tauri::State<'_, AppState>, name: String) -> Result<sett
 fn tab_set_preset(state: tauri::State<'_, AppState>, tab_idx: i64, preset: String) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::tab_set_preset(&state, tab_idx, preset)
 }
+#[tauri::command]
+fn preset_set_groups(state: tauri::State<'_, AppState>, name: String, groups: Vec<i64>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::preset_set_groups(&state, name, groups)
+}
+#[tauri::command]
+fn preset_fork(state: tauri::State<'_, AppState>, tab_idx: i64, name: String, groups: Vec<i64>, filtered_states: Vec<i64>, always_shown_states: Vec<i64>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::preset_fork(&state, tab_idx, name, groups, filtered_states, always_shown_states)
+}
 
 #[tauri::command]
 fn autofill_lists(state: tauri::State<'_, AppState>) -> Result<Vec<settings_model::RememberedList>, ErrDto> {
@@ -276,13 +297,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
-            window_layout, resolve_character_names, refresh_character_names,
+            window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove,
-            preset_create, preset_rename, preset_delete, tab_set_preset,
+            preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
             autofill_lists, set_autofill_list, clear_all_autofill,
             setup_preview, setup_apply,
             stack_unstack, stack_add, stack_reorder, stack_create
