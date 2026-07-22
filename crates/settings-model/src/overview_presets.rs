@@ -607,6 +607,13 @@ mod tests {
     fn empty_lists_clear_both_fields() {
         let mut v = user_with_presets();
         set_preset_states(&mut v, "alpha", &[9], &[13]).unwrap();
+        // Prove both lists are actually populated before clearing them: without
+        // this, `preset_states` reads an absent key and an empty list the same
+        // way, so a write that never happened would be indistinguishable from
+        // one that was cleared, and the test would pass on its own for the
+        // wrong reason.
+        assert_eq!(preset_states(&v, "alpha", "filteredStates"), vec![9]);
+        assert_eq!(preset_states(&v, "alpha", "alwaysShownStates"), vec![13]);
         set_preset_states(&mut v, "alpha", &[], &[]).unwrap();
         assert!(preset_states(&v, "alpha", "filteredStates").is_empty());
         assert!(preset_states(&v, "alpha", "alwaysShownStates").is_empty());
