@@ -32,6 +32,30 @@ export function applyException(
   return { filtered: f, alwaysShown: a };
 }
 
+const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n * 255)));
+
+/** EVE stores colours as 0..1 floats; <input type="color"> speaks #rrggbb. */
+export function rgbaToHex(rgba: [number, number, number, number]): string {
+  const [r, g, b] = rgba;
+  return "#" + [r, g, b].map((c) => clamp(c).toString(16).padStart(2, "0")).join("");
+}
+
+/** Alpha is not exposed in the UI — every observed entry is 1.0 — so the
+ *  caller passes the stored alpha through unchanged rather than resetting it. */
+export function hexToRgba(hex: string, alpha: number): [number, number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, alpha];
+}
+
+/** Move one entry of a priority order. Length is invariant, so an id the client
+ *  never renders (68) rides along instead of being dropped. */
+export function moveInOrder(order: number[], from: number, to: number): number[] {
+  const next = [...order];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
 export const DEFAULT_BACKGROUND_ORDER: number[] = bundle.defaultBackgroundOrder;
 export const DEFAULT_BACKGROUND_STATES: number[] = bundle.defaultBackgroundStates;
 export const DEFAULT_FLAG_ORDER: number[] = bundle.defaultFlagOrder;

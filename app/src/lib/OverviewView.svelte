@@ -268,7 +268,7 @@
     <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
   </div>
   <div hidden={sub !== "Appearance"}>
-    <OverviewAppearanceTab />
+    <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
   </div>
 {/if}
 

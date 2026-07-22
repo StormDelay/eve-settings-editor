@@ -1,5 +1,5 @@
 // Run: npm test (node --test). Throw-based checks, no framework.
-import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, exceptionOf, applyException } from "./states.ts";
+import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder } from "./states.ts";
 
 const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
 const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -27,5 +27,13 @@ check("choosing show removes a state from both lists", eq(toShow.filtered, []) &
 
 const others = applyException([9, 13], [11], 13, "show");
 check("applying a choice leaves other states alone", eq(others.filtered, [9]) && eq(others.alwaysShown, [11]));
+
+check("rgbaToHex converts EVE's 0..1 floats to a hex colour", rgbaToHex([1, 0.35, 0, 1]) === "#ff5900");
+check("hexToRgba round-trips through rgbaToHex", rgbaToHex(hexToRgba("#ff5900", 1)) === "#ff5900");
+check("hexToRgba preserves the alpha it is given", hexToRgba("#000000", 0.5)[3] === 0.5);
+
+const moved = moveInOrder([13, 44, 9, 68], 0, 2);
+check("moveInOrder reorders without dropping any id", eq(moved, [44, 9, 13, 68]) && moved.length === 4);
+check("moveInOrder keeps an unrendered id in place", moveInOrder([13, 44, 68], 0, 1).includes(68));
 
 console.log("states: all checks passed");
