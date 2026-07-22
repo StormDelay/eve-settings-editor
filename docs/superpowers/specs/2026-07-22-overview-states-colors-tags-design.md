@@ -340,9 +340,14 @@ details copied from EVE's rendering:
 - Drive it from the **Exceptions vocabulary** (§2.5), which includes the two
   Wreck states and excludes `68`.
 
-Reuses the group checklist's filter box. Editing a **built-in default preset**
-auto-forks a user copy exactly as `setPresetGroup` does today — same `forkName`
-helper, same mint-the-container path — so built-ins stay read-only.
+**No filter box.** The group checklist has one because its catalog runs to
+hundreds of entries; the Exceptions vocabulary is a fixed 24 rows that fits on
+screen, so filtering would be chrome without a job. (An earlier draft of this
+section said the filter box was reused here — it is not, deliberately.)
+
+Editing a **built-in default preset** auto-forks a user copy exactly as
+`setPresetGroup` does today — same `forkName` helper, same mint-the-container
+path — so built-ins stay read-only.
 
 ### 4.3 Appearance tab
 
