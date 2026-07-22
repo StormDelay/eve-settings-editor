@@ -124,15 +124,21 @@ head of the list independently.
 | 20 | 17 | Pilot has No Standing |
 | 21 | 48 | Pilot is in your Non Capsuleer corporation |
 | 22 | 66 | Pilot has retribution timer |
-| 23 | 68 | **unresolved — below the screenshot fold** |
+| 23 | 68 | *(none — stored but not rendered by the client)* |
 
-Two gaps close during implementation (Task 1), both by screenshot:
+**The order lists can hold ids the client does not display.** Both lists carry 23
+ids, but EVE's Appearance tab renders only 22 rows — verified against a
+full-window screenshot showing the list ending at position 22 with empty space
+below, not a scroll fold. Position 23 (`68`) has no row and no label. It is
+therefore a **preservation case, not a discovery gap**: id 68 must survive a
+read/write round-trip untouched. Presenting it as a raw `#68` row is acceptable
+(§2.3, unrecognised ids) but it must never be silently dropped from the order
+list — doing so would quietly rewrite a list EVE still owns.
 
-- **id 68** — the 23rd row, below the visible fold of the Background tab.
-- **ids 36 and 37** — these appear in preset `filteredStates` but never in
-  `backgroundOrder2` / `flagOrder2`, so the filterable vocabulary is a
-  **superset** of the colourable one. Their labels come from a preset's States
-  tab in-game.
+One gap remains, closing in implementation Task 1: **ids 36 and 37** appear in
+preset `filteredStates` but never in `backgroundOrder2` / `flagOrder2`, so the
+filterable vocabulary is a **superset** of the colourable one. Their labels come
+from EVE's **Filters** tab (see §4.2).
 
 An id with no bundled label is **not an error**: it displays as a raw `#id` row
 and round-trips normally, exactly as 2b handles unrecognised group ids.
@@ -300,8 +306,25 @@ Alpha is not exposed: every observed entry is `1.0`. When an entry already
 carries a non-1.0 alpha, that alpha is **preserved** on a colour edit rather
 than silently reset — the picker changes RGB only.
 
-Below the lists, the overview container's boolean settings as labelled
-checkboxes, driven off one small key→label table.
+Layout mirrors EVE's own Appearance tab, which puts the booleans **above** a
+Colortag/Background sub-tab pair — worth copying so the screen is recognisable
+to anyone who has used the in-game one. Four labels are confirmed from a
+screenshot of it:
+
+| Key | EVE's label |
+|---|---|
+| `useSmallColorTags` | Use small colortags |
+| `useSmallText` | Use small font |
+| `applyToStructures` | Also apply to structures |
+| `applyToOtherObjects` | Also apply to other objects in space |
+
+EVE groups the last two under the note "The Colortag and Background settings
+apply to ships and drones by default", which explains what they modify; reuse
+it. Remaining booleans (`overviewBroadcastsToTop`, `hideCorpTicker`,
+`showModuleHairlines`, `targetCrosshair`, `showInTargetRange`,
+`showBiggestDamageDealers`) live on EVE's **Misc** and **Ships** tabs rather
+than Appearance; label them from those tabs during implementation, or group them
+under a "Misc" heading if a screenshot is unavailable.
 
 The whole tab writes account-wide, so it sits behind the existing shared-account
 banner (`sharedWith` in `overview.ts`), which already names the sibling
