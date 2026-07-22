@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-22
+
+Overview filter preset contents, and full support for EVE's built-in presets.
+
+- You can now edit **what an overview preset shows** — which ship and entity
+  groups appear on it — and every EVE built-in preset is fully usable on any
+  character, including ones whose overview was never customised.
+
+### Added
+- A group checklist under each preset in the Overview editor: tick which entity
+  groups (ships, drones, structures, asteroids, NPCs, …) the preset shows, with a
+  filter box and collapsible categories. (Editing a preset's *state* filters —
+  standings, war targets, and so on — is still a later release.)
+- EVE's built-in default presets now all appear in the per-tab preset dropdown,
+  grouped ("Default profiles" / "Your profiles") and labelled with their real
+  in-game names ("General: All", "Target Capsuleer: Carriers", "Mining: Mining",
+  …) — so you can assign any of them to a tab, even on a character that has never
+  customised its overview (where EVE stores none of them in the settings file).
+- Editing a built-in default automatically creates an editable copy, leaving the
+  original untouched; Duplicate does the same and switches the tab to the copy.
+
+### Changed
+- Built-in default presets are read-only — Rename and Delete are disabled on them.
+  Edit or duplicate one to make a copy you can change.
+
 ## [0.11.0] - 2026-07-21
 
 Overview filter presets.
