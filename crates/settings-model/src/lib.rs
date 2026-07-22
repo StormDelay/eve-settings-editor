@@ -18,7 +18,7 @@ pub mod batch;
 mod stacks;
 mod overview_tabs;
 mod overview_presets;
-pub mod overview_states;
+mod overview_states;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
