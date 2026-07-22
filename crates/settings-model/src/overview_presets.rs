@@ -222,6 +222,40 @@ pub fn set_preset_groups(v: &mut Value, name: &str, groups: &[i64]) -> Result<()
     Ok(())
 }
 
+/// Replace the named preset's two state lists, both sorted ascending for a
+/// deterministic on-disk order. `groups` is untouched.
+///
+/// Both lists are written in one call so that moving a state from "hide" to
+/// "always show" is atomic — EVE's Exceptions tab models this as one three-way
+/// choice per state, and the two lists are disjoint on real files.
+pub fn set_preset_states(
+    v: &mut Value, name: &str, filtered: &[i64], always_shown: &[i64],
+) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let (_, blob) = presets
+        .iter_mut()
+        .find(|(k, _)| as_str(k).as_deref() == Some(name))
+        .ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+    let fields = dict_inner_mut(blob).ok_or(OverviewTabError::UnknownPreset { name: name.to_string() })?;
+
+    for (key, ids) in [
+        (&b"filteredStates"[..], filtered),
+        (&b"alwaysShownStates"[..], always_shown),
+    ] {
+        let mut sorted = ids.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let list = Value::List(sorted.into_iter().map(Value::Int).collect());
+        match fields.iter_mut().find(|(k, _)| is_b(k, key)) {
+            Some((_, slot)) => *slot = list,
+            None => fields.push((Value::Bytes(key.to_vec()), list)),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,5 +550,101 @@ mod tests {
             inner.is_some_and(|d| d.iter().any(|(k, _)| as_str(k).as_deref() == Some("X")))
         });
         assert!(!stranded, "a failed fork must not strand a preset");
+    }
+
+    fn preset_states(v: &Value, name: &str, field: &str) -> Vec<i64> {
+        let Value::Dict(root) = v else { return Vec::new() };
+        let Some((_, ov)) = root.iter().find(|(k, _)| is_b(k, b"overview")) else { return Vec::new() };
+        let Value::Dict(ovd) = ov else { return Vec::new() };
+        let Some((_, p)) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")) else { return Vec::new() };
+        let inner = match p {
+            Value::Tuple(items) => items.iter().find_map(|e| match e { Value::Dict(d) => Some(d), _ => None }),
+            Value::Dict(d) => Some(d),
+            _ => None,
+        };
+        let Some(pd) = inner else { return Vec::new() };
+        let Some((_, blob)) = pd.iter().find(|(k, _)| as_str(k).as_deref() == Some(name)) else { return Vec::new() };
+        let Value::Dict(fields) = blob else { return Vec::new() };
+        let Some((_, list)) = fields.iter().find(|(k, _)| is_b(k, field.as_bytes())) else { return Vec::new() };
+        let Value::List(l) = list else { return Vec::new() };
+        l.iter().filter_map(|e| if let Value::Int(n) = e { Some(*n) } else { None }).collect()
+    }
+
+    #[test]
+    fn writes_both_state_lists_sorted() {
+        let mut v = user_with_presets();
+        set_preset_states(&mut v, "alpha", &[52, 9, 13], &[11]).unwrap();
+        assert_eq!(preset_states(&v, "alpha", "filteredStates"), vec![9, 13, 52]);
+        assert_eq!(preset_states(&v, "alpha", "alwaysShownStates"), vec![11]);
+    }
+
+    #[test]
+    fn leaves_groups_untouched() {
+        let mut v = user_with_presets();
+        set_preset_states(&mut v, "alpha", &[9], &[]).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Some(Value::Dict(pd)) = items.iter().find(|e| matches!(e, Value::Dict(_))) else { panic!() };
+        let (_, blob) = pd.iter().find(|(k, _)| as_str(k).as_deref() == Some("alpha")).unwrap();
+        let Value::Dict(fields) = blob else { panic!() };
+        let (_, g) = fields.iter().find(|(k, _)| is_b(k, b"groups")).unwrap();
+        assert_eq!(*g, Value::List(vec![Value::Int(1)]), "groups must survive a state edit");
+    }
+
+    #[test]
+    fn moving_a_state_between_lists_is_atomic() {
+        let mut v = user_with_presets();
+        set_preset_states(&mut v, "alpha", &[9, 13], &[]).unwrap();
+        set_preset_states(&mut v, "alpha", &[13], &[9]).unwrap();
+        assert_eq!(preset_states(&v, "alpha", "filteredStates"), vec![13]);
+        assert_eq!(preset_states(&v, "alpha", "alwaysShownStates"), vec![9]);
+    }
+
+    #[test]
+    fn empty_lists_clear_both_fields() {
+        let mut v = user_with_presets();
+        set_preset_states(&mut v, "alpha", &[9], &[13]).unwrap();
+        set_preset_states(&mut v, "alpha", &[], &[]).unwrap();
+        assert!(preset_states(&v, "alpha", "filteredStates").is_empty());
+        assert!(preset_states(&v, "alpha", "alwaysShownStates").is_empty());
+    }
+
+    #[test]
+    fn unknown_preset_is_an_error() {
+        let mut v = user_with_presets();
+        assert!(matches!(
+            set_preset_states(&mut v, "nope", &[9], &[]),
+            Err(OverviewTabError::UnknownPreset { .. })
+        ));
+    }
+
+    /// The state lists sit BARE inside a preset blob — unlike the
+    /// account-scoped keys earlier tasks handled, there is no `(timestamp,
+    /// list)` wrapper at this level (the timestamp lives one level up, on
+    /// `overviewProfilePresets` itself). Assert this directly against the raw
+    /// tree rather than through `preset_states`, whose fallback chain would
+    /// silently read a tuple-wrapped list back as an empty vec instead of
+    /// failing loudly.
+    #[test]
+    fn states_are_written_as_bare_lists_not_tuple_wrapped() {
+        let mut v = user_with_presets();
+        set_preset_states(&mut v, "alpha", &[9, 13], &[11]).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Some(Value::Dict(pd)) = items.iter().find(|e| matches!(e, Value::Dict(_))) else { panic!() };
+        let (_, blob) = pd.iter().find(|(k, _)| as_str(k).as_deref() == Some("alpha")).unwrap();
+        let Value::Dict(fields) = blob else { panic!() };
+
+        let (_, fs) = fields.iter().find(|(k, _)| is_b(k, b"filteredStates")).unwrap();
+        assert_eq!(*fs, Value::List(vec![Value::Int(9), Value::Int(13)]), "filteredStates must be a bare List, no (ts, list) wrapper");
+
+        let (_, asv) = fields.iter().find(|(k, _)| is_b(k, b"alwaysShownStates")).unwrap();
+        assert_eq!(*asv, Value::List(vec![Value::Int(11)]), "alwaysShownStates must be a bare List, no (ts, list) wrapper");
     }
 }
