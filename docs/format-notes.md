@@ -703,6 +703,63 @@ Column visibility and order are **per overview tab**, stored in
   `b"TRANSVERSALVELOCITY": 159` for the edited tab). Sibling
   `b"SortHeadersSettings2"` has the same keying and holds per-tab sort
   state. Width entries appear lazily when a tab is rendered.
+### Overview states, colours and tags (slice 3; id 36/37 experiment 2026-07-22)
+
+Which pilot states tint an overview row or carry a colortag is **account-scoped**,
+in `core_user_<id>.dat` root → `b"overview"`, as four `(timestamp, [int])` keys:
+
+| Key | Holds |
+|---|---|
+| `backgroundStates2` | states that tint a row — the **enabled subset** |
+| `backgroundOrder2` | **every** known state in priority order (first match wins) |
+| `flagStates2` | states that show a colortag — enabled subset |
+| `flagOrder2` | every known state in colortag priority order |
+
+- **Enabled and order are independent.** The order lists enumerate the full state
+  universe regardless of what is ticked; the `*States2` lists are the ticked
+  subset. Toggling a state therefore writes only `*States2`, reordering writes
+  only `*Order2` — never a coupled write.
+- A clean account carries **none** of the four keys; the client falls back to its
+  built-in defaults. The first edit materialises just the key that was edited.
+- The unsuffixed `backgroundOrder` / `backgroundStates` appear **only** inside
+  `overview → restoreData` (session state, raw-tree-only), so unlike
+  `tabsettings` → `tabsettings_new` there is **no legacy migration** here.
+
+**Three vocabularies, not one.** They differ, and conflating them is wrong:
+
+| Surface | Count | Contents |
+|---|---|---|
+| Appearance lists, as rendered | 22 | the pilot states |
+| `backgroundOrder2` / `flagOrder2`, as stored | 23 | those 22 plus `68` |
+| Filters → Exceptions | 24 | those 22 plus ids `36` and `37` |
+
+Id `68` is **stored but never rendered** — verified against a full-window
+screenshot ending at position 22 with empty space below, not a scroll fold. It is
+a preservation case, not a discovery gap: it must survive a read/write round-trip
+and must never be silently dropped from an order list. Ids `36`/`37` are the two
+non-pilot (Wreck) states, which is why they appear only under Exceptions; a live
+experiment on 2026-07-22 settled which is which — setting "Wreck is empty" to
+Hide in-game moved **37** into a preset's `filteredStates` while **36** stayed
+put, giving **36 = "Wreck is already viewed", 37 = "Wreck is empty"**. State ids
+carry no label in the file and there is no ESI or fsdbinary source; the id→label
+map lives in client script, so the editor bundles a hand-authored vocabulary.
+
+**`stateColors` is sparse.** Same container, `(timestamp, dict)` keyed by a
+**tuple** `(surface_bytes, state_id)` → RGBA 4-tuple of 0..1 floats. In a corpus
+account with 20 enabled background states only 13 carried an entry: **absent
+means EVE's built-in default colour for that state, not black.** Removing the key
+is how "reset to default" works and must never be conflated with writing an
+explicit colour. `b"background"` is the only surface observed across the corpus;
+any other surface is read past and written back untouched.
+
+Per-preset **exceptions** live on the preset blob (see `overviewProfilePresets`
+below) as `filteredStates` (hide) and `alwaysShownStates` (always show). The two
+are disjoint on real files, so the editor models them as one per-state tri-state.
+
+A `filterOut` key — a `(timestamp, None)` sibling in the overview container — was
+observed appearing during the 36/37 experiment. It is not a state key and is not
+touched by this slice.
+
 ### Autofill / remembered-string lists (experiment 4: ran a People & Places search)
 
 All remembered text-input history in the client is **one structure**, in
