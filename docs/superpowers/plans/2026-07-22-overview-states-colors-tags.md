@@ -178,34 +178,25 @@ exclude `68` since it is not a real state.
 
 - [ ] **Step 3: Write the failing test**
 
-Create `app/src/lib/states.test.ts`:
+Create `app/src/lib/states.test.ts`. **House style — match the existing
+`presets.test.ts` / `groups.test.ts` exactly:** throw-based `check`/`eq` helpers,
+NOT `node:test`; imports carry the `.ts` extension. The runner is `node --test`,
+but no test file in this repo imports `node:test`, and doing so needs
+`@ts-ignore` because the types are not installed.
 
 ```ts
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER } from "./states";
+// Run: npm test (node --test). Throw-based checks, no framework.
+import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER } from "./states.ts";
 
-test("stateLabel resolves a known id", () => {
-  assert.equal(stateLabel(51), "Pilot is a criminal");
-});
+const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
 
-test("stateLabel returns null for the unrendered id 68", () => {
-  assert.equal(stateLabel(68), null);
-});
-
-test("stateLabel returns null for an unknown id", () => {
-  assert.equal(stateLabel(9999), null);
-});
-
-test("the exception vocabulary includes the wreck states and excludes 68", () => {
-  assert.ok(EXCEPTION_STATES.includes(36));
-  assert.ok(EXCEPTION_STATES.includes(37));
-  assert.ok(!EXCEPTION_STATES.includes(68));
-});
-
-test("the default background order carries the unrendered id 68", () => {
-  assert.ok(DEFAULT_BACKGROUND_ORDER.includes(68));
-});
+check("stateLabel resolves a known id", stateLabel(51) === "Pilot is a criminal");
+check("stateLabel resolves a wreck state", stateLabel(37) === "Wreck is empty");
+check("stateLabel returns null for the unrendered id 68", stateLabel(68) === null);
+check("stateLabel returns null for an unknown id", stateLabel(9999) === null);
+check("exception vocabulary includes both wreck states", EXCEPTION_STATES.includes(36) && EXCEPTION_STATES.includes(37));
+check("exception vocabulary excludes the unrendered id 68", !EXCEPTION_STATES.includes(68));
+check("the default background order carries the unrendered id 68", DEFAULT_BACKGROUND_ORDER.includes(68));
 ```
 
 - [ ] **Step 4: Run the test to verify it fails**
@@ -1528,47 +1519,32 @@ git commit -m "Split the Overview view into Columns, Filters and Appearance sub-
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `app/src/lib/states.test.ts`:
+Add to `app/src/lib/states.test.ts`, in the same throw-based house style the
+file already uses. Add an `eq` helper beside the existing `check` (matching
+`presets.test.ts`):
 
 ```ts
-import { exceptionOf, applyException } from "./states";
+const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-test("a state in neither list shows normally", () => {
-  assert.equal(exceptionOf([9], [11], 13), "show");
-});
+check("a state in neither list shows normally", exceptionOf([9], [11], 13) === "show");
+check("a state in filteredStates is hidden", exceptionOf([9], [11], 9) === "hide");
+check("a state in alwaysShownStates is always shown", exceptionOf([9], [11], 11) === "always");
 
-test("a state in filteredStates is hidden", () => {
-  assert.equal(exceptionOf([9], [11], 9), "hide");
-});
+const toHide = applyException([], [11], 11, "hide");
+check("choosing hide moves a state out of alwaysShown", eq(toHide.filtered, [11]) && eq(toHide.alwaysShown, []));
 
-test("a state in alwaysShownStates is always shown", () => {
-  assert.equal(exceptionOf([9], [11], 11), "always");
-});
+const toAlways = applyException([9], [], 9, "always");
+check("choosing always moves a state out of filtered", eq(toAlways.filtered, []) && eq(toAlways.alwaysShown, [9]));
 
-test("choosing hide moves a state out of alwaysShown", () => {
-  const next = applyException([], [11], 11, "hide");
-  assert.deepEqual(next.filtered, [11]);
-  assert.deepEqual(next.alwaysShown, []);
-});
+const toShow = applyException([9], [], 9, "show");
+check("choosing show removes a state from both lists", eq(toShow.filtered, []) && eq(toShow.alwaysShown, []));
 
-test("choosing always moves a state out of filtered", () => {
-  const next = applyException([9], [], 9, "always");
-  assert.deepEqual(next.filtered, []);
-  assert.deepEqual(next.alwaysShown, [9]);
-});
-
-test("choosing show removes a state from both lists", () => {
-  const next = applyException([9], [], 9, "show");
-  assert.deepEqual(next.filtered, []);
-  assert.deepEqual(next.alwaysShown, []);
-});
-
-test("applying a choice leaves other states alone", () => {
-  const next = applyException([9, 13], [11], 13, "show");
-  assert.deepEqual(next.filtered, [9]);
-  assert.deepEqual(next.alwaysShown, [11]);
-});
+const others = applyException([9, 13], [11], 13, "show");
+check("applying a choice leaves other states alone", eq(others.filtered, [9]) && eq(others.alwaysShown, [11]));
 ```
+
+Extend the existing import line at the top of the file to add `exceptionOf` and
+`applyException`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1652,32 +1628,17 @@ git commit -m "Add the per-preset overview Exceptions editor"
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `app/src/lib/states.test.ts`:
+Add to `app/src/lib/states.test.ts`, in the same throw-based house style, adding
+`rgbaToHex`, `hexToRgba` and `moveInOrder` to the file's existing import line:
 
 ```ts
-import { rgbaToHex, hexToRgba, moveInOrder } from "./states";
+check("rgbaToHex converts EVE's 0..1 floats to a hex colour", rgbaToHex([1, 0.35, 0, 1]) === "#ff5900");
+check("hexToRgba round-trips through rgbaToHex", rgbaToHex(hexToRgba("#ff5900", 1)) === "#ff5900");
+check("hexToRgba preserves the alpha it is given", hexToRgba("#000000", 0.5)[3] === 0.5);
 
-test("rgbaToHex converts EVE's 0..1 floats to a hex colour", () => {
-  assert.equal(rgbaToHex([1, 0.35, 0, 1]), "#ff5900");
-});
-
-test("hexToRgba round-trips through rgbaToHex", () => {
-  assert.equal(rgbaToHex(hexToRgba("#ff5900", 1)), "#ff5900");
-});
-
-test("hexToRgba preserves the alpha it is given", () => {
-  assert.deepEqual(hexToRgba("#000000", 0.5)[3], 0.5);
-});
-
-test("moveInOrder reorders without dropping any id", () => {
-  const next = moveInOrder([13, 44, 9, 68], 0, 2);
-  assert.deepEqual(next, [44, 9, 13, 68]);
-  assert.equal(next.length, 4);
-});
-
-test("moveInOrder keeps an unrendered id in place", () => {
-  assert.ok(moveInOrder([13, 44, 68], 0, 1).includes(68));
-});
+const moved = moveInOrder([13, 44, 9, 68], 0, 2);
+check("moveInOrder reorders without dropping any id", eq(moved, [44, 9, 13, 68]) && moved.length === 4);
+check("moveInOrder keeps an unrendered id in place", moveInOrder([13, 44, 68], 0, 1).includes(68));
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
