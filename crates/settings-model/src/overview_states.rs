@@ -180,6 +180,74 @@ pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result
     Ok(())
 }
 
+/// The overview container's simple boolean settings, as EVE's own Overview
+/// Settings window exposes them. Deliberately excludes the
+/// `showCategoryInTargetRange_<id>` family, which is keyed by inventory category
+/// and needs group naming to present.
+pub const OVERVIEW_BOOLS: [&str; 6] = [
+    "applyToStructures",
+    "applyToOtherObjects",
+    "useSmallColorTags",
+    "useSmallText",
+    "overviewBroadcastsToTop",
+    "hideCorpTicker",
+];
+
+fn as_bool(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::Tuple(items) => items.iter().find_map(|e| match e {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// The known boolean settings actually present in the file. A setting absent
+/// here is one EVE has never written; the UI shows it unticked.
+pub fn overview_bools(v: &Value) -> Vec<(String, bool)> {
+    let Value::Dict(root) = v else { return Vec::new() };
+    let Some((_, ov)) = root.iter().find(|(k, _)| is_b(k, b"overview")) else { return Vec::new() };
+    let Value::Dict(ovd) = ov else { return Vec::new() };
+    OVERVIEW_BOOLS
+        .iter()
+        .filter_map(|name| {
+            let (_, val) = ovd.iter().find(|(k, _)| is_b(k, name.as_bytes()))?;
+            Some(((*name).to_string(), as_bool(val)?))
+        })
+        .collect()
+}
+
+/// Set one of the overview container's boolean settings. Preserves an existing
+/// `(timestamp, bool)` wrapper and mints one — with a zero `Long`, matching the
+/// rest of this module — when the key is absent.
+///
+/// `key` is validated against `OVERVIEW_BOOLS` so a typo cannot mint a junk key
+/// into a file the client reads.
+pub fn set_overview_bool(v: &mut Value, key: &str, on: bool) -> Result<(), OverviewTabError> {
+    if !OVERVIEW_BOOLS.contains(&key) {
+        return Err(OverviewTabError::UnknownSetting { key: key.to_string() });
+    }
+    inline_all(v);
+    let ov = overview_mut(v)?;
+
+    match ov.iter_mut().find(|(k, _)| is_b(k, key.as_bytes())) {
+        Some((_, existing)) => match existing {
+            Value::Tuple(items) => match items.iter_mut().find(|e| matches!(e, Value::Bool(_))) {
+                Some(slot) => *slot = Value::Bool(on),
+                None => items.push(Value::Bool(on)),
+            },
+            other => *other = Value::Bool(on),
+        },
+        None => ov.push((
+            Value::Bytes(key.as_bytes().to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Bool(on)]),
+        )),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +506,85 @@ mod tests {
         let mut v = user_with_colors();
         set_state_color(&mut v, 20, Some([0.1, 0.2, 0.3, 0.5])).unwrap();
         assert!(state_colors(&v).contains(&(20, [0.1, 0.2, 0.3, 0.5])));
+    }
+
+    /// user -> overview -> a few boolean settings as (ts, bool) tuples.
+    /// The timestamp is the shared `seeded_ts()` (not a zero Long), so a test
+    /// can tell "the original was preserved" apart from "a fresh one was minted".
+    fn user_with_bools() -> Value {
+        let flag = |on: bool| Value::Tuple(vec![seeded_ts(), Value::Bool(on)]);
+        Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("applyToStructures"), flag(true)),
+            (b("applyToOtherObjects"), flag(false)),
+            (b("useSmallText"), flag(false)),
+        ]))])
+    }
+
+    #[test]
+    fn projects_the_boolean_settings_present_in_the_file() {
+        let mut got = overview_bools(&user_with_bools());
+        got.sort();
+        assert_eq!(got, vec![
+            ("applyToOtherObjects".to_string(), false),
+            ("applyToStructures".to_string(), true),
+            ("useSmallText".to_string(), false),
+        ]);
+    }
+
+    #[test]
+    fn sets_an_existing_boolean() {
+        let mut v = user_with_bools();
+        set_overview_bool(&mut v, "applyToOtherObjects", true).unwrap();
+        assert!(overview_bools(&v).contains(&("applyToOtherObjects".to_string(), true)));
+    }
+
+    #[test]
+    fn bool_timestamp_wrapper_survives_the_edit() {
+        let mut v = user_with_bools();
+        set_overview_bool(&mut v, "applyToStructures", false).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"applyToStructures")).unwrap();
+        let Value::Tuple(items) = val else { panic!("the (ts, bool) wrapper must be preserved") };
+        let ts = items.iter().find(|e| matches!(e, Value::Long(_))).expect("a Long timestamp element");
+        assert_eq!(ts, &seeded_ts(), "the ORIGINAL timestamp must survive the edit, not be replaced");
+    }
+
+    #[test]
+    fn materialises_a_known_boolean_that_is_absent() {
+        let mut v = user_with_bools();
+        set_overview_bool(&mut v, "hideCorpTicker", true).unwrap();
+        assert!(overview_bools(&v).contains(&("hideCorpTicker".to_string(), true)));
+
+        // `as_bool` also accepts a bare `Value::Bool` (real files use both shapes
+        // for OTHER settings), so the projection check above would not by itself
+        // notice a missing `(ts, _)` wrapper. Assert the raw shape explicitly.
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"hideCorpTicker")).unwrap();
+        assert_eq!(
+            val,
+            &Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Bool(true)]),
+            "a freshly minted key must be a (zero Long timestamp, bool) tuple, not a bare bool"
+        );
+    }
+
+    #[test]
+    fn rejects_a_key_outside_the_allow_list() {
+        let mut v = user_with_bools();
+        assert!(matches!(
+            set_overview_bool(&mut v, "applyToStructuresTypo", true),
+            Err(OverviewTabError::UnknownSetting { key }) if key == "applyToStructuresTypo"
+        ));
+        assert_eq!(overview_bools(&v).len(), 3, "nothing was minted");
+        // Check the raw container too: `overview_bools` only ever projects
+        // allow-listed names, so it would not notice a junk key minted alongside
+        // them. Confirm the entry count in the raw dict is unchanged as well.
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        assert_eq!(ovd.len(), 3, "no junk key was pushed into the raw overview container");
     }
 }
