@@ -40,8 +40,10 @@ impl StateList {
     }
 
     /// Enabled lists are stored sorted ascending (EVE's own convention on real
-    /// files, and what `set_preset_groups` does for `groups`). Order lists are
-    /// a priority sequence and must keep the caller's order.
+    /// files, matching the sort `set_preset_groups` does for `groups`). They are
+    /// ALSO deduplicated, which `set_preset_groups` does not do: an enabled-states
+    /// list is a set, so a duplicate id is meaningless and must not round-trip.
+    /// Order lists are a priority sequence and must keep the caller's order.
     fn sorted(self) -> bool {
         matches!(self, StateList::Background | StateList::Flag)
     }
@@ -112,11 +114,15 @@ mod tests {
         ovd.iter().find(|(k, _)| is_b(k, key.as_bytes())).map(|(_, v)| ints(v)).unwrap_or_default()
     }
 
+    /// A distinguishable non-zero timestamp, so a test can tell "the original was
+    /// preserved" apart from "the code invented a fresh zero one".
+    fn seeded_ts() -> Value { Value::Long(vec![7, 0, 0, 0, 0, 0, 0, 0]) }
+
     /// user -> overview -> the four state keys, each a (ts, [int]) tuple.
     /// The order lists carry id 68, which the client stores but never renders.
     fn user_with_states() -> Value {
         let list = |ids: &[i64]| Value::Tuple(vec![
-            Value::Long(vec![0u8; 8]),
+            seeded_ts(),
             Value::List(ids.iter().map(|n| Value::Int(*n)).collect()),
         ]);
         Value::Dict(vec![(b("overview"), Value::Dict(vec![
@@ -164,13 +170,35 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"backgroundStates2")).unwrap();
-        assert!(matches!(val, Value::Tuple(_)), "the (ts, list) wrapper must be preserved");
+        let Value::Tuple(items) = val else { panic!("the (ts, list) wrapper must be preserved") };
+        let ts = items.iter().find(|e| matches!(e, Value::Long(_))).expect("a Long timestamp element");
+        assert_eq!(ts, &seeded_ts(), "the ORIGINAL timestamp must survive the edit, not be replaced");
     }
 
     #[test]
     fn absent_keys_are_materialised_on_first_edit() {
         let mut v = user_without_states();
         set_state_list(&mut v, StateList::Background, &[9, 13]).unwrap();
+        assert_eq!(read(&v, "backgroundStates2"), vec![9, 13]);
+
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"backgroundStates2")).unwrap();
+        assert_eq!(
+            val,
+            &Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::List(vec![Value::Int(9), Value::Int(13)]),
+            ]),
+            "a freshly minted key must be a (zero Long timestamp, list) tuple, not a bare list"
+        );
+    }
+
+    #[test]
+    fn enabled_list_dedups_duplicate_ids() {
+        let mut v = user_with_states();
+        set_state_list(&mut v, StateList::Background, &[9, 9, 13, 9]).unwrap();
         assert_eq!(read(&v, "backgroundStates2"), vec![9, 13]);
     }
 
