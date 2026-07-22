@@ -79,11 +79,12 @@ Tauri commands, SvelteKit 5 (runes) frontend, `node --test` for frontend tests.
 
 ### Task 1: Resolve ids 36/37 and author the state vocabulary
 
-The 22 pilot-state labels are already derived and colour-verified (spec §2.3).
-Two ids remain ambiguous: `36` and `37` are "Wreck is already viewed" and "Wreck
-is empty", but which is which is not determinable from the corpus — both always
-appear together in the same sorted list, and EVE's Exceptions list is
-alphabetical. Step 1 settles it with a live experiment.
+The 22 pilot-state labels are derived and colour-verified (spec §2.3), and the
+`36`/`37` ambiguity was **resolved by live experiment on 2026-07-22 — Step 1 is
+already done**. Setting "Wreck is empty" to Hide in-game moved `37` into a
+preset's `filteredStates` while `36` stayed put, giving **36 = "Wreck is already
+viewed", 37 = "Wreck is empty"**. Step 1 is kept below as the record of how the
+fact was established; start this task at Step 2.
 
 **Files:**
 - Create: `app/src/lib/data/overview-states.json`
@@ -97,7 +98,12 @@ alphabetical. Step 1 settles it with a live experiment.
   `DEFAULT_BACKGROUND_STATES: number[]`, `DEFAULT_FLAG_ORDER: number[]`,
   `DEFAULT_FLAG_STATES: number[]` from `app/src/lib/states.ts`.
 
-- [ ] **Step 1: Run the live experiment to pin ids 36 and 37**
+- [x] **Step 1: Run the live experiment to pin ids 36 and 37** — DONE 2026-07-22.
+  Result: **37 = "Wreck is empty", 36 = "Wreck is already viewed".** Exactly one
+  account file changed; its diff was timestamp churn plus one preset's
+  `filteredStates` going `[] → [37]`, with `36` untouched in a sibling preset's
+  list. The dump also surfaced a new `filterOut` `(ts, None)` sibling key in the
+  overview container — not a state key, not touched by this slice.
 
 This step needs the EVE client and a human. It follows the project's existing
 experiment pattern (`testdata/exp*.diff`).
@@ -125,9 +131,8 @@ viewed". Record which.
 
 - [ ] **Step 2: Write the vocabulary JSON**
 
-Create `app/src/lib/data/overview-states.json`. Fill the two `36`/`37` labels
-per Step 1 — the assignment below is written the way Step 1 will most likely
-resolve it, and **must be corrected if Step 1 says otherwise**.
+Create `app/src/lib/data/overview-states.json` exactly as below. The `36`/`37`
+labels are the experiment's verified result — do not swap them.
 
 ```json
 {

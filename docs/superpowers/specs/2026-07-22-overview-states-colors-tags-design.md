@@ -73,6 +73,12 @@ The unsuffixed `backgroundOrder` / `backgroundStates` appear **only** inside
 session state (raw-tree-only). There is therefore **no legacy/modern migration**
 here, unlike `tabsettings` → `tabsettings_new`. `restoreData` is left untouched.
 
+A `filterOut` key — a `(timestamp, None)` sibling — was observed appearing in the
+overview container as a side effect of editing an exception in-game. It is
+neither a state list nor a boolean, so nothing in this slice reads or writes it
+and it round-trips untouched. Recorded so a future reader does not mistake it
+for a state key.
+
 ### 2.2 Per-preset keys
 
 Each preset blob under `overview → overviewProfilePresets` holds exactly three
@@ -145,14 +151,18 @@ The state ids partition into three overlapping sets, confirmed by screenshot:
 | `backgroundOrder2` / `flagOrder2`, as stored | 23 | those 22 plus `68`, which is never rendered |
 | Filters → Exceptions | 24 | those 22 plus ids `36` and `37` |
 
-Ids **36 and 37 are the two non-pilot states** — "Wreck is already viewed" and
-"Wreck is empty" — which is why they appear only in the per-preset lists and
-never in the account-wide colour/tag lists. Which of the two is 36 and which is
-37 is **not determined by the corpus** (both appear together in the same sorted
+Ids **36 and 37 are the two non-pilot states**, which is why they appear only in
+the per-preset lists and never in the account-wide colour/tag lists. The corpus
+alone cannot tell them apart (both appear together in the same sorted
 `filteredStates` list, and EVE's Exceptions list is alphabetical rather than
-id-ordered). Implementation Task 1 resolves it by the project's standard live
-experiment: set one of the two to a non-default choice in-game, save, and diff
-the file.
+id-ordered), so a live experiment settled it on 2026-07-22: setting **"Wreck is
+empty"** to Hide in-game moved **37** into a preset's `filteredStates` while
+**36** stayed in place in another preset's list.
+
+| id | Label |
+|---|---|
+| 36 | Wreck is already viewed |
+| 37 | Wreck is empty |
 
 The practical consequence: the Exceptions list and the Appearance lists must be
 driven from **separate vocabularies**, not one shared list. Offering "Wreck is
