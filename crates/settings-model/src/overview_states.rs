@@ -160,7 +160,7 @@ pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result
         ));
     }
     let (_, sc) = ov.iter_mut().find(|(k, _)| is_b(k, b"stateColors")).expect("just checked");
-    let Some(entries) = dict_inner_mut(sc) else { return Ok(()) };
+    let entries = dict_inner_mut(sc).ok_or(OverviewTabError::NoOverview)?;
 
     match rgba {
         None => entries.retain(|(k, _)| background_color_id(k) != Some(id)),
@@ -320,10 +320,12 @@ mod tests {
 
     /// user -> overview -> stateColors: (ts, { ("background", id): (r,g,b,a) })
     /// Includes one entry on a foreign surface, which must never be touched.
+    /// The timestamp is the shared `seeded_ts()` (not a zero Long), so a test
+    /// can tell "the original was preserved" apart from "a fresh one was minted".
     fn user_with_colors() -> Value {
         Value::Dict(vec![(b("overview"), Value::Dict(vec![
             (b("stateColors"), Value::Tuple(vec![
-                Value::Long(vec![0u8; 8]),
+                seeded_ts(),
                 Value::Dict(vec![
                     (color_key("background", 44), rgba(0.75, 0.0, 0.0, 1.0)),
                     (color_key("background", 20), rgba(0.7, 0.7, 0.7, 0.5)),
@@ -391,6 +393,41 @@ mod tests {
         let mut v = user_without_states();
         set_state_color(&mut v, 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
         assert_eq!(state_colors(&v), vec![(13, [1.0, 0.0, 0.0, 1.0])]);
+    }
+
+    #[test]
+    fn color_timestamp_wrapper_survives_the_edit() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"stateColors")).unwrap();
+        let Value::Tuple(items) = val else { panic!("the (ts, dict) wrapper must be preserved") };
+        let ts = items.iter().find(|e| matches!(e, Value::Long(_))).expect("a Long timestamp element");
+        assert_eq!(ts, &seeded_ts(), "the ORIGINAL timestamp must survive the edit, not be replaced");
+    }
+
+    #[test]
+    fn set_state_color_with_no_overview_container_is_an_error() {
+        let mut v = Value::Dict(vec![(b("ui"), Value::Dict(Vec::new()))]);
+        assert!(matches!(
+            set_state_color(&mut v, 9, Some([0.0, 0.0, 0.0, 1.0])),
+            Err(OverviewTabError::NoOverview)
+        ));
+    }
+
+    /// A malformed `stateColors` value (neither a dict nor a (ts, dict) tuple)
+    /// must be reported as an error, not silently treated as a no-op success.
+    #[test]
+    fn malformed_state_colors_value_is_an_error() {
+        let mut v = Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("stateColors"), Value::Int(1)),
+        ]))]);
+        assert!(matches!(
+            set_state_color(&mut v, 9, Some([0.0, 0.0, 0.0, 1.0])),
+            Err(OverviewTabError::NoOverview)
+        ));
     }
 
     /// State 20's fixture entry already carries a non-1.0 alpha (0.5). An RGB-only
