@@ -186,10 +186,21 @@ export interface OverviewWindow {
   index: number;
   tab_indices: number[];
 }
+export interface Preset {
+  name: string;
+  groups: number[];
+}
 export interface OverviewColumns {
   tabs: OverviewTab[];
   windows: OverviewWindow[];
-  presets: string[];
+  presets: Preset[];
+}
+
+export interface GroupEntry {
+  id: number;
+  name: string;
+  category_id: number;
+  category_name: string;
 }
 
 export interface RememberedList {
@@ -247,6 +258,8 @@ export const api = {
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
     invoke<NameMap>("refresh_character_names", { ids }),
+  syncGroupCatalog: (knownIds: number[], relevantCategories: number[]) =>
+    invoke<GroupEntry[]>("sync_group_catalog", { knownIds, relevantCategories }),
   accountRoster: () => invoke<AccountRoster>("account_roster"),
   setAccountAlias: (userId: number, alias: string | null) =>
     invoke<AccountRoster>("set_account_alias", { userId, alias }),
@@ -285,6 +298,10 @@ export const api = {
     invoke<OverviewColumns>("preset_delete", { name }),
   tabSetPreset: (tabIdx: number, preset: string) =>
     invoke<OverviewColumns>("tab_set_preset", { tabIdx, preset }),
+  presetSetGroups: (name: string, groups: number[]) =>
+    invoke<OverviewColumns>("preset_set_groups", { name, groups }),
+  presetFork: (tabIdx: number, name: string, groups: number[], filteredStates: number[], alwaysShownStates: number[]) =>
+    invoke<OverviewColumns>("preset_fork", { tabIdx, name, groups, filteredStates, alwaysShownStates }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
