@@ -13,7 +13,7 @@
 
 use blue_marshal::Value;
 
-use crate::overview_tabs::{is_b, overview_mut, OverviewTabError};
+use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, OverviewTabError};
 use crate::treewalk::inline_all;
 
 /// Which of the four account-scoped state lists to write.
@@ -85,6 +85,97 @@ pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<()
             Value::Bytes(which.key().to_vec()),
             Value::Tuple(vec![Value::Long(vec![0u8; 8]), list]),
         )),
+    }
+    Ok(())
+}
+
+/// The surface component of a `stateColors` key. Only this surface is edited;
+/// any other is read past and written back untouched.
+const BACKGROUND_SURFACE: &[u8] = b"background";
+
+fn as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f64),
+        _ => None,
+    }
+}
+
+/// Read a `(surface, id)` colour key, returning the id only for the background
+/// surface.
+fn background_color_id(k: &Value) -> Option<i64> {
+    let Value::Tuple(parts) = k else { return None };
+    let [surface, id] = parts.as_slice() else { return None };
+    match (surface, id) {
+        (Value::Bytes(s), Value::Int(n)) if s.as_slice() == BACKGROUND_SURFACE => Some(*n),
+        _ => None,
+    }
+}
+
+fn as_rgba(v: &Value) -> Option<[f64; 4]> {
+    let Value::Tuple(parts) = v else { return None };
+    let [r, g, b, a] = parts.as_slice() else { return None };
+    Some([as_f64(r)?, as_f64(g)?, as_f64(b)?, as_f64(a)?])
+}
+
+/// Every background-surface colour override in the file, as `(state_id, rgba)`.
+/// SPARSE: a state absent from this list uses EVE's built-in default colour.
+pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
+    let Value::Dict(root) = v else { return Vec::new() };
+    let Some((_, ov)) = root.iter().find(|(k, _)| is_b(k, b"overview")) else { return Vec::new() };
+    let Value::Dict(ovd) = ov else { return Vec::new() };
+    let Some((_, sc)) = ovd.iter().find(|(k, _)| is_b(k, b"stateColors")) else { return Vec::new() };
+    let inner = match sc {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| match e {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let Some(d) = inner else { return Vec::new() };
+    d.iter()
+        .filter_map(|(k, val)| Some((background_color_id(k)?, as_rgba(val)?)))
+        .collect()
+}
+
+/// Set or clear one state's background colour.
+///
+/// `Some(rgba)` writes an explicit override; `None` REMOVES the entry, which is
+/// how the UI restores EVE's built-in default for that state — writing an
+/// explicit default-looking colour is not the same thing.
+///
+/// Entries whose surface is not `background` are left exactly as found.
+pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+
+    if !ov.iter().any(|(k, _)| is_b(k, b"stateColors")) {
+        if rgba.is_none() {
+            return Ok(()); // nothing stored, nothing to clear
+        }
+        ov.push((
+            Value::Bytes(b"stateColors".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
+    }
+    let (_, sc) = ov.iter_mut().find(|(k, _)| is_b(k, b"stateColors")).expect("just checked");
+    let Some(entries) = dict_inner_mut(sc) else { return Ok(()) };
+
+    match rgba {
+        None => entries.retain(|(k, _)| background_color_id(k) != Some(id)),
+        Some([r, g, b_, a]) => {
+            let val = Value::Tuple(vec![
+                Value::Float(r), Value::Float(g), Value::Float(b_), Value::Float(a),
+            ]);
+            match entries.iter_mut().find(|(k, _)| background_color_id(k) == Some(id)) {
+                Some((_, slot)) => *slot = val,
+                None => entries.push((
+                    Value::Tuple(vec![Value::Bytes(BACKGROUND_SURFACE.to_vec()), Value::Int(id)]),
+                    val,
+                )),
+            }
+        }
     }
     Ok(())
 }
@@ -217,5 +308,98 @@ mod tests {
             set_state_list(&mut v, StateList::Background, &[9]),
             Err(OverviewTabError::NoOverview)
         ));
+    }
+
+    fn rgba(r: f64, g: f64, bl: f64, a: f64) -> Value {
+        Value::Tuple(vec![Value::Float(r), Value::Float(g), Value::Float(bl), Value::Float(a)])
+    }
+
+    fn color_key(surface: &str, id: i64) -> Value {
+        Value::Tuple(vec![b(surface), Value::Int(id)])
+    }
+
+    /// user -> overview -> stateColors: (ts, { ("background", id): (r,g,b,a) })
+    /// Includes one entry on a foreign surface, which must never be touched.
+    fn user_with_colors() -> Value {
+        Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("stateColors"), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![
+                    (color_key("background", 44), rgba(0.75, 0.0, 0.0, 1.0)),
+                    (color_key("background", 20), rgba(0.7, 0.7, 0.7, 0.5)),
+                    (color_key("bracket", 44), rgba(0.1, 0.2, 0.3, 1.0)),
+                ]),
+            ])),
+        ]))])
+    }
+
+    #[test]
+    fn projects_only_the_background_surface() {
+        let v = user_with_colors();
+        let mut got = state_colors(&v);
+        got.sort_by_key(|(id, _)| *id);
+        assert_eq!(got, vec![(20, [0.7, 0.7, 0.7, 0.5]), (44, [0.75, 0.0, 0.0, 1.0])]);
+    }
+
+    #[test]
+    fn sets_a_colour_for_a_state_with_no_entry() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
+        assert!(state_colors(&v).contains(&(13, [1.0, 0.0, 0.0, 1.0])));
+    }
+
+    #[test]
+    fn overwrites_an_existing_colour() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
+        assert!(state_colors(&v).contains(&(44, [0.0, 1.0, 0.0, 1.0])));
+        assert_eq!(state_colors(&v).iter().filter(|(id, _)| *id == 44).count(), 1);
+    }
+
+    #[test]
+    fn none_removes_the_entry_restoring_eves_default() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 44, None).unwrap();
+        assert!(!state_colors(&v).iter().any(|(id, _)| *id == 44));
+    }
+
+    #[test]
+    fn removing_an_absent_entry_is_a_no_op() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 13, None).unwrap();
+        assert_eq!(state_colors(&v).len(), 2);
+    }
+
+    #[test]
+    fn a_foreign_surface_entry_is_preserved() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 44, Some([0.0, 0.0, 1.0, 1.0])).unwrap();
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, sc) = ovd.iter().find(|(k, _)| is_b(k, b"stateColors")).unwrap();
+        let Value::Tuple(items) = sc else { panic!() };
+        let Some(Value::Dict(d)) = items.iter().find(|e| matches!(e, Value::Dict(_))) else { panic!() };
+        assert!(
+            d.iter().any(|(k, _)| *k == color_key("bracket", 44)),
+            "a non-background surface must round-trip untouched"
+        );
+    }
+
+    #[test]
+    fn colours_can_be_set_when_the_key_is_absent() {
+        let mut v = user_without_states();
+        set_state_color(&mut v, 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
+        assert_eq!(state_colors(&v), vec![(13, [1.0, 0.0, 0.0, 1.0])]);
+    }
+
+    /// State 20's fixture entry already carries a non-1.0 alpha (0.5). An RGB-only
+    /// edit passes that same alpha back through explicitly; the write path must
+    /// use exactly what the caller supplied, not silently reset it to 1.0.
+    #[test]
+    fn editing_rgb_preserves_a_non_default_alpha() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, 20, Some([0.1, 0.2, 0.3, 0.5])).unwrap();
+        assert!(state_colors(&v).contains(&(20, [0.1, 0.2, 0.3, 0.5])));
     }
 }
