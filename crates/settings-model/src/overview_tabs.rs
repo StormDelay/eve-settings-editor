@@ -33,6 +33,8 @@ pub enum OverviewTabError {
     PresetExists { name: String },
     /// Refused: would delete the last remaining preset.
     LastPreset,
+    /// Key is not in the boolean-settings allow-list (`OVERVIEW_BOOLS`).
+    UnknownSetting { key: String },
 }
 
 impl std::fmt::Display for OverviewTabError {
@@ -48,6 +50,7 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
             OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
             OverviewTabError::LastPreset => write!(f, "An overview must keep at least one preset."),
+            OverviewTabError::UnknownSetting { key } => write!(f, "Setting \"{key}\" is not recognised."),
         }
     }
 }
