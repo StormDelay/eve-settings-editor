@@ -18,6 +18,7 @@ pub mod batch;
 mod stacks;
 mod overview_tabs;
 mod overview_presets;
+pub mod overview_states;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -37,6 +38,7 @@ pub use overview_tabs::{
     set_tab_preset, OverviewTabError,
 };
 pub use overview_presets::{create_preset, create_preset_from_lists, delete_preset, fork_preset, rename_preset, set_preset_groups};
+pub use overview_states::{set_state_list, StateList};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
