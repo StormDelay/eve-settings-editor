@@ -135,10 +135,28 @@ read/write round-trip untouched. Presenting it as a raw `#68` row is acceptable
 (§2.3, unrecognised ids) but it must never be silently dropped from the order
 list — doing so would quietly rewrite a list EVE still owns.
 
-One gap remains, closing in implementation Task 1: **ids 36 and 37** appear in
-preset `filteredStates` but never in `backgroundOrder2` / `flagOrder2`, so the
-filterable vocabulary is a **superset** of the colourable one. Their labels come
-from EVE's **Filters** tab (see §4.2).
+### 2.5 Three vocabularies, not one
+
+The state ids partition into three overlapping sets, confirmed by screenshot:
+
+| Surface | Count | Contents |
+|---|---|---|
+| Appearance lists, as rendered | 22 | the pilot states in the §2.3 table, positions 1–22 |
+| `backgroundOrder2` / `flagOrder2`, as stored | 23 | those 22 plus `68`, which is never rendered |
+| Filters → Exceptions | 24 | those 22 plus ids `36` and `37` |
+
+Ids **36 and 37 are the two non-pilot states** — "Wreck is already viewed" and
+"Wreck is empty" — which is why they appear only in the per-preset lists and
+never in the account-wide colour/tag lists. Which of the two is 36 and which is
+37 is **not determined by the corpus** (both appear together in the same sorted
+`filteredStates` list, and EVE's Exceptions list is alphabetical rather than
+id-ordered). Implementation Task 1 resolves it by the project's standard live
+experiment: set one of the two to a non-default choice in-game, save, and diff
+the file.
+
+The practical consequence: the Exceptions list and the Appearance lists must be
+driven from **separate vocabularies**, not one shared list. Offering "Wreck is
+empty" a background colour, or offering `68` an exception, would both be wrong.
 
 An id with no bundled label is **not an error**: it displays as a raw `#id` row
 and round-trips normally, exactly as 2b handles unrecognised group ids.
@@ -264,30 +282,49 @@ this same Overview view anyway". This is that slice.
 Split into sub-tabs mirroring EVE's own overview settings window:
 
 ```
-Overview   [ Columns | Filter | Appearance ]
+Overview   [ Columns | Filters | Appearance ]
 ```
+
+Sub-tab names follow EVE's own Overview Settings window (`Tabs | Filters |
+Appearance | Ships | Misc | History`) wherever they overlap, so the screen reads
+as familiar rather than as a parallel vocabulary.
 
 - The **tab/window strip** (create/rename/delete/reorder/move, add/remove
   window) stays in the parent `OverviewView.svelte` — it selects *what* the
-  three sub-tabs are editing.
+  three sub-tabs are editing. This is our equivalent of EVE's `Tabs`.
 - `OverviewColumnsTab.svelte` — the existing column list, moved unchanged.
-- `OverviewFilterTab.svelte` — the preset picker, 2b's group checklist, and the
-  new per-state tri-state list.
-- `OverviewAppearanceTab.svelte` — the two state lists and the boolean settings.
+- `OverviewFiltersTab.svelte` — the preset picker, then 2b's group checklist and
+  the new state list under EVE's own **Types Shown** / **Exceptions** split.
+- `OverviewAppearanceTab.svelte` — the boolean settings above a
+  Colortag/Background pair, matching EVE's Appearance layout (§4.3).
 
 This is a move-and-split, not a rewrite: existing column and preset behaviour is
 carried over as-is so the diff stays reviewable.
 
-### 4.2 Filter tab — per-preset states
+### 4.2 Filters tab — per-preset states
 
-A list of states (bundled vocabulary, plus any unrecognised id present in the
-file), each a three-way radio:
+EVE splits its own Filters tab into **Types Shown** (2b's group tree) and
+**Exceptions** (the state lists). Mirror that naming and split rather than
+inventing our own — it is the vocabulary users already have.
+
+The Exceptions list is a three-way radio per state, which is EVE's own control,
+not an invention of this design — its Exceptions tab renders exactly three
+columns (show / hide / always show):
 
 | Choice | Effect |
 |---|---|
-| Default | in neither list |
+| Show | in neither list |
+| Hide | in `filteredStates` |
 | Always show | in `alwaysShownStates` |
-| Filter out | in `filteredStates` |
+
+The tri-state is what makes the two lists structurally disjoint (§2.2). Two
+details copied from EVE's rendering:
+
+- **Sort alphabetically by label**, not by id and not in priority order — the
+  Appearance lists are priority-ordered and draggable, Exceptions is not
+  ordered at all.
+- Drive it from the **Exceptions vocabulary** (§2.5), which includes the two
+  Wreck states and excludes `68`.
 
 Reuses the group checklist's filter box. Editing a **built-in default preset**
 auto-forks a user copy exactly as `setPresetGroup` does today — same `forkName`
@@ -337,12 +374,21 @@ New `app/src/lib/data/overview-states.json`:
 ```json
 {
   "states": { "9": "Pilot has a security status below -5", "...": "..." },
+  "exceptionStates": [9, 10, 11, "...", 36, 37],
   "defaultBackgroundOrder": [13, 44, "..."],
   "defaultBackgroundStates": [9, 10, "..."],
   "defaultFlagOrder": [13, 44, "..."],
   "defaultFlagStates": [9, 10, "..."]
 }
 ```
+
+`states` names all 24 known ids (22 pilot + 2 Wreck); `68` is deliberately
+absent and renders raw. The **Appearance** vocabulary is taken from the file's
+own order array (falling back to `defaultBackgroundOrder` /
+`defaultFlagOrder`), so a state EVE adds later shows up without a rebuild. The
+**Exceptions** vocabulary is the explicit `exceptionStates` list, since nothing
+in the file enumerates it — a preset only records the states it has an opinion
+about, so it cannot be derived from a preset blob.
 
 Hand-authored from the screenshots, like the hand-corrected
 `default-preset-names.json`. It carries a header comment recording that the
@@ -371,6 +417,9 @@ Backend unit tests, in the style of the existing `overview_presets` tests:
   `UnknownPreset` for a bad name.
 - Projection — `defaulted` is true exactly when the keys were absent;
   unrecognised ids survive a read/write round-trip.
+- **Id 68 preservation** — a fixture whose order lists contain `68` still
+  contains it after a toggle and after a reorder (§2.3). This is the regression
+  guard for the one id the client stores but never shows.
 
 Frontend tests: tri-state ↔ two-list mapping in both directions, and
 fork-on-edit for a built-in default preset.
