@@ -30,5 +30,17 @@
   "defaultBackgroundOrder": [13, 44, 52, 11, 12, 14, 15, 16, 45, 49, 19, 18, 9, 51, 50, 53, 10, 20, 21, 17, 48, 66, 68],
   "defaultBackgroundStates": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 44, 45, 48, 49, 50, 51, 52, 53, 66],
   "defaultFlagOrder": [13, 44, 52, 11, 12, 14, 15, 16, 45, 9, 51, 50, 53, 19, 18, 49, 10, 17, 48, 21, 20, 66, 68],
-  "defaultFlagStates": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 44, 45, 48, 49, 50, 51, 52, 53, 66]
+  "defaultFlagStates": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 44, 45, 48, 49, 50, 51, 52, 53, 66],
+  "_defaultColorsNote": "EVE's built-in per-state background colour, for states the file stores no override for. NOT in any settings file (stateColors holds only overrides; restoreData's stateColorsNameList mirrors the same overrides as palette names; defaultoverview holds only a profile id) — it lives in client script, so these are sampled pixel-exact from EVE's own Overview Settings > Appearance > Background swatches. Only rows the account had NO stored colour for are listed, since a stored row's swatch shows the override, not the default. Sampling is trustworthy: on rows where a value WAS stored, the sampled pixel matched the file's floats exactly (BF0000 = 0.75/0/0, 002699 = 0/0.15/0.6, 337FFF = 0.2/0.5/1, FF5900 = 1/0.35/0, B2B2B2 = 0.7/0.7/0.7). Id 48 is included because EVE paints its default there even though a colour is stored — the state is not enabled, and EVE appears to ignore an override on a disabled state. Display only: an entry here is never written to a file. An id absent here falls back to a neutral placeholder.",
+  "defaultColors": {
+    "11": "#9926e5",
+    "13": "#bf0000",
+    "14": "#002699",
+    "15": "#002699",
+    "17": "#b2b2b2",
+    "19": "#bf0000",
+    "48": "#199919",
+    "52": "#00a191",
+    "53": "#ff5900"
+  }
 }
