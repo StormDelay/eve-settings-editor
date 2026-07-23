@@ -37,8 +37,8 @@ check("moveInOrder reorders without dropping any id", eq(moved, [44, 9, 13, 68])
 check("moveInOrder keeps an unrendered id in place", moveInOrder([13, 44, 68], 0, 1).includes(68));
 
 check("defaultColor gives a harvested built-in colour", defaultColor(13) === "#bf0000");
-check("defaultColor is null for a state we have no sample for", defaultColor(9) === null);
-check("every harvested default is a 6-digit hex colour",
-  DEFAULT_BACKGROUND_ORDER.every((id) => { const c = defaultColor(id); return c === null || /^#[0-9a-f]{6}$/.test(c); }));
+check("defaultColor is null for the unrendered id 68", defaultColor(68) === null);
+check("every rendered state has a harvested default",
+  DEFAULT_BACKGROUND_ORDER.filter((id) => id !== 68).every((id) => /^#[0-9a-f]{6}$/.test(defaultColor(id) ?? "")));
 
 console.log("states: all checks passed");
