@@ -14,7 +14,7 @@
 use blue_marshal::Value;
 
 use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, OverviewTabError};
-use crate::treewalk::inline_all;
+use crate::treewalk::{collect_shared, effective, inline_all, Entries, SharedTable};
 
 /// Which of the four account-scoped state lists to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,8 +93,26 @@ pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<()
 /// any other is read past and written back untouched.
 const BACKGROUND_SURFACE: &[u8] = b"background";
 
-fn as_f64(v: &Value) -> Option<f64> {
-    match v {
+/// Key match for the READ path. The write path inlines the tree first and can
+/// use `is_b`, which matches bare `Bytes`; a read cannot — real files store a
+/// repeated byte string once and `Ref` it everywhere else (so does our own
+/// `reshare` pass), and an unresolved `Ref` silently matches nothing.
+fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
+    matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name)
+}
+
+/// The `overview` container's entries, resolving indirection at every hop.
+fn overview_entries<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    let Value::Dict(root) = effective(v, sh) else { return None };
+    let (_, ov) = root.iter().find(|(k, _)| shared_is_b(k, b"overview", sh))?;
+    match effective(ov, sh) {
+        Value::Dict(d) => Some(d),
+        _ => None,
+    }
+}
+
+fn as_f64<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<f64> {
+    match effective(v, sh) {
         Value::Float(f) => Some(*f),
         Value::Int(i) => Some(*i as f64),
         _ => None,
@@ -102,32 +120,35 @@ fn as_f64(v: &Value) -> Option<f64> {
 }
 
 /// Read a `(surface, id)` colour key, returning the id only for the background
-/// surface.
-fn background_color_id(k: &Value) -> Option<i64> {
-    let Value::Tuple(parts) = k else { return None };
+/// surface. On a real file the surface string is stored once and the other keys
+/// carry a `Ref` to it, so both parts go through `effective`.
+fn background_color_id<'a>(k: &'a Value, sh: &SharedTable<'a>) -> Option<i64> {
+    let Value::Tuple(parts) = effective(k, sh) else { return None };
     let [surface, id] = parts.as_slice() else { return None };
-    match (surface, id) {
+    match (effective(surface, sh), effective(id, sh)) {
         (Value::Bytes(s), Value::Int(n)) if s.as_slice() == BACKGROUND_SURFACE => Some(*n),
         _ => None,
     }
 }
 
-fn as_rgba(v: &Value) -> Option<[f64; 4]> {
-    let Value::Tuple(parts) = v else { return None };
+fn as_rgba<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<[f64; 4]> {
+    let Value::Tuple(parts) = effective(v, sh) else { return None };
     let [r, g, b, a] = parts.as_slice() else { return None };
-    Some([as_f64(r)?, as_f64(g)?, as_f64(b)?, as_f64(a)?])
+    Some([as_f64(r, sh)?, as_f64(g, sh)?, as_f64(b, sh)?, as_f64(a, sh)?])
 }
 
 /// Every background-surface colour override in the file, as `(state_id, rgba)`.
 /// SPARSE: a state absent from this list uses EVE's built-in default colour.
 pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
-    let Value::Dict(root) = v else { return Vec::new() };
-    let Some((_, ov)) = root.iter().find(|(k, _)| is_b(k, b"overview")) else { return Vec::new() };
-    let Value::Dict(ovd) = ov else { return Vec::new() };
-    let Some((_, sc)) = ovd.iter().find(|(k, _)| is_b(k, b"stateColors")) else { return Vec::new() };
-    let inner = match sc {
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    let Some(ovd) = overview_entries(v, &sh) else { return Vec::new() };
+    let Some((_, sc)) = ovd.iter().find(|(k, _)| shared_is_b(k, b"stateColors", &sh)) else {
+        return Vec::new();
+    };
+    let inner = match effective(sc, &sh) {
         Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| match e {
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, &sh) {
             Value::Dict(d) => Some(d),
             _ => None,
         }),
@@ -135,7 +156,7 @@ pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
     };
     let Some(d) = inner else { return Vec::new() };
     d.iter()
-        .filter_map(|(k, val)| Some((background_color_id(k)?, as_rgba(val)?)))
+        .filter_map(|(k, val)| Some((background_color_id(k, &sh)?, as_rgba(val, &sh)?)))
         .collect()
 }
 
@@ -162,13 +183,16 @@ pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result
     let (_, sc) = ov.iter_mut().find(|(k, _)| is_b(k, b"stateColors")).expect("just checked");
     let entries = dict_inner_mut(sc).ok_or(OverviewTabError::NoOverview)?;
 
+    // `inline_all` above dropped every Shared/Ref, so the write path resolves
+    // against an empty slot table.
+    let flat = SharedTable::new();
     match rgba {
-        None => entries.retain(|(k, _)| background_color_id(k) != Some(id)),
+        None => entries.retain(|(k, _)| background_color_id(k, &flat) != Some(id)),
         Some([r, g, b_, a]) => {
             let val = Value::Tuple(vec![
                 Value::Float(r), Value::Float(g), Value::Float(b_), Value::Float(a),
             ]);
-            match entries.iter_mut().find(|(k, _)| background_color_id(k) == Some(id)) {
+            match entries.iter_mut().find(|(k, _)| background_color_id(k, &flat) == Some(id)) {
                 Some((_, slot)) => *slot = val,
                 None => entries.push((
                     Value::Tuple(vec![Value::Bytes(BACKGROUND_SURFACE.to_vec()), Value::Int(id)]),
@@ -193,10 +217,10 @@ pub const OVERVIEW_BOOLS: [&str; 6] = [
     "hideCorpTicker",
 ];
 
-fn as_bool(v: &Value) -> Option<bool> {
-    match v {
+fn as_bool<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<bool> {
+    match effective(v, sh) {
         Value::Bool(b) => Some(*b),
-        Value::Tuple(items) => items.iter().find_map(|e| match e {
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
             Value::Bool(b) => Some(*b),
             _ => None,
         }),
@@ -207,14 +231,14 @@ fn as_bool(v: &Value) -> Option<bool> {
 /// The known boolean settings actually present in the file. A setting absent
 /// here is one EVE has never written; the UI shows it unticked.
 pub fn overview_bools(v: &Value) -> Vec<(String, bool)> {
-    let Value::Dict(root) = v else { return Vec::new() };
-    let Some((_, ov)) = root.iter().find(|(k, _)| is_b(k, b"overview")) else { return Vec::new() };
-    let Value::Dict(ovd) = ov else { return Vec::new() };
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    let Some(ovd) = overview_entries(v, &sh) else { return Vec::new() };
     OVERVIEW_BOOLS
         .iter()
         .filter_map(|name| {
-            let (_, val) = ovd.iter().find(|(k, _)| is_b(k, name.as_bytes()))?;
-            Some(((*name).to_string(), as_bool(val)?))
+            let (_, val) = ovd.iter().find(|(k, _)| shared_is_b(k, name.as_bytes(), &sh))?;
+            Some(((*name).to_string(), as_bool(val, &sh)?))
         })
         .collect()
 }
@@ -409,6 +433,53 @@ mod tests {
         let mut got = state_colors(&v);
         got.sort_by_key(|(id, _)| *id);
         assert_eq!(got, vec![(20, [0.7, 0.7, 0.7, 0.5]), (44, [0.75, 0.0, 0.0, 1.0])]);
+    }
+
+    /// The shape every REAL file has: `b"background"` is stored once and every
+    /// later colour key carries a `Ref` to it, and a colour repeated across two
+    /// states is stored once too. Reading these as bare `Bytes`/`Tuple` finds
+    /// nothing, which showed up in the live smoke as "no state has a colour".
+    fn user_with_shared_colors() -> Value {
+        let dict = Value::Dict(vec![
+            (
+                Value::Tuple(vec![
+                    Value::Shared { slot: 1, value: Box::new(b("background")) },
+                    Value::Int(10),
+                ]),
+                Value::Shared { slot: 2, value: Box::new(rgba(0.7, 0.7, 0.7, 1.0)) },
+            ),
+            (
+                Value::Tuple(vec![Value::Ref(1), Value::Int(12)]),
+                Value::Ref(2),
+            ),
+        ]);
+        Value::Dict(vec![(
+            Value::Shared { slot: 3, value: Box::new(b("overview")) },
+            Value::Dict(vec![(b("stateColors"), Value::Tuple(vec![seeded_ts(), dict]))]),
+        )])
+    }
+
+    #[test]
+    fn resolves_shared_and_ref_colour_keys_and_values() {
+        let mut got = state_colors(&user_with_shared_colors());
+        got.sort_by_key(|(id, _)| *id);
+        assert_eq!(got, vec![(10, [0.7, 0.7, 0.7, 1.0]), (12, [0.7, 0.7, 0.7, 1.0])]);
+    }
+
+    #[test]
+    fn resolves_a_ref_boolean_key() {
+        // The key is stored in a sibling subtree and `Ref`d inside `overview`.
+        let v = Value::Dict(vec![
+            (b("restoreData"), Value::List(vec![Value::Shared {
+                slot: 7,
+                value: Box::new(b("useSmallText")),
+            }])),
+            (b("overview"), Value::Dict(vec![(
+                Value::Ref(7),
+                Value::Tuple(vec![seeded_ts(), Value::Bool(true)]),
+            )])),
+        ]);
+        assert_eq!(overview_bools(&v), vec![("useSmallText".to_string(), true)]);
     }
 
     #[test]
