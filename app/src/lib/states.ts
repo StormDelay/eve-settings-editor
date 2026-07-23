@@ -56,6 +56,14 @@ export function moveInOrder(order: number[], from: number, to: number): number[]
   return next;
 }
 
+/** EVE's built-in background colour for a state the file stores no override
+ *  for, or null when we have no sample for it (the table lives in client
+ *  script, so it is harvested from EVE's own screen — see the bundle's
+ *  `_defaultColorsNote`). Display only: never written to a file. */
+export function defaultColor(id: number): string | null {
+  return (bundle.defaultColors as Record<string, string>)[String(id)] ?? null;
+}
+
 export const DEFAULT_BACKGROUND_ORDER: number[] = bundle.defaultBackgroundOrder;
 export const DEFAULT_BACKGROUND_STATES: number[] = bundle.defaultBackgroundStates;
 export const DEFAULT_FLAG_ORDER: number[] = bundle.defaultFlagOrder;

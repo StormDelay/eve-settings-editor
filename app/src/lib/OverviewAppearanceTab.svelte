@@ -2,7 +2,7 @@
   import { api, errMessage, type OverviewColumns } from "./api";
   import { message } from "@tauri-apps/plugin-dialog";
   import {
-    stateLabel, rgbaToHex, hexToRgba, moveInOrder,
+    stateLabel, rgbaToHex, hexToRgba, moveInOrder, defaultColor,
     DEFAULT_BACKGROUND_ORDER, DEFAULT_BACKGROUND_STATES,
     DEFAULT_FLAG_ORDER, DEFAULT_FLAG_STATES,
   } from "./states";
@@ -21,10 +21,8 @@
     ["hideCorpTicker", "Hide corporation ticker"],
   ];
 
-  // Shown in the swatch for a state with no stored colour. EVE's built-in
-  // per-state defaults live in client script and aren't in any file we read, so
-  // this is a neutral placeholder — the "default" marker beside it, not the
-  // colour, is what tells the user the row is unset.
+  // Last-resort swatch for a state with no stored colour AND no harvested
+  // default. Dimmed, because unlike a real default it carries no information.
   const UNSET_HEX = "#808080";
 
   let surface = $state<"Background" | "Colortag">("Background");
@@ -147,14 +145,19 @@
         </label>
         {#if isBg}
           {@const c = colors.get(id)}
-          <input class="swatch" class:unset={!c} type="color" value={c ? rgbaToHex(c) : UNSET_HEX}
+          {@const fallback = defaultColor(id)}
+          <input class="swatch" class:unset={!c && !fallback} type="color"
+                 value={c ? rgbaToHex(c) : (fallback ?? UNSET_HEX)}
                  aria-label="Background colour"
                  onchange={(e) => setColor(id, (e.currentTarget as HTMLInputElement).value)} />
           {#if c}
             <button class="reset" onclick={() => resetColor(id)}
                     title="Remove the stored colour, restoring EVE's default">Reset</button>
           {:else}
-            <span class="default-note" title="No stored colour — EVE uses its built-in default for this state">default</span>
+            <span class="default-note"
+                  title={fallback
+                    ? "No stored colour — this is EVE's built-in default for this state"
+                    : "No stored colour, and EVE's built-in default for this state is unknown"}>default</span>
           {/if}
         {/if}
       </li>
