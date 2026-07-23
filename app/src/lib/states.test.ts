@@ -1,5 +1,5 @@
 // Run: npm test (node --test). Throw-based checks, no framework.
-import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder } from "./states.ts";
+import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder, defaultColor } from "./states.ts";
 
 const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
 const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -35,5 +35,10 @@ check("hexToRgba preserves the alpha it is given", hexToRgba("#000000", 0.5)[3] 
 const moved = moveInOrder([13, 44, 9, 68], 0, 2);
 check("moveInOrder reorders without dropping any id", eq(moved, [44, 9, 13, 68]) && moved.length === 4);
 check("moveInOrder keeps an unrendered id in place", moveInOrder([13, 44, 68], 0, 1).includes(68));
+
+check("defaultColor gives a harvested built-in colour", defaultColor(13) === "#bf0000");
+check("defaultColor is null for a state we have no sample for", defaultColor(9) === null);
+check("every harvested default is a 6-digit hex colour",
+  DEFAULT_BACKGROUND_ORDER.every((id) => { const c = defaultColor(id); return c === null || /^#[0-9a-f]{6}$/.test(c); }));
 
 console.log("states: all checks passed");
