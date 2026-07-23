@@ -116,7 +116,8 @@
   </div>
 
   <div class="subtabs" role="tablist">
-    {#each ["Background", "Colortag"] as name}
+    <!-- EVE's own Appearance tab lists Colortag first, Background second. -->
+    {#each ["Colortag", "Background"] as name}
       <button role="tab" aria-selected={surface === name} class:active={surface === name}
               onclick={() => (surface = name as "Background" | "Colortag")}>{name}</button>
     {/each}
