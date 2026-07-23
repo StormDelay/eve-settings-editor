@@ -27,12 +27,38 @@ pub struct OverviewColumns {
     pub windows: Vec<OverviewWindow>,
     pub tabs: Vec<OverviewTab>,
     pub presets: Vec<Preset>,
+    pub appearance: Appearance,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct Preset {
     pub name: String,
     pub groups: Vec<i64>,
+    pub filtered_states: Vec<i64>,
+    pub always_shown_states: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Default)]
+pub struct StateSurface {
+    /// The ticked subset — states that actually tint a row / carry a tag.
+    pub enabled: Vec<i64>,
+    /// Every state the client knows, in priority order (first match wins).
+    /// May contain an id the client never renders; callers MUST preserve it.
+    pub order: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Default)]
+pub struct Appearance {
+    pub background: StateSurface,
+    pub flag: StateSurface,
+    /// Sparse background-surface colour overrides. A state absent here uses
+    /// EVE's built-in default colour.
+    pub colors: Vec<(i64, [f64; 4])>,
+    pub bools: Vec<(String, bool)>,
+    /// True when the file carried none of the four state keys — the account has
+    /// never customised its overview states, so the UI shows bundled defaults
+    /// and the first edit materialises the keys.
+    pub defaulted: bool,
 }
 
 /// A physical overview window and the tab indices it shows, in order — grouped
@@ -63,15 +89,44 @@ pub struct OverviewColumn {
 pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColumns {
     let mut sh = SharedTable::new();
     collect_shared(user, &mut sh);
-    let empty = OverviewColumns { windows: vec![], tabs: vec![], presets: vec![] };
+    let empty = OverviewColumns { windows: vec![], tabs: vec![], presets: vec![], appearance: Appearance::default() };
     let Some(overview) = overview_container(user, &sh) else { return empty };
 
     let windows = window_groups(overview, &sh);
     let tabs = tab_dict(overview, &sh)
         .map(|d| d.iter().filter_map(|(k, v)| project_tab(k, v, overview, char_tree, &sh)).collect())
         .unwrap_or_default();
-    let presets = presets_with_groups(overview, &sh);
-    OverviewColumns { windows, tabs, presets }
+    let presets = presets_with_states(overview, &sh);
+    let appearance = appearance(overview, user, &sh);
+    OverviewColumns { windows, tabs, presets, appearance }
+}
+
+/// One account-scoped state list. Empty when the key is absent, which is the
+/// case on an account that has never customised its overview states.
+fn state_ids(overview: &Entries, key: &[u8], sh: &SharedTable) -> Vec<i64> {
+    find_child(overview, key, sh)
+        .and_then(|v| as_list_r(v, sh))
+        .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
+        .unwrap_or_default()
+}
+
+fn appearance(overview: &Entries, user: &Value, sh: &SharedTable) -> Appearance {
+    const KEYS: [&[u8]; 4] = [
+        b"backgroundStates2", b"backgroundOrder2", b"flagStates2", b"flagOrder2",
+    ];
+    Appearance {
+        background: StateSurface {
+            enabled: state_ids(overview, b"backgroundStates2", sh),
+            order: state_ids(overview, b"backgroundOrder2", sh),
+        },
+        flag: StateSurface {
+            enabled: state_ids(overview, b"flagStates2", sh),
+            order: state_ids(overview, b"flagOrder2", sh),
+        },
+        colors: crate::overview_states::state_colors(user),
+        bools: crate::overview_states::overview_bools(user),
+        defaulted: KEYS.iter().all(|k| find_child(overview, k, sh).is_none()),
+    }
 }
 
 /// The `overview` container dict (key resolved through Ref/Shared).
@@ -160,22 +215,30 @@ fn default_columns(overview: &Entries, sh: &SharedTable) -> (Vec<String>, Vec<St
     (order, visible)
 }
 
-/// Each preset's name and its group IDs, sorted case-insensitively by name (the
-/// SAME order the picker/neighbour logic uses). `groups` is the preset's `groups`
-/// list (empty if absent); the two state lists are not read here (slice 3).
-fn presets_with_groups(overview: &Entries, sh: &SharedTable) -> Vec<Preset> {
+/// Each preset's name, its group IDs, and its two state-list exceptions, sorted
+/// case-insensitively by name (the SAME order the picker/neighbour logic uses).
+/// `groups` / `filtered_states` / `always_shown_states` are the preset's bare
+/// (unwrapped) lists, empty if absent.
+fn presets_with_states(overview: &Entries, sh: &SharedTable) -> Vec<Preset> {
     let Some(dict) = find_child(overview, b"overviewProfilePresets", sh).and_then(|v| as_dict(v, sh))
     else { return vec![] };
     let mut out: Vec<Preset> = dict
         .iter()
         .filter_map(|(k, v)| {
             let name = preset_key_name(effective(k, sh))?;
-            let groups = as_dict(v, sh)
-                .and_then(|d| find_child(d, b"groups", sh))
-                .and_then(|g| as_list_r(g, sh))
-                .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
-                .unwrap_or_default();
-            Some(Preset { name, groups })
+            let d = as_dict(v, sh);
+            let ids = |name: &[u8]| {
+                d.and_then(|d| find_child(d, name, sh))
+                    .and_then(|g| as_list_r(g, sh))
+                    .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
+                    .unwrap_or_default()
+            };
+            Some(Preset {
+                name,
+                groups: ids(b"groups"),
+                filtered_states: ids(b"filteredStates"),
+                always_shown_states: ids(b"alwaysShownStates"),
+            })
         })
         .collect();
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -1366,5 +1429,91 @@ mod tests {
             cols.presets.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
             vec!["alpha".to_string(), "Zeta".to_string()]
         );
+    }
+
+    // --- Task 6: state surfaces + preset state-list exceptions ----------------
+
+    fn ob(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+
+    fn ts_list(ids: &[i64]) -> Value {
+        Value::Tuple(vec![
+            Value::Long(vec![0u8; 8]),
+            Value::List(ids.iter().map(|n| Value::Int(*n)).collect()),
+        ])
+    }
+
+    fn alpha_blob() -> Value {
+        let list = |ids: &[i64]| Value::List(ids.iter().map(|n| Value::Int(*n)).collect());
+        Value::Dict(vec![
+            (ob("groups"), list(&[1])),
+            (ob("filteredStates"), list(&[9, 13])),
+            (ob("alwaysShownStates"), list(&[11])),
+        ])
+    }
+
+    fn overview_with(mut extra: Vec<(Value, Value)>) -> Value {
+        let mut entries = vec![
+            (ob("tabsettings_new"), Value::Dict(vec![(
+                Value::Int(0),
+                Value::Dict(vec![(ob("overview"), ob("alpha"))]),
+            )])),
+            (ob("overviewProfilePresets"), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![(ob("alpha"), alpha_blob())]),
+            ])),
+        ];
+        entries.append(&mut extra);
+        Value::Dict(vec![(ob("overview"), Value::Dict(entries))])
+    }
+
+    /// An account that HAS customised its overview states. The order lists carry
+    /// id 68, which the client stores but never renders.
+    fn user_with_state_keys() -> Value {
+        overview_with(vec![
+            (ob("backgroundStates2"), ts_list(&[9, 13])),
+            (ob("backgroundOrder2"), ts_list(&[13, 9, 68])),
+            (ob("flagStates2"), ts_list(&[9])),
+            (ob("flagOrder2"), ts_list(&[9, 13, 68])),
+        ])
+    }
+
+    /// A clean account: presets and tabs, but none of the four state keys.
+    fn user_without_state_keys() -> Value {
+        overview_with(Vec::new())
+    }
+
+    fn out_preset<'a>(out: &'a OverviewColumns, name: &str) -> &'a Preset {
+        out.presets.iter().find(|p| p.name == name).expect("preset present")
+    }
+
+    #[test]
+    fn projects_state_surfaces_from_the_file() {
+        let user = user_with_state_keys();
+        let out = project_overview(&user, None);
+        assert_eq!(out.appearance.background.enabled, vec![9, 13]);
+        assert_eq!(out.appearance.background.order, vec![13, 9, 68]);
+        // The flag surface must read its OWN keys, not the background ones (the
+        // fixture gives them different values expressly to catch a copy-paste
+        // that aliases the two surfaces).
+        assert_eq!(out.appearance.flag.enabled, vec![9]);
+        assert_eq!(out.appearance.flag.order, vec![9, 13, 68]);
+        assert!(!out.appearance.defaulted, "keys were present");
+    }
+
+    #[test]
+    fn flags_a_clean_account_as_defaulted() {
+        let user = user_without_state_keys();
+        let out = project_overview(&user, None);
+        assert!(out.appearance.defaulted, "no state keys means the UI shows bundled defaults");
+        assert!(out.appearance.background.order.is_empty());
+    }
+
+    #[test]
+    fn projects_preset_state_lists() {
+        let user = user_with_state_keys();
+        let out = project_overview(&user, None);
+        let alpha = out_preset(&out, "alpha");
+        assert_eq!(alpha.filtered_states, vec![9, 13]);
+        assert_eq!(alpha.always_shown_states, vec![11]);
     }
 }
