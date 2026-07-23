@@ -1,5 +1,5 @@
 // Run: npm test (node --test). Throw-based checks, no framework.
-import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder, defaultColor } from "./states.ts";
+import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, DEFAULT_BACKGROUND_STATES, DEFAULT_FLAG_STATES, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder, defaultColor } from "./states.ts";
 
 const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
 const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -38,6 +38,10 @@ check("moveInOrder keeps an unrendered id in place", moveInOrder([13, 44, 68], 0
 
 check("defaultColor gives a harvested built-in colour", defaultColor(13) === "#bf0000");
 check("defaultColor is null for the unrendered id 68", defaultColor(68) === null);
+// EVE's own reset output: 66 is in the order arrays but off by default.
+check("the default enabled set leaves the retribution timer off",
+  !DEFAULT_BACKGROUND_STATES.includes(66) && !DEFAULT_FLAG_STATES.includes(66)
+  && DEFAULT_BACKGROUND_STATES.includes(48) && DEFAULT_BACKGROUND_STATES.length === 21);
 check("every rendered state has a harvested default",
   DEFAULT_BACKGROUND_ORDER.filter((id) => id !== 68).every((id) => /^#[0-9a-f]{6}$/.test(defaultColor(id) ?? "")));
 
