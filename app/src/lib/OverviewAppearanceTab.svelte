@@ -59,11 +59,20 @@
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
 
-  // Enabled and order are independent lists: a toggle writes only *States2,
-  // a drag writes only *Order2. Never a coupled write.
+  // Enabled and order are independent lists: a toggle writes only *States2, a
+  // drag only *Order2 — never a coupled write. The one exception is the FIRST
+  // edit on an un-materialised surface: both lists are showing EVE's bundled
+  // defaults, so writing one alone leaves the other absent while `surfaceUnset`
+  // flips false, and the list we never wrote would then render as empty (every
+  // state unticked, or the priority order lost) instead of as the defaults the
+  // user was just looking at.
   function toggleState(id: number, on: boolean) {
     const next = on ? [...enabled, id] : enabled.filter((n) => n !== id);
-    return edit(() => api.overviewSetStates(isBg ? "background" : "flag", next));
+    const materialise = surfaceUnset;
+    return edit(async () => {
+      if (materialise) await api.overviewSetStates(isBg ? "backgroundOrder" : "flagOrder", order);
+      return api.overviewSetStates(isBg ? "background" : "flag", next);
+    });
   }
 
   let dragFrom = $state<number | null>(null);
@@ -72,7 +81,12 @@
     const from = dragFrom;
     dragFrom = null;
     if (from === to) return;
-    return edit(() => api.overviewSetStates(isBg ? "backgroundOrder" : "flagOrder", moveInOrder(rows, from, to)));
+    const next = moveInOrder(rows, from, to);
+    const materialise = surfaceUnset;
+    return edit(async () => {
+      if (materialise) await api.overviewSetStates(isBg ? "background" : "flag", enabled);
+      return api.overviewSetStates(isBg ? "backgroundOrder" : "flagOrder", next);
+    });
   }
 
   // Alpha isn't exposed; carry the stored one through so a non-1.0 entry keeps it.
