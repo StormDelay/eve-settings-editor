@@ -1748,10 +1748,11 @@ Launch the app (`cd app && npm run tauri dev`), open a real character with its a
 1. Furniture appears: a left neocom bar, a ship HUD block at the bottom centre, and — if the character has the fighter UI detached and shown — a fighter block. The notification badge block appears where the badge sits in game.
 2. Drag the ship HUD sideways, drag the fighter block, save, and confirm the character/account dirty badges appeared before the save.
 3. Note the numbers the panel shows, then start EVE with that character and compare: does the ship HUD sit where the canvas drew it? Is the fighter panel's stored point its top-left, or its centre? Is the drawn size roughly right?
-4. Fix `HUD_NOMINAL` (and, if the point is centre-anchored, `hudRects`'s fighter/badge placement plus `shipOffsetFromX`'s inverse) from what you saw. Re-run `npm test` — the `hudRects` cases encode the convention, so they must be updated deliberately, not incidentally.
+4. Fix `HUD_NOMINAL` (and, if the point is centre-anchored, `hudRects`'s fighter/badge placement plus its matched inverse pair — `shipOffsetFromX` for the ship HUD, `hudPointFromRect` for the fighter/badge points) from what you saw. Re-run `npm test` — the `hudRects` cases encode the convention, so they must be updated deliberately, not incidentally.
 5. Toggle "Align to top" and confirm EVE moves the HUD to the top on next login.
 6. Check a character with **no** stored offset (the 18% case): the field shows the default with a "default" badge, and the first edit mints the key — after saving, reopen the file and confirm the value persisted.
 7. Regression check for the `onDirty` fix: unstack a window with no other edit, confirm the character dirty badge appears, save, reopen, and confirm the unstack persisted.
+8. Open a **paired** account whose neocom width has actually been changed in-game (not left at the default) and whose fighter UI is detached, and confirm those rows show the real stored values rather than a "default" badge — a "default" badge on a character known to have a non-default value is the tell that `hud.rs`'s account-side section (`windows` for `neocomWidth`, `ui` for the other three) is wrong.
 
 - [ ] **Step 3: Record the confirmed format facts**
 

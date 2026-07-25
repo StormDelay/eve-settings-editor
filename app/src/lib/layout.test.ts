@@ -149,15 +149,19 @@ check("open filter keeps the right window", open[0].id === "a");
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
-import { hudRects, hudNum, hudFlag, shipOffsetFromX, HUD_NOMINAL } from "./layout.ts";
+import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
+
+// The four account-scoped fields, by name — a literal list rather than a
+// name-prefix guess, so a future field can't be silently mislabelled.
+const ACCOUNT_FIELDS = new Set(["ship_top", "fighter_detached", "fighter_shown", "neocom_width"]);
 
 const hudEntry = (name: string, value: string | null, kind: HudEntry["kind"], dflt: string, how: "set" | "unavailable" = "set"): HudEntry => ({
   name,
   kind,
   value,
   default: dflt,
-  scope: name.startsWith("ship_top") || name.startsWith("fighter_d") || name.startsWith("fighter_s") || name === "neocom_width" ? "account" : "char",
+  scope: ACCOUNT_FIELDS.has(name) ? "account" : "char",
   set: how === "set" ? { how: "set", path: [] } : { how: "unavailable" },
 });
 
@@ -233,7 +237,36 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("no account file means no neocom bar", !rects.some((r) => r.kind === "neocom"));
 }
 
-// The drag round-trip: a rect x converted back to the stored offset is itself.
-check("shipOffsetFromX inverts the ship HUD placement", shipOffsetFromX(1280 - 100 - HUD_NOMINAL.shipui.w / 2, 2560) === -100);
+// The drag round-trip: run hudRects to get the rect a stored value places,
+// then feed that rect straight back through the matching inverse and recover
+// the original stored value. This is a genuine round trip through BOTH
+// functions (not a hand-computed expression that holds regardless of what
+// either side does), so it fails if hudRects and its inverse ever disagree
+// about the convention — e.g. one side treats a point as top-left and the
+// other as centre.
+{
+  const hud = fullHud();
+  const rects = hudRects(hud, layout2560);
+
+  const ship = rects.find((r) => r.kind === "shipui")!;
+  check(
+    "shipOffsetFromX inverts hudRects' ship HUD placement",
+    shipOffsetFromX(ship.x, layout2560.reference_w) === hudNum(hud, "ship_offset"),
+  );
+
+  const fighter = rects.find((r) => r.kind === "fighter")!;
+  const fighterPoint = hudPointFromRect("fighter", fighter.x, fighter.y);
+  check(
+    "hudPointFromRect inverts hudRects' fighter placement",
+    fighterPoint.x === hudNum(hud, "fighter_x") && fighterPoint.y === hudNum(hud, "fighter_y"),
+  );
+
+  const badge = rects.find((r) => r.kind === "badge")!;
+  const badgePoint = hudPointFromRect("badge", badge.x, badge.y);
+  check(
+    "hudPointFromRect inverts hudRects' badge placement",
+    badgePoint.x === hudNum(hud, "badge_x") && badgePoint.y === hudNum(hud, "badge_y"),
+  );
+}
 
 console.log("layout: all checks passed");

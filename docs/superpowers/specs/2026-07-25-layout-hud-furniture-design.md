@@ -49,12 +49,18 @@ snapshots, so it is a stable key, not one being phased in or out.
 
 ### 2.2 Account-scoped keys (`core_user_<id>.dat`)
 
-| what | key | value | present |
-|---|---|---|---|
-| Ship HUD aligned to top | `shipuialigntop` | Bool | 131/175 |
-| Fighter UI detached | `detachFighterUI` | Bool | 130/175 |
-| Fighter UI shown | `displayFighterUI` | Bool | 131/175 |
-| Neocom thickness | `neocomWidth` | Int, e.g. `37` | 130/175 |
+| what | section | key | value | present |
+|---|---|---|---|---|
+| Ship HUD aligned to top | `ui` | `shipuialigntop` | Bool | 131/175 |
+| Fighter UI detached | `ui` | `detachFighterUI` | Bool | 130/175 |
+| Fighter UI shown | `ui` | `displayFighterUI` | Bool | 131/175 |
+| Neocom thickness | `windows` | `neocomWidth` | Int, e.g. `37` | 130/175 |
+
+Corpus-verified, not assumed: on the sampled real account file, `neocomWidth`
+sits directly under the root `windows` section (which holds only that one key
+there), and the other three sit under the root `ui` section — itself keyed by
+a `Ref` whose byte-string definition appears later in the stream (the trailing
+shared-object table makes that legal).
 
 These are account-wide: changing one affects every character on the account.
 The existing shared-account banner (`overview.ts` `sharedWith`) already names
