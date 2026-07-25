@@ -13,6 +13,34 @@ Workflow:
 
 ## Open
 
+- [ ] **HUD furniture follow-ups (task + whole-branch reviews, all ship-as-debt).**
+  Non-blocking minors from the layout-depth HUD slice, triaged by the final
+  review as none-blocking-merge: (1) `ops::set_hud_field` reshares the whole
+  document after *every* write, where the spec says a key-present scalar
+  overwrite needs neither `inline_all` nor `reshare` (it matches what every
+  other editor does and measures in single-digit ms — to fix, have
+  `set_hud_value` report whether it minted and reshare only then); (2) the four
+  account-scoped rows in `HudPanel` are disabled by the *character* document's
+  read-only flag, so a read-only account file leaves them clickable and the
+  backend refusal surfaces as a dialog (stricter than `OverviewView`, which has
+  no read-only concept at all); (3) `hud.rs::section()` resolves a `Shared` root
+  with `effective` but doesn't push `Step::SharedInner`, so a `Shared`-wrapped
+  root would yield paths that fail `resolve_mut` (safe failure, unreachable on
+  real files); (4) `hud.rs::hex()` duplicates the private `hex()` in
+  `windows.rs` byte-for-byte — fold into `treewalk` as `pub(crate)` next time
+  either file is touched; (5) `locate()`'s `Option<String>` half is computed and
+  discarded on the writer path; (6) `mint` has three separate
+  `Err(HudError::NoSection)` guard returns; (7) `HudPanel` hardcodes hex colours
+  instead of `app.css`'s custom properties (inherited from the plan) — candidate
+  for a theming pass; (8) a rejected number-input edit leaves the field visually
+  desynced until an unrelated re-render (pre-existing pattern, same as
+  `WindowPanel`); (9) test gaps — the badge rect's geometry is never asserted
+  (only its position in the order string), there's no case for a fighter axis
+  reading `unavailable` nor for a neocom width of exactly 0, and the `hudEntry`
+  test helper can't build a `set.how === "insert"` entry, so the real absent-key
+  wire shape is never literally exercised (behaviourally equivalent).
+  _Added 2026-07-25._
+
 - [ ] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
   its live smoke; the user chose to come back to it. Nothing in the branch has been

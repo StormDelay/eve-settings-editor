@@ -148,4 +148,125 @@ check("open filter keeps the right window", open[0].id === "a");
   check("unrelated free windows still draw", units.some((u) => u.key === "free"));
 }
 
+// --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
+import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL } from "./layout.ts";
+import type { Hud, HudEntry, WindowLayout } from "./api.ts";
+
+// The four account-scoped fields, by name — a literal list rather than a
+// name-prefix guess, so a future field can't be silently mislabelled.
+const ACCOUNT_FIELDS = new Set(["ship_top", "fighter_detached", "fighter_shown", "neocom_width"]);
+
+const hudEntry = (name: string, value: string | null, kind: HudEntry["kind"], dflt: string, how: "set" | "unavailable" = "set"): HudEntry => ({
+  name,
+  kind,
+  value,
+  default: dflt,
+  scope: ACCOUNT_FIELDS.has(name) ? "account" : "char",
+  set: how === "set" ? { how: "set", path: [] } : { how: "unavailable" },
+});
+
+const fullHud = (over: Partial<Record<string, HudEntry>> = {}): Hud => {
+  const base: HudEntry[] = [
+    hudEntry("ship_offset", "-100", "float", "0"),
+    hudEntry("fighter_x", "326", "int", "0"),
+    hudEntry("fighter_y", "54", "int", "0"),
+    hudEntry("badge_x", "1000", "int", "0"),
+    hudEntry("badge_y", "20", "int", "0"),
+    hudEntry("ship_top", "false", "bool", "false"),
+    hudEntry("fighter_detached", "true", "bool", "false"),
+    hudEntry("fighter_shown", "true", "bool", "false"),
+    hudEntry("neocom_width", "37", "int", "37"),
+  ];
+  return { entries: base.map((e) => over[e.name] ?? e) };
+};
+
+const layout2560: WindowLayout = { reference_w: 2560, reference_h: 1440, windows: [], stacks: [] };
+
+// An absent value falls back to the default; an unavailable field reads null.
+check("hudNum uses the value when present", hudNum(fullHud(), "fighter_x") === 326);
+check(
+  "hudNum falls back to the default when the key is absent",
+  hudNum(fullHud({ fighter_x: hudEntry("fighter_x", null, "int", "7") }), "fighter_x") === 7,
+);
+check(
+  "hudNum is null when the field is unavailable",
+  hudNum(fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "37", "unavailable") }), "neocom_width") === null,
+);
+check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
+
+{
+  const rects = hudRects(fullHud(), layout2560);
+  const kinds = rects.map((r) => r.kind).join(",");
+  check("all four elements are drawn in a stable order", kinds === "neocom,shipui,fighter,badge");
+
+  const neocom = rects[0];
+  check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 37 && neocom.h === 1440);
+  check("the neocom is not draggable", neocom.drag === "none");
+
+  // Centre-relative offset: x = w/2 + offset - nominal/2 = 1280 - 100 - 343.
+  const ship = rects[1];
+  check("the ship HUD is centred plus the offset", ship.x === 1280 - 100 - HUD_NOMINAL.shipui.w / 2);
+  check("the ship HUD sits at the bottom by default", ship.y === 1440 - HUD_NOMINAL.shipui.h);
+  check("the ship HUD drags on x only", ship.drag === "x");
+
+  const fighter = rects[2];
+  check("the fighter panel sits at its stored point", fighter.x === 326 && fighter.y === 54);
+  check("the fighter panel drags freely", fighter.drag === "xy");
+}
+
+{
+  const rects = hudRects(fullHud({ ship_top: hudEntry("ship_top", "true", "bool", "false") }), layout2560);
+  check("ship_top anchors the HUD to the top", rects[1].y === 0);
+}
+
+{
+  const rects = hudRects(fullHud({ fighter_shown: hudEntry("fighter_shown", "false", "bool", "false") }), layout2560);
+  check("a hidden fighter UI is not drawn", !rects.some((r) => r.kind === "fighter"));
+}
+
+{
+  const rects = hudRects(fullHud({ fighter_detached: hudEntry("fighter_detached", "false", "bool", "false") }), layout2560);
+  check("an attached fighter UI is not drawn", !rects.some((r) => r.kind === "fighter"));
+}
+
+{
+  const rects = hudRects(
+    fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "37", "unavailable") }),
+    layout2560,
+  );
+  check("no account file means no neocom bar", !rects.some((r) => r.kind === "neocom"));
+}
+
+// The drag round-trip: run hudRects to get the rect a stored value places,
+// then feed that rect straight back through the matching inverse and recover
+// the original stored value. This is a genuine round trip through BOTH
+// functions (not a hand-computed expression that holds regardless of what
+// either side does), so it fails if hudRects and its inverse ever disagree
+// about the convention — e.g. one side treats a point as top-left and the
+// other as centre.
+{
+  const hud = fullHud();
+  const rects = hudRects(hud, layout2560);
+
+  const ship = rects.find((r) => r.kind === "shipui")!;
+  check(
+    "shipOffsetFromX inverts hudRects' ship HUD placement",
+    shipOffsetFromX(ship.x, layout2560.reference_w) === hudNum(hud, "ship_offset"),
+  );
+
+  const fighter = rects.find((r) => r.kind === "fighter")!;
+  const fighterPoint = hudPointFromRect("fighter", fighter.x, fighter.y);
+  check(
+    "hudPointFromRect inverts hudRects' fighter placement",
+    fighterPoint.x === hudNum(hud, "fighter_x") && fighterPoint.y === hudNum(hud, "fighter_y"),
+  );
+
+  const badge = rects.find((r) => r.kind === "badge")!;
+  const badgePoint = hudPointFromRect("badge", badge.x, badge.y);
+  check(
+    "hudPointFromRect inverts hudRects' badge placement",
+    badgePoint.x === hudNum(hud, "badge_x") && badgePoint.y === hudNum(hud, "badge_y"),
+  );
+}
+
 console.log("layout: all checks passed");
