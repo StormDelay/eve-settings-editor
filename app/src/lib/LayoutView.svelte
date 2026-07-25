@@ -11,17 +11,21 @@
     runMutations,
     readOnly,
     refreshToken,
+    userOpen,
     selectedId = $bindable(null),
     onReveal,
     onDirty,
+    sharedLabel = "",
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
     readOnly: boolean;
     refreshToken: number;
+    userOpen: boolean;
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
     onDirty: (slot: Slot) => void;
+    sharedLabel?: string;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -57,13 +61,19 @@
     hud = await api.hud().catch(() => null);
   }
 
-  // Reload when the parent signals a save/restore, or when the slot switches.
+  // Reload when the parent signals a save/restore, when the slot switches, or
+  // when an account gets paired while this view is open (the four account-side
+  // HUD rows and the neocom bar depend on it, and pairing doesn't otherwise
+  // bump refreshToken or change slot). Still only reloads when something
+  // actually changed, not on every tick.
   let lastToken = -1;
   let lastSlot: Slot | null = null;
+  let lastUserOpen = false;
   $effect(() => {
-    if (refreshToken !== lastToken || slot !== lastSlot) {
+    if (refreshToken !== lastToken || slot !== lastSlot || userOpen !== lastUserOpen) {
       lastToken = refreshToken;
       lastSlot = slot;
+      lastUserOpen = userOpen;
       load();
     }
   });
@@ -361,6 +371,7 @@
       <p class="ref">reference {layout.reference_w}×{layout.reference_h}</p>
     </div>
     <div class="side">
+      {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
       {#if hud}
         <HudPanel {hud} {readOnly} onSet={setHud} />
       {/if}
@@ -400,6 +411,10 @@
     flex-direction: column;
     min-height: 0;
     overflow: auto;
+  }
+  .shared-banner {
+    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
+    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
   }
   .canvas {
     position: relative;
