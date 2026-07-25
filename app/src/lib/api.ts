@@ -124,6 +124,23 @@ export interface BoolFlag {
   set: SetTarget;
 }
 
+export type HudScope = "char" | "account";
+export type HudKind = "float" | "int" | "bool";
+
+export interface HudEntry {
+  name: string;
+  kind: HudKind;
+  /** null when the key is absent or holds an unexpected wire kind — use `default`. */
+  value: string | null;
+  default: string;
+  scope: HudScope;
+  set: SetTarget;
+}
+
+export interface Hud {
+  entries: HudEntry[];
+}
+
 export type StackRole = "container" | "member";
 export interface StackRef {
   container_id: string;
@@ -268,6 +285,9 @@ export const api = {
   restoreBackup: (slot: Slot, backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
   windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
+  hud: () => invoke<Hud>("hud_layout"),
+  setHudValue: (name: string, text: string) =>
+    invoke<Hud>("set_hud_value", { name, text }),
   resolveCharacterNames: (ids: number[]) =>
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>
