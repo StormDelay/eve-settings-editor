@@ -124,9 +124,17 @@ fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetT
             // refuse to write rather than clobber it or mint a duplicate key.
             None => (None, SetTarget::Unavailable),
         },
-        // Absent: `set_hud_value` mints the `(timestamp, value)` leaf. The
-        // parent/key here document the target; the op does the insert, because
-        // a generic InsertDictEntry cannot build the timestamp wrapper.
+        // `leaf` returns a bare `None` for two different reasons: the key is
+        // genuinely absent, or it's present but unreadable (a malformed point
+        // tuple). Only the former is safe to insert: `Entries` is a plain
+        // `Vec`, not a deduping map, so inserting on the latter would push a
+        // second entry with the same key — reads keep finding the first
+        // (malformed) one via `.find()`, silently orphaning every write.
+        None if key_present(entries, f.key, shared) => (None, SetTarget::Unavailable),
+        // Genuinely absent: `set_hud_value` mints the `(timestamp, value)`
+        // leaf. The parent/key here document the target; the op does the
+        // insert, because a generic InsertDictEntry cannot build the
+        // timestamp wrapper.
         None => (
             None,
             SetTarget::Insert { parent: base, key: crate::mutate::NewValue::BytesHex(hex(f.key)) },
@@ -183,6 +191,13 @@ fn leaf<'a>(
     let mut q = p;
     q.push(Step::Tuple(ix));
     Some((items.get(ix)?, q))
+}
+
+/// Whether `key` exists in `entries` at all, resolved through `Ref`/`Shared`
+/// exactly as `leaf` does. Used to tell "genuinely absent" (safe to insert)
+/// apart from "present but unreadable" (must not insert — see `probe`).
+fn key_present(entries: &Entries, key: &[u8], shared: &SharedTable) -> bool {
+    entries.iter().any(|(k, _)| is_bytes(effective(k, shared), key))
 }
 
 /// The stored value as the text the UI edits, or `None` if the wire kind is not
@@ -311,14 +326,31 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_point_tuple_reads_as_absent() {
+    fn a_malformed_point_tuple_is_unavailable_not_insertable() {
         let doc = Value::Dict(vec![(
             b("ui"),
             // One element instead of two.
             Value::Dict(vec![(b("fightersDetachedPosition"), wrapped(Value::Tuple(vec![Value::Int(1)])))]),
         )]);
         let hud = project_hud(&doc, None);
-        assert!(entry(&hud, "fighter_y").value.is_none());
+        let e = entry(&hud, "fighter_y");
+        assert!(e.value.is_none());
+        // Present but unreadable: must NOT report Insert — the key already
+        // exists, so inserting would push a duplicate `.find()` never sees.
+        assert!(matches!(e.set, SetTarget::Unavailable));
+    }
+
+    #[test]
+    fn a_present_key_with_the_wrong_wire_kind_is_unavailable_not_insertable() {
+        let doc = Value::Dict(vec![(
+            b("windows"),
+            // ship_offset expects a Float; this file has a Bool there instead.
+            Value::Dict(vec![(b("shipuialignleftoffset"), wrapped(Value::Bool(true)))]),
+        )]);
+        let hud = project_hud(&doc, None);
+        let e = entry(&hud, "ship_offset");
+        assert!(e.value.is_none());
+        assert!(matches!(e.set, SetTarget::Unavailable));
     }
 
     #[test]
