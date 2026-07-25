@@ -273,6 +273,19 @@ fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: Str
 }
 
 #[tauri::command]
+fn hud_layout(state: tauri::State<'_, AppState>) -> Result<settings_model::Hud, ErrDto> {
+    ops::hud_layout(&state)
+}
+#[tauri::command]
+fn set_hud_value(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    text: String,
+) -> Result<settings_model::Hud, ErrDto> {
+    ops::set_hud_field(&state, &name, &text)
+}
+
+#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source_char_path: String,
@@ -327,7 +340,8 @@ pub fn run() {
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
             autofill_lists, set_autofill_list, clear_all_autofill,
             setup_preview, setup_apply,
-            stack_unstack, stack_add, stack_reorder, stack_create
+            stack_unstack, stack_add, stack_reorder, stack_create,
+            hud_layout, set_hud_value
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
