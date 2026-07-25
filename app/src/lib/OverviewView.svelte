@@ -177,14 +177,21 @@
       const ignored = summary.ignored.length
         ? `\n\nIgnored unknown sections: ${summary.ignored.join(", ")}`
         : "";
+      // Per-tab column overrides are only ever stripped inside apply_tabs,
+      // which only runs when the pack defines a non-empty tabSetup section —
+      // a preset-only pack never touches them, so don't claim it does.
+      const dropsColumns = summary.sections.some(([name, count]) => name === "tabSetup" && count > 0);
+      const columnsNote = dropsColumns ? " Per-tab column overrides are discarded." : "";
       const ok = await confirm(
-        `This pack contains: ${what}.\n\nEach of those replaces your account's current overview settings. Per-tab column overrides are discarded.${ignored}`,
+        `This pack contains: ${what}.\n\nEach of those replaces your account's current overview settings.${columnsNote}${ignored}`,
         { title: "Import overview pack", kind: "warning" },
       );
       if (!ok) return;
-      data = await api.packImport(picked);
+      const result = await api.packImport(picked);
+      data = result.columns;
       onUserDirty();
-      await message("Pack imported. Save to write it to the account file.", { title: "Import overview pack" });
+      const warnings = result.report.warnings.length ? `\n\n${result.report.warnings.join("\n")}` : "";
+      await message(`Pack imported. Save to write it to the account file.${warnings}`, { title: "Import overview pack" });
     } catch (e) {
       await message(errMessage(e), { title: "Import failed", kind: "error" });
     } finally {
@@ -378,5 +385,9 @@
     color: var(--fg-dim); padding: 0.3rem 0.7rem; font: inherit; cursor: pointer;
   }
   .subtabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  /* The pack Import/Export buttons live inside .subtabs for layout only — they
+     aren't tab selectors, so undo the flat tab styling above and look like the
+     normal action buttons (.tab-actions) instead. */
+  .pack-actions button { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; color: var(--fg); }
   .pack-actions { margin-left: auto; display: flex; gap: 0.4rem; }
 </style>
