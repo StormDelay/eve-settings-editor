@@ -12,6 +12,10 @@
 use serde::Serialize;
 use yaml_rust2::{Yaml, YamlLoader};
 
+use blue_marshal::Value;
+
+use crate::treewalk::{collect_shared, effective, Entries, SharedTable};
+
 /// A YAML scalar or sequence. No map variant — see the module note.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -281,6 +285,237 @@ pub(crate) fn join_surface_key(surface: &str, id: i64) -> String {
     format!("{surface}_{id}")
 }
 
+/// Pack section name → the `overview` container key holding it, for the sections
+/// that are a plain list under a `(ts, list)` wrapper.
+const LIST_SECTIONS: [(&str, &[u8]); 6] = [
+    ("backgroundStates", b"backgroundStates2"),
+    ("backgroundOrder", b"backgroundOrder2"),
+    ("flagStates", b"flagStates2"),
+    ("flagOrder", b"flagOrder2"),
+    ("columnOrder", b"overviewColumnOrder"),
+    ("overviewColumns", b"overviewColumns"),
+];
+
+/// The `userSettings` names this build understands, paired with the file key.
+/// Packs also carry names with no key on current files (`applyOnlyToShips`, an
+/// older single toggle that became `applyToStructures`/`applyToOtherObjects`);
+/// those are IGNORED rather than minted, and `set_overview_bool`'s allow-list is
+/// the backstop.
+const USER_SETTINGS: [(&str, &str); 6] = [
+    ("applyToStructures", "applyToStructures"),
+    ("applyToOtherObjects", "applyToOtherObjects"),
+    ("useSmallColorTags", "useSmallColorTags"),
+    ("useSmallText", "useSmallText"),
+    ("overviewBroadcastsToTop", "overviewBroadcastsToTop"),
+    ("hideCorpTicker", "hideCorpTicker"),
+];
+
+fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
+    matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name)
+}
+
+fn overview_entries<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    let Value::Dict(root) = effective(v, sh) else { return None };
+    let (_, ov) = root.iter().find(|(k, _)| shared_is_b(k, b"overview", sh))?;
+    match effective(ov, sh) { Value::Dict(d) => Some(d), _ => None }
+}
+
+fn find<'a>(ov: &'a Entries, key: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
+    ov.iter().find(|(k, _)| shared_is_b(k, key, sh)).map(|(_, v)| v)
+}
+
+/// Unwrap a `(timestamp, x)` wrapper, resolving indirection at both hops.
+fn unwrapped<'a>(v: &'a Value, sh: &SharedTable<'a>) -> &'a Value {
+    match effective(v, sh) {
+        Value::Tuple(items) => items
+            .iter()
+            .map(|e| effective(e, sh))
+            .find(|e| matches!(e, Value::Dict(_) | Value::List(_) | Value::Bool(_)))
+            .unwrap_or(effective(v, sh)),
+        other => other,
+    }
+}
+
+fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
+    match effective(v, sh) {
+        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        Value::Str(s) | Value::StrUcs2(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn node_of<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Node {
+    match effective(v, sh) {
+        Value::None => Node::Null,
+        Value::Bool(x) => Node::Bool(*x),
+        Value::Int(i) => Node::Int(*i),
+        Value::Float(f) => Node::Float(*f),
+        Value::Bytes(b) => Node::Str(String::from_utf8_lossy(b).into_owned()),
+        Value::Str(s) | Value::StrUcs2(s) => Node::Str(s.clone()),
+        Value::List(items) | Value::Tuple(items) => Node::Seq(items.iter().map(|e| node_of(e, sh)).collect()),
+        Value::Dict(d) => Node::Seq(
+            d.iter().map(|(k, val)| Node::Seq(vec![node_of(k, sh), node_of(val, sh)])).collect(),
+        ),
+        _ => Node::Null,
+    }
+}
+
+fn pair(k: &str, v: Node) -> Node { Node::Seq(vec![Node::Str(k.to_string()), v]) }
+
+/// Project the account's overview as a pack, plus warnings for anything the
+/// pack format cannot express.
+pub fn read_pack(v: &Value) -> (Pack, Vec<String>) {
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    let mut pack = Pack::default();
+    let mut warnings = Vec::new();
+    let Some(ov) = overview_entries(v, &sh) else { return (pack, warnings) };
+
+    for (section, key) in LIST_SECTIONS {
+        let Some(raw) = find(ov, key, &sh) else { continue };
+        let Value::List(items) = unwrapped(raw, &sh) else { continue };
+        pack.set(section, Node::Seq(items.iter().map(|e| node_of(e, &sh)).collect()));
+    }
+
+    // presets: name -> {alwaysShownStates, filteredStates, groups} (sorted keys,
+    // as published packs have them)
+    if let Some(raw) = find(ov, b"overviewProfilePresets", &sh) {
+        if let Value::Dict(d) = unwrapped(raw, &sh) {
+            let mut out = Vec::new();
+            for (k, body) in d {
+                let Some(name) = text(k, &sh) else { continue };
+                let Value::Dict(fields) = effective(body, &sh) else { continue };
+                let mut kv: Vec<(String, Node)> = fields
+                    .iter()
+                    .filter_map(|(fk, fv)| Some((text(fk, &sh)?, node_of(fv, &sh))))
+                    .collect();
+                kv.sort_by(|a, b| a.0.cmp(&b.0));
+                let body = Node::Seq(kv.into_iter().map(|(k, v)| pair(&k, v)).collect());
+                out.push(Node::Seq(vec![Node::Str(name), body]));
+            }
+            out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+            pack.set("presets", Node::Seq(out));
+        }
+    }
+
+    // tabSetup: index -> {bracket, name, overview}. Per-tab column overrides are
+    // deliberately NOT exported — pack columns are account-global.
+    if let Some(raw) = find(ov, b"tabsettings_new", &sh).or_else(|| find(ov, b"tabsettings", &sh)) {
+        if let Value::Dict(d) = unwrapped(raw, &sh) {
+            let mut out = Vec::new();
+            for (k, body) in d {
+                let Value::Int(idx) = effective(k, &sh) else { continue };
+                let Value::Dict(fields) = effective(body, &sh) else { continue };
+                let mut kv: Vec<(String, Node)> = Vec::new();
+                for name in ["bracket", "name", "overview"] {
+                    if let Some((_, fv)) = fields.iter().find(|(fk, _)| {
+                        text(fk, &sh).as_deref() == Some(name) || matches!(effective(fk, &sh), Value::StrTable(52) if name == "name")
+                    }) {
+                        kv.push((name.to_string(), Node::Str(text(fv, &sh).unwrap_or_default())));
+                    }
+                }
+                let body = Node::Seq(kv.into_iter().map(|(k, v)| pair(&k, v)).collect());
+                out.push(Node::Seq(vec![Node::Int(*idx), body]));
+            }
+            out.sort_by_key(|e| match e { Node::Seq(kv) => match kv[0] { Node::Int(i) => i, _ => 0 }, _ => 0 });
+            pack.set("tabSetup", Node::Seq(out));
+        }
+    }
+
+    // stateColors -> stateColorsNameList (palette names only)
+    if let Some(raw) = find(ov, b"stateColors", &sh) {
+        if let Value::Dict(d) = unwrapped(raw, &sh) {
+            let mut out = Vec::new();
+            let mut omitted = 0usize;
+            for (k, val) in d {
+                let Value::Tuple(kp) = effective(k, &sh) else { continue };
+                let [surface, id] = kp.as_slice() else { continue };
+                let (Some(surface), Value::Int(id)) = (text(surface, &sh), effective(id, &sh)) else { continue };
+                let Value::Tuple(parts) = effective(val, &sh) else { continue };
+                let comps: Vec<f64> = parts.iter().filter_map(|c| match effective(c, &sh) {
+                    Value::Float(f) => Some(*f),
+                    Value::Int(i) => Some(*i as f64),
+                    _ => None,
+                }).collect();
+                let [r, g, bl, a] = comps.as_slice() else { continue };
+                match color_name([*r, *g, *bl, *a]) {
+                    Some(name) => out.push(Node::Seq(vec![
+                        Node::Str(join_surface_key(&surface, *id)),
+                        Node::Str(name.to_string()),
+                    ])),
+                    None => omitted += 1,
+                }
+            }
+            out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+            pack.set("stateColorsNameList", Node::Seq(out));
+            if omitted > 0 {
+                warnings.push(format!("{omitted} custom colour(s) had no pack name and were omitted"));
+            }
+        }
+    }
+
+    // stateBlinks: (surface, id) -> bool
+    if let Some(raw) = find(ov, b"stateBlinks", &sh) {
+        if let Value::Dict(d) = unwrapped(raw, &sh) {
+            let mut out = Vec::new();
+            for (k, val) in d {
+                let Value::Tuple(kp) = effective(k, &sh) else { continue };
+                let [surface, id] = kp.as_slice() else { continue };
+                let (Some(surface), Value::Int(id)) = (text(surface, &sh), effective(id, &sh)) else { continue };
+                let Value::Bool(on) = effective(val, &sh) else { continue };
+                out.push(Node::Seq(vec![Node::Str(join_surface_key(&surface, *id)), Node::Bool(*on)]));
+            }
+            out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+            pack.set("stateBlinks", Node::Seq(out));
+        }
+    }
+
+    // shipLabels / shipLabelOrder: the file stores one ordered list of label
+    // dicts; the pack splits it into an order list and a name-keyed list.
+    if let Some(raw) = find(ov, b"shipLabels", &sh) {
+        if let Value::List(items) = unwrapped(raw, &sh) {
+            let mut order = Vec::new();
+            let mut labels = Vec::new();
+            for item in items {
+                let Value::Dict(fields) = effective(item, &sh) else { continue };
+                let mut kv: Vec<(String, Node)> = fields
+                    .iter()
+                    .filter_map(|(fk, fv)| Some((text(fk, &sh)?, node_of(fv, &sh))))
+                    .collect();
+                kv.sort_by(|a, b| a.0.cmp(&b.0));
+                let name = kv.iter().find(|(k, _)| k == "type").map(|(_, v)| v.clone()).unwrap_or(Node::Null);
+                order.push(name.clone());
+                labels.push(Node::Seq(vec![name, Node::Seq(kv.into_iter().map(|(k, v)| pair(&k, v)).collect())]));
+            }
+            pack.set("shipLabelOrder", Node::Seq(order));
+            pack.set("shipLabels", Node::Seq(labels));
+        }
+    }
+
+    // userSettings
+    let settings: Vec<Node> = USER_SETTINGS
+        .iter()
+        .filter_map(|(pack_name, file_key)| {
+            let raw = find(ov, file_key.as_bytes(), &sh)?;
+            let Value::Bool(on) = unwrapped(raw, &sh) else { return None };
+            Some(Node::Seq(vec![Node::Str(pack_name.to_string()), Node::Bool(*on)]))
+        })
+        .collect();
+    if !settings.is_empty() {
+        pack.set("userSettings", Node::Seq(settings));
+    }
+
+    // `emit_pack` always writes sections in `SECTIONS` (canonical alphabetical)
+    // order regardless of `pack.sections`'s own order, and re-parsing that text
+    // reproduces the same canonical order — so a freshly-read pack must already
+    // be sorted that way, or comparing it against an emit-then-reparse copy
+    // (`a_read_pack_emits_and_reparses`) would spuriously fail on order alone
+    // despite carrying identical data.
+    pack.sections.sort_by_key(|(name, _)| SECTIONS.iter().position(|s| s == name).unwrap_or(usize::MAX));
+
+    (pack, warnings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,5 +751,107 @@ userSettings:
         // splitting on the first.
         assert_eq!(split_surface_key("some_thing_5"), Some(("some_thing", 5)));
         assert_eq!(join_surface_key("flag", 9), "flag_9".to_string());
+    }
+
+    use blue_marshal::Value;
+
+    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+    // A distinguishable non-zero seed (not all-zero): Task 5's write path mints
+    // a zero `Long` timestamp for an ABSENT key while preserving an EXISTING
+    // key's own timestamp untouched, and an all-zero fixture cannot tell those
+    // two behaviours apart.
+    fn ts() -> Value { Value::Long(vec![7, 0, 0, 0, 0, 0, 0, 0]) }
+    fn ints_v(xs: &[i64]) -> Value { Value::List(xs.iter().map(|n| Value::Int(*n)).collect()) }
+
+    /// A minimal but realistic `core_user` tree: overview container with one
+    /// preset, one tab, columns, state lists, one colour, one blink and one bool.
+    fn user_doc() -> Value {
+        let preset = Value::Dict(vec![
+            (b("groups"), ints_v(&[25, 26])),
+            (b("filteredStates"), ints_v(&[21])),
+            (b("alwaysShownStates"), ints_v(&[])),
+        ]);
+        let tab = Value::Dict(vec![
+            (b("color"), Value::None),
+            (b("bracket"), b("Brackets")),
+            (b("name"), Value::StrUcs2("Fleet".into())),
+            (b("overview"), b("Friendly")),
+        ]);
+        Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("overviewProfilePresets"), Value::Tuple(vec![ts(), Value::Dict(vec![(b("Friendly"), preset)])])),
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+            (b("overviewColumnOrder"), Value::List(vec![b("ICON"), b("NAME")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME")])),
+            (b("backgroundStates2"), Value::Tuple(vec![ts(), ints_v(&[9, 13])])),
+            (b("backgroundOrder2"), Value::Tuple(vec![ts(), ints_v(&[13, 9])])),
+            (b("flagStates2"), Value::Tuple(vec![ts(), ints_v(&[9])])),
+            (b("flagOrder2"), Value::Tuple(vec![ts(), ints_v(&[9, 13])])),
+            (b("stateColors"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Tuple(vec![b("background"), Value::Int(16)]),
+                 Value::Tuple(vec![Value::Float(0.0), Value::Float(0.15), Value::Float(0.6), Value::Float(1.0)])),
+                (Value::Tuple(vec![b("background"), Value::Int(18)]),
+                 Value::Tuple(vec![Value::Float(0.42), Value::Float(0.42), Value::Float(0.42), Value::Float(1.0)])),
+            ])])),
+            (b("stateBlinks"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Tuple(vec![b("flag"), Value::Int(9)]), Value::Bool(true)),
+            ])])),
+            (b("overviewBroadcastsToTop"), Value::Tuple(vec![ts(), Value::Bool(true)])),
+        ]))])
+    }
+
+    #[test]
+    fn reads_every_section_from_a_file() {
+        let (pack, warnings) = read_pack(&user_doc());
+
+        assert_eq!(ints(pack.get("backgroundStates").unwrap()), vec![9, 13]);
+        assert_eq!(ints(pack.get("backgroundOrder").unwrap()), vec![13, 9]);
+        assert_eq!(ints(pack.get("flagStates").unwrap()), vec![9]);
+        assert_eq!(strs(pack.get("columnOrder").unwrap()), vec!["ICON".to_string(), "NAME".to_string()]);
+        assert_eq!(strs(pack.get("overviewColumns").unwrap()), vec!["NAME".to_string()]);
+
+        let presets = pairs(pack.get("presets").unwrap());
+        assert_eq!(as_str(presets[0].0), Some("Friendly"));
+        let fields = pairs(presets[0].1);
+        assert_eq!(as_str(fields[0].0), Some("alwaysShownStates"), "preset fields are sorted");
+        let groups = fields.iter().find(|(k, _)| as_str(k) == Some("groups")).unwrap().1;
+        assert_eq!(ints(groups), vec![25, 26]);
+
+        let tabs = pairs(pack.get("tabSetup").unwrap());
+        assert_eq!(tabs[0].0, &Node::Int(0));
+        let tab = pairs(tabs[0].1);
+        assert_eq!(as_str(tab.iter().find(|(k, _)| as_str(k) == Some("name")).unwrap().1), Some("Fleet"));
+        assert_eq!(as_str(tab.iter().find(|(k, _)| as_str(k) == Some("overview")).unwrap().1), Some("Friendly"));
+        assert_eq!(as_str(tab.iter().find(|(k, _)| as_str(k) == Some("bracket")).unwrap().1), Some("Brackets"));
+
+        // Only the palette-matching colour survives; the custom one is reported.
+        let colors = pairs(pack.get("stateColorsNameList").unwrap());
+        assert_eq!(colors.len(), 1);
+        assert_eq!((as_str(colors[0].0), as_str(colors[0].1)), (Some("background_16"), Some("darkBlue")));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("1"), "warning counts the omitted colour: {warnings:?}");
+
+        let blinks = pairs(pack.get("stateBlinks").unwrap());
+        assert_eq!((as_str(blinks[0].0), blinks[0].1), (Some("flag_9"), &Node::Bool(true)));
+
+        let settings = pairs(pack.get("userSettings").unwrap());
+        assert_eq!((as_str(settings[0].0), settings[0].1), (Some("overviewBroadcastsToTop"), &Node::Bool(true)));
+    }
+
+    #[test]
+    fn omits_sections_the_file_does_not_have() {
+        let doc = Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("overviewColumns"), Value::List(vec![b("NAME")])),
+        ]))]);
+        let (pack, _) = read_pack(&doc);
+        assert!(pack.get("presets").is_none());
+        assert!(pack.get("shipLabels").is_none());
+        assert_eq!(pack.sections.len(), 1);
+    }
+
+    #[test]
+    fn a_read_pack_emits_and_reparses() {
+        let (pack, _) = read_pack(&user_doc());
+        let again = parse_pack(&emit_pack(&pack)).unwrap();
+        assert_eq!(again.sections, pack.sections);
     }
 }
