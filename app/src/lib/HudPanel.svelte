@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Hud, HudEntry } from "$lib/api";
+  import type { Hud, HudEntry, HudKind } from "$lib/api";
 
   let { hud, readOnly, onSet }: {
     hud: Hud;
@@ -39,9 +39,13 @@
           ? "Account-wide: changes every character on this account"
           : "";
 
-  const numberEdit = (name: string) => (ev: Event) => {
+  // Int fields round before writing: <input type="number"> doesn't enforce
+  // integrality (typing "1.5" is not blocked), and the backend's Int parser
+  // rejects a fractional string outright.
+  const numberEdit = (name: string, kind: HudKind) => (ev: Event) => {
     const raw = (ev.target as HTMLInputElement).value;
-    if (raw.trim() !== "" && Number.isFinite(Number(raw))) onSet(name, raw);
+    if (raw.trim() === "" || !Number.isFinite(Number(raw))) return;
+    onSet(name, kind === "float" ? raw : String(Math.round(Number(raw))));
   };
 </script>
 
@@ -64,9 +68,10 @@
               <span class="label">{row.label}</span>
               <input
                 type="number"
+                step={e.kind === "float" ? undefined : "1"}
                 value={shown(row.name)}
                 disabled={disabled(e)}
-                onchange={numberEdit(row.name)} />
+                onchange={numberEdit(row.name, e.kind)} />
             {/if}
             {#if e.scope === "account"}<span class="badge">account</span>{/if}
             {#if e.value === null && e.set.how !== "unavailable"}<span class="badge">default</span>{/if}

@@ -134,6 +134,10 @@ export interface HudEntry {
   value: string | null;
   default: string;
   scope: HudScope;
+  /** Informational only: unlike a window BoolFlag's `Insert` (which
+   * insert_dict_entry can act on directly), a HUD field's `Insert` means the
+   * leaf needs the `(timestamp, value)` wrapper, and for a point field, would
+   * insert the same key twice. Only `api.setHudValue` may act on it. */
   set: SetTarget;
 }
 
