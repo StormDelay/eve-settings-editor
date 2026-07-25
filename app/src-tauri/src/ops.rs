@@ -20,6 +20,7 @@ use settings_model::{
     create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
+    project_hud, set_hud_value, Hud, HudScope,
 };
 
 use crate::accounts;
@@ -578,6 +579,53 @@ pub fn window_layout(state: &AppState, slot: Slot) -> Result<WindowLayout, ErrDt
     let guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     Ok(project_window_layout(&doc.value))
+}
+
+/// Project the HUD anchors: the character document is required, the account
+/// document optional (an unpaired character still has its own anchors).
+pub fn hud_layout(state: &AppState) -> Result<Hud, ErrDto> {
+    // Lock user before char, matching `overview_columns` — the only other spot
+    // that holds both slots at once. A consistent order across the file rules
+    // out lock-order-inversion deadlock between concurrently invoked commands.
+    let uguard = state.user.lock().unwrap();
+    let cguard = state.char.lock().unwrap();
+    let cdoc = cguard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+    Ok(project_hud(&cdoc.value, uguard.as_ref().map(|d| &d.value)))
+}
+
+/// Write one HUD field into whichever document its scope names, reshare, and
+/// re-project. The frontend marks that slot dirty from the entry's scope.
+pub fn set_hud_field(state: &AppState, name: &str, text: &str) -> Result<Hud, ErrDto> {
+    let scope = {
+        // The projection is the single source of truth for which file a field
+        // lives in, so ops never repeats the field table.
+        let hud = hud_layout(state)?;
+        hud.entries
+            .iter()
+            .find(|e| e.name == name)
+            .map(|e| e.scope)
+            .ok_or_else(|| ErrDto::new("hud", format!("unknown field {name:?}")))?
+    };
+    let slot = match scope {
+        HudScope::Char => Slot::Char,
+        HudScope::Account => Slot::User,
+    };
+    {
+        let mut guard = state.doc(slot).lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| {
+            let which = match scope {
+                HudScope::Char => "character",
+                HudScope::Account => "account",
+            };
+            ErrDto::new("no_document", format!("no {which} file open"))
+        })?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        set_hud_value(&mut doc.value, name, text).map_err(|e| ErrDto::new("hud", format!("{e:?}")))?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    hud_layout(state)
 }
 
 pub fn restore_backup(state: &AppState, slot: Slot, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
@@ -1609,5 +1657,43 @@ mod tests {
         let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
         assert!(char_ok, "char widths write succeeded");
         assert!(acct_fail, "read-only account write failed but was reported, not panicked");
+    }
+
+    /// root -> { b"windows": {}, b"ui": {} } — sections present, no HUD keys.
+    fn hud_char_bytes() -> Vec<u8> {
+        let doc = blue_marshal::Value::Dict(vec![
+            (blue_marshal::Value::Bytes(b"windows".to_vec()), blue_marshal::Value::Dict(vec![])),
+            (blue_marshal::Value::Bytes(b"ui".to_vec()), blue_marshal::Value::Dict(vec![])),
+        ]);
+        blue_marshal::encode(&doc).expect("encode fixture")
+    }
+
+    #[test]
+    fn hud_projects_and_sets_the_ship_offset() {
+        // A character document with an empty `windows` section: the projection
+        // reports ship_offset absent, and the first write mints it.
+        let state = AppState::new();
+        let path = temp_file("hud-char", &hud_char_bytes());
+        open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
+
+        let hud = hud_layout(&state).expect("project");
+        let e = hud.entries.iter().find(|e| e.name == "ship_offset").expect("entry");
+        assert!(e.value.is_none());
+
+        let hud = set_hud_field(&state, "ship_offset", "-77").expect("set");
+        let e = hud.entries.iter().find(|e| e.name == "ship_offset").expect("entry");
+        assert_eq!(e.value.as_deref(), Some("-77"));
+
+        // The document still encodes and round-trips (reshare ran cleanly).
+        let guard = state.char.lock().unwrap();
+        let doc = guard.as_ref().expect("open");
+        let bytes = blue_marshal::encode(&doc.value).expect("encode");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value);
+    }
+
+    #[test]
+    fn hud_without_a_character_file_is_an_error() {
+        let state = AppState::new();
+        assert!(hud_layout(&state).is_err());
     }
 }
