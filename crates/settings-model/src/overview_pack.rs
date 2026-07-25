@@ -14,7 +14,9 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 use blue_marshal::Value;
 
-use crate::treewalk::{collect_shared, effective, Entries, SharedTable};
+use crate::overview_states::OVERVIEW_BOOLS;
+use crate::overview_tabs::{is_b, overview_mut};
+use crate::treewalk::{collect_shared, effective, inline_all, Entries, SharedTable};
 
 /// A YAML scalar or sequence. No map variant — see the module note.
 #[derive(Debug, Clone, PartialEq)]
@@ -309,6 +311,165 @@ const USER_SETTINGS: [(&str, &str); 6] = [
     ("overviewBroadcastsToTop", "overviewBroadcastsToTop"),
     ("hideCorpTicker", "hideCorpTicker"),
 ];
+
+/// What an import did, for the UI's summary line.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PackReport {
+    /// Section names actually written.
+    pub applied: Vec<String>,
+    /// Anything ignored or skipped, in user-facing wording.
+    pub warnings: Vec<String>,
+}
+
+/// Wrap a value in the `(timestamp, value)` shape EVE uses, minting a zero
+/// timestamp like the rest of the crate. Reuses the existing wrapper when the
+/// key is already present so an existing timestamp survives.
+fn put(ov: &mut Entries, key: &[u8], value: Value) {
+    match ov.iter_mut().find(|(k, _)| is_b(k, key)) {
+        Some((_, slot)) => match slot {
+            Value::Tuple(items) => {
+                match items.iter_mut().find(|e| !matches!(e, Value::Long(_))) {
+                    Some(inner) => *inner = value,
+                    None => items.push(value),
+                }
+            }
+            other => *other = value,
+        },
+        None => ov.push((
+            Value::Bytes(key.to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), value]),
+        )),
+    }
+}
+
+/// Columns are stored as a BARE list (no `(ts, _)` wrapper) on real files.
+fn put_bare(ov: &mut Entries, key: &[u8], value: Value) {
+    match ov.iter_mut().find(|(k, _)| is_b(k, key)) {
+        Some((_, slot)) => *slot = value,
+        None => ov.push((Value::Bytes(key.to_vec()), value)),
+    }
+}
+
+/// Apply every section the pack defines. Sections it omits are left untouched.
+///
+/// ATOMICITY: every replacement value is built BEFORE the first mutation, so a
+/// pack that fails conversion leaves the document exactly as it was. The only
+/// error after that point is a missing `overview` container, which is checked
+/// first.
+pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
+    let mut report = PackReport::default();
+    for name in &pack.ignored {
+        report.warnings.push(format!("ignored unknown section '{name}'"));
+    }
+
+    // --- build phase (no mutation) ---
+    let mut writes: Vec<(&[u8], Value, bool)> = Vec::new(); // (key, value, wrapped)
+
+    for (section, key) in LIST_SECTIONS {
+        let Some(node) = pack.get(section) else { continue };
+        // Columns are stored BARE on real files; the four state lists are wrapped
+        // in `(timestamp, list)`. (`key` is a `&[u8]`, so compare against slices —
+        // a `b"…"` pattern is a `&[u8; N]` and will not typecheck here.)
+        let wrapped = key != b"overviewColumnOrder".as_slice() && key != b"overviewColumns".as_slice();
+        let value = if wrapped {
+            let mut ids = ints(node);
+            // Enabled lists are stored sorted and deduplicated; order lists keep
+            // the pack's sequence (the slice-3 convention).
+            if matches!(section, "backgroundStates" | "flagStates") {
+                ids.sort_unstable();
+                ids.dedup();
+            }
+            Value::List(ids.into_iter().map(Value::Int).collect())
+        } else {
+            Value::List(strs(node).into_iter().map(|s| Value::Bytes(s.into_bytes())).collect())
+        };
+        writes.push((key, value, wrapped));
+        report.applied.push(section.to_string());
+    }
+
+    if let Some(node) = pack.get("stateColorsNameList") {
+        let mut entries: Entries = Vec::new();
+        for (k, val) in pairs(node) {
+            let (Some(key), Some(name)) = (as_str(k), as_str(val)) else { continue };
+            let Some((surface, id)) = split_surface_key(key) else { continue };
+            let Some(rgba) = color_rgba(name) else {
+                report.warnings.push(format!("unknown colour name '{name}' — left at EVE's default"));
+                continue;
+            };
+            entries.push((
+                Value::Tuple(vec![Value::Bytes(surface.as_bytes().to_vec()), Value::Int(id)]),
+                Value::Tuple(vec![Value::Float(rgba[0]), Value::Float(rgba[1]), Value::Float(rgba[2]), Value::Float(rgba[3])]),
+            ));
+        }
+        writes.push((b"stateColors", Value::Dict(entries), true));
+        report.applied.push("stateColorsNameList".to_string());
+    }
+
+    if let Some(node) = pack.get("stateBlinks") {
+        let mut entries: Entries = Vec::new();
+        for (k, val) in pairs(node) {
+            let (Some(key), Node::Bool(on)) = (as_str(k), val) else { continue };
+            let Some((surface, id)) = split_surface_key(key) else { continue };
+            entries.push((
+                Value::Tuple(vec![Value::Bytes(surface.as_bytes().to_vec()), Value::Int(id)]),
+                Value::Bool(*on),
+            ));
+        }
+        writes.push((b"stateBlinks", Value::Dict(entries), true));
+        report.applied.push("stateBlinks".to_string());
+    }
+
+    // shipLabels: rebuild the file's ordered list of label dicts from the pack's
+    // order list plus its name-keyed bodies. Field values are Bytes, as the file
+    // stores them; `state` stays an int.
+    if let (Some(order), Some(labels)) = (pack.get("shipLabelOrder"), pack.get("shipLabels")) {
+        let bodies = pairs(labels);
+        let Node::Seq(order_items) = order else { return Err(PackError::NotAPack) };
+        let mut list = Vec::new();
+        for want in order_items {
+            let Some((_, body)) = bodies.iter().find(|(k, _)| *k == want) else { continue };
+            let fields: Entries = pairs(body)
+                .into_iter()
+                .filter_map(|(k, val)| {
+                    let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
+                    let value = match val {
+                        Node::Null => Value::None,
+                        Node::Int(i) => Value::Int(*i),
+                        Node::Bool(x) => Value::Bool(*x),
+                        Node::Str(s) => Value::Bytes(s.clone().into_bytes()),
+                        _ => return None,
+                    };
+                    Some((key, value))
+                })
+                .collect();
+            list.push(Value::Dict(fields));
+        }
+        writes.push((b"shipLabels", Value::List(list), true));
+        report.applied.push("shipLabels".to_string());
+    }
+
+    if let Some(node) = pack.get("userSettings") {
+        for (k, val) in pairs(node) {
+            let (Some(name), Node::Bool(on)) = (as_str(k), val) else { continue };
+            match USER_SETTINGS.iter().find(|(pack_name, _)| *pack_name == name) {
+                Some((_, file_key)) => {
+                    debug_assert!(OVERVIEW_BOOLS.contains(file_key));
+                    writes.push((file_key.as_bytes(), Value::Bool(*on), true));
+                }
+                None => report.warnings.push(format!("ignored unknown setting '{name}'")),
+            }
+        }
+        report.applied.push("userSettings".to_string());
+    }
+
+    // --- mutate phase ---
+    inline_all(v);
+    let ov = overview_mut(v).map_err(|_| PackError::NoOverview)?;
+    for (key, value, wrapped) in writes {
+        if wrapped { put(ov, key, value) } else { put_bare(ov, key, value) }
+    }
+    Ok(report)
+}
 
 fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
     matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name)
@@ -874,5 +1035,110 @@ userSettings:
         let (pack, _) = read_pack(&user_doc());
         let again = parse_pack(&emit_pack(&pack)).unwrap();
         assert_eq!(again.sections, pack.sections);
+    }
+
+    #[test]
+    fn applies_lists_colours_blinks_and_bools() {
+        let mut doc = user_doc();
+        let pack = parse_pack(
+            "backgroundStates:\n- 44\n- 9\nflagOrder:\n- 13\ncolumnOrder:\n- TYPE\n- NAME\n\
+             stateColorsNameList:\n- - background_44\n  - red\nstateBlinks:\n- - flag_13\n  - true\n\
+             userSettings:\n- - useSmallText\n  - true\n",
+        ).unwrap();
+
+        let report = apply_pack(&mut doc, &pack).unwrap();
+        let (back, _) = read_pack(&doc);
+
+        assert_eq!(ints(back.get("backgroundStates").unwrap()), vec![9, 44], "enabled lists are stored sorted");
+        assert_eq!(ints(back.get("flagOrder").unwrap()), vec![13]);
+        assert_eq!(strs(back.get("columnOrder").unwrap()), vec!["TYPE".to_string(), "NAME".to_string()],
+                   "order lists keep the pack's order");
+
+        let colors = pairs(back.get("stateColorsNameList").unwrap());
+        assert_eq!(colors.len(), 1, "the pack's colours REPLACE the file's");
+        assert_eq!((as_str(colors[0].0), as_str(colors[0].1)), (Some("background_44"), Some("red")));
+
+        let blinks = pairs(back.get("stateBlinks").unwrap());
+        assert_eq!((as_str(blinks[0].0), blinks[0].1), (Some("flag_13"), &Node::Bool(true)));
+
+        let settings = pairs(back.get("userSettings").unwrap());
+        assert!(settings.iter().any(|(k, v)| as_str(k) == Some("useSmallText") && *v == &Node::Bool(true)));
+        assert!(report.applied.iter().any(|s| s == "backgroundStates"));
+    }
+
+    #[test]
+    fn leaves_sections_the_pack_omits_untouched() {
+        let mut doc = user_doc();
+        let before = read_pack(&doc).0;
+        let pack = parse_pack("backgroundStates:\n- 44\n").unwrap();
+        apply_pack(&mut doc, &pack).unwrap();
+        let after = read_pack(&doc).0;
+
+        assert_eq!(after.get("overviewColumns"), before.get("overviewColumns"));
+        assert_eq!(after.get("presets"), before.get("presets"));
+        assert_eq!(after.get("stateColorsNameList"), before.get("stateColorsNameList"));
+        assert_ne!(after.get("backgroundStates"), before.get("backgroundStates"));
+    }
+
+    #[test]
+    fn skips_an_unknown_colour_name_and_an_unknown_setting() {
+        let mut doc = user_doc();
+        let pack = parse_pack(
+            "stateColorsNameList:\n- - background_44\n  - chartreuse\n\
+             userSettings:\n- - applyOnlyToShips\n  - true\n",
+        ).unwrap();
+        let report = apply_pack(&mut doc, &pack).unwrap();
+
+        let (back, _) = read_pack(&doc);
+        assert_eq!(pairs(back.get("stateColorsNameList").unwrap()).len(), 0, "unknown name writes nothing");
+        assert!(report.warnings.iter().any(|w| w.contains("chartreuse")));
+        assert!(report.warnings.iter().any(|w| w.contains("applyOnlyToShips")));
+    }
+
+    #[test]
+    fn applying_a_pack_to_a_file_with_no_overview_container_errors() {
+        let mut doc = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        let pack = parse_pack("backgroundStates:\n- 44\n").unwrap();
+        assert!(matches!(apply_pack(&mut doc, &pack), Err(PackError::NoOverview)));
+    }
+
+    /// The RAW value under a key in the document's (already-inlined) `overview`
+    /// dict — no timestamp/Shared unwrapping, unlike `read_pack`'s deliberately
+    /// permissive `unwrapped`. `read_pack` would happily accept a wrapper that
+    /// should not be there (or a reset timestamp), so the structural write-path
+    /// invariants below check the raw tree directly instead.
+    fn raw_overview_entry<'a>(doc: &'a Value, key: &str) -> &'a Value {
+        let Value::Dict(root) = doc else { panic!("doc is not a dict") };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).expect("overview container");
+        let Value::Dict(entries) = ov else { panic!("overview is not a dict") };
+        entries
+            .iter()
+            .find(|(k, _)| is_b(k, key.as_bytes()))
+            .map(|(_, v)| v)
+            .unwrap_or_else(|| panic!("missing key {key}"))
+    }
+
+    #[test]
+    fn apply_pack_preserves_an_existing_wrappers_timestamp() {
+        let mut doc = user_doc();
+        let pack = parse_pack("backgroundStates:\n- 44\n").unwrap();
+        apply_pack(&mut doc, &pack).unwrap();
+
+        let Value::Tuple(items) = raw_overview_entry(&doc, "backgroundStates2") else {
+            panic!("backgroundStates2 must stay a (timestamp, list) tuple");
+        };
+        assert_eq!(items[0], ts(), "an existing wrapper's own timestamp must survive, not be reset to zero");
+    }
+
+    #[test]
+    fn apply_pack_stores_columns_as_a_bare_list() {
+        let mut doc = user_doc();
+        let pack = parse_pack("columnOrder:\n- TYPE\n").unwrap();
+        apply_pack(&mut doc, &pack).unwrap();
+
+        assert!(
+            matches!(raw_overview_entry(&doc, "overviewColumnOrder"), Value::List(_)),
+            "columns are stored bare on real files, not wrapped in a (timestamp, list) tuple",
+        );
     }
 }
