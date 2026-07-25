@@ -848,6 +848,27 @@ userSettings:
         assert_eq!(pack.sections.len(), 1);
     }
 
+    /// A legacy account stores its tabs under `tabsettings`, not `tabsettings_new`
+    /// (the two are structurally identical — see `overview_tabs::tabs_mut`, which
+    /// migrates one to the other). Without this the `.or_else` fallback in the tab
+    /// read could be deleted outright and the whole suite would stay green.
+    #[test]
+    fn reads_tabs_from_a_legacy_tabsettings_key() {
+        let tab = Value::Dict(vec![
+            (b("bracket"), b("Brackets")),
+            (b("name"), Value::StrUcs2("Fleet".into())),
+            (b("overview"), b("Friendly")),
+        ]);
+        let doc = Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("tabsettings"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+        ]))]);
+        let (pack, _) = read_pack(&doc);
+        let tabs = pairs(pack.get("tabSetup").expect("legacy tabs are read"));
+        assert_eq!(tabs.len(), 1);
+        let fields = pairs(tabs[0].1);
+        assert_eq!(as_str(fields.iter().find(|(k, _)| as_str(k) == Some("name")).unwrap().1), Some("Fleet"));
+    }
+
     #[test]
     fn a_read_pack_emits_and_reparses() {
         let (pack, _) = read_pack(&user_doc());
