@@ -106,9 +106,10 @@ fn canonical_section(name: &str) -> Option<&'static str> {
     SECTIONS.iter().find(|s| **s == stripped).copied()
 }
 
-/// Parse a pack. Tolerates a leading UTF-8 BOM (real packs carry one).
+/// Parse a pack. Tolerates a leading UTF-8 BOM (real packs carry one) — the
+/// scanner treats it as stream-start whitespace, so no stripping happens here;
+/// `strips_a_leading_bom` is the guard on that behaviour surviving a parser swap.
 pub fn parse_pack(text: &str) -> Result<Pack, PackError> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let docs = YamlLoader::load_from_str(text)
         .map_err(|e| PackError::Yaml { message: e.to_string() })?;
     let Some(Yaml::Hash(top)) = docs.into_iter().next() else {

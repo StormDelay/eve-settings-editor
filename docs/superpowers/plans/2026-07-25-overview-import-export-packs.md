@@ -20,6 +20,7 @@
 - **Minted `(timestamp, value)` wrappers use a zero `Long`** (`Value::Long(vec![0u8; 8])`), matching `overview_states.rs`. EVE accepts a freshly minted zero-timestamp container.
 - **No personal data in the repo.** No character/account ids, no real character names, no live-directory paths in code, tests, comments or docs. Test fixtures are synthetic.
 - **Commits are sentence-case with no attribution trailers** (e.g. `Parse an overview pack into a section tree`).
+- **The pack node type is re-exported as `PackNode`.** `settings-model`'s root already exports `projection::Node`, so `pub use overview_pack::{Node as PackNode, …}`. Inside `overview_pack.rs` the type is still plain `Node`; only the external name is aliased. (Found in Task 1.)
 - Rust tests: `cargo test -p settings-model`. Frontend: `cd app && npm test`, `npm run check`.
 
 **Before Task 1:** branch off master — `git checkout -b overview-import-export-packs` — as every previous slice did. The spec is already committed on master.
@@ -1164,6 +1165,10 @@ Create `crates/settings-model/tests/overview_pack_realshape.rs`:
 use blue_marshal::{decode, encode, Value};
 use settings_model::{emit_pack, parse_pack, read_pack};
 
+// NOTE: the pack node type is re-exported as `PackNode`, not `Node` — the crate
+// root already exports `projection::Node`. Inside `overview_pack.rs` it is still
+// plain `Node`; only the external name is aliased.
+
 fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
@@ -1196,7 +1201,7 @@ fn reads_through_shared_and_ref() {
     let (pack, _) = read_pack(&doc);
 
     let states = pack.get("backgroundStates").expect("state list read through a Ref");
-    assert_eq!(settings_model::Node::Seq(vec![settings_model::Node::Int(9), settings_model::Node::Int(13)]), *states);
+    assert_eq!(settings_model::PackNode::Seq(vec![settings_model::PackNode::Int(9), settings_model::PackNode::Int(13)]), *states);
     assert!(pack.get("presets").is_some(), "preset field name read through a Ref");
     let colors = pack.get("stateColorsNameList").expect("colour surface read through a Ref");
     assert_eq!(format!("{colors:?}").contains("background_16"), true);
@@ -1876,7 +1881,8 @@ pub fn pack_preview(path: &str) -> Result<PackSummary, ErrDto> {
         .sections
         .iter()
         .map(|(name, node)| {
-            let count = match node { settings_model::Node::Seq(items) => items.len(), _ => 0 };
+            // `PackNode`, not `Node` — the crate root's `Node` is the projection type.
+            let count = match node { settings_model::PackNode::Seq(items) => items.len(), _ => 0 };
             (name.clone(), count)
         })
         .collect();
