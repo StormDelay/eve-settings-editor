@@ -251,9 +251,17 @@
         if (p.x !== d.f.x) await setHud(`${prefix}_x`, String(Math.round(p.x)));
         if (p.y !== d.f.y) await setHud(`${prefix}_y`, String(Math.round(p.y)));
       }
-      const rest = { ...fPreview };
-      delete rest[d.f.kind];
-      fPreview = rest;
+      // A re-grab on the same furniture piece may have started during the
+      // async write and now owns fPreview — don't wipe it out from under the
+      // new drag. (The cast: TS narrowed `drag` to null above and can't see
+      // the reassignment a concurrent startFurniture may have made across
+      // the await.)
+      const activeF = drag as Drag | null;
+      if (!activeF || activeF.kind !== "furniture" || activeF.f.kind !== d.f.kind) {
+        const rest = { ...fPreview };
+        delete rest[d.f.kind];
+        fPreview = rest;
+      }
       return;
     }
 
