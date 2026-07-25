@@ -449,7 +449,8 @@
             readOnly={current.fidelity.state !== "editable"}
             refreshToken={savedAt}
             bind:selectedId={selectedWindowId}
-            onReveal={revealInTree} />
+            onReveal={revealInTree}
+            onDirty={(slot) => (dirtySlots[slot] = true)} />
         </div>
       {:else if view === "overview"}
         <div class="tree-area">

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
-  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot } from "$lib/api";
-  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, type Corner, type DrawUnit } from "$lib/layout";
+  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
+  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -12,6 +12,7 @@
     refreshToken,
     selectedId = $bindable(null),
     onReveal,
+    onDirty,
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -19,13 +20,17 @@
     refreshToken: number;
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
+    onDirty: (slot: Slot) => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
+  let hud = $state<Hud | null>(null);
   let containerWidth = $state(0);
   let canvasEl: HTMLDivElement | undefined = $state();
   // Live drag/resize preview by window id (data px); absent when not dragging.
   let preview: Record<string, { x: number; y: number; w: number; h: number }> = $state({});
+  // Live drag preview for furniture, keyed by kind (data px).
+  let fPreview: Record<string, { x: number; y: number }> = $state({});
 
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its
@@ -46,6 +51,9 @@
     } catch (e) {
       await message(errMessage(e), { title: "Layout unavailable", kind: "error" });
     }
+    // Furniture is a bonus view: an account file open on its own, or a document
+    // with no HUD keys, must not take the canvas down with it.
+    hud = await api.hud().catch(() => null);
   }
 
   // Reload when the parent signals a save/restore, or when the slot switches.
@@ -129,6 +137,7 @@
   async function runStack(p: Promise<WindowLayout>) {
     try {
       layout = await p;
+      onDirty("char"); // stack ops edit the character document in the backend
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
     } catch (e) {
       await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
@@ -139,12 +148,36 @@
   const onAddToStack = (member: string, container: string) => runStack(api.stackAdd(member, container));
   const onCreateStack = (m1: string, m2: string) => runStack(api.stackCreate(m1, m2));
 
+  /** Write one HUD field and refresh the projection. */
+  async function setHud(name: string, text: string) {
+    try {
+      hud = await api.setHudValue(name, text);
+      const e = hud.entries.find((x) => x.name === name);
+      onDirty(e?.scope === "account" ? "user" : "char");
+    } catch (e) {
+      await message(errMessage(e), { title: "HUD edit failed", kind: "error" });
+    }
+  }
+
   // --- Canvas drag & resize ------------------------------------------------
 
   type Drag =
     | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number }
-    | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number };
+    | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number }
+    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number };
   let drag: Drag | null = null;
+
+  const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
+  const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
+
+  function startFurniture(f: FurnitureRect, e: PointerEvent) {
+    if (readOnly || f.drag === "none") return;
+    const r = fRectOf(f);
+    drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
+    canvasEl?.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  }
 
   // Capture on the canvas (not the rectangle) so its onpointermove/up keep
   // firing even as the pointer leaves the rectangle during a drag.
@@ -181,12 +214,20 @@
     const dy = toData(e.clientY - drag.startY, scale);
     if (drag.kind === "move") {
       preview = { ...preview, [drag.unit.anchor.id]: { ...rectOf(drag.unit.anchor), x: drag.ox + dx, y: drag.oy + dy } };
-    } else {
-      preview = {
-        ...preview,
-        [drag.unit.anchor.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
-      };
+      return;
     }
+    if (drag.kind === "furniture") {
+      const f = drag.f;
+      fPreview = {
+        ...fPreview,
+        [f.kind]: { x: drag.ox + dx, y: f.drag === "xy" ? drag.oy + dy : drag.oy },
+      };
+      return;
+    }
+    preview = {
+      ...preview,
+      [drag.unit.anchor.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
+    };
   }
 
   function clearPreview(id: string) {
@@ -197,9 +238,26 @@
 
   async function onPointerUp() {
     if (!drag) return;
-    const p = preview[drag.unit.anchor.id];
     const d = drag;
     drag = null;
+
+    if (d.kind === "furniture") {
+      const p = fPreview[d.f.kind];
+      if (!p) return;
+      if (d.f.kind === "shipui" && layout) {
+        await setHud("ship_offset", String(shipOffsetFromX(p.x, layout.reference_w)));
+      } else if (d.f.kind === "fighter" || d.f.kind === "badge") {
+        const prefix = d.f.kind === "fighter" ? "fighter" : "badge";
+        if (p.x !== d.f.x) await setHud(`${prefix}_x`, String(Math.round(p.x)));
+        if (p.y !== d.f.y) await setHud(`${prefix}_y`, String(Math.round(p.y)));
+      }
+      const rest = { ...fPreview };
+      delete rest[d.f.kind];
+      fPreview = rest;
+      return;
+    }
+
+    const p = preview[d.unit.anchor.id];
     if (!p) return;
     // Fan the new anchor rect out to every renderable window in the unit so a
     // stack moves/resizes coherently and stale members are repaired. The full
@@ -215,7 +273,9 @@
     // cast: TS narrowed `drag` to null above and can't see the reassignment a
     // concurrent startMove may have made across the await.)
     const active = drag as Drag | null;
-    if (!active || active.unit.anchor.id !== d.unit.anchor.id) clearPreview(d.unit.anchor.id);
+    if (!active || active.kind === "furniture" || active.unit.anchor.id !== d.unit.anchor.id) {
+      clearPreview(d.unit.anchor.id);
+    }
   }
 </script>
 
@@ -231,6 +291,18 @@
         style="width: {toCanvas(layout.reference_w, scale)}px; height: {canvasHeight}px;"
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}>
+        {#each furniture as f (f.kind)}
+          {@const r = fRectOf(f)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="furniture"
+            class:draggable={f.drag !== "none" && !readOnly}
+            style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
+                   width: {toCanvas(f.w, scale)}px; height: {toCanvas(f.h, scale)}px;"
+            onpointerdown={(e) => startFurniture(f, e)}>
+            <span class="furniture-label">{f.label}</span>
+          </div>
+        {/each}
         {#each units as unit (unit.key)}
           {@const r = rectOf(unit.anchor)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -300,6 +372,25 @@
       linear-gradient(90deg, #2a2f3a 1px, transparent 1px);
     background-size: 40px 40px;
     border: 1px solid #444;
+  }
+  .furniture {
+    position: absolute;
+    box-sizing: border-box;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px dashed #64748b;
+    color: #94a3b8;
+    font-size: 11px;
+    overflow: hidden;
+    pointer-events: none;
+    touch-action: none;
+  }
+  .furniture.draggable {
+    pointer-events: auto;
+    cursor: move;
+  }
+  .furniture-label {
+    padding: 1px 3px;
+    pointer-events: none;
   }
   .win {
     position: absolute;
