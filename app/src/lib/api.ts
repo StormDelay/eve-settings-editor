@@ -189,11 +189,25 @@ export interface OverviewWindow {
 export interface Preset {
   name: string;
   groups: number[];
+  filtered_states: number[];
+  always_shown_states: number[];
+}
+export interface StateSurface {
+  enabled: number[];
+  order: number[];
+}
+export interface Appearance {
+  background: StateSurface;
+  flag: StateSurface;
+  colors: [number, [number, number, number, number]][];
+  bools: [string, boolean][];
+  defaulted: boolean;
 }
 export interface OverviewColumns {
   tabs: OverviewTab[];
   windows: OverviewWindow[];
   presets: Preset[];
+  appearance: Appearance;
 }
 
 export interface GroupEntry {
@@ -302,6 +316,14 @@ export const api = {
     invoke<OverviewColumns>("preset_set_groups", { name, groups }),
   presetFork: (tabIdx: number, name: string, groups: number[], filteredStates: number[], alwaysShownStates: number[]) =>
     invoke<OverviewColumns>("preset_fork", { tabIdx, name, groups, filteredStates, alwaysShownStates }),
+  overviewSetStates: (which: "background" | "backgroundOrder" | "flag" | "flagOrder", ids: number[]) =>
+    invoke<OverviewColumns>("overview_set_states", { which, ids }),
+  overviewSetStateColor: (id: number, rgba: [number, number, number, number] | null) =>
+    invoke<OverviewColumns>("overview_set_state_color", { id, rgba }),
+  overviewSetBool: (key: string, on: boolean) =>
+    invoke<OverviewColumns>("overview_set_bool", { key, on }),
+  presetSetStates: (name: string, filtered: number[], alwaysShown: number[]) =>
+    invoke<OverviewColumns>("preset_set_states", { name, filtered, alwaysShown }),
   autofillLists: () => invoke<RememberedList[]>("autofill_lists"),
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
