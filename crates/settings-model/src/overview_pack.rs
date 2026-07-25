@@ -1141,4 +1141,114 @@ userSettings:
             "columns are stored bare on real files, not wrapped in a (timestamp, list) tuple",
         );
     }
+
+    /// `apply_pack` rebuilds the file's ONE ship-label list by walking the pack's
+    /// `shipLabelOrder` and pulling each body out of `shipLabels`, keyed by the
+    /// label's own `type` field (the inverse of `read_pack`'s split, below). This
+    /// is the only coverage of that reconstruction: it pins the pack's ORDER (a
+    /// reversed walk must fail this test — the fixture keys `shipLabels` in a
+    /// different order than `shipLabelOrder` so the two cannot be confused), a
+    /// literal `null` label surviving (real published packs carry one — the
+    /// bracket-only line), an order entry with no matching body ("ghost") and a
+    /// body with no matching order entry ("orphan") both being skipped rather
+    /// than corrupting the result, and each field landing with the type the file
+    /// stores (`pre`/`post` as byte strings, `state` as an int, a `null` `type`
+    /// as `Value::None`).
+    ///
+    /// `user_doc()` has no `shipLabels` key, so this is also the only test that
+    /// exercises `put`'s "key absent" branch: the assertions on `wrapper[0]`/
+    /// `wrapper.len()` check the RAW tree for a freshly-minted `(zero timestamp,
+    /// list)` wrapper, because `read_pack`'s `unwrapped` accepts a bare value just
+    /// as happily as a wrapped one and so cannot tell a lost wrapper apart.
+    #[test]
+    fn apply_pack_reconstructs_ship_labels_from_order_and_bodies() {
+        fn fields(kvs: &[(&str, Node)]) -> Node {
+            Node::Seq(kvs.iter().map(|(k, v)| Node::Seq(vec![Node::Str(k.to_string()), v.clone()])).collect())
+        }
+        fn keyed(entries: Vec<(Node, Node)>) -> Node {
+            Node::Seq(entries.into_iter().map(|(k, v)| Node::Seq(vec![k, v])).collect())
+        }
+        fn field(entries: &Entries, name: &str) -> Value {
+            entries
+                .iter()
+                .find(|(k, _)| is_b(k, name.as_bytes()))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("missing field '{name}'"))
+        }
+
+        let mut pack = Pack::default();
+        pack.set(
+            "shipLabelOrder",
+            Node::Seq(vec![Node::Null, Node::Str("hull".into()), Node::Str("ghost".into())]),
+        );
+        pack.set(
+            "shipLabels",
+            keyed(vec![
+                (
+                    Node::Str("orphan".into()),
+                    fields(&[("type", Node::Str("orphan".into())), ("pre", Node::Str("orphan-pre".into()))]),
+                ),
+                (
+                    Node::Str("hull".into()),
+                    fields(&[
+                        ("type", Node::Str("hull".into())),
+                        ("pre", Node::Str("hull-pre".into())),
+                        ("post", Node::Str("hull-post".into())),
+                        ("state", Node::Int(5)),
+                    ]),
+                ),
+                (
+                    Node::Null,
+                    fields(&[
+                        ("type", Node::Null),
+                        ("pre", Node::Str("null-pre".into())),
+                        ("post", Node::Str("null-post".into())),
+                        ("state", Node::Int(2)),
+                    ]),
+                ),
+            ]),
+        );
+
+        let mut doc = user_doc();
+        apply_pack(&mut doc, &pack).unwrap();
+
+        let Value::Tuple(wrapper) = raw_overview_entry(&doc, "shipLabels") else {
+            panic!("shipLabels must be minted as a (timestamp, list) wrapper — the key is absent from user_doc()");
+        };
+        assert_eq!(wrapper.len(), 2, "a minted wrapper is exactly (timestamp, list): {wrapper:?}");
+        assert_eq!(wrapper[0], Value::Long(vec![0u8; 8]), "an absent key mints a fresh ZERO timestamp");
+        let Value::List(list) = &wrapper[1] else { panic!("wrapper's second element must be the label list") };
+        assert_eq!(list.len(), 2, "ghost (no body) and orphan (no order entry) must both be skipped: {list:?}");
+
+        let Value::Dict(first) = &list[0] else { panic!("label entry is a dict") };
+        assert_eq!(field(first, "type"), Value::None, "the null label survives and decodes to None");
+        assert_eq!(field(first, "pre"), b("null-pre"));
+        assert_eq!(field(first, "post"), b("null-post"));
+        assert_eq!(field(first, "state"), Value::Int(2));
+
+        let Value::Dict(second) = &list[1] else { panic!("label entry is a dict") };
+        assert_eq!(field(second, "type"), b("hull"), "the file list follows the pack's ORDER, not the bodies' own sequence");
+        assert_eq!(field(second, "pre"), b("hull-pre"));
+        assert_eq!(field(second, "post"), b("hull-post"));
+        assert_eq!(field(second, "state"), Value::Int(5));
+    }
+
+    /// `apply_pack` is documented to build every replacement value BEFORE the
+    /// first mutation. A pack whose `shipLabelOrder` is not a sequence fails
+    /// INSIDE the build phase — before `inline_all`/`overview_mut` ever run — so
+    /// the document must come back unchanged. This proves atomicity for THAT
+    /// build-phase failure only: it says nothing about the `NoOverview` path,
+    /// which runs `inline_all` (a value-preserving Shared/Ref collapse) before
+    /// returning its error, so a document can be structurally rewritten and
+    /// still correctly be called "unchanged" there.
+    #[test]
+    fn apply_pack_leaves_the_document_unchanged_on_a_build_phase_failure() {
+        let mut doc = user_doc();
+        let before = doc.clone();
+        let pack = parse_pack("shipLabelOrder: true\nshipLabels: []\n").unwrap();
+
+        let err = apply_pack(&mut doc, &pack).unwrap_err();
+        assert!(matches!(err, PackError::NotAPack), "got {err:?}");
+        assert_eq!(doc, before, "a build-phase failure must leave the document untouched");
+    }
 }
