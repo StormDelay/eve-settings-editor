@@ -56,3 +56,67 @@ fn reads_through_shared_and_ref() {
     // and it still emits valid YAML
     assert!(parse_pack(&emit_pack(&pack)).is_ok());
 }
+
+/// `realish_user` above only puts `Shared`/`Ref` indirection inside VALUES and
+/// nested dict keys — never on the `overview` container's own SECTION-NAME
+/// keys, which is exactly what `overview_entries`/`find` match against via
+/// `shared_is_b`. On a real `core_user` file those section keys are interned
+/// too: a dump shows entries whose key prints as `shared[255]:b"stateBlinks"`
+/// or `shared[319]:b"shipLabels"`, the same string `Ref`'d elsewhere in the
+/// file. This fixture puts one section key behind a `Shared` DEFINITION and a
+/// different section key behind a `Ref` to a slot stored earlier in the
+/// stream — the two shapes a real file's section keys actually take — so a
+/// section-key matcher that regresses to bare `Value::Bytes` (no `effective`)
+/// finds neither section and gets caught here.
+fn realish_user_section_keys() -> Value {
+    let overview = Value::Dict(vec![
+        // Decoy: stores the "shipLabels" bytes at slot 1 BEFORE anything
+        // refs it, mirroring an earlier unrelated occurrence of the same
+        // string elsewhere in a real file.
+        (Value::Int(900), Value::Shared { slot: 1, value: Box::new(b("shipLabels")) }),
+        // stateBlinks: section key reached as a Shared DEFINITION.
+        (
+            Value::Shared { slot: 2, value: Box::new(b("stateBlinks")) },
+            Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Tuple(vec![b("flag"), Value::Int(9)]), Value::Bool(true)),
+            ])]),
+        ),
+        // shipLabels: section key reached as a Ref to the earlier slot.
+        (
+            Value::Ref(1),
+            Value::Tuple(vec![ts(), Value::List(vec![
+                Value::Dict(vec![(b("type"), b("hull"))]),
+            ])]),
+        ),
+    ]);
+    Value::Dict(vec![(b("overview"), overview)])
+}
+
+#[test]
+fn reads_sections_keyed_by_shared_and_ref() {
+    let doc = decode(&encode(&realish_user_section_keys()).unwrap()).unwrap();
+    let (pack, _) = read_pack(&doc);
+
+    let blinks = pack
+        .get("stateBlinks")
+        .expect("stateBlinks section key (a Shared definition) must still be found");
+    assert_eq!(
+        *blinks,
+        settings_model::PackNode::Seq(vec![settings_model::PackNode::Seq(vec![
+            settings_model::PackNode::Str("flag_9".into()),
+            settings_model::PackNode::Bool(true),
+        ])]),
+    );
+
+    let order = pack
+        .get("shipLabelOrder")
+        .expect("shipLabels section key (a Ref) must still be found");
+    assert_eq!(
+        *order,
+        settings_model::PackNode::Seq(vec![settings_model::PackNode::Str("hull".into())]),
+    );
+    assert!(pack.get("shipLabels").is_some());
+
+    // and it still emits valid YAML
+    assert!(parse_pack(&emit_pack(&pack)).is_ok());
+}
