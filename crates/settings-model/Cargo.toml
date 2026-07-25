@@ -1,6 +1,6 @@
 [package]
 name = "settings-model"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 license = "MIT"
 
@@ -8,3 +8,4 @@ license = "MIT"
 blue-marshal = { path = "../blue-marshal" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+yaml-rust2 = "0.10"
