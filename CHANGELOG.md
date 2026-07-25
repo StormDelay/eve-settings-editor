@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-26
+
+Overview pack import and export.
+
+- **Treat this release's overview features as unstable.** Import and export of
+  overview packs has not yet been tested against a running EVE client — it is
+  covered by an extensive automated suite, including a check that 1771 real
+  settings files survive a full export-and-reimport unchanged, but nothing here
+  has been confirmed in-game. Back up your settings before importing a pack, and
+  expect rough edges in the Overview editor generally while this milestone
+  finishes.
+
+### Added
+- **Import and export overview packs.** The Overview editor reads and writes the
+  same YAML file EVE's own Overview Settings → Import/Export uses, so a
+  downloaded community pack can be applied to an account without logging in, and
+  your own overview can be shared as a pack EVE loads. Every section the pack
+  defines — presets, tabs, columns, state colours and colortags, blink flags,
+  in-space ship labels and the overview toggles — replaces that part of the
+  account; sections the pack omits are left alone, so modular "preset only"
+  packs work. Importing marks the file dirty: you still press Save, and the
+  usual backup is taken. Two limits worth knowing: importing a pack that
+  defines tabs discards your per-tab column overrides (pack columns are
+  account-global), and only the five colours EVE's own pack format has names
+  for round-trip — a custom colour outside that list is dropped on both
+  import and export rather than approximated.
+
 ## [0.13.0] - 2026-07-25
 
 Overview states, colours and tags.

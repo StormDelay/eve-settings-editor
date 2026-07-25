@@ -238,6 +238,21 @@ fn overview_set_bool(state: tauri::State<'_, AppState>, key: String, on: bool) -
 }
 
 #[tauri::command]
+fn pack_preview(path: String) -> Result<ops::PackSummary, ErrDto> {
+    ops::pack_preview(&path)
+}
+
+#[tauri::command]
+fn pack_import(state: tauri::State<'_, AppState>, path: String) -> Result<ops::PackImportResult, ErrDto> {
+    ops::pack_import(&state, &path)
+}
+
+#[tauri::command]
+fn pack_export(state: tauri::State<'_, AppState>, path: String) -> Result<settings_model::PackReport, ErrDto> {
+    ops::pack_export(&state, &path)
+}
+
+#[tauri::command]
 fn preset_set_states(state: tauri::State<'_, AppState>, name: String, filtered: Vec<i64>, always_shown: Vec<i64>) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::preset_set_states(&state, name, filtered, always_shown)
 }
@@ -338,6 +353,7 @@ pub fn run() {
             overview_window_add, overview_window_remove,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
+            pack_preview, pack_import, pack_export,
             autofill_lists, set_autofill_list, clear_all_autofill,
             setup_preview, setup_apply,
             stack_unstack, stack_add, stack_reorder, stack_create,

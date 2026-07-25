@@ -231,6 +231,10 @@ export interface OverviewColumns {
   appearance: Appearance;
 }
 
+export type PackSummary = { sections: [string, number][]; ignored: string[] };
+export type PackReport = { applied: string[]; warnings: string[] };
+export type PackImportResult = { columns: OverviewColumns; report: PackReport };
+
 export interface GroupEntry {
   id: number;
   name: string;
@@ -370,6 +374,9 @@ export const api = {
   stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
+  packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
+  packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
+  packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
 };
 
 export function errMessage(e: unknown): string {
