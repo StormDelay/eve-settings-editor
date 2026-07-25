@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-25
+
+Overview states, colours and tags.
+
+- The Overview editor now covers **state colouring** — the background colours and
+  colortags EVE paints on an overview row for war targets, criminals, fleet
+  members, standings and the rest — plus per-preset exceptions that hide or
+  always show a state.
+
+### Added
+- An **Appearance** sub-tab in the Overview editor: tick which states colour a
+  row, drag them into priority order (the first match wins), and set each state's
+  background colour. Background and Colortag are managed separately, as EVE does.
+- A state you have never customised shows EVE's own built-in colour instead of a
+  blank swatch, and **Reset** clears your override to restore it.
+- The six Appearance checkboxes — small colortags, small font, apply to
+  structures, apply to other objects in space, fleet broadcasts at the top, and
+  hide corporation ticker.
+- An **Exceptions** editor on each filter preset: set any state to Show, Hide or
+  Always show, so a preset can hide blues or always surface war targets whatever
+  its group filters say.
+
+### Changed
+- The Overview editor is split into **Columns**, **Filters** and **Appearance**
+  sub-tabs, mirroring EVE's own Overview Settings window.
+
 ## [0.12.0] - 2026-07-22
 
 Overview filter preset contents, and full support for EVE's built-in presets.
