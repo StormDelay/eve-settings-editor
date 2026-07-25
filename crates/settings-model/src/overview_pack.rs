@@ -238,6 +238,49 @@ fn write_scalar(n: &Node) -> String {
     }
 }
 
+/// EVE's overview colour palette: the names a pack uses for a state's row
+/// colour, and the RGBA the client writes for each.
+///
+/// HARVESTED FROM THE CORPUS, not from a client data file: an account that
+/// imported a pack keeps the pack's `stateColorsNameList` under
+/// `overview`→`restoreData`→`data` and the RGBA EVE derived from it under
+/// `overview`→`stateColors`; joining them across the corpus yields this table
+/// (`src/bin/pack_palette.rs`). A name absent here is skipped on import and a
+/// colour absent here is omitted on export — never approximated, since a
+/// near-miss would silently change the user's colours. Every name below
+/// mapped to exactly one RGBA across all contributing corpus files — no
+/// conflicts to resolve.
+pub(crate) const PALETTE: [(&str, [f64; 4]); 5] = [
+    ("blue", [0.2, 0.5, 1.0, 1.0]),
+    ("darkBlue", [0.0, 0.15, 0.6, 1.0]),
+    ("orange", [1.0, 0.35, 0.0, 1.0]),
+    ("red", [0.75, 0.0, 0.0, 1.0]),
+    ("white", [0.7, 0.7, 0.7, 1.0]),
+];
+
+pub fn color_rgba(name: &str) -> Option<[f64; 4]> {
+    PALETTE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
+}
+
+/// Exact match only. Two floats that differ in the last bit are not the same
+/// colour name, and guessing the nearest one would rewrite a user's colours.
+pub fn color_name(rgba: [f64; 4]) -> Option<&'static str> {
+    PALETTE.iter().find(|(_, c)| *c == rgba).map(|(n, _)| *n)
+}
+
+/// `"background_16"` → `("background", 16)`. Both `stateColorsNameList` and
+/// `stateBlinks` key their entries this way; the file keys them by a
+/// `(surface, id)` tuple instead.
+pub(crate) fn split_surface_key(s: &str) -> Option<(&str, i64)> {
+    let (surface, id) = s.rsplit_once('_')?;
+    if surface.is_empty() { return None }
+    Some((surface, id.parse().ok()?))
+}
+
+pub(crate) fn join_surface_key(surface: &str, id: i64) -> String {
+    format!("{surface}_{id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +483,38 @@ userSettings:
         assert!(text.contains("columnOrder: true\n"), "missing space after colon: {text}");
         let again = parse_pack(&text).unwrap();
         assert_eq!(again.get("columnOrder"), Some(&Node::Bool(true)));
+    }
+
+    #[test]
+    fn palette_maps_both_directions() {
+        assert_eq!(color_rgba("darkBlue"), Some([0.0, 0.15, 0.6, 1.0]));
+        assert_eq!(color_rgba("blue"), Some([0.2, 0.5, 1.0, 1.0]));
+        assert_eq!(color_rgba("red"), Some([0.75, 0.0, 0.0, 1.0]));
+        assert_eq!(color_name([0.0, 0.15, 0.6, 1.0]), Some("darkBlue"));
+        assert_eq!(color_rgba("chartreuse"), None);
+        assert_eq!(color_name([0.123, 0.0, 0.0, 1.0]), None, "no near-miss matching");
+    }
+
+    #[test]
+    fn palette_has_no_duplicate_colours() {
+        for (i, (_, a)) in PALETTE.iter().enumerate() {
+            for (_, b) in PALETTE.iter().skip(i + 1) {
+                assert_ne!(a, b, "two names share an RGBA, so color_name is ambiguous");
+            }
+        }
+    }
+
+    #[test]
+    fn splits_and_joins_surface_keys() {
+        assert_eq!(split_surface_key("background_16"), Some(("background", 16)));
+        assert_eq!(split_surface_key("flag_9"), Some(("flag", 9)));
+        assert_eq!(split_surface_key("background"), None);
+        assert_eq!(split_surface_key("background_x"), None);
+        // Every real surface name is a single word, so this case never occurs in
+        // the corpus; it exists only to pin "split on the LAST underscore" as the
+        // contract, since a single-underscore case can't distinguish that from
+        // splitting on the first.
+        assert_eq!(split_surface_key("some_thing_5"), Some(("some_thing", 5)));
+        assert_eq!(join_surface_key("flag", 9), "flag_9".to_string());
     }
 }
