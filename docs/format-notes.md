@@ -623,8 +623,11 @@ harmless — not yet verified).
   entries under root → `b"windows"`: `b"openWindows"`,
   `b"collapsedWindows"`, `b"minimizedWindows"`, `b"lockedWindows"`,
   `b"compactWindows"`, `b"isOverlayedWindows"`,
-  `b"isLightBackgroundWindows"`, `b"stacksWindows"` (values bool, except
-  stacksWindows: stack id). These are the spec's WindowLayout flag fields.
+  `b"isLightBackgroundWindows"`, `b"stacksWindows"`, and `b"pinnedWindows"`
+  (values bool, except stacksWindows: stack id). `pinnedWindows` is present in
+  352 of 384 character files in both the 2026-07-22 and 2026-07-12 corpus
+  snapshots — a stable key, not one being phased in or out. These are the
+  spec's WindowLayout flag fields.
 - Overview column *widths* observed under root → `b"ui"` →
   `b"SortHeadersSizes"` / `b"SortHeadersSettings2"` keyed by tuple
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
@@ -670,6 +673,60 @@ live window ids on load and will not reclaim one it sees in use. One residual
 unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
+
+### HUD anchors (corpus-derived; the placement conventions are NOT yet confirmed in-game)
+
+Where EVE stores the screen furniture the layout canvas draws — the ship HUD
+(capacitor plus module racks), the detached fighter UI, the neocom and the
+notification badge. Every key below is an ordinary `(timestamp, value)` leaf, so
+it needs the usual value-wrapper unwrap. Counts are files containing the key in
+the 2026-07-22 corpus snapshot (384 character files, 175 account files).
+
+Character file (`core_char_<id>.dat`):
+
+- root → `b"windows"` → `b"shipuialignleftoffset"`: Float, e.g. `-189.0`,
+  `-173.0` — the ship HUD's horizontal offset. 315/384. The only float in the
+  layout surface, which matters for the write path (`NewValue::Float`).
+- root → `b"ui"` → `b"fightersDetachedPosition"`: Int 2-tuple, e.g. `(326, 54)`.
+  319/384.
+- root → `b"ui"` → `b"notification_badge_offset"`: Int 2-tuple, e.g.
+  `(2519, 131)`. 313/384.
+
+Account file (`core_user_<id>.dat`) — these are account-wide, so one edit
+changes every character on the account:
+
+- root → `b"ui"` → `b"shipuialigntop"` (Bool, 131/175),
+  `b"detachFighterUI"` (Bool, 130/175), `b"displayFighterUI"` (Bool, 131/175).
+- root → `b"windows"` → `b"neocomWidth"` (Int, e.g. `37`, 130/175).
+
+**The account file's `ui` section key is `Ref`-keyed** — a `Ref` whose
+byte-string definition appears *later* in the stream, which the trailing
+shared-object table makes legal. A section lookup that compares a bare
+`Value::Bytes` (as `treewalk::is_bytes` does) therefore misses it entirely and
+projects nothing from real account files; resolve section keys through
+`effective` first. `hud.rs::section` does this.
+
+Absent means "EVE's built-in default", not "zero": 69/384 character files have
+no `shipuialignleftoffset` at all. Minting one as `(Long(0), value)` — the
+zero-timestamp mint already proven by the overview-presets container — is what
+`hud.rs::set_hud_value` does.
+
+**Still unconfirmed (no in-game capture has been run for this slice).** The
+files store anchors but never sizes, and never state what an anchor is relative
+to. The editor currently assumes, and `app/src/lib/layout.ts` isolates, all of:
+
+- `shipuialignleftoffset` is **centre-relative**, positive to the right. Basis:
+  small negative values on clients of two different widths (1920 and 2560).
+- the two point tuples are **top-left corners** in absolute client pixels.
+  Counter-evidence worth resolving: one character reads `(1280, 660)` on a
+  2560×1440 client, where x is *exactly* half the screen width — which is what
+  a centre-anchored panel would look like.
+- nominal on-screen sizes, invented: ship HUD 686×250, fighter UI 400×120,
+  badge 32×32.
+
+Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
+the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
+`hudRects` ↔ `hudPointFromRect`), which a round-trip unit test pins together.
 
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
