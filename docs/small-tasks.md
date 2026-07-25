@@ -13,6 +13,29 @@ Workflow:
 
 ## Open
 
+- [ ] **Run the overview-pack live in-game smoke — deliberately skipped before
+  merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
+  its live smoke; the user chose to come back to it. Nothing in the branch has been
+  proven against a running client, so the checklist below is still entirely
+  outstanding. From the spec's §8: import a published community pack and verify
+  tabs, presets, colours and in-space ship labels in-game; export from the editor
+  and confirm EVE's own Import Overview Settings accepts the file; determine which
+  internal boolean `applyOnlyToShips` maps to, and whether a current-client export
+  uses the suffixed (`backgroundStates2`) or unsuffixed state-list names (the
+  reader accepts both either way). Plus the additions the whole-branch review
+  earned: use a real **three-window** account (`[[0,1,2,3,4,7],[5],[6]]` — the
+  shape 812 of 825 mapped corpus accounts have, NOT a hand-made two-window one)
+  and import packs with both more and fewer tabs than the account, checking
+  whether EVE renders a duplicated tab and what it does with a secondary window
+  whose list ends up empty; import onto an account with **no tab settings at all**
+  (385 of 1925 accounts — the first real exercise of the zero-tab fallback path);
+  import a pack whose ship labels carry **colours** (the C2 regression); export →
+  let EVE import it → export again from EVE and **diff the two exports**, which is
+  what tells you whether EVE round-trips what we wrote or quietly normalises it;
+  and import a **tab-layout-only** pack (no `presets` section) to see what EVE does
+  with tabs whose `overview`/`bracket` names the account has no preset for.
+  _Added 2026-07-26._
+
 - [ ] **Tab order inside a window is not expressible in a pack, so export → re-import
   resets it.** A window's tab order comes from the per-window list in
   `tabsByWindowInstanceID`, and that mapping has no representation in EVE's pack
