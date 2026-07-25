@@ -623,8 +623,11 @@ harmless — not yet verified).
   entries under root → `b"windows"`: `b"openWindows"`,
   `b"collapsedWindows"`, `b"minimizedWindows"`, `b"lockedWindows"`,
   `b"compactWindows"`, `b"isOverlayedWindows"`,
-  `b"isLightBackgroundWindows"`, `b"stacksWindows"` (values bool, except
-  stacksWindows: stack id). These are the spec's WindowLayout flag fields.
+  `b"isLightBackgroundWindows"`, `b"stacksWindows"`, and `b"pinnedWindows"`
+  (values bool, except stacksWindows: stack id). `pinnedWindows` is present in
+  352 of 384 character files in both the 2026-07-22 and 2026-07-12 corpus
+  snapshots — a stable key, not one being phased in or out. These are the
+  spec's WindowLayout flag fields.
 - Overview column *widths* observed under root → `b"ui"` →
   `b"SortHeadersSizes"` / `b"SortHeadersSettings2"` keyed by tuple
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
