@@ -15,7 +15,7 @@
     selectedId = $bindable(null),
     onReveal,
     onDirty,
-    sharedLabel = "",
+    sharedNames = [],
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -25,7 +25,11 @@
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
     onDirty: (slot: Slot) => void;
-    sharedLabel?: string;
+    /** Other characters on this account — named in HudPanel's account-row
+     * legend. Unlike the Overview/Autofill views, only four of this view's
+     * fields are account-wide, so the warning belongs on those rows, not
+     * above the whole view. */
+    sharedNames?: string[];
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -36,6 +40,10 @@
   let preview: Record<string, { x: number; y: number; w: number; h: number }> = $state({});
   // Live drag preview for furniture, keyed by kind (data px).
   let fPreview: Record<string, { x: number; y: number }> = $state({});
+  // The selected furniture element, if any. Furniture isn't a window — it has
+  // no id in `layout.windows` — so it needs its own selection alongside
+  // `selectedId`; the two are kept mutually exclusive (see selectWindow).
+  let selectedFurniture = $state<FurnitureRect["kind"] | null>(null);
 
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its
@@ -126,7 +134,21 @@
 
   // --- Panel callbacks -----------------------------------------------------
 
-  const onSelect = (id: string) => (selectedId = id);
+  /** Selecting a window clears the furniture selection, and vice versa (see
+   * startFurniture) — the canvas shows one selection, not two. */
+  function selectWindow(id: string) {
+    selectedId = id;
+    selectedFurniture = null;
+  }
+
+  /** The mirror of clicking a rectangle: selecting a group in HudPanel
+   * highlights the furniture it edits on the canvas. */
+  function selectFurniture(kind: FurnitureRect["kind"]) {
+    selectedFurniture = kind;
+    selectedId = null;
+  }
+
+  const onSelect = (id: string) => selectWindow(id);
 
   function onToggleOpen(w: WindowRect) {
     const open = w.flags.find((f) => f.name === "openWindows");
@@ -181,20 +203,25 @@
   const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
 
+  // Selecting furniture and dragging it are separate: the neocom can't be
+  // dragged (its width is a field, not a rect) but must still be selectable, or
+  // clicking it looks broken. Selection is exclusive with the window selection,
+  // so exactly one thing on the canvas ever reads as selected.
   function startFurniture(f: FurnitureRect, e: PointerEvent) {
+    selectFurniture(f.kind);
+    e.stopPropagation();
     if (readOnly || f.drag === "none") return;
     const r = fRectOf(f);
     drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
-    e.stopPropagation();
   }
 
   // Capture on the canvas (not the rectangle) so its onpointermove/up keep
   // firing even as the pointer leaves the rectangle during a drag.
   function startMove(unit: DrawUnit, e: PointerEvent) {
     if (readOnly) return;
-    selectedId = unit.anchor.id;
+    selectWindow(unit.anchor.id);
     // Origin from the DISPLAYED rect (preview if a prior drop is still
     // committing), not the committed geom — otherwise a re-drag before the
     // async commit lands would start from stale coordinates and jump.
@@ -206,7 +233,7 @@
 
   function startResize(unit: DrawUnit, corner: Corner, e: PointerEvent) {
     if (readOnly) return;
-    selectedId = unit.anchor.id;
+    selectWindow(unit.anchor.id);
     // Origin from the displayed rect (see startMove), so a resize started
     // before a prior drop finishes committing doesn't jump.
     const r = rectOf(unit.anchor);
@@ -332,6 +359,7 @@
           <div
             class="furniture"
             class:draggable={f.drag !== "none" && !readOnly}
+            class:selected={selectedFurniture === f.kind}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(f.w, scale)}px; height: {toCanvas(f.h, scale)}px;"
             onpointerdown={(e) => startFurniture(f, e)}>
@@ -353,7 +381,7 @@
                 {#each unit.tabs as tab (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <span class="tab" class:active={tab.id === selectedId}
-                    onpointerdown={(e) => { e.stopPropagation(); selectedId = tab.id; }}>{tab.label}</span>
+                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{tab.label}</span>
                 {/each}
               </div>
             {:else}
@@ -371,9 +399,14 @@
       <p class="ref">reference {layout.reference_w}×{layout.reference_h}</p>
     </div>
     <div class="side">
-      {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
       {#if hud}
-        <HudPanel {hud} {readOnly} onSet={setHud} />
+        <HudPanel
+          {hud}
+          {readOnly}
+          onSet={setHud}
+          {sharedNames}
+          selectedKind={selectedFurniture}
+          onSelectKind={selectFurniture} />
       {/if}
       <WindowPanel
         windows={layout.windows}
@@ -412,10 +445,6 @@
     min-height: 0;
     overflow: auto;
   }
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
-  }
   .canvas {
     position: relative;
     background: #1b1f27;
@@ -432,12 +461,23 @@
     color: #94a3b8;
     font-size: 11px;
     overflow: hidden;
-    pointer-events: none;
+    /* Clickable so it can be selected, but furniture is drawn BEFORE the window
+       rects, so an overlapping window is the later sibling and still wins the
+       click — it can't swallow a window drag. */
+    pointer-events: auto;
+    cursor: pointer;
     touch-action: none;
   }
   .furniture.draggable {
-    pointer-events: auto;
     cursor: move;
+  }
+  /* The same amber as .win.selected, so a selection reads identically whether
+     it's a window or furniture; the dashed border still says "not a window". */
+  .furniture.selected {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.25);
+    color: #fde68a;
+    z-index: 1;
   }
   .furniture-label {
     padding: 1px 3px;
