@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-26
+
+The ship HUD, fighter UI and neocom on the layout canvas.
+
+- **The furniture's size and anchoring on the canvas are estimates.** EVE's
+  files record where these elements sit but never how large they are, and never
+  state what the stored coordinate is measured from — so the rectangles are
+  drawn from informed guesses, and nothing here has been checked against a
+  running client. The numbers in the panel are exactly what the file holds and
+  are safe to trust; the drawing is an approximation, so use the fields when
+  precision matters. Back up your settings before a session of dragging.
+
+### Added
+- **The layout canvas draws your screen furniture.** The ship HUD (capacitor
+  ring and module racks), the detached fighter UI, the neocom and the
+  notification badge now appear alongside your windows, so you can arrange
+  windows around the things that were previously invisible to the editor. The
+  ship HUD drags sideways, the fighter panel and the badge drag freely, and
+  each element can be selected from either the canvas or the panel — selecting
+  one highlights the other.
+- **A HUD & Neocom panel** with the exact numbers behind those elements: the
+  ship HUD's offset and top alignment, the fighter UI's position and its
+  detached/shown toggles, the neocom's width, and the notification badge's
+  position. A value EVE has never stored shows its built-in default, marked as
+  such, and is created the first time you edit it.
+- **Account-wide fields are marked as such.** Four of the nine — the HUD's top
+  alignment, the fighter UI's detached and shown toggles, and the neocom width
+  — are stored once per account rather than per character, so a legend names
+  the other characters an edit will also change.
+- **The per-window "pinned" flag** is now listed with the other window flags in
+  the Layout editor.
+
+### Fixed
+- **Window-stack edits could be silently discarded.** Un-stacking a window,
+  adding one to a stack, reordering stack tabs or creating a stack marked
+  nothing as unsaved — so unless you also dragged or resized something, Save
+  skipped that file and the change was gone on reload.
+
 ## [0.14.0] - 2026-07-26
 
 Overview pack import and export.
