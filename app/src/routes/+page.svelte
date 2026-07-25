@@ -448,9 +448,11 @@
             {runMutations}
             readOnly={current.fidelity.state !== "editable"}
             refreshToken={savedAt}
+            userOpen={slots.user?.status === "opened"}
             bind:selectedId={selectedWindowId}
             onReveal={revealInTree}
-            onDirty={(slot) => (dirtySlots[slot] = true)} />
+            onDirty={(slot) => (dirtySlots[slot] = true)}
+            sharedLabel={sharedLabel} />
         </div>
       {:else if view === "overview"}
         <div class="tree-area">
