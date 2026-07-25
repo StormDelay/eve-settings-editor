@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-26
+
+Overview pack import and export.
+
+- **Treat this release's overview features as unstable.** Import and export of
+  overview packs has not yet been tested against a running EVE client — it is
+  covered by an extensive automated suite, including a check that 1771 real
+  settings files survive a full export-and-reimport unchanged, but nothing here
+  has been confirmed in-game. Back up your settings before importing a pack, and
+  expect rough edges in the Overview editor generally while this milestone
+  finishes.
+
 ### Added
 - **Import and export overview packs.** The Overview editor reads and writes the
   same YAML file EVE's own Overview Settings → Import/Export uses, so a
