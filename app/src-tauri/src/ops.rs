@@ -770,6 +770,31 @@ pub fn preset_set_groups(state: &AppState, name: String, groups: Vec<i64>) -> Re
     edit_user_tabs(state, |v| set_preset_groups(v, &name, &groups))
 }
 
+pub fn overview_set_states(state: &AppState, which: String, ids: Vec<i64>) -> Result<OverviewColumns, ErrDto> {
+    let list = match which.as_str() {
+        "background" => settings_model::StateList::Background,
+        "backgroundOrder" => settings_model::StateList::BackgroundOrder,
+        "flag" => settings_model::StateList::Flag,
+        "flagOrder" => settings_model::StateList::FlagOrder,
+        other => return Err(ErrDto::new("overview", format!("unknown state list {other}"))),
+    };
+    edit_user_tabs(state, |v| settings_model::set_state_list(v, list, &ids))
+}
+
+pub fn overview_set_state_color(state: &AppState, id: i64, rgba: Option<[f64; 4]>) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| settings_model::set_state_color(v, id, rgba))
+}
+
+pub fn overview_set_bool(state: &AppState, key: String, on: bool) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| settings_model::set_overview_bool(v, &key, on))
+}
+
+pub fn preset_set_states(
+    state: &AppState, name: String, filtered: Vec<i64>, always_shown: Vec<i64>,
+) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| settings_model::set_preset_states(v, &name, &filtered, &always_shown))
+}
+
 /// Fork a preset from explicit lists (e.g. a built-in default not stored in the
 /// file) and point the tab at it, in one edit.
 pub fn preset_fork(
