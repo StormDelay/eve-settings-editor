@@ -760,6 +760,22 @@ A `filterOut` key — a `(timestamp, None)` sibling in the overview container �
 observed appearing during the 36/37 experiment. It is not a state key and is not
 touched by this slice.
 
+- Overview **packs** (the YAML EVE's Overview Settings → Misc Import/Export
+  writes) encode dicts as sequences of two-element `[key, value]` sequences and
+  use a vocabulary of their own: `backgroundStates`/`backgroundOrder`/
+  `flagStates`/`flagOrder` (the file's `…2` keys without the suffix),
+  `columnOrder` (`overviewColumnOrder`), `presets`
+  (`overviewProfilePresets` — bracket presets are ordinary presets, referenced
+  by a tab's `bracket` field), `tabSetup` (`tabsettings_new`),
+  `stateColorsNameList` (`stateColors`, by palette NAME not RGBA),
+  `stateBlinks`, `shipLabels`/`shipLabelOrder` and `userSettings`.
+- `overview` → `restoreData` → `data` holds the LAST IMPORTED PACK verbatim in
+  that pack vocabulary, and `presetHistoryKeys` is the imported-pack MRU (keyed
+  by content hash, `overviewName` = the pack's name). Joining `restoreData`'s
+  `stateColorsNameList` against the live `stateColors` is how the colour palette
+  (`darkBlue` = `(0.0, 0.15, 0.6, 1.0)`, …) was derived — see
+  `overview_pack.rs` `PALETTE`. Both keys stay read-only for us.
+
 ### Autofill / remembered-string lists (experiment 4: ran a People & Places search)
 
 All remembered text-input history in the client is **one structure**, in
@@ -784,6 +800,18 @@ All remembered text-input history in the client is **one structure**, in
   Str) with `b"overviewProfilePresets_notSaved"`, `b"presetHistoryKeys"`,
   `b"restoreData"` as session-state siblings — raw-tree-only in V1 per
   spec §6.
+
+### `tabsByWindowInstanceID` shape on real accounts (overview pack review, 2026-07-26)
+
+Measured across the full 1925-account corpus while fixing a pack-import bug
+(a re-import that re-pointed this mapping was duplicating a tab index across
+two windows): of 1925 corpus accounts, **825 carry a `tabsByWindowInstanceID`
+mapping** at all; **823 of those have exactly three windows**; **812 of those
+are split 6+1+1** (one "everything else" window holding six tabs, and two
+single-tab windows). A mapping this lopsided is exactly the shape that makes
+a naive "give window 0 every tab, then filter the rest" re-point wrong: window
+0 must be built from what the OTHER windows don't claim, not the other way
+around.
 
 ### Name presence (Task 11 decision: local extraction NOT viable)
 
