@@ -895,20 +895,31 @@ pub fn pack_preview(path: &str) -> Result<PackSummary, ErrDto> {
     Ok(PackSummary { sections, ignored: pack.ignored })
 }
 
+/// `pack_import`'s result: the re-projected columns plus the apply report, so
+/// the UI can surface warnings ("unknown colour name…", "ignored empty
+/// 'presets' section…") on import the same way `pack_export` already does.
+#[derive(Debug, serde::Serialize)]
+pub struct PackImportResult {
+    pub columns: OverviewColumns,
+    pub report: settings_model::PackReport,
+}
+
 /// Apply a pack to the open account file. Marks the slot dirty like every other
 /// editor — the user saves, and the normal backup chain applies.
-pub fn pack_import(state: &AppState, path: &str) -> Result<OverviewColumns, ErrDto> {
+pub fn pack_import(state: &AppState, path: &str) -> Result<PackImportResult, ErrDto> {
     let pack = read_pack_file(path)?;
-    {
+    let report = {
         let mut guard = state.user.lock().unwrap();
         let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
         if let Fidelity::ReadOnly { reason } = &doc.fidelity {
             return Err(ErrDto::new("read_only", reason.clone()));
         }
-        settings_model::apply_pack(&mut doc.value, &pack).map_err(pack_err)?;
+        let report = settings_model::apply_pack(&mut doc.value, &pack).map_err(pack_err)?;
         doc.value = blue_marshal::reshare(&doc.value);
-    }
-    overview_columns(state)
+        report
+    };
+    let columns = overview_columns(state)?;
+    Ok(PackImportResult { columns, report })
 }
 
 /// Write the open account's overview out as a pack. Exports the IN-MEMORY

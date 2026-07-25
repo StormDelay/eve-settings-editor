@@ -7,10 +7,13 @@
 use std::path::{Path, PathBuf};
 use settings_model::{emit_pack, parse_pack, read_pack};
 
-fn user_files(root: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(root) else { return };
-    for e in rd.flatten() {
-        let p = e.path();
+fn user_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("corpus walk failed at {}: {e}", dir.display()));
+    for entry in entries {
+        let entry = entry
+            .unwrap_or_else(|e| panic!("corpus walk failed under {}: {e}", dir.display()));
+        let p = entry.path();
         if p.is_dir() { user_files(&p, out); }
         else if p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("core_user_")) {
             out.push(p);
@@ -21,6 +24,10 @@ fn user_files(root: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn every_corpus_user_file_round_trips_as_a_pack() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
+    if !root.is_dir() {
+        eprintln!("corpus missing at {root:?} — skipping (run tools/sync-corpus.ps1)");
+        return;
+    }
     let mut files = Vec::new();
     user_files(&root, &mut files);
     if files.is_empty() { eprintln!("corpus not present, skipping"); return; }

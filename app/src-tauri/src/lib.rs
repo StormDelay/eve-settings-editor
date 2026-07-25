@@ -243,7 +243,7 @@ fn pack_preview(path: String) -> Result<ops::PackSummary, ErrDto> {
 }
 
 #[tauri::command]
-fn pack_import(state: tauri::State<'_, AppState>, path: String) -> Result<settings_model::OverviewColumns, ErrDto> {
+fn pack_import(state: tauri::State<'_, AppState>, path: String) -> Result<ops::PackImportResult, ErrDto> {
     ops::pack_import(&state, &path)
 }
 
