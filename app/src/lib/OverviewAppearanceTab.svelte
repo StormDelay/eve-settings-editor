@@ -43,10 +43,11 @@
   const enabled = $derived(
     surfaceUnset ? (isBg ? DEFAULT_BACKGROUND_STATES : DEFAULT_FLAG_STATES) : (stored?.enabled ?? []),
   );
-  // Render `order` verbatim — it's a priority list and carries ids the client
-  // never draws (68), which must keep their slots. An enabled id somehow absent
-  // from it is appended so it stays reachable instead of being invisible and
-  // impossible to untick.
+  // Iterate `order` verbatim — it's a priority list and carries ids the client
+  // never draws (68), which must keep their slots, so they stay in `rows` (and
+  // thus in every reorder) even though the markup skips drawing them. An enabled
+  // id somehow absent from it is appended so it stays reachable instead of being
+  // invisible and impossible to untick.
   const rows = $derived([...order, ...enabled.filter((id) => !order.includes(id))]);
   const enabledSet = $derived(new Set(enabled));
   const colors = $derived(new Map(appearance?.colors ?? []));
@@ -128,6 +129,10 @@
 
   <ul class="state-list">
     {#each rows as id, i (id)}
+      <!-- An id with no label is one the client never draws (68): EVE's own
+           Appearance list has no row for it, so neither do we. It stays in
+           `rows`, keeping its slot through every reorder. -->
+      {#if stateLabel(id)}
       <li draggable="true"
           ondragstart={(e) => { dragFrom = i;
             // WebView2/Chromium won't fire `drop` unless dragstart sets data.
@@ -141,7 +146,7 @@
         <label class="state-label">
           <input type="checkbox" checked={enabledSet.has(id)}
                  onchange={(e) => toggleState(id, (e.currentTarget as HTMLInputElement).checked)} />
-          {stateLabel(id) ?? `#${id}`}
+          {stateLabel(id)}
         </label>
         {#if isBg}
           {@const c = colors.get(id)}
@@ -161,6 +166,7 @@
           {/if}
         {/if}
       </li>
+      {/if}
     {/each}
   </ul>
 {/if}
