@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, errMessage, type OverviewColumns } from "./api";
-  import { message, confirm } from "@tauri-apps/plugin-dialog";
+  import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { documentDir } from "@tauri-apps/api/path";
   import { names } from "./names.svelte";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
@@ -144,6 +145,70 @@
     try { data = await api.tabReorder(windowIdx, order); onUserDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
+
+  // Pack import/export is account-wide, so it lives in the view header rather
+  // than inside one sub-tab. Import marks the slot dirty; the user still saves.
+  let packBusy = $state(false);
+
+  // EVE's own export lands in Documents/EVE/Overview, so start the picker there.
+  // Best-effort: if the path can't be resolved the dialog just opens wherever it
+  // last was.
+  async function overviewFolder(): Promise<string | undefined> {
+    try {
+      return `${await documentDir()}EVE/Overview`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function importPack() {
+    const picked = await openDialog({
+      multiple: false,
+      defaultPath: await overviewFolder(),
+      filters: [{ name: "Overview pack", extensions: ["yaml", "yml"] }],
+    });
+    if (typeof picked !== "string") return;
+    packBusy = true;
+    try {
+      const summary = await api.packPreview(picked);
+      const what = summary.sections
+        .map(([name, count]) => (count > 0 ? `${name} (${count})` : name))
+        .join(", ");
+      const ignored = summary.ignored.length
+        ? `\n\nIgnored unknown sections: ${summary.ignored.join(", ")}`
+        : "";
+      const ok = await confirm(
+        `This pack contains: ${what}.\n\nEach of those replaces your account's current overview settings. Per-tab column overrides are discarded.${ignored}`,
+        { title: "Import overview pack", kind: "warning" },
+      );
+      if (!ok) return;
+      data = await api.packImport(picked);
+      onUserDirty();
+      await message("Pack imported. Save to write it to the account file.", { title: "Import overview pack" });
+    } catch (e) {
+      await message(errMessage(e), { title: "Import failed", kind: "error" });
+    } finally {
+      packBusy = false;
+    }
+  }
+
+  async function exportPack() {
+    const picked = await saveDialog({
+      defaultPath: "overview.yaml",
+      filters: [{ name: "Overview pack", extensions: ["yaml"] }],
+    });
+    if (typeof picked !== "string") return;
+    packBusy = true;
+    try {
+      const report = await api.packExport(picked);
+      const warnings = report.warnings.length ? `\n\n${report.warnings.join("\n")}` : "";
+      await message(`Exported ${report.applied.length} section(s).${warnings}`, { title: "Export overview pack" });
+    } catch (e) {
+      await message(errMessage(e), { title: "Export failed", kind: "error" });
+    } finally {
+      packBusy = false;
+    }
+  }
 </script>
 
 {#if !userOpen && charId !== null}
@@ -260,6 +325,10 @@
       <button role="tab" aria-selected={sub === name} class:active={sub === name}
               onclick={() => (sub = name)}>{name}</button>
     {/each}
+    <span class="pack-actions">
+      <button onclick={importPack} disabled={packBusy} title="Replace this account's overview from an EVE overview pack">Import pack…</button>
+      <button onclick={exportPack} disabled={packBusy} title="Write this account's overview out as an EVE overview pack">Export pack…</button>
+    </span>
   </div>
   <div hidden={sub !== "Columns"}>
     <OverviewColumnsTab {data} {tabIndex} {charId} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
@@ -309,4 +378,5 @@
     color: var(--fg-dim); padding: 0.3rem 0.7rem; font: inherit; cursor: pointer;
   }
   .subtabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  .pack-actions { margin-left: auto; display: flex; gap: 0.4rem; }
 </style>
