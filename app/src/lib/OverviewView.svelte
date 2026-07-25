@@ -189,6 +189,11 @@
       if (!ok) return;
       const result = await api.packImport(picked);
       data = result.columns;
+      // A pack can replace the tab set wholesale (or the account may have had
+      // none at all); if the previously-selected tab no longer exists, fall
+      // back to the first tab rather than leaving tabIndex dangling — same
+      // rule deleteTab already follows.
+      if (!data.tabs.some((t) => t.index === tabIndex)) tabIndex = data.tabs[0]?.index ?? null;
       onUserDirty();
       const warnings = result.report.warnings.length ? `\n\n${result.report.warnings.join("\n")}` : "";
       await message(`Pack imported. Save to write it to the account file.${warnings}`, { title: "Import overview pack" });
@@ -227,125 +232,131 @@
   <p class="hint">Open a character or account file to edit overview columns.</p>
 {:else if error}
   <p class="error">{error}</p>
-{:else if data && data.tabs.length === 0}
-  <p class="hint">This account file has no overview tabs.</p>
 {:else if data}
   {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
-  <div class="ov-controls">
-    <label>Tab
-      <select bind:value={tabIndex}>
-        {#if data.windows.length > 0}
-          {@const grouped = new Set(data.windows.flatMap((w) => w.tab_indices))}
-          {@const orphans = data.tabs.filter((t) => !grouped.has(t.index))}
-          {#each data.windows as w (w.index)}
-            <optgroup label="Overview {w.index + 1}">
-              {#each w.tab_indices as idx (idx)}
-                <option value={idx}>{data.tabs.find((t) => t.index === idx)?.name ?? `Tab ${idx}`}</option>
-              {/each}
-            </optgroup>
-          {/each}
-          {#if orphans.length > 0}
-            <optgroup label="Other">
-              {#each orphans as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
-            </optgroup>
-          {/if}
-        {:else}
-          {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
-        {/if}
-      </select>
-    </label>
-    <div class="tab-actions">
-      <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
-      <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
-      <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
-      {#if currentWindow && data.windows.length > 1}
-        {@const cw = currentWindow}
-        <select aria-label="Move to window" value=""
-                onchange={(e) => {
-                  const el = e.currentTarget as HTMLSelectElement;
-                  const v = el.value;
-                  el.value = "";
-                  if (v) moveTab(Number(v));
-                }}>
-          <option value="" disabled>Move to window…</option>
-          {#each data.windows as w (w.index)}
-            {#if w.index !== cw.index}
-              <option value={w.index}>Overview {w.index + 1}</option>
+  {#if data.tabs.length === 0}
+    <p class="hint">This account file has no overview tabs.</p>
+  {:else}
+    <div class="ov-controls">
+      <label>Tab
+        <select bind:value={tabIndex}>
+          {#if data.windows.length > 0}
+            {@const grouped = new Set(data.windows.flatMap((w) => w.tab_indices))}
+            {@const orphans = data.tabs.filter((t) => !grouped.has(t.index))}
+            {#each data.windows as w (w.index)}
+              <optgroup label="Overview {w.index + 1}">
+                {#each w.tab_indices as idx (idx)}
+                  <option value={idx}>{data.tabs.find((t) => t.index === idx)?.name ?? `Tab ${idx}`}</option>
+                {/each}
+              </optgroup>
+            {/each}
+            {#if orphans.length > 0}
+              <optgroup label="Other">
+                {#each orphans as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+              </optgroup>
             {/if}
-          {/each}
+          {:else}
+            {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+          {/if}
         </select>
-      {/if}
-      {#if data.windows.length >= 1}
-        <button onclick={startAddWindow} title="Add a new overview window">+ Window</button>
-      {/if}
-      {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
-        <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
-      {/if}
-    </div>
-    {#if pending}
-      <div class="name-entry">
-        <input type="text" bind:value={pending.value} use:focusInput
-               placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
-               onkeydown={(e) => {
-                 if (e.key === "Enter") { e.preventDefault(); submitPending(); }
-                 else if (e.key === "Escape") pending = null;
-               }} />
-        <button onclick={submitPending}>
-          {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
-        </button>
-        <button onclick={() => (pending = null)}>Cancel</button>
+      </label>
+      <div class="tab-actions">
+        <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
+        <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
+        <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
+        {#if currentWindow && data.windows.length > 1}
+          {@const cw = currentWindow}
+          <select aria-label="Move to window" value=""
+                  onchange={(e) => {
+                    const el = e.currentTarget as HTMLSelectElement;
+                    const v = el.value;
+                    el.value = "";
+                    if (v) moveTab(Number(v));
+                  }}>
+            <option value="" disabled>Move to window…</option>
+            {#each data.windows as w (w.index)}
+              {#if w.index !== cw.index}
+                <option value={w.index}>Overview {w.index + 1}</option>
+              {/if}
+            {/each}
+          </select>
+        {/if}
+        {#if data.windows.length >= 1}
+          <button onclick={startAddWindow} title="Add a new overview window">+ Window</button>
+        {/if}
+        {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
+          <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
+        {/if}
       </div>
+      {#if pending}
+        <div class="name-entry">
+          <input type="text" bind:value={pending.value} use:focusInput
+                 placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
+                 onkeydown={(e) => {
+                   if (e.key === "Enter") { e.preventDefault(); submitPending(); }
+                   else if (e.key === "Escape") pending = null;
+                 }} />
+          <button onclick={submitPending}>
+            {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
+          </button>
+          <button onclick={() => (pending = null)}>Cancel</button>
+        </div>
+      {/if}
+      <label>Character (for widths)
+        <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
+          <option value="" disabled>Select…</option>
+          {#each characters as c (c)}<option value={c}>{names[c]?.name ?? c}</option>{/each}
+        </select>
+      </label>
+    </div>
+    {#if currentWindow && currentWindow.tab_indices.length > 1}
+      {@const cw = currentWindow}
+      <ul class="ov-tabs">
+        {#each cw.tab_indices as idx, i (idx)}
+          {@const t = data.tabs.find((x) => x.index === idx)}
+          <li draggable="true" class:selected={idx === tabIndex}
+              ondragstart={(e) => { tabDragFrom = i;
+                // WebView2/Chromium won't fire `drop` unless dragstart sets data.
+                e.dataTransfer?.setData("text/plain", String(i));
+                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
+              ondragover={(e) => { e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+              ondrop={(e) => { e.preventDefault(); dropTab(i); }}
+              ondragend={() => (tabDragFrom = null)}>
+            <span class="grip" title="Drag to reorder">⠿</span>
+            <button type="button" class="tab-chip" onclick={() => (tabIndex = idx)}>{t?.name ?? `Tab ${idx}`}</button>
+          </li>
+        {/each}
+      </ul>
     {/if}
-    <label>Character (for widths)
-      <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
-        <option value="" disabled>Select…</option>
-        {#each characters as c (c)}<option value={c}>{names[c]?.name ?? c}</option>{/each}
-      </select>
-    </label>
-  </div>
-  {#if currentWindow && currentWindow.tab_indices.length > 1}
-    {@const cw = currentWindow}
-    <ul class="ov-tabs">
-      {#each cw.tab_indices as idx, i (idx)}
-        {@const t = data.tabs.find((x) => x.index === idx)}
-        <li draggable="true" class:selected={idx === tabIndex}
-            ondragstart={(e) => { tabDragFrom = i;
-              // WebView2/Chromium won't fire `drop` unless dragstart sets data.
-              e.dataTransfer?.setData("text/plain", String(i));
-              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
-            ondragover={(e) => { e.preventDefault();
-              if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
-            ondrop={(e) => { e.preventDefault(); dropTab(i); }}
-            ondragend={() => (tabDragFrom = null)}>
-          <span class="grip" title="Drag to reorder">⠿</span>
-          <button type="button" class="tab-chip" onclick={() => (tabIndex = idx)}>{t?.name ?? `Tab ${idx}`}</button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-  {#if characters.length === 0}
-    <p class="hint">No characters associated with this account yet — pair one in Accounts to edit widths.</p>
+    {#if characters.length === 0}
+      <p class="hint">No characters associated with this account yet — pair one in Accounts to edit widths.</p>
+    {/if}
   {/if}
 
   <div class="subtabs" role="tablist">
-    {#each ["Columns", "Filters", "Appearance"] as name}
-      <button role="tab" aria-selected={sub === name} class:active={sub === name}
-              onclick={() => (sub = name)}>{name}</button>
-    {/each}
+    {#if data.tabs.length > 0}
+      {#each ["Columns", "Filters", "Appearance"] as name}
+        <button role="tab" aria-selected={sub === name} class:active={sub === name}
+                onclick={() => (sub = name)}>{name}</button>
+      {/each}
+    {/if}
     <span class="pack-actions">
       <button onclick={importPack} disabled={packBusy} title="Replace this account's overview from an EVE overview pack">Import pack…</button>
       <button onclick={exportPack} disabled={packBusy} title="Write this account's overview out as an EVE overview pack">Export pack…</button>
     </span>
   </div>
-  <div hidden={sub !== "Columns"}>
-    <OverviewColumnsTab {data} {tabIndex} {charId} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
-  </div>
-  <div hidden={sub !== "Filters"}>
-    <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
-  </div>
-  <div hidden={sub !== "Appearance"}>
-    <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
-  </div>
+  {#if data.tabs.length > 0}
+    <div hidden={sub !== "Columns"}>
+      <OverviewColumnsTab {data} {tabIndex} {charId} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
+    </div>
+    <div hidden={sub !== "Filters"}>
+      <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
+    </div>
+    <div hidden={sub !== "Appearance"}>
+      <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
+    </div>
+  {/if}
 {/if}
 
 <style>
