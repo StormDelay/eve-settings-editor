@@ -13,6 +13,38 @@ Workflow:
 
 ## Open
 
+- [ ] **Tab order inside a window is not expressible in a pack, so export → re-import
+  resets it.** A window's tab order comes from the per-window list in
+  `tabsByWindowInstanceID`, and that mapping has no representation in EVE's pack
+  format at all — `read_pack` writes `tabSetup` sorted ascending by index, and
+  `apply_tabs` rebuilds window 0's list from the pack's order. So a user who has
+  drag-reordered tabs inside a window loses that ordering on a round trip through
+  a pack. Inherent to the format rather than a bug (a community pack genuinely
+  should decide its own tab order), but a re-import of the user's *own* export
+  could preserve the existing relative order of indices the window already had.
+  Decide whether that asymmetry is worth the code. _Added 2026-07-26 (overview
+  pack whole-branch review)._
+
+- [ ] **Overview-pack follow-ups (whole-branch review, all ship-as-debt).**
+  Non-blocking minors from the import/export packs branch: (1) `PackError::NotAPack`
+  is reused for "`shipLabelOrder` is not a sequence", so that failure tells the user
+  "this YAML contains no overview pack sections", which is false — it wants its own
+  variant or a reworded message; (2) a pack carrying only one of the two ship-label
+  sections applies neither, silently (real packs always carry both); (3)
+  `USER_SETTINGS` in `overview_pack.rs` is an exact identity map of `OVERVIEW_BOOLS`
+  and exists only to be policed by a `debug_assert!` — collapse it unless the live
+  smoke shows `applyOnlyToShips` really needs a mapping table; (4) `SECTIONS`,
+  `color_rgba` and `color_name` are re-exported at the crate root but used nowhere
+  outside `overview_pack.rs`; (5) `read_pack` returns `(Pack, Vec<String>)` while
+  `apply_pack` returns a `PackReport` — two shapes for the same "warnings" concept,
+  and `ops::pack_export` hand-assembles a `PackReport` whose `applied` field really
+  means "exported"; (6) a pre-existing cross-secondary duplicate index in
+  `tabsByWindowInstanceID` survives an import — the fix only stops window 0 from
+  also claiming it (no corpus account has this corruption); (7) preset field values
+  go through `ints()` unconditionally, so an unrecognised preset field would become
+  `[]` rather than being dropped or reported (no corpus preset has one). _Added
+  2026-07-26._
+
 - [ ] **Overview filter-presets slice 2a follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the slice-2a (preset management +
   tab→preset mapping) final review: (1) `overview.rs` `preset_key_name`'s

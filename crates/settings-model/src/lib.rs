@@ -19,6 +19,7 @@ mod stacks;
 mod overview_tabs;
 mod overview_presets;
 mod overview_states;
+mod overview_pack;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -42,6 +43,11 @@ pub use overview_states::{
     overview_bools, set_overview_bool, set_state_color, set_state_list, state_colors, StateList,
     OVERVIEW_BOOLS,
 };
+// The pack node type is exported as `PackNode`: `projection::Node` already
+// claims the bare name at the crate root (see the `pub use projection::{project,
+// Node}` line above). Inside `overview_pack.rs` it stays plain `Node`; only the
+// external name is aliased.
+pub use overview_pack::{apply_pack, color_name, color_rgba, emit_pack, parse_pack, read_pack, Node as PackNode, Pack, PackError, PackReport, SECTIONS};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
