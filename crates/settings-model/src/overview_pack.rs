@@ -462,13 +462,121 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
         report.applied.push("userSettings".to_string());
     }
 
+    // Presets: name-keyed dict of the three int lists. Built here, written below.
+    let presets_value = pack.get("presets").map(|node| {
+        let mut entries: Entries = Vec::new();
+        for (name, body) in pairs(node) {
+            let Some(name) = as_str(name) else { continue };
+            let fields: Entries = pairs(body)
+                .into_iter()
+                .filter_map(|(k, val)| {
+                    let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
+                    Some((key, Value::List(ints(val).into_iter().map(Value::Int).collect())))
+                })
+                .collect();
+            entries.push((Value::Bytes(name.as_bytes().to_vec()), Value::Dict(fields)));
+        }
+        Value::Dict(entries)
+    });
+
     // --- mutate phase ---
     inline_all(v);
     let ov = overview_mut(v).map_err(|_| PackError::NoOverview)?;
     for (key, value, wrapped) in writes {
         if wrapped { put(ov, key, value) } else { put_bare(ov, key, value) }
     }
+
+    if let Some(value) = presets_value {
+        put(ov, b"overviewProfilePresets", value);
+        report.applied.push("presets".to_string());
+        // A stale unsaved working copy under a name the pack does not define
+        // would resurrect a phantom preset, exactly as rename/delete guard
+        // against in slice 2a.
+        ov.retain(|(k, _)| !is_b(k, b"overviewProfilePresets_notSaved"));
+    }
+
+    if let Some(node) = pack.get("tabSetup") {
+        apply_tabs(ov, node);
+        report.applied.push("tabSetup".to_string());
+    }
+
     Ok(report)
+}
+
+/// Replace the tab dict from a pack's `tabSetup`, then re-point the window
+/// mapping. New tabs CLONE an existing tab so they keep the `bracket`/`color`
+/// keys EVE's reset path reads; per-tab column overrides are dropped, because
+/// pack columns are account-global.
+fn apply_tabs(ov: &mut Entries, node: &Node) {
+    use crate::overview_tabs::{as_int, dict_inner_mut, tabs_mut};
+
+    let template = {
+        let tabs = tabs_mut(ov);
+        let mut lowest: Option<(i64, Value)> = None;
+        for (k, val) in tabs.iter() {
+            if let Some(idx) = as_int(k) {
+                if lowest.as_ref().map_or(true, |(best, _)| idx < *best) {
+                    lowest = Some((idx, val.clone()));
+                }
+            }
+        }
+        lowest.map(|(_, val)| val)
+    };
+
+    let mut fresh: Entries = Vec::new();
+    let mut indices: Vec<i64> = Vec::new();
+    for (idx, body) in pairs(node) {
+        let Node::Int(idx) = idx else { continue };
+        let mut tab = template.clone().unwrap_or_else(|| Value::Dict(vec![
+            (Value::Bytes(b"color".to_vec()), Value::None),
+        ]));
+        let Some(fields) = dict_inner_mut(&mut tab) else { continue };
+        // Column overrides belong to the account, not the pack.
+        fields.retain(|(k, _)| !is_b(k, b"tabColumns") && !is_b(k, b"tabColumnOrder"));
+        for (k, val) in pairs(body) {
+            let (Some(key), Some(text)) = (as_str(k), as_str(val)) else { continue };
+            match key {
+                "name" => {
+                    fields.retain(|(k, _)| !matches!(k, Value::StrTable(52)) && !is_b(k, b"name") && !matches!(k, Value::Str(s) if s == "name"));
+                    fields.push((Value::Str("name".into()), Value::StrUcs2(text.to_string())));
+                }
+                "bracket" | "overview" => {
+                    let kb = key.as_bytes().to_vec();
+                    fields.retain(|(k, _)| !is_b(k, &kb));
+                    fields.push((Value::Bytes(kb), Value::Bytes(text.as_bytes().to_vec())));
+                }
+                _ => {}
+            }
+        }
+        fresh.push((Value::Int(*idx), tab));
+        indices.push(*idx);
+    }
+
+    let tabs = tabs_mut(ov);
+    *tabs = fresh;
+
+    // Re-point the window mapping, only if the account has one (never fabricate).
+    let Some((_, groups_val)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) else { return };
+    let groups = match groups_val {
+        Value::List(l) => l,
+        Value::Tuple(items) => match items.iter_mut().find_map(|e| match e { Value::List(l) => Some(l), _ => None }) {
+            Some(l) => l,
+            None => return,
+        },
+        _ => return,
+    };
+    for (pos, window) in groups.iter_mut().enumerate() {
+        let Some(list) = (match window {
+            Value::List(l) => Some(l),
+            Value::Tuple(items) => items.iter_mut().find_map(|e| match e { Value::List(l) => Some(l), _ => None }),
+            _ => None,
+        }) else { continue };
+        if pos == 0 {
+            *list = indices.iter().map(|i| Value::Int(*i)).collect();
+        } else {
+            list.retain(|e| matches!(e, Value::Int(i) if indices.contains(i)));
+        }
+    }
 }
 
 fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
@@ -1250,5 +1358,150 @@ userSettings:
         let err = apply_pack(&mut doc, &pack).unwrap_err();
         assert!(matches!(err, PackError::NotAPack), "got {err:?}");
         assert_eq!(doc, before, "a build-phase failure must leave the document untouched");
+    }
+
+    fn user_doc_with_windows() -> Value {
+        let Value::Dict(mut root) = user_doc() else { unreachable!() };
+        let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { unreachable!() };
+        // two windows: window 0 holds tab 0, window 1 holds tab 7 (not in the pack)
+        entries.push((b("tabsByWindowInstanceID"), Value::Tuple(vec![ts(), Value::List(vec![
+            Value::List(vec![Value::Int(0)]),
+            Value::List(vec![Value::Int(7)]),
+        ])])));
+        Value::Dict(root)
+    }
+
+    // A raw string (matching FIXTURE's convention above), not a `\`-continued
+    // literal: a `\<newline>` in a Rust string literal eats not just the
+    // newline but ALL leading whitespace of the following physical line, which
+    // would silently swallow the 2-space indent block YAML needs here.
+    const TWO_TAB_PACK: &str = r#"presets:
+- - Enemies
+  - - - alwaysShownStates
+      - []
+    - - filteredStates
+      - []
+    - - groups
+      - - 27
+tabSetup:
+- - 0
+  - - - bracket
+      - Enemies
+    - - name
+      - Tab A
+    - - overview
+      - Enemies
+- - 1
+  - - - bracket
+      - Enemies
+    - - name
+      - Tab B
+    - - overview
+      - Enemies
+"#;
+
+    #[test]
+    fn replaces_presets_and_tabs() {
+        let mut doc = user_doc();
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+        let (back, _) = read_pack(&doc);
+
+        let presets = pairs(back.get("presets").unwrap());
+        assert_eq!(presets.len(), 1, "the file's own preset is gone");
+        assert_eq!(as_str(presets[0].0), Some("Enemies"));
+
+        let tabs = pairs(back.get("tabSetup").unwrap());
+        assert_eq!(tabs.len(), 2);
+        let names: Vec<Option<&str>> = tabs.iter()
+            .map(|(_, body)| as_str(pairs(body).iter().find(|(k, _)| as_str(k) == Some("name")).unwrap().1))
+            .collect();
+        assert_eq!(names, vec![Some("Tab A"), Some("Tab B")]);
+    }
+
+    #[test]
+    fn a_new_tab_keeps_the_color_key_reset_needs() {
+        let mut doc = user_doc();
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+        // Tab 1 did not exist before; it must be a clone of tab 0, so it carries
+        // `color` — EVE's reset-overview iterates tabs reading it.
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        let tabs = crate::overview_tabs::tabs_mut(ov);
+        for idx in [0i64, 1] {
+            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(idx)).unwrap();
+            let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+            assert!(fields.iter().any(|(k, _)| is_b(k, b"color")), "tab {idx} lost its color key");
+        }
+    }
+
+    #[test]
+    fn a_new_tab_drops_per_tab_column_overrides() {
+        // tab 0 in user_doc() carries no tabColumns/tabColumnOrder, so give it
+        // some before applying the pack — the clone must not carry them onto the
+        // new tab (or back onto tab 0 itself), since pack columns are account-global.
+        let mut doc = user_doc();
+        {
+            let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
+            let tabs = crate::overview_tabs::tabs_mut(ov);
+            let (_, tab0) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(0)).unwrap();
+            let fields = crate::overview_tabs::dict_inner_mut(tab0).unwrap();
+            fields.push((b("tabColumns"), Value::List(vec![b("NAME")])));
+            fields.push((b("tabColumnOrder"), Value::List(vec![b("NAME")])));
+        }
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        let tabs = crate::overview_tabs::tabs_mut(ov);
+        for idx in [0i64, 1] {
+            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(idx)).unwrap();
+            let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+            assert!(!fields.iter().any(|(k, _)| is_b(k, b"tabColumns")), "tab {idx} kept a per-tab tabColumns override");
+            assert!(!fields.iter().any(|(k, _)| is_b(k, b"tabColumnOrder")), "tab {idx} kept a per-tab tabColumnOrder override");
+        }
+    }
+
+    #[test]
+    fn rebuilds_the_window_mapping_without_dangling_indices() {
+        let mut doc = user_doc_with_windows();
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        let (_, groups) = ov.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let text = format!("{groups:?}");
+        assert!(text.contains("Int(0)") && text.contains("Int(1)"), "both pack tabs are mapped: {text}");
+        assert!(!text.contains("Int(7)"), "the dangling index is gone: {text}");
+    }
+
+    #[test]
+    fn never_fabricates_a_window_mapping() {
+        let mut doc = user_doc(); // no tabsByWindowInstanceID
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        assert!(!ov.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")),
+                "a windowless account must stay windowless");
+    }
+
+    #[test]
+    fn replacing_presets_drops_the_stale_not_saved_working_copy() {
+        // A stale overviewProfilePresets_notSaved entry keyed by a name the new
+        // pack doesn't define would resurrect a phantom preset in-game.
+        let mut doc = user_doc();
+        {
+            let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
+            ov.push((b("overviewProfilePresets_notSaved"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("Friendly"), Value::Dict(vec![])),
+            ])])));
+        }
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+
+        let Value::Dict(root) = &doc else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        assert!(!entries.iter().any(|(k, _)| is_b(k, b"overviewProfilePresets_notSaved")),
+                "a stale notSaved working copy must not survive a preset replacement");
     }
 }
