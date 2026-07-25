@@ -90,7 +90,9 @@ pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
 }
 
 /// Inner list of a plain (post-inline) value, unwrapping a `(ts, list)` tuple.
-fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
+/// `pub(crate)` so `overview_pack.rs`'s window re-pointing can reuse the same
+/// unwrap rather than writing it out again.
+pub(crate) fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
     match v {
         Value::List(l) => Some(l),
         Value::Tuple(items) => items.iter_mut().find_map(|e| match e {

@@ -350,6 +350,23 @@ fn put_bare(ov: &mut Entries, key: &[u8], value: Value) {
     }
 }
 
+/// Convert a ship-label field's pack value to the file's `Value` vocabulary.
+/// Real labels carry `color` as a nested sequence of floats (the corpus has
+/// files with a `List` of floats there, never a `Tuple`), so this must be
+/// exhaustive over every `Node` variant — an earlier version fell through to
+/// `_ => return None` inside a `filter_map`, which silently DROPPED the whole
+/// field (not just left it at a default) for any label carrying a `color`.
+fn label_value(n: &Node) -> Value {
+    match n {
+        Node::Null => Value::None,
+        Node::Bool(x) => Value::Bool(*x),
+        Node::Int(i) => Value::Int(*i),
+        Node::Float(f) => Value::Float(*f),
+        Node::Str(s) => Value::Bytes(s.clone().into_bytes()),
+        Node::Seq(items) => Value::List(items.iter().map(label_value).collect()),
+    }
+}
+
 /// Apply every section the pack defines. Sections it omits are left untouched.
 ///
 /// ATOMICITY: every replacement value is built BEFORE the first mutation, so a
@@ -432,14 +449,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 .into_iter()
                 .filter_map(|(k, val)| {
                     let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
-                    let value = match val {
-                        Node::Null => Value::None,
-                        Node::Int(i) => Value::Int(*i),
-                        Node::Bool(x) => Value::Bool(*x),
-                        Node::Str(s) => Value::Bytes(s.clone().into_bytes()),
-                        _ => return None,
-                    };
-                    Some((key, value))
+                    Some((key, label_value(val)))
                 })
                 .collect();
             list.push(Value::Dict(fields));
@@ -517,8 +527,13 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     }
 
     if let Some(node) = tabs_to_apply {
-        apply_tabs(ov, node);
+        let emptied = apply_tabs(ov, node);
         report.applied.push("tabSetup".to_string());
+        if emptied > 0 {
+            report.warnings.push(format!(
+                "{emptied} overview window(s) ended up with no tabs (the pack has fewer tabs than the account's window layout expects)"
+            ));
+        }
     }
 
     Ok(report)
@@ -534,8 +549,13 @@ fn is_empty_section(node: &Node) -> bool {
 /// mapping. New tabs CLONE an existing tab so they keep the `bracket`/`color`
 /// keys EVE's reset path reads; per-tab column overrides are dropped, because
 /// pack columns are account-global.
-fn apply_tabs(ov: &mut Entries, node: &Node) {
-    use crate::overview_tabs::{as_int, dict_inner_mut, fallback_tab, tabs_mut};
+///
+/// Returns how many windows in the mapping end up with no tabs at all. A pack
+/// with fewer tabs than the account previously had can leave a secondary
+/// window empty — unavoidable, since a pack carries no window model — so the
+/// caller reports it as a warning instead of hiding it.
+fn apply_tabs(ov: &mut Entries, node: &Node) -> usize {
+    use crate::overview_tabs::{as_int, dict_inner_mut, fallback_tab, list_inner_mut as window_list_mut, tabs_mut};
 
     let template = {
         let tabs = tabs_mut(ov);
@@ -585,27 +605,31 @@ fn apply_tabs(ov: &mut Entries, node: &Node) {
     *tabs = fresh;
 
     // Re-point the window mapping, only if the account has one (never fabricate).
-    let Some((_, groups_val)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) else { return };
-    let groups = match groups_val {
-        Value::List(l) => l,
-        Value::Tuple(items) => match items.iter_mut().find_map(|e| match e { Value::List(l) => Some(l), _ => None }) {
-            Some(l) => l,
-            None => return,
-        },
-        _ => return,
-    };
-    for (pos, window) in groups.iter_mut().enumerate() {
-        let Some(list) = (match window {
-            Value::List(l) => Some(l),
-            Value::Tuple(items) => items.iter_mut().find_map(|e| match e { Value::List(l) => Some(l), _ => None }),
-            _ => None,
-        }) else { continue };
-        if pos == 0 {
-            *list = indices.iter().map(|i| Value::Int(*i)).collect();
-        } else {
-            list.retain(|e| matches!(e, Value::Int(i) if indices.contains(i)));
+    let Some((_, groups_val)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) else { return 0 };
+    let Some(groups) = window_list_mut(groups_val) else { return 0 };
+
+    // Filter the SECONDARY windows first, keeping only indices the pack still
+    // defines, and remember what they claimed. Window 0 (the "everything else"
+    // window) then gets only what's left over — giving it every pack index
+    // up front, as the old code did, guarantees overlap with whatever a
+    // secondary window also kept.
+    let mut claimed: Vec<i64> = Vec::new();
+    for window in groups.iter_mut().skip(1) {
+        let Some(list) = window_list_mut(window) else { continue };
+        list.retain(|e| matches!(e, Value::Int(i) if indices.contains(i)));
+        claimed.extend(list.iter().filter_map(as_int));
+    }
+    if let Some(list) = groups.first_mut().and_then(window_list_mut) {
+        *list = indices.iter().filter(|i| !claimed.contains(i)).map(|i| Value::Int(*i)).collect();
+    }
+
+    let mut emptied = 0;
+    for window in groups.iter_mut() {
+        if window_list_mut(window).map_or(false, |l| l.is_empty()) {
+            emptied += 1;
         }
     }
+    emptied
 }
 
 fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
@@ -1370,6 +1394,38 @@ userSettings:
         assert_eq!(field(second, "state"), Value::Int(5));
     }
 
+    /// C2 regression guard: real labels carry `color` as a nested sequence of
+    /// floats (the corpus has files with `color` as a `List` of floats). The
+    /// generic field-value conversion inside a `filter_map` must not fall
+    /// through to `_ => return None` for that shape — doing so drops the WHOLE
+    /// field, not just leaves the colour unset.
+    #[test]
+    fn apply_pack_keeps_a_ship_labels_nested_color_field() {
+        let mut pack = Pack::default();
+        pack.set("shipLabelOrder", Node::Seq(vec![Node::Str("hull".into())]));
+        pack.set("shipLabels", Node::Seq(vec![Node::Seq(vec![
+            Node::Str("hull".into()),
+            Node::Seq(vec![
+                Node::Seq(vec![Node::Str("type".into()), Node::Str("hull".into())]),
+                Node::Seq(vec![
+                    Node::Str("color".into()),
+                    Node::Seq(vec![Node::Float(1.0), Node::Float(1.0), Node::Float(1.0)]),
+                ]),
+            ]),
+        ])]));
+
+        let mut doc = user_doc();
+        apply_pack(&mut doc, &pack).unwrap();
+
+        let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
+        let (_, wrapper) = ov.iter().find(|(k, _)| is_b(k, b"shipLabels")).expect("shipLabels must be written");
+        let Value::Tuple(items) = wrapper else { panic!("shipLabels must be a (timestamp, list) wrapper") };
+        let Value::List(list) = &items[1] else { panic!("wrapper's second element must be the label list") };
+        let Value::Dict(fields) = &list[0] else { panic!("label entry is a dict") };
+        let (_, color) = fields.iter().find(|(k, _)| is_b(k, b"color")).expect("color field must survive, not be dropped");
+        assert_eq!(color, &Value::List(vec![Value::Float(1.0), Value::Float(1.0), Value::Float(1.0)]));
+    }
+
     /// `apply_pack` is documented to build every replacement value BEFORE the
     /// first mutation. A pack whose `shipLabelOrder` is not a sequence fails
     /// INSIDE the build phase — before `inline_all`/`overview_mut` ever run — so
@@ -1412,6 +1468,24 @@ userSettings:
         entries.push((b("tabsByWindowInstanceID"), Value::Tuple(vec![ts(), Value::List(vec![
             Value::Tuple(vec![ts(), Value::List(vec![Value::Int(0)])]),
             Value::Tuple(vec![ts(), Value::List(vec![Value::Int(7)])]),
+        ])])));
+        Value::Dict(root)
+    }
+
+    /// The real shape a corpus review found on real multi-window accounts: three
+    /// windows, tabs split 6+1+1 (window 0 holds everything else, windows 1 and
+    /// 2 each hold one tab). `apply_tabs`'s old bug gave window 0 every pack
+    /// index up front, so tabs 5 and 6 ended up living in two windows at once —
+    /// this fixture is what `reapplying_the_full_tab_set_...` below re-imports
+    /// a matching pack onto, to pin that it no longer happens.
+    fn user_doc_with_three_windows() -> Value {
+        let Value::Dict(mut root) = user_doc() else { unreachable!() };
+        let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { unreachable!() };
+        entries.push((b("tabsByWindowInstanceID"), Value::Tuple(vec![ts(), Value::List(vec![
+            Value::List([0, 1, 2, 3, 4, 7].into_iter().map(Value::Int).collect()),
+            Value::List(vec![Value::Int(5)]),
+            Value::List(vec![Value::Int(6)]),
         ])])));
         Value::Dict(root)
     }
@@ -1562,6 +1636,65 @@ tabSetup:
         let Value::Tuple(w1_items) = &groups[1] else { panic!("window 1's own (ts, list) wrapper must survive") };
         assert_eq!(w1_items[0], ts(), "the per-window tuple's own timestamp must survive untouched");
         assert!(list_or_wrapped(&groups[1]).is_empty(), "window 1's only index (7) was dangling: must leave an EMPTY list");
+    }
+
+    /// The corpus-measured C1 regression guard: re-importing a pack that names
+    /// exactly the tabs the account already had (an export-then-re-import,
+    /// which changes nothing) must reproduce the SAME mapping, not duplicate an
+    /// index into two windows. This is the permanent guard on the bug where
+    /// window 0 was given every pack index before the secondary windows were
+    /// filtered, so whatever a secondary window also kept ended up in both.
+    #[test]
+    fn reapplying_the_full_tab_set_does_not_duplicate_an_index_across_windows() {
+        let mut doc = user_doc_with_three_windows();
+        let mut pack = Pack::default();
+        let tabs: Vec<Node> = [0, 1, 2, 3, 4, 5, 6, 7].iter().map(|&i| Node::Seq(vec![
+            Node::Int(i),
+            Node::Seq(vec![Node::Seq(vec![Node::Str("name".into()), Node::Str(format!("Tab {i}"))])]),
+        ])).collect();
+        pack.set("tabSetup", Node::Seq(tabs));
+
+        apply_pack(&mut doc, &pack).unwrap();
+
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        let (_, groups_val) = ov.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let groups = list_or_wrapped(groups_val);
+        assert_eq!(groups.len(), 3, "all three windows stay present");
+
+        let per_window: Vec<Vec<i64>> = groups.iter().map(|g| as_ints(list_or_wrapped(g))).collect();
+        assert_eq!(
+            per_window,
+            vec![vec![0, 1, 2, 3, 4, 7], vec![5], vec![6]],
+            "re-importing the account's own full tab set must leave the mapping unchanged: {per_window:?}",
+        );
+
+        let mut seen: Vec<i64> = Vec::new();
+        for idx in per_window.into_iter().flatten() {
+            assert!(!seen.contains(&idx), "index {idx} appears in more than one window");
+            seen.push(idx);
+        }
+    }
+
+    #[test]
+    fn warns_when_a_pack_leaves_overview_windows_with_no_tabs() {
+        // The pack only defines the six tabs window 0 held; windows 1 and 2
+        // (whose only tab was 5 and 6 respectively) end up empty. There is no
+        // way to avoid this — a pack carries no window model — so it must be
+        // reported rather than left for the user to discover in-game.
+        let mut doc = user_doc_with_three_windows();
+        let mut pack = Pack::default();
+        let tabs: Vec<Node> = [0, 1, 2, 3, 4, 7].iter().map(|&i| Node::Seq(vec![
+            Node::Int(i),
+            Node::Seq(vec![Node::Seq(vec![Node::Str("name".into()), Node::Str(format!("Tab {i}"))])]),
+        ])).collect();
+        pack.set("tabSetup", Node::Seq(tabs));
+
+        let report = apply_pack(&mut doc, &pack).unwrap();
+        assert!(
+            report.warnings.iter().any(|w| w.contains('2') && w.contains("no tabs")),
+            "warns how many windows ended up empty: {:?}", report.warnings,
+        );
     }
 
     #[test]
