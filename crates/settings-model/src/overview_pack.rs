@@ -174,6 +174,70 @@ pub fn as_str(n: &Node) -> Option<&str> {
     match n { Node::Str(s) => Some(s.as_str()), _ => None }
 }
 
+/// Render a pack as YAML EVE can import.
+///
+/// Style note: nested sequences are written on their OWN lines (`-` alone, then
+/// the nested block indented) rather than the `- - -` run-in style python's
+/// dumper produces. Both are the same YAML; matching CCP's dumper byte for byte
+/// is an explicit non-goal, and the simple form is a third of the code.
+pub fn emit_pack(pack: &Pack) -> String {
+    let mut out = String::new();
+    for name in SECTIONS {
+        let Some(node) = pack.get(name) else { continue };
+        out.push_str(name);
+        out.push(':');
+        match node {
+            Node::Seq(items) if items.is_empty() => out.push_str(" []\n"),
+            Node::Seq(items) => {
+                out.push('\n');
+                write_seq(&mut out, items, 0);
+            }
+            scalar => {
+                out.push(' ');
+                out.push_str(&write_scalar(scalar));
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn write_seq(out: &mut String, items: &[Node], indent: usize) {
+    for item in items {
+        for _ in 0..indent { out.push(' '); }
+        match item {
+            Node::Seq(inner) if inner.is_empty() => out.push_str("- []\n"),
+            Node::Seq(inner) => {
+                out.push_str("-\n");
+                write_seq(out, inner, indent + 2);
+            }
+            scalar => {
+                out.push_str("- ");
+                out.push_str(&write_scalar(scalar));
+                out.push('\n');
+            }
+        }
+    }
+}
+
+/// Quote every string: single-quoted (doubling `'`) normally, double-quoted with
+/// `\n` escapes when the value contains a newline, since a single-quoted YAML
+/// scalar folds line breaks instead of preserving them.
+fn write_scalar(n: &Node) -> String {
+    match n {
+        Node::Null => "null".to_string(),
+        Node::Bool(b) => b.to_string(),
+        Node::Int(i) => i.to_string(),
+        Node::Float(f) => format!("{f:?}"),
+        Node::Str(s) if s.contains('\n') => {
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+            format!("\"{escaped}\"")
+        }
+        Node::Str(s) => format!("'{}'", s.replace('\'', "''")),
+        Node::Seq(_) => unreachable!("write_seq handles sequences"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +352,45 @@ userSettings:
         let pack = parse_pack("presets: []\nsomeFutureSection:\n- 1\n").unwrap();
         assert!(pack.get("someFutureSection").is_none());
         assert_eq!(pack.ignored, vec!["someFutureSection".to_string()]);
+    }
+
+    #[test]
+    fn emit_then_parse_round_trips_the_fixture() {
+        let pack = parse_pack(FIXTURE).unwrap();
+        let text = emit_pack(&pack);
+        let again = parse_pack(&text).unwrap();
+        assert_eq!(again.sections, pack.sections, "round trip changed the tree:\n{text}");
+    }
+
+    #[test]
+    fn emits_no_bom_and_sections_in_order() {
+        let pack = parse_pack(FIXTURE).unwrap();
+        let text = emit_pack(&pack);
+        assert!(!text.starts_with('\u{feff}'));
+        let pos = |s: &str| text.find(&format!("\n{s}:")).or_else(|| text.strip_prefix(s).map(|_| 0));
+        assert!(text.starts_with("backgroundOrder:"), "first section is alphabetical: {text}");
+        assert!(pos("presets") < pos("tabSetup"));
+    }
+
+    #[test]
+    fn quotes_scalars_that_need_it() {
+        let mut pack = Pack::default();
+        pack.set("presets", Node::Seq(vec![Node::Seq(vec![
+            Node::Str("It's <b>bold</b>".into()),
+            Node::Seq(vec![Node::Seq(vec![Node::Str("groups".into()), Node::Seq(vec![])])]),
+        ])]));
+        let text = emit_pack(&pack);
+        let again = parse_pack(&text).unwrap();
+        let name = pairs(again.get("presets").unwrap())[0].0;
+        assert_eq!(as_str(name), Some("It's <b>bold</b>"));
+        assert!(text.contains("[]"), "an empty sequence emits as []: {text}");
+    }
+
+    #[test]
+    fn round_trips_a_multiline_scalar() {
+        let mut pack = Pack::default();
+        pack.set("columnOrder", Node::Seq(vec![Node::Str("two\nlines".into())]));
+        let again = parse_pack(&emit_pack(&pack)).unwrap();
+        assert_eq!(strs(again.get("columnOrder").unwrap()), vec!["two\nlines".to_string()]);
     }
 }
