@@ -1,6 +1,6 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
-import type { WindowLayout, Stack, WindowRect } from "./api";
+import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -101,4 +101,109 @@ export function stackUnits(layout: WindowLayout): DrawUnit[] {
     units.push({ key: w.id, anchor: w, stack: null, tabs: [w], fanTargets: [w] });
   }
   return units;
+}
+
+export interface FurnitureRect {
+  kind: "neocom" | "shipui" | "fighter" | "badge";
+  label: string;
+  /** Data px, like WindowRect.geom — the canvas scales it with toCanvas. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  drag: "none" | "x" | "xy";
+}
+
+// ponytail: EVE stores anchors but never sizes, and never says what the anchor
+// is relative to. These nominal sizes — and the centre-relative ship offset and
+// top-left point convention below — are ASSUMPTIONS, corrected from the slice's
+// live smoke. Nothing outside this table depends on the numbers.
+export const HUD_NOMINAL = {
+  shipui: { w: 686, h: 250 },
+  fighter: { w: 400, h: 120 },
+  badge: { w: 32, h: 32 },
+};
+
+const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
+
+/** A field's number: its value, else its default; null when not writable at all. */
+export function hudNum(hud: Hud, name: string): number | null {
+  const e = byName(hud, name);
+  if (!e || e.set.how === "unavailable") return null;
+  const n = parseFloat(e.value ?? e.default);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function hudFlag(hud: Hud, name: string): boolean {
+  const e = byName(hud, name);
+  if (!e || e.set.how === "unavailable") return false;
+  return (e.value ?? e.default) === "true";
+}
+
+/** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects'
+ * ship-HUD placement below — the two must be corrected together (see
+ * hudRects' comment on the ship HUD branch). */
+export function shipOffsetFromX(x: number, referenceW: number): number {
+  return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
+}
+
+/**
+ * Stored (x, y) for a fighter/badge rect at data-px `x, y`. Inverse of
+ * hudRects' fighter/badge placement below, which currently stores the rect's
+ * top-left directly — the two must be corrected together (see hudRects'
+ * comment on the fighter/badge branches) or a drag will jump by however much
+ * the convention actually differs (e.g. half the element's size, if the
+ * stored point turns out to be the panel's centre).
+ */
+export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+/**
+ * The screen furniture the canvas draws, in data px. Order is fixed
+ * (neocom, ship HUD, fighter, badge) so the canvas paints the bar first and
+ * tests can index. An element whose values aren't writable is omitted rather
+ * than drawn at a guessed position.
+ */
+export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
+  const out: FurnitureRect[] = [];
+
+  const neocom = hudNum(hud, "neocom_width");
+  if (neocom !== null && neocom > 0) {
+    out.push({ kind: "neocom", label: "Neocom", x: 0, y: 0, w: neocom, h: layout.reference_h, drag: "none" });
+  }
+
+  // Centre-relative placement. Its inverse is shipOffsetFromX, below — a
+  // matched pair that must be corrected together (see shipOffsetFromX's doc).
+  const offset = hudNum(hud, "ship_offset");
+  if (offset !== null) {
+    const { w, h } = HUD_NOMINAL.shipui;
+    out.push({
+      kind: "shipui",
+      label: "Ship HUD",
+      x: Math.round(layout.reference_w / 2 + offset - w / 2),
+      y: hudFlag(hud, "ship_top") ? 0 : layout.reference_h - h,
+      w,
+      h,
+      drag: "x",
+    });
+  }
+
+  // The stored point is placed as the rect's top-left. Its inverse is
+  // hudPointFromRect, below — a matched pair that must be corrected together
+  // (see hudPointFromRect's doc) if the live smoke shows this is wrong (e.g.
+  // the stored point is really the panel's centre).
+  const fx = hudNum(hud, "fighter_x");
+  const fy = hudNum(hud, "fighter_y");
+  if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
+    out.push({ kind: "fighter", label: "Fighter UI", x: fx, y: fy, ...HUD_NOMINAL.fighter, drag: "xy" });
+  }
+
+  const bx = hudNum(hud, "badge_x");
+  const by = hudNum(hud, "badge_y");
+  if (bx !== null && by !== null) {
+    out.push({ kind: "badge", label: "Badge", x: bx, y: by, ...HUD_NOMINAL.badge, drag: "xy" });
+  }
+
+  return out;
 }
