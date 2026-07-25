@@ -14,9 +14,9 @@ use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
 use crate::treewalk::{child_dict, collect_shared, effective, timestamped_dict, Entries, SharedTable};
 
-/// The seven boolean per-window flags (see docs/format-notes.md). `stacksWindows`
+/// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
-const BOOL_FLAGS: [&str; 7] = [
+const BOOL_FLAGS: [&str; 8] = [
     "openWindows",
     "collapsedWindows",
     "minimizedWindows",
@@ -24,6 +24,7 @@ const BOOL_FLAGS: [&str; 7] = [
     "compactWindows",
     "isOverlayedWindows",
     "isLightBackgroundWindows",
+    "pinnedWindows",
 ];
 
 #[derive(Debug, Serialize)]
@@ -499,7 +500,7 @@ mod tests {
         let wl = window_layout(&doc);
         let ov = &wl.windows[0];
         assert!(ov.open, "overview is open");
-        assert_eq!(ov.flags.len(), 7);
+        assert_eq!(ov.flags.len(), 8);
         let locked = flag(ov, "lockedWindows");
         assert!(locked.value);
         // A present flag resolves to a set path over the real Bool(true).
@@ -532,6 +533,38 @@ mod tests {
         let doc = doc_with(vec![(Value::Bytes(b"overview".to_vec()), geom(1, 2, 3, 4, 2560, 1440))]);
         let wl = window_layout(&doc);
         assert!(matches!(flag(&wl.windows[0], "openWindows").set, SetTarget::Unavailable));
+    }
+
+    /// pinnedWindows is a per-window bool dict like the other seven (352/384
+    /// character files in the 2026-07-22 corpus carry it).
+    #[test]
+    fn pinned_windows_is_projected_as_a_flag() {
+        let doc = Value::Dict(vec![(
+            Value::Bytes(b"windows".to_vec()),
+            Value::Dict(vec![
+                (
+                    Value::Bytes(b"windowSizesAndPositions_1".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), geom(1, 2, 3, 4, 2560, 1440))]),
+                    ]),
+                ),
+                (
+                    Value::Bytes(b"pinnedWindows".to_vec()),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Bool(true))]),
+                    ]),
+                ),
+            ]),
+        )]);
+        let wl = window_layout(&doc);
+        let pinned = flag(&wl.windows[0], "pinnedWindows");
+        assert!(pinned.value);
+        match &pinned.set {
+            SetTarget::Set { path } => assert_eq!(resolve(&doc, path), Some(&Value::Bool(true))),
+            other => panic!("expected Set, got {other:?}"),
+        }
     }
 
     #[test]
