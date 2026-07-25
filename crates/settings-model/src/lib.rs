@@ -47,7 +47,7 @@ pub use overview_states::{
 // claims the bare name at the crate root (see the `pub use projection::{project,
 // Node}` line above). Inside `overview_pack.rs` it stays plain `Node`; only the
 // external name is aliased.
-pub use overview_pack::{parse_pack, Node as PackNode, Pack, PackError, SECTIONS};
+pub use overview_pack::{emit_pack, parse_pack, Node as PackNode, Pack, PackError, SECTIONS};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
