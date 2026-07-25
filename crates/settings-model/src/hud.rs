@@ -12,7 +12,7 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::{NodePath, Step};
-use crate::treewalk::{collect_shared, effective, is_bytes, unwrap_shared, Entries, SharedTable};
+use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, unwrap_shared, Entries, SharedTable};
 use crate::windows::SetTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -117,12 +117,46 @@ fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetT
         // The whole section is missing (or unaddressable) — nothing to write to.
         return (None, SetTarget::Unavailable);
     };
-    match leaf(entries, &base, f.key, f.elem, shared) {
+    match locate(entries, &base, f, shared) {
+        (Located::Writable(path), text) => (text, SetTarget::Set { path }),
+        // Key present but unreadable (wrong wire kind, or a malformed point
+        // tuple): refuse to write rather than clobber it or mint a duplicate key.
+        (Located::Unwritable, _) => (None, SetTarget::Unavailable),
+        // Genuinely absent: `set_hud_value` mints the `(timestamp, value)`
+        // leaf. The parent/key here document the target; the op does the
+        // insert, because a generic InsertDictEntry cannot build the
+        // timestamp wrapper.
+        (Located::Absent, _) => (
+            None,
+            SetTarget::Insert { parent: base, key: crate::mutate::NewValue::BytesHex(hex(f.key)) },
+        ),
+    }
+}
+
+/// What a write to this field may do — the single three-way decision shared by
+/// the projection (`probe`) and the setter (`set_hud_value`), so the two can
+/// never disagree about whether a key is absent or merely unreadable.
+enum Located {
+    /// Key present and readable: overwrite the scalar at this path.
+    Writable(NodePath),
+    /// Key present but not readable as this field's kind (wrong wire kind, or a
+    /// malformed point tuple): refuse — overwriting would change its type and
+    /// minting would duplicate the key.
+    Unwritable,
+    /// Key genuinely absent: mint the `(timestamp, value)` leaf.
+    Absent,
+}
+
+/// Decide what a write to `f` may do. The `Option<String>` alongside `Located`
+/// is the scalar text `probe` shows the user (present only for `Writable`) —
+/// returned here, rather than re-derived by each caller, so the branch logic
+/// that tells "absent" apart from "present but unreadable" (see `leaf`'s doc)
+/// lives in exactly one place.
+fn locate(entries: &Entries, base: &NodePath, f: &Field, shared: &SharedTable) -> (Located, Option<String>) {
+    match leaf(entries, base, f.key, f.elem, shared) {
         Some((v, path)) => match scalar_text(v, f.kind, shared) {
-            Some(text) => (Some(text), SetTarget::Set { path }),
-            // Key present but the wire kind is not what this field expects:
-            // refuse to write rather than clobber it or mint a duplicate key.
-            None => (None, SetTarget::Unavailable),
+            Some(text) => (Located::Writable(path), Some(text)),
+            None => (Located::Unwritable, None),
         },
         // `leaf` returns a bare `None` for two different reasons: the key is
         // genuinely absent, or it's present but unreadable (a malformed point
@@ -130,15 +164,8 @@ fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetT
         // `Vec`, not a deduping map, so inserting on the latter would push a
         // second entry with the same key — reads keep finding the first
         // (malformed) one via `.find()`, silently orphaning every write.
-        None if key_present(entries, f.key, shared) => (None, SetTarget::Unavailable),
-        // Genuinely absent: `set_hud_value` mints the `(timestamp, value)`
-        // leaf. The parent/key here document the target; the op does the
-        // insert, because a generic InsertDictEntry cannot build the
-        // timestamp wrapper.
-        None => (
-            None,
-            SetTarget::Insert { parent: base, key: crate::mutate::NewValue::BytesHex(hex(f.key)) },
-        ),
+        None if key_present(entries, f.key, shared) => (Located::Unwritable, None),
+        None => (Located::Absent, None),
     }
 }
 
@@ -217,6 +244,104 @@ fn scalar_text(v: &Value, kind: HudKind, shared: &SharedTable) -> Option<String>
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "code", content = "detail", rename_all = "snake_case")]
+pub enum HudError {
+    UnknownField(String),
+    /// The file has no such section — nothing to write into. Real character and
+    /// account files always have both `windows` and `ui`.
+    NoSection,
+    /// The key exists but holds an unexpected wire kind; overwriting it would
+    /// change its type and minting would duplicate the key.
+    NotEditable,
+    Parse(String),
+}
+
+/// Write one HUD field. An existing key is overwritten in place (no reshare
+/// needed — a scalar edit is not structural). An absent key is minted as the
+/// `(timestamp, value)` leaf real files use, which needs `inline_all` first per
+/// the house rule; the caller (`ops`) reshares afterwards.
+///
+/// Shares `locate`'s three-way decision with `probe` so the two can never
+/// disagree about whether a key is genuinely absent (safe to mint) or merely
+/// unreadable (must be refused, not duplicated).
+pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), HudError> {
+    let f = FIELDS
+        .iter()
+        .find(|f| f.name == name)
+        .ok_or_else(|| HudError::UnknownField(name.to_string()))?;
+
+    // Resolve the decision under an immutable borrow, then mutate.
+    let located = {
+        let mut shared = SharedTable::new();
+        collect_shared(root, &mut shared);
+        let (entries, base) = section(root, f.section, &shared).ok_or(HudError::NoSection)?;
+        locate(entries, &base, f, &shared).0
+    };
+
+    match located {
+        Located::Writable(path) => {
+            let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
+            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(format!("{e:?}")))
+        }
+        Located::Unwritable => Err(HudError::NotEditable),
+        Located::Absent => mint(root, f, text),
+    }
+}
+
+/// Insert the absent leaf. After `inline_all` every key is a plain byte-string,
+/// so this half needs no `Shared`/`Ref` resolution.
+fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
+    let value = build_scalar(f.kind, text)?;
+    let leaf_value = match f.elem {
+        None => value,
+        Some(ix) => {
+            // A point field mints the whole (x, y); the untouched axis takes the
+            // sibling field's default.
+            let sibling = FIELDS
+                .iter()
+                .find(|o| o.section == f.section && o.key == f.key && o.elem != f.elem)
+                .expect("every point field has a sibling axis");
+            let other = build_scalar(sibling.kind, sibling.default)?;
+            let mut items = vec![Value::None, Value::None];
+            items[ix] = value;
+            items[sibling.elem.expect("sibling is a point axis")] = other;
+            Value::Tuple(items)
+        }
+    };
+    inline_all(root);
+    let Value::Dict(entries) = root else { return Err(HudError::NoSection) };
+    let (_, section_value) = entries
+        .iter_mut()
+        .find(|(k, _)| is_bytes(k, f.section))
+        .ok_or(HudError::NoSection)?;
+    let Value::Dict(section_entries) = section_value else { return Err(HudError::NoSection) };
+    section_entries.push((
+        Value::Bytes(f.key.to_vec()),
+        Value::Tuple(vec![Value::Long(vec![0u8; 8]), leaf_value]),
+    ));
+    Ok(())
+}
+
+fn build_scalar(kind: HudKind, text: &str) -> Result<Value, HudError> {
+    let err = || HudError::Parse(format!("{kind:?}: {text:?}"));
+    Ok(match kind {
+        HudKind::Float => {
+            let v: f64 = text.trim().parse().map_err(|_| err())?;
+            if !v.is_finite() {
+                return Err(err());
+            }
+            Value::Float(v)
+        }
+        HudKind::Int => Value::Int(text.trim().parse().map_err(|_| err())?),
+        HudKind::Bool => match text {
+            "true" | "True" => Value::Bool(true),
+            "false" | "False" => Value::Bool(false),
+            _ => return Err(err()),
+        },
+    })
 }
 
 #[cfg(test)]
@@ -410,6 +535,116 @@ mod tests {
         }
         // The character-side fields are unaffected.
         assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("326"));
+    }
+
+    #[test]
+    fn sets_an_existing_float_and_keeps_its_wire_kind() {
+        let mut doc = char_doc();
+        set_hud_value(&mut doc, "ship_offset", "-42").expect("set");
+        let hud = project_hud(&doc, None);
+        assert_eq!(entry(&hud, "ship_offset").value.as_deref(), Some("-42"));
+        // Still a Float, not an Int — set_scalar edits in place.
+        match &entry(&hud, "ship_offset").set {
+            SetTarget::Set { path } => {
+                assert!(matches!(resolve(&doc, path), Some(Value::Float(f)) if *f == -42.0));
+            }
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sets_one_axis_of_a_point_without_disturbing_the_other() {
+        let mut doc = char_doc();
+        set_hud_value(&mut doc, "fighter_y", "500").expect("set");
+        let hud = project_hud(&doc, None);
+        assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("326"));
+        assert_eq!(entry(&hud, "fighter_y").value.as_deref(), Some("500"));
+    }
+
+    #[test]
+    fn sets_a_bool_in_the_account_document() {
+        let mut doc = user_doc();
+        set_hud_value(&mut doc, "fighter_shown", "true").expect("set");
+        let hud = project_hud(&char_doc(), Some(&doc));
+        assert_eq!(entry(&hud, "fighter_shown").value.as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn mints_an_absent_scalar_with_a_zero_timestamp() {
+        // `windows` present but empty — the 69/384 corpus case.
+        let mut doc = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        set_hud_value(&mut doc, "ship_offset", "-100").expect("mint");
+        let hud = project_hud(&doc, None);
+        assert_eq!(entry(&hud, "ship_offset").value.as_deref(), Some("-100"));
+        // The minted leaf is the (timestamp, value) wrapper real files use.
+        let Value::Dict(root) = &doc else { panic!("root is a dict") };
+        let (_, section) = &root[0];
+        let Value::Dict(entries) = section else { panic!("section is a dict") };
+        assert_eq!(entries.len(), 1);
+        match &entries[0].1 {
+            Value::Tuple(items) => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0], Value::Long(vec![0u8; 8]));
+                assert!(matches!(items[1], Value::Float(f) if f == -100.0));
+            }
+            other => panic!("expected (ts, value), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mints_an_absent_point_with_the_sibling_axis_defaulted() {
+        let mut doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        set_hud_value(&mut doc, "fighter_x", "640").expect("mint");
+        let hud = project_hud(&doc, None);
+        assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("640"));
+        assert_eq!(entry(&hud, "fighter_y").value.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn a_minted_key_is_written_once_not_duplicated() {
+        let mut doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        set_hud_value(&mut doc, "fighter_x", "10").expect("mint");
+        set_hud_value(&mut doc, "fighter_y", "20").expect("set");
+        let Value::Dict(root) = &doc else { panic!() };
+        let Value::Dict(entries) = &root[0].1 else { panic!() };
+        assert_eq!(entries.len(), 1, "the second write reuses the minted key");
+        let hud = project_hud(&doc, None);
+        assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("10"));
+        assert_eq!(entry(&hud, "fighter_y").value.as_deref(), Some("20"));
+    }
+
+    #[test]
+    fn errors_are_reported_not_papered_over() {
+        let mut doc = char_doc();
+        assert_eq!(
+            set_hud_value(&mut doc, "no_such_field", "1"),
+            Err(HudError::UnknownField("no_such_field".to_string()))
+        );
+        // Section missing entirely.
+        let mut bare = Value::Dict(vec![(b("audio"), Value::Dict(vec![]))]);
+        assert_eq!(set_hud_value(&mut bare, "ship_offset", "1"), Err(HudError::NoSection));
+        // Key present with an unexpected wire kind.
+        let mut odd = Value::Dict(vec![(
+            b("windows"),
+            Value::Dict(vec![(b("shipuialignleftoffset"), wrapped(b("nonsense")))]),
+        )]);
+        assert_eq!(set_hud_value(&mut odd, "ship_offset", "1"), Err(HudError::NotEditable));
+        // Unparseable text.
+        assert!(matches!(set_hud_value(&mut doc, "fighter_x", "abc"), Err(HudError::Parse(_))));
+    }
+
+    #[test]
+    fn a_present_but_malformed_point_tuple_is_refused_not_minted() {
+        let mut doc = Value::Dict(vec![(
+            b("ui"),
+            // One element instead of two — present, but not readable as a point.
+            Value::Dict(vec![(b("fightersDetachedPosition"), wrapped(Value::Tuple(vec![Value::Int(1)])))]),
+        )]);
+        assert_eq!(set_hud_value(&mut doc, "fighter_x", "10"), Err(HudError::NotEditable));
+        // Must not have minted a second entry alongside the malformed one.
+        let Value::Dict(root) = &doc else { panic!() };
+        let Value::Dict(entries) = &root[0].1 else { panic!() };
+        assert_eq!(entries.len(), 1, "refusing must not duplicate the key");
     }
 
     #[test]
