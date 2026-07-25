@@ -801,6 +801,18 @@ All remembered text-input history in the client is **one structure**, in
   `b"restoreData"` as session-state siblings — raw-tree-only in V1 per
   spec §6.
 
+### `tabsByWindowInstanceID` shape on real accounts (overview pack review, 2026-07-26)
+
+Measured across the full 1925-account corpus while fixing a pack-import bug
+(a re-import that re-pointed this mapping was duplicating a tab index across
+two windows): of 1925 corpus accounts, **825 carry a `tabsByWindowInstanceID`
+mapping** at all; **823 of those have exactly three windows**; **812 of those
+are split 6+1+1** (one "everything else" window holding six tabs, and two
+single-tab windows). A mapping this lopsided is exactly the shape that makes
+a naive "give window 0 every tab, then filter the rest" re-point wrong: window
+0 must be built from what the OTHER windows don't claim, not the other way
+around.
+
 ### Name presence (Task 11 decision: local extraction NOT viable)
 
 Investigated on fresh current-client files with the account's real

@@ -15,7 +15,11 @@ All notable changes to this project are documented here. The format follows
   in-space ship labels and the overview toggles — replaces that part of the
   account; sections the pack omits are left alone, so modular "preset only"
   packs work. Importing marks the file dirty: you still press Save, and the
-  usual backup is taken.
+  usual backup is taken. Two limits worth knowing: importing a pack that
+  defines tabs discards your per-tab column overrides (pack columns are
+  account-global), and only the five colours EVE's own pack format has names
+  for round-trip — a custom colour outside that list is dropped on both
+  import and export rather than approximated.
 
 ## [0.13.0] - 2026-07-25
 
