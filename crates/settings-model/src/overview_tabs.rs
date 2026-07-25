@@ -63,6 +63,20 @@ pub(crate) fn as_int(v: &Value) -> Option<i64> {
     match v { Value::Int(i) => Some(*i), _ => None }
 }
 
+/// The tab EVE gets when there is no sibling to clone from (an empty overview
+/// — reachable when the account has zero tabs, whether via `create_tab`'s
+/// no-sibling path or `overview_pack.rs`'s zero-tab pack-apply path). Every
+/// real EVE tab carries `bracket` and `color` — EVE's "reset all overview
+/// settings" iterates tabs reading both — so this fallback must too; a single
+/// shared definition means both call sites can't drift apart on the default.
+pub(crate) fn fallback_tab() -> Value {
+    Value::Dict(vec![
+        (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+        (Value::Bytes(b"color".to_vec()), Value::None),
+        (Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new())),
+    ])
+}
+
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
 pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     match v {
@@ -228,11 +242,7 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
             // overview — only reachable when the account has no tabs). Still
             // carries bracket/color so the "every created tab is a valid EVE
             // tab" invariant holds on this path too.
-            None => Value::Dict(vec![
-                (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
-                (Value::Bytes(b"color".to_vec()), Value::None),
-                (Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new())),
-            ]),
+            None => fallback_tab(),
         };
         if let Some(fields) = dict_inner_mut(&mut tab) {
             fields.retain(|(k, _)| !is_b(k, b"tabColumnOrder") && !is_b(k, b"tabColumns"));

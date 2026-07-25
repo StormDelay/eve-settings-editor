@@ -463,21 +463,42 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     }
 
     // Presets: name-keyed dict of the three int lists. Built here, written below.
-    let presets_value = pack.get("presets").map(|node| {
-        let mut entries: Entries = Vec::new();
-        for (name, body) in pairs(node) {
-            let Some(name) = as_str(name) else { continue };
-            let fields: Entries = pairs(body)
-                .into_iter()
-                .filter_map(|(k, val)| {
-                    let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
-                    Some((key, Value::List(ints(val).into_iter().map(Value::Int).collect())))
-                })
-                .collect();
-            entries.push((Value::Bytes(name.as_bytes().to_vec()), Value::Dict(fields)));
+    // An EMPTY section is read as "not defined", not "set to nothing": the rest
+    // of this crate maintains a LastPreset/LastTab invariant (overview_tabs.rs /
+    // overview_presets.rs) that a pack wiping every preset or tab would violate,
+    // leaving an overview the client can't render. A blank state/colour list has
+    // no such invariant and keeps meaning "set this to nothing".
+    let presets_value = match pack.get("presets") {
+        Some(node) if is_empty_section(node) => {
+            report.warnings.push("ignored empty 'presets' section (would have left the account with no presets)".to_string());
+            None
         }
-        Value::Dict(entries)
-    });
+        Some(node) => {
+            let mut entries: Entries = Vec::new();
+            for (name, body) in pairs(node) {
+                let Some(name) = as_str(name) else { continue };
+                let fields: Entries = pairs(body)
+                    .into_iter()
+                    .filter_map(|(k, val)| {
+                        let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
+                        Some((key, Value::List(ints(val).into_iter().map(Value::Int).collect())))
+                    })
+                    .collect();
+                entries.push((Value::Bytes(name.as_bytes().to_vec()), Value::Dict(fields)));
+            }
+            Some(Value::Dict(entries))
+        }
+        None => None,
+    };
+
+    let tabs_to_apply = match pack.get("tabSetup") {
+        Some(node) if is_empty_section(node) => {
+            report.warnings.push("ignored empty 'tabSetup' section (would have left the account with no tabs)".to_string());
+            None
+        }
+        Some(node) => Some(node),
+        None => None,
+    };
 
     // --- mutate phase ---
     inline_all(v);
@@ -495,7 +516,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
         ov.retain(|(k, _)| !is_b(k, b"overviewProfilePresets_notSaved"));
     }
 
-    if let Some(node) = pack.get("tabSetup") {
+    if let Some(node) = tabs_to_apply {
         apply_tabs(ov, node);
         report.applied.push("tabSetup".to_string());
     }
@@ -503,12 +524,18 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     Ok(report)
 }
 
+/// An empty `presets`/`tabSetup` section (`presets: []` in the file) — see the
+/// note at the `presets_value`/`tabs_to_apply` build above.
+fn is_empty_section(node: &Node) -> bool {
+    matches!(node, Node::Seq(items) if items.is_empty())
+}
+
 /// Replace the tab dict from a pack's `tabSetup`, then re-point the window
 /// mapping. New tabs CLONE an existing tab so they keep the `bracket`/`color`
 /// keys EVE's reset path reads; per-tab column overrides are dropped, because
 /// pack columns are account-global.
 fn apply_tabs(ov: &mut Entries, node: &Node) {
-    use crate::overview_tabs::{as_int, dict_inner_mut, tabs_mut};
+    use crate::overview_tabs::{as_int, dict_inner_mut, fallback_tab, tabs_mut};
 
     let template = {
         let tabs = tabs_mut(ov);
@@ -527,9 +554,11 @@ fn apply_tabs(ov: &mut Entries, node: &Node) {
     let mut indices: Vec<i64> = Vec::new();
     for (idx, body) in pairs(node) {
         let Node::Int(idx) = idx else { continue };
-        let mut tab = template.clone().unwrap_or_else(|| Value::Dict(vec![
-            (Value::Bytes(b"color".to_vec()), Value::None),
-        ]));
+        // Zero-tab account: no sibling to clone. Reuse overview_tabs::create_tab's
+        // own no-sibling fallback rather than a bespoke one — a fallback missing
+        // `bracket` produced a tab EVE's "reset all overview settings" throws on
+        // when the pack's own tab body doesn't supply it either.
+        let mut tab = template.clone().unwrap_or_else(fallback_tab);
         let Some(fields) = dict_inner_mut(&mut tab) else { continue };
         // Column overrides belong to the account, not the pack.
         fields.retain(|(k, _)| !is_b(k, b"tabColumns") && !is_b(k, b"tabColumnOrder"));
@@ -1372,6 +1401,36 @@ userSettings:
         Value::Dict(root)
     }
 
+    /// Same two windows as `user_doc_with_windows`, but each PER-WINDOW entry is
+    /// itself a `(ts, list)` tuple rather than a bare list — a shape real files
+    /// can carry alongside the outer wrapper, and one the fixture above never
+    /// exercises.
+    fn user_doc_with_wrapped_windows() -> Value {
+        let Value::Dict(mut root) = user_doc() else { unreachable!() };
+        let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { unreachable!() };
+        entries.push((b("tabsByWindowInstanceID"), Value::Tuple(vec![ts(), Value::List(vec![
+            Value::Tuple(vec![ts(), Value::List(vec![Value::Int(0)])]),
+            Value::Tuple(vec![ts(), Value::List(vec![Value::Int(7)])]),
+        ])])));
+        Value::Dict(root)
+    }
+
+    /// Unwrap a bare list OR a `(ts, list)` tuple — mirrors the unwrap `apply_tabs`
+    /// itself performs on both the outer mapping value and each per-window entry.
+    fn list_or_wrapped(v: &Value) -> &Vec<Value> {
+        match v {
+            Value::List(l) => l,
+            Value::Tuple(items) => items.iter().find_map(|e| match e { Value::List(l) => Some(l), _ => None })
+                .expect("tuple has no inner list"),
+            _ => panic!("expected a list or (ts, list) tuple, got {v:?}"),
+        }
+    }
+
+    fn as_ints(items: &[Value]) -> Vec<i64> {
+        items.iter().filter_map(crate::overview_tabs::as_int).collect()
+    }
+
     // A raw string (matching FIXTURE's convention above), not a `\`-continued
     // literal: a `\<newline>` in a Rust string literal eats not just the
     // newline but ALL leading whitespace of the following physical line, which
@@ -1469,10 +1528,40 @@ tabSetup:
 
         let mut probe = doc.clone();
         let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
-        let (_, groups) = ov.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
-        let text = format!("{groups:?}");
+        let (_, groups_val) = ov.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let text = format!("{groups_val:?}");
         assert!(text.contains("Int(0)") && text.contains("Int(1)"), "both pack tabs are mapped: {text}");
         assert!(!text.contains("Int(7)"), "the dangling index is gone: {text}");
+
+        // Direct assertions on the actual lists, not just substring matching on
+        // a debug-formatted blob: window 1 must become an EMPTY list, and the
+        // window itself must still be present (not removed).
+        let groups = list_or_wrapped(groups_val);
+        assert_eq!(groups.len(), 2, "window 1 must stay present, not be removed");
+        assert_eq!(as_ints(list_or_wrapped(&groups[0])), vec![0, 1], "window 0 gets both pack tabs");
+        assert!(list_or_wrapped(&groups[1]).is_empty(), "window 1's only index (7) was dangling: must leave an EMPTY list");
+    }
+
+    #[test]
+    fn rebuilds_wrapped_per_window_entries_without_dangling_indices() {
+        // Same scenario as above, but each per-window entry is itself a
+        // `(ts, list)` tuple — the inner-tuple branch the plain-list fixture
+        // never exercises.
+        let mut doc = user_doc_with_wrapped_windows();
+        apply_pack(&mut doc, &parse_pack(TWO_TAB_PACK).unwrap()).unwrap();
+
+        let mut probe = doc.clone();
+        let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
+        let (_, groups_val) = ov.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let groups = list_or_wrapped(groups_val);
+        assert_eq!(groups.len(), 2, "window 1 must stay present, not be removed");
+
+        assert!(matches!(&groups[0], Value::Tuple(_)), "window 0's own (ts, list) wrapper must survive");
+        assert_eq!(as_ints(list_or_wrapped(&groups[0])), vec![0, 1], "window 0 gets both pack tabs");
+
+        let Value::Tuple(w1_items) = &groups[1] else { panic!("window 1's own (ts, list) wrapper must survive") };
+        assert_eq!(w1_items[0], ts(), "the per-window tuple's own timestamp must survive untouched");
+        assert!(list_or_wrapped(&groups[1]).is_empty(), "window 1's only index (7) was dangling: must leave an EMPTY list");
     }
 
     #[test]
@@ -1503,5 +1592,58 @@ tabSetup:
         let Value::Dict(entries) = ov else { panic!() };
         assert!(!entries.iter().any(|(k, _)| is_b(k, b"overviewProfilePresets_notSaved")),
                 "a stale notSaved working copy must not survive a preset replacement");
+    }
+
+    #[test]
+    fn zero_tab_account_fallback_carries_bracket_and_color() {
+        // No tab at all to clone as a template: apply_tabs falls back to
+        // overview_tabs::create_tab's own no-sibling default. The pack's tab body
+        // supplies only a name, so `bracket` can ONLY come from the fallback
+        // itself — a fallback that carries `color` but not `bracket` (the bug)
+        // would leave tab 0 with no `bracket` key at all.
+        let mut doc = Value::Dict(vec![(b("overview"), Value::Dict(vec![]))]);
+        let mut pack = Pack::default();
+        pack.set("tabSetup", Node::Seq(vec![Node::Seq(vec![
+            Node::Int(0),
+            Node::Seq(vec![Node::Seq(vec![Node::Str("name".into()), Node::Str("Solo".into())])]),
+        ])]));
+        apply_pack(&mut doc, &pack).unwrap();
+
+        // Read the RAW tree directly (not through read_pack/pairs, which would
+        // just re-project whatever keys happen to exist).
+        let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
+        let tabs = crate::overview_tabs::tabs_mut(ov);
+        let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(0)).unwrap();
+        let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+        assert!(fields.iter().any(|(k, _)| is_b(k, b"bracket")), "fallback tab must carry bracket: {fields:?}");
+        assert!(fields.iter().any(|(k, _)| is_b(k, b"color")), "fallback tab must carry color: {fields:?}");
+    }
+
+    #[test]
+    fn skips_an_empty_presets_section_and_warns() {
+        let mut doc = user_doc();
+        let before_presets = read_pack(&doc).0.get("presets").cloned();
+        let pack = parse_pack("presets: []\nbackgroundStates:\n- 44\n").unwrap();
+        let report = apply_pack(&mut doc, &pack).unwrap();
+
+        let (back, _) = read_pack(&doc);
+        assert_eq!(back.get("presets"), before_presets.as_ref(), "the account's own preset(s) survive untouched");
+        assert!(report.warnings.iter().any(|w| w.contains("presets")), "warns about the skipped section: {:?}", report.warnings);
+        assert!(!report.applied.iter().any(|s| s == "presets"), "presets must not be reported as applied");
+        assert!(report.applied.iter().any(|s| s == "backgroundStates"), "a good section in the same pack still applies");
+    }
+
+    #[test]
+    fn skips_an_empty_tab_setup_section_and_warns() {
+        let mut doc = user_doc();
+        let before_tabs = read_pack(&doc).0.get("tabSetup").cloned();
+        let pack = parse_pack("tabSetup: []\nbackgroundStates:\n- 44\n").unwrap();
+        let report = apply_pack(&mut doc, &pack).unwrap();
+
+        let (back, _) = read_pack(&doc);
+        assert_eq!(back.get("tabSetup"), before_tabs.as_ref(), "the account's own tab(s) survive untouched");
+        assert!(report.warnings.iter().any(|w| w.contains("tabSetup")), "warns about the skipped section: {:?}", report.warnings);
+        assert!(!report.applied.iter().any(|s| s == "tabSetup"), "tabSetup must not be reported as applied");
+        assert!(report.applied.iter().any(|s| s == "backgroundStates"), "a good section in the same pack still applies");
     }
 }
