@@ -19,6 +19,7 @@ mod stacks;
 mod overview_tabs;
 mod overview_presets;
 mod overview_states;
+mod overview_pack;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -42,6 +43,14 @@ pub use overview_states::{
     overview_bools, set_overview_bool, set_state_color, set_state_list, state_colors, StateList,
     OVERVIEW_BOOLS,
 };
+// `Node` is deliberately not re-exported here: `projection::Node` already
+// claims that bare name at the crate root (see the `pub use projection::{project,
+// Node}` line above). Within this crate, sibling modules can still reach the
+// pack node type via `crate::overview_pack::Node`. Whichever later task first
+// needs `overview_pack::Node` from OUTSIDE this crate (an external test crate
+// under `tests/`, or `app/src-tauri`) must resolve the name collision then —
+// e.g. by aliasing one of the two at the re-export site.
+pub use overview_pack::{parse_pack, Pack, PackError, SECTIONS};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
