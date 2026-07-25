@@ -452,7 +452,7 @@
             bind:selectedId={selectedWindowId}
             onReveal={revealInTree}
             onDirty={(slot) => (dirtySlots[slot] = true)}
-            sharedLabel={sharedLabel} />
+            {sharedNames} />
         </div>
       {:else if view === "overview"}
         <div class="tree-area">
