@@ -39,6 +39,12 @@ pub struct HudEntry {
     pub value: Option<String>,
     pub default: String,
     pub scope: HudScope,
+    /// Informational only: `SetTarget` is shared with the per-window bool
+    /// flags, whose `Insert` a generic `insert_dict_entry` can act on directly.
+    /// A HUD field cannot: `Insert` here means the leaf needs the
+    /// `(timestamp, value)` wrapper (never a bare value), and for a point
+    /// field, driving `insert_dict_entry` from it would insert the same key
+    /// twice (once per axis). Only `set_hud_value` may act on this variant.
     pub set: SetTarget,
 }
 
@@ -71,6 +77,13 @@ const FIELDS: [Field; 9] = [
             elem: Some(0), kind: HudKind::Int, default: "0", scope: HudScope::Char },
     Field { name: "badge_y", section: b"ui", key: b"notification_badge_offset",
             elem: Some(1), kind: HudKind::Int, default: "0", scope: HudScope::Char },
+    // Corpus-verified (not assumed): in a real account file, `shipuialigntop`,
+    // `detachFighterUI` and `displayFighterUI` sit under the root `ui` section,
+    // and `neocomWidth` (below) sits under the root `windows` section — a
+    // section that, on the sampled file, holds only that one key. The account
+    // file's `ui` section key is itself `Ref`-keyed (a `Ref` to a byte-string
+    // defined later in the stream, via the trailing shared-object table), which
+    // is why `section()`'s `Ref`/`Shared` resolution matters here specifically.
     Field { name: "ship_top", section: b"ui", key: b"shipuialigntop",
             elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
     Field { name: "fighter_detached", section: b"ui", key: b"detachFighterUI",
@@ -259,6 +272,19 @@ pub enum HudError {
     Parse(String),
 }
 
+impl std::fmt::Display for HudError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HudError::UnknownField(name) => write!(f, "Unknown HUD field {name:?}."),
+            HudError::NoSection => write!(f, "This file has no section to write this value into."),
+            HudError::NotEditable => {
+                write!(f, "This value has an unexpected type here and cannot be edited safely.")
+            }
+            HudError::Parse(detail) => write!(f, "{detail}"),
+        }
+    }
+}
+
 /// Write one HUD field. An existing key is overwritten in place (no reshare
 /// needed — a scalar edit is not structural). An absent key is minted as the
 /// `(timestamp, value)` leaf real files use, which needs `inline_all` first per
@@ -284,7 +310,7 @@ pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), Hud
     match located {
         Located::Writable(path) => {
             let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
-            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(format!("{e:?}")))
+            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))
         }
         Located::Unwritable => Err(HudError::NotEditable),
         Located::Absent => mint(root, f, text),

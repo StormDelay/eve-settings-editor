@@ -622,7 +622,10 @@ pub fn set_hud_field(state: &AppState, name: &str, text: &str) -> Result<Hud, Er
         if let Fidelity::ReadOnly { reason } = &doc.fidelity {
             return Err(ErrDto::new("read_only", reason.clone()));
         }
-        set_hud_value(&mut doc.value, name, text).map_err(|e| ErrDto::new("hud", format!("{e:?}")))?;
+        set_hud_value(&mut doc.value, name, text).map_err(|e| {
+            let v = serde_json::to_value(&e).unwrap_or_default();
+            ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("hud"), e.to_string())
+        })?;
         doc.value = blue_marshal::reshare(&doc.value);
     }
     hud_layout(state)
