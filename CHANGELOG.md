@@ -10,14 +10,6 @@ All notable changes to this project are documented here. The format follows
 
 The ship HUD, fighter UI and neocom on the layout canvas.
 
-- **The furniture's size and anchoring on the canvas are estimates.** EVE's
-  files record where these elements sit but never how large they are, and never
-  state what the stored coordinate is measured from — so the rectangles are
-  drawn from informed guesses, and nothing here has been checked against a
-  running client. The numbers in the panel are exactly what the file holds and
-  are safe to trust; the drawing is an approximation, so use the fields when
-  precision matters. Back up your settings before a session of dragging.
-
 ### Added
 - **The layout canvas draws your screen furniture.** The ship HUD (capacitor
   ring and module racks), the detached fighter UI, the neocom and the
