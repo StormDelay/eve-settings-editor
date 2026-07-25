@@ -855,6 +855,92 @@ pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<Ove
     overview_columns(state)
 }
 
+/// What a pack file contains, for the confirm dialog — section name and the
+/// number of entries in it (0 for a scalar section).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PackSummary {
+    pub sections: Vec<(String, usize)>,
+    pub ignored: Vec<String>,
+}
+
+/// Map a `PackError` to a frontend `ErrDto`, carrying its `code` tag — the same
+/// shape as `tab_err`, so the UI sees `not_a_pack` / `yaml` / `no_overview`
+/// rather than one opaque code.
+fn pack_err(e: settings_model::PackError) -> ErrDto {
+    let jv = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(
+        jv.get("code").and_then(|c| c.as_str()).unwrap_or("pack"),
+        e.to_string(),
+    )
+}
+
+fn read_pack_file(path: &str) -> Result<settings_model::Pack, ErrDto> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| ErrDto::new("io", format!("{path}: {e}")))?;
+    settings_model::parse_pack(&text).map_err(pack_err)
+}
+
+/// Parse a pack and describe it. Reads the file only — no lock, no mutation.
+pub fn pack_preview(path: &str) -> Result<PackSummary, ErrDto> {
+    let pack = read_pack_file(path)?;
+    let sections = pack
+        .sections
+        .iter()
+        .map(|(name, node)| {
+            // `PackNode`, not `Node` — the crate root's `Node` is the projection type.
+            let count = match node { settings_model::PackNode::Seq(items) => items.len(), _ => 0 };
+            (name.clone(), count)
+        })
+        .collect();
+    Ok(PackSummary { sections, ignored: pack.ignored })
+}
+
+/// `pack_import`'s result: the re-projected columns plus the apply report, so
+/// the UI can surface warnings ("unknown colour name…", "ignored empty
+/// 'presets' section…") on import the same way `pack_export` already does.
+#[derive(Debug, serde::Serialize)]
+pub struct PackImportResult {
+    pub columns: OverviewColumns,
+    pub report: settings_model::PackReport,
+}
+
+/// Apply a pack to the open account file. Marks the slot dirty like every other
+/// editor — the user saves, and the normal backup chain applies.
+pub fn pack_import(state: &AppState, path: &str) -> Result<PackImportResult, ErrDto> {
+    let pack = read_pack_file(path)?;
+    let report = {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        let report = settings_model::apply_pack(&mut doc.value, &pack).map_err(pack_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+        report
+    };
+    let columns = overview_columns(state)?;
+    Ok(PackImportResult { columns, report })
+}
+
+/// Write the open account's overview out as a pack. Exports the IN-MEMORY
+/// document, so unsaved edits are included.
+pub fn pack_export(state: &AppState, path: &str) -> Result<settings_model::PackReport, ErrDto> {
+    let (pack, warnings) = {
+        let guard = state.user.lock().unwrap();
+        let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        settings_model::read_pack(&doc.value)
+    };
+    if pack.sections.is_empty() {
+        return Err(pack_err(settings_model::PackError::NoOverview));
+    }
+    let text = settings_model::emit_pack(&pack);
+    std::fs::write(path, text).map_err(|e| ErrDto::new("io", format!("{path}: {e}")))?;
+    Ok(settings_model::PackReport {
+        applied: pack.sections.iter().map(|(name, _)| name.clone()).collect(),
+        warnings,
+    })
+}
+
 pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
     let user = state.user.lock().unwrap();
     let udoc = user.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
@@ -1609,5 +1695,142 @@ mod tests {
         let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
         assert!(char_ok, "char widths write succeeded");
         assert!(acct_fail, "read-only account write failed but was reported, not panicked");
+    }
+
+    /// A user file with one preset and one tab — enough for every pack section
+    /// the command layer touches. Mirrors `user_doc()` in `overview_pack.rs`.
+    fn pack_user_fixture() -> Value {
+        let bb = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let ts = || Value::Long(vec![0u8; 8]);
+        let preset = Value::Dict(vec![
+            (bb("groups"), Value::List(vec![Value::Int(25)])),
+            (bb("filteredStates"), Value::List(vec![])),
+            (bb("alwaysShownStates"), Value::List(vec![])),
+        ]);
+        let tab = Value::Dict(vec![
+            (bb("color"), Value::None),
+            (bb("bracket"), bb("Friendly")),
+            (bb("name"), Value::StrUcs2("Fleet".into())),
+            (bb("overview"), bb("Friendly")),
+        ]);
+        Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("overviewProfilePresets"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("Friendly"), preset)])])),
+            (bb("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+            (bb("overviewColumns"), Value::List(vec![bb("NAME")])),
+        ]))])
+    }
+
+    #[test]
+    fn pack_round_trip_through_the_commands() {
+        let upath = temp_file("pack-roundtrip", &encode(&pack_user_fixture()).unwrap());
+        let dir = upath.parent().unwrap().to_path_buf();
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+
+        let out = dir.join("pack.yaml");
+        let report = pack_export(&state, out.to_str().unwrap()).unwrap();
+        assert!(report.applied.iter().any(|s| s == "presets"), "{report:?}");
+
+        let summary = pack_preview(out.to_str().unwrap()).unwrap();
+        assert!(summary.sections.iter().any(|(name, n)| name == "presets" && *n > 0));
+
+        // Import a pack whose preset and tab NAMES differ from what the open
+        // account already has, and prove the document actually changed to
+        // match it -- a stubbed pack_import that never calls apply_pack would
+        // leave `before == after` and pass a same-document round trip, so the
+        // fixture below must not share a name with `pack_user_fixture()`.
+        let before = overview_columns(&state).unwrap();
+        assert_eq!(before.presets[0].name, "Friendly");
+        // `pack_user_fixture`'s tab keys its "name" field as Bytes, which the
+        // projection's `name` lookup does not match (only Str/StrUcs2/StrTable) --
+        // so it falls back to "Tab {index}". Real files key it StrTable(52); this
+        // fixture quirk is pre-existing and out of scope here.
+        assert_eq!(before.tabs[0].name, "Tab 0");
+
+        let differing = dir.join("differing.yaml");
+        fs::write(&differing, DIFFERING_PACK).unwrap();
+        pack_import(&state, differing.to_str().unwrap()).unwrap();
+
+        let after = overview_columns(&state).unwrap();
+        assert_eq!(after.presets.len(), 1);
+        assert_eq!(after.presets[0].name, "Neutral", "import replaced the preset with the pack's");
+        assert_eq!(after.tabs[0].name, "Scouts", "import renamed the tab from the pack");
+    }
+
+    /// A hand-written pack (published shape, see `overview_pack::tests::FIXTURE`)
+    /// carrying a preset and tab name `pack_user_fixture()` does not have, so
+    /// importing it is only provably applied if the document's names change.
+    const DIFFERING_PACK: &str = r#"presets:
+- - Neutral
+  - - - alwaysShownStates
+      - []
+    - - filteredStates
+      - []
+    - - groups
+      - - 30
+tabSetup:
+- - 0
+  - - - bracket
+      - Neutral
+    - - name
+      - Scouts
+    - - overview
+      - Neutral
+"#;
+
+    #[test]
+    fn pack_preview_rejects_a_non_pack_file() {
+        let junk = temp_file("pack-junk", b"").parent().unwrap().join("junk.yaml");
+        fs::write(&junk, "some: mapping\n").unwrap();
+        let err = pack_preview(junk.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "not_a_pack");
+    }
+
+    #[test]
+    fn pack_preview_rejects_malformed_yaml() {
+        let junk = temp_file("pack-malformed", b"").parent().unwrap().join("malformed.yaml");
+        fs::write(&junk, "presets:\n- - unclosed: [\n").unwrap();
+        let err = pack_preview(junk.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "yaml", "{err:?}");
+    }
+
+    #[test]
+    fn pack_preview_missing_file_is_an_io_error() {
+        let dir = temp_file("pack-missing", b"").parent().unwrap().to_path_buf();
+        let missing = dir.join("does-not-exist.yaml");
+        let err = pack_preview(missing.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "io");
+    }
+
+    #[test]
+    fn pack_import_without_an_open_account_errors() {
+        let p = temp_file("pack-nodoc", b"").parent().unwrap().join("pack.yaml");
+        fs::write(&p, "backgroundStates:\n- 9\n").unwrap();
+        let state = AppState::new();
+        let err = pack_import(&state, p.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "no_document");
+    }
+
+    #[test]
+    fn pack_export_without_an_open_account_errors() {
+        let out = temp_file("pack-export-nodoc", b"").parent().unwrap().join("pack.yaml");
+        let state = AppState::new();
+        let err = pack_export(&state, out.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "no_document");
+    }
+
+    #[test]
+    fn pack_export_rejects_an_account_with_no_overview_settings() {
+        let bb = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let doc = Value::Dict(vec![(bb("other"), Value::Int(1))]);
+        let upath = temp_file("pack-export-empty", &encode(&doc).unwrap());
+        let dir = upath.parent().unwrap().to_path_buf();
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+
+        let out = dir.join("pack.yaml");
+        let err = pack_export(&state, out.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "no_overview");
+        assert!(!out.exists(), "export must not write a file on rejection");
     }
 }
