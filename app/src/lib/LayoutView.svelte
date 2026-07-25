@@ -3,6 +3,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
   import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
+  import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let {
@@ -343,20 +344,25 @@
       </div>
       <p class="ref">reference {layout.reference_w}×{layout.reference_h}</p>
     </div>
-    <WindowPanel
-      windows={layout.windows}
-      stacks={layout.stacks}
-      {selectedId}
-      {readOnly}
-      {onSelect}
-      {onToggleOpen}
-      {onGeom}
-      {onFlag}
-      {onReveal}
-      {onUnstack}
-      {onReorder}
-      {onAddToStack}
-      {onCreateStack} />
+    <div class="side">
+      {#if hud}
+        <HudPanel {hud} {readOnly} onSet={setHud} />
+      {/if}
+      <WindowPanel
+        windows={layout.windows}
+        stacks={layout.stacks}
+        {selectedId}
+        {readOnly}
+        {onSelect}
+        {onToggleOpen}
+        {onGeom}
+        {onFlag}
+        {onReveal}
+        {onUnstack}
+        {onReorder}
+        {onAddToStack}
+        {onCreateStack} />
+    </div>
   </div>
 {/if}
 
@@ -372,6 +378,12 @@
   .canvas-wrap {
     overflow: auto;
     padding: 0.5rem;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
   }
   .canvas {
     position: relative;
