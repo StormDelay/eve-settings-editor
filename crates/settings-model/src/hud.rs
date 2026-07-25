@@ -365,4 +365,63 @@ mod tests {
         let hud = project_hud(&doc, None);
         assert_eq!(entry(&hud, "ship_offset").value.as_deref(), Some("-12"));
     }
+
+    /// An account document: neocomWidth under `windows`, the toggles under `ui`
+    /// — and, as in real files, `ui` keyed by a Ref.
+    fn user_doc() -> Value {
+        Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(37)))])),
+            (
+                Value::Ref(9),
+                Value::Dict(vec![
+                    (b("shipuialigntop"), wrapped(Value::Bool(true))),
+                    (b("detachFighterUI"), wrapped(Value::Bool(true))),
+                    (b("displayFighterUI"), wrapped(Value::Bool(false))),
+                ]),
+            ),
+            (b("anchor"), Value::Shared { slot: 9, value: Box::new(b("ui")) }),
+        ])
+    }
+
+    #[test]
+    fn projects_the_account_side_fields() {
+        let cdoc = char_doc();
+        let udoc = user_doc();
+        let hud = project_hud(&cdoc, Some(&udoc));
+        assert_eq!(entry(&hud, "neocom_width").value.as_deref(), Some("37"));
+        assert_eq!(entry(&hud, "ship_top").value.as_deref(), Some("true"));
+        assert_eq!(entry(&hud, "fighter_detached").value.as_deref(), Some("true"));
+        assert_eq!(entry(&hud, "fighter_shown").value.as_deref(), Some("false"));
+        assert_eq!(entry(&hud, "neocom_width").scope, HudScope::Account);
+        // Paths address the ACCOUNT document, not the character one.
+        match &entry(&hud, "neocom_width").set {
+            SetTarget::Set { path } => assert_eq!(resolve(&udoc, path), Some(&Value::Int(37))),
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn without_an_account_file_the_account_fields_are_unavailable() {
+        let hud = project_hud(&char_doc(), None);
+        for name in ["ship_top", "fighter_detached", "fighter_shown", "neocom_width"] {
+            let e = entry(&hud, name);
+            assert!(e.value.is_none(), "{name} has no value");
+            assert!(matches!(e.set, SetTarget::Unavailable), "{name} is unavailable");
+        }
+        // The character-side fields are unaffected.
+        assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("326"));
+    }
+
+    #[test]
+    fn all_nine_fields_are_projected_in_a_stable_order() {
+        let hud = project_hud(&char_doc(), Some(&user_doc()));
+        let names: Vec<&str> = hud.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "ship_offset", "fighter_x", "fighter_y", "badge_x", "badge_y",
+                "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+            ]
+        );
+    }
 }
