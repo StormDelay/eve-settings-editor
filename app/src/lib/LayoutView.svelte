@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
-  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
+  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, hudPointFromRect, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -246,11 +246,27 @@
       const p = fPreview[d.f.kind];
       if (!p) return;
       if (d.f.kind === "shipui" && layout) {
-        await setHud("ship_offset", String(shipOffsetFromX(p.x, layout.reference_w)));
+        // Compare the derived offsets, not the raw preview x against the
+        // drag-start rect x — those are different quantities (a rect
+        // coordinate vs. a stored offset) and comparing them directly would
+        // either miss a real change or flag a no-op drag as one, depending on
+        // how hudRects' ship-HUD placement is defined. shipOffsetFromX(d.f.x, …)
+        // recovers the offset hudRects placed this rect at, since d.f is the
+        // rect captured at drag start (undragged, so still the committed one).
+        const next = shipOffsetFromX(p.x, layout.reference_w);
+        if (next !== shipOffsetFromX(d.f.x, layout.reference_w)) {
+          await setHud("ship_offset", String(next));
+        }
       } else if (d.f.kind === "fighter" || d.f.kind === "badge") {
         const prefix = d.f.kind === "fighter" ? "fighter" : "badge";
-        if (p.x !== d.f.x) await setHud(`${prefix}_x`, String(Math.round(p.x)));
-        if (p.y !== d.f.y) await setHud(`${prefix}_y`, String(Math.round(p.y)));
+        // Route through hudPointFromRect (see layout.ts) rather than writing
+        // the raw preview rect coordinates: it's the point-convention inverse
+        // that must stay matched with hudRects' placement, and comparing its
+        // output (not the raw preview x/y) is what makes a sub-pixel drag that
+        // rounds back to the same stored value a no-op instead of a dirtying write.
+        const stored = hudPointFromRect(d.f.kind, p.x, p.y);
+        if (stored.x !== d.f.x) await setHud(`${prefix}_x`, String(stored.x));
+        if (stored.y !== d.f.y) await setHud(`${prefix}_y`, String(stored.y));
       }
       // A re-grab on the same furniture piece may have started during the
       // async write and now owns fPreview — don't wipe it out from under the
