@@ -379,11 +379,22 @@ userSettings:
             Node::Str("It's <b>bold</b>".into()),
             Node::Seq(vec![Node::Seq(vec![Node::Str("groups".into()), Node::Seq(vec![])])]),
         ])]));
+        // Neither of these parses back to the same string unless quoted: unquoted,
+        // a leading `-` reads as a nested sequence entry, and `: ` reads as a
+        // nested mapping.
+        pack.set("columnOrder", Node::Seq(vec![
+            Node::Str("- leading dash".into()),
+            Node::Str("key: value-shaped".into()),
+        ]));
         let text = emit_pack(&pack);
         let again = parse_pack(&text).unwrap();
         let name = pairs(again.get("presets").unwrap())[0].0;
         assert_eq!(as_str(name), Some("It's <b>bold</b>"));
         assert!(text.contains("[]"), "an empty sequence emits as []: {text}");
+        assert_eq!(
+            strs(again.get("columnOrder").unwrap()),
+            vec!["- leading dash".to_string(), "key: value-shaped".to_string()],
+        );
     }
 
     #[test]
@@ -392,5 +403,42 @@ userSettings:
         pack.set("columnOrder", Node::Seq(vec![Node::Str("two\nlines".into())]));
         let again = parse_pack(&emit_pack(&pack)).unwrap();
         assert_eq!(strs(again.get("columnOrder").unwrap()), vec!["two\nlines".to_string()]);
+    }
+
+    #[test]
+    fn round_trips_a_null_entry() {
+        // Real published packs carry a literal `null` in shipLabelOrder (and a
+        // `null` key in shipLabels); node_from_yaml maps blank/`~` YAML to
+        // Node::Null, so re-exporting a parsed real pack hits this path.
+        let mut pack = Pack::default();
+        pack.set("shipLabelOrder", Node::Seq(vec![Node::Null, Node::Str("hull".into())]));
+        let again = parse_pack(&emit_pack(&pack)).unwrap();
+        assert_eq!(again.get("shipLabelOrder"), pack.get("shipLabelOrder"));
+    }
+
+    #[test]
+    fn round_trips_an_integral_float() {
+        // {f:?} (not {f}) is what keeps an integral float's `.0` so it does not
+        // silently reparse as an int.
+        let mut pack = Pack::default();
+        pack.set("userSettings", Node::Seq(vec![Node::Seq(vec![
+            Node::Str("someFloatSetting".into()),
+            Node::Float(3.0),
+        ])]));
+        let again = parse_pack(&emit_pack(&pack)).unwrap();
+        let settings = pairs(again.get("userSettings").unwrap());
+        assert_eq!(settings[0].1, &Node::Float(3.0));
+    }
+
+    #[test]
+    fn writes_a_bare_scalar_section_with_a_space_after_the_colon() {
+        // Sections aren't always Seqs: a section whose value is a plain scalar
+        // takes the `name: value` branch of emit_pack, not write_seq.
+        let mut pack = Pack::default();
+        pack.set("columnOrder", Node::Bool(true));
+        let text = emit_pack(&pack);
+        assert!(text.contains("columnOrder: true\n"), "missing space after colon: {text}");
+        let again = parse_pack(&text).unwrap();
+        assert_eq!(again.get("columnOrder"), Some(&Node::Bool(true)));
     }
 }
