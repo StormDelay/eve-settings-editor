@@ -920,7 +920,7 @@ pub fn pack_export(state: &AppState, path: &str) -> Result<settings_model::PackR
         settings_model::read_pack(&doc.value)
     };
     if pack.sections.is_empty() {
-        return Err(ErrDto::new("pack", "this account file has no overview settings to export".to_string()));
+        return Err(pack_err(settings_model::PackError::NoOverview));
     }
     let text = settings_model::emit_pack(&pack);
     std::fs::write(path, text).map_err(|e| ErrDto::new("io", format!("{path}: {e}")))?;
@@ -1723,13 +1723,49 @@ mod tests {
         let summary = pack_preview(out.to_str().unwrap()).unwrap();
         assert!(summary.sections.iter().any(|(name, n)| name == "presets" && *n > 0));
 
-        // Importing what we just exported leaves the same overview in place.
+        // Import a pack whose preset and tab NAMES differ from what the open
+        // account already has, and prove the document actually changed to
+        // match it -- a stubbed pack_import that never calls apply_pack would
+        // leave `before == after` and pass a same-document round trip, so the
+        // fixture below must not share a name with `pack_user_fixture()`.
         let before = overview_columns(&state).unwrap();
-        pack_import(&state, out.to_str().unwrap()).unwrap();
+        assert_eq!(before.presets[0].name, "Friendly");
+        // `pack_user_fixture`'s tab keys its "name" field as Bytes, which the
+        // projection's `name` lookup does not match (only Str/StrUcs2/StrTable) --
+        // so it falls back to "Tab {index}". Real files key it StrTable(52); this
+        // fixture quirk is pre-existing and out of scope here.
+        assert_eq!(before.tabs[0].name, "Tab 0");
+
+        let differing = dir.join("differing.yaml");
+        fs::write(&differing, DIFFERING_PACK).unwrap();
+        pack_import(&state, differing.to_str().unwrap()).unwrap();
+
         let after = overview_columns(&state).unwrap();
-        assert_eq!(after.tabs.len(), before.tabs.len());
-        assert_eq!(after.presets, before.presets);
+        assert_eq!(after.presets.len(), 1);
+        assert_eq!(after.presets[0].name, "Neutral", "import replaced the preset with the pack's");
+        assert_eq!(after.tabs[0].name, "Scouts", "import renamed the tab from the pack");
     }
+
+    /// A hand-written pack (published shape, see `overview_pack::tests::FIXTURE`)
+    /// carrying a preset and tab name `pack_user_fixture()` does not have, so
+    /// importing it is only provably applied if the document's names change.
+    const DIFFERING_PACK: &str = r#"presets:
+- - Neutral
+  - - - alwaysShownStates
+      - []
+    - - filteredStates
+      - []
+    - - groups
+      - - 30
+tabSetup:
+- - 0
+  - - - bracket
+      - Neutral
+    - - name
+      - Scouts
+    - - overview
+      - Neutral
+"#;
 
     #[test]
     fn pack_preview_rejects_a_non_pack_file() {
@@ -1740,11 +1776,50 @@ mod tests {
     }
 
     #[test]
+    fn pack_preview_rejects_malformed_yaml() {
+        let junk = temp_file("pack-malformed", b"").parent().unwrap().join("malformed.yaml");
+        fs::write(&junk, "presets:\n- - unclosed: [\n").unwrap();
+        let err = pack_preview(junk.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "yaml", "{err:?}");
+    }
+
+    #[test]
+    fn pack_preview_missing_file_is_an_io_error() {
+        let dir = temp_file("pack-missing", b"").parent().unwrap().to_path_buf();
+        let missing = dir.join("does-not-exist.yaml");
+        let err = pack_preview(missing.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "io");
+    }
+
+    #[test]
     fn pack_import_without_an_open_account_errors() {
         let p = temp_file("pack-nodoc", b"").parent().unwrap().join("pack.yaml");
         fs::write(&p, "backgroundStates:\n- 9\n").unwrap();
         let state = AppState::new();
         let err = pack_import(&state, p.to_str().unwrap()).unwrap_err();
         assert_eq!(err.code, "no_document");
+    }
+
+    #[test]
+    fn pack_export_without_an_open_account_errors() {
+        let out = temp_file("pack-export-nodoc", b"").parent().unwrap().join("pack.yaml");
+        let state = AppState::new();
+        let err = pack_export(&state, out.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "no_document");
+    }
+
+    #[test]
+    fn pack_export_rejects_an_account_with_no_overview_settings() {
+        let bb = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let doc = Value::Dict(vec![(bb("other"), Value::Int(1))]);
+        let upath = temp_file("pack-export-empty", &encode(&doc).unwrap());
+        let dir = upath.parent().unwrap().to_path_buf();
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+
+        let out = dir.join("pack.yaml");
+        let err = pack_export(&state, out.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "no_overview");
+        assert!(!out.exists(), "export must not write a file on rejection");
     }
 }
