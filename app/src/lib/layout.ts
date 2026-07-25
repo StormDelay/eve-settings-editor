@@ -140,9 +140,23 @@ export function hudFlag(hud: Hud, name: string): boolean {
   return (e.value ?? e.default) === "true";
 }
 
-/** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects. */
+/** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects'
+ * ship-HUD placement below — the two must be corrected together (see
+ * hudRects' comment on the ship HUD branch). */
 export function shipOffsetFromX(x: number, referenceW: number): number {
   return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
+}
+
+/**
+ * Stored (x, y) for a fighter/badge rect at data-px `x, y`. Inverse of
+ * hudRects' fighter/badge placement below, which currently stores the rect's
+ * top-left directly — the two must be corrected together (see hudRects'
+ * comment on the fighter/badge branches) or a drag will jump by however much
+ * the convention actually differs (e.g. half the element's size, if the
+ * stored point turns out to be the panel's centre).
+ */
+export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
+  return { x: Math.round(x), y: Math.round(y) };
 }
 
 /**
@@ -159,6 +173,8 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     out.push({ kind: "neocom", label: "Neocom", x: 0, y: 0, w: neocom, h: layout.reference_h, drag: "none" });
   }
 
+  // Centre-relative placement. Its inverse is shipOffsetFromX, below — a
+  // matched pair that must be corrected together (see shipOffsetFromX's doc).
   const offset = hudNum(hud, "ship_offset");
   if (offset !== null) {
     const { w, h } = HUD_NOMINAL.shipui;
@@ -173,6 +189,10 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     });
   }
 
+  // The stored point is placed as the rect's top-left. Its inverse is
+  // hudPointFromRect, below — a matched pair that must be corrected together
+  // (see hudPointFromRect's doc) if the live smoke shows this is wrong (e.g.
+  // the stored point is really the panel's centre).
   const fx = hudNum(hud, "fighter_x");
   const fy = hudNum(hud, "fighter_y");
   if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
