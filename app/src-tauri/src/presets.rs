@@ -21,7 +21,7 @@ const RESERVED: &[&str] = &[
 ];
 
 /// A rejected preset name, carrying the message shown to the user.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct NameError(pub String);
 
 /// `<app data dir>/presets` — alongside accounts.json rather than
@@ -56,14 +56,20 @@ pub fn sanitize_name(raw: &str) -> Result<String, NameError> {
     Ok(raw.to_string())
 }
 
+/// True when `name` is exactly one ordinary path component — no separators, no
+/// `.`/`..`, no drive prefix or root. Checked independently of `sanitize_name`
+/// so that a gap in the name rules still cannot escape the presets directory.
+fn is_single_normal_component(name: &str) -> bool {
+    let mut comps = Path::new(name).components();
+    matches!(comps.next(), Some(Component::Normal(_))) && comps.next().is_none()
+}
+
 /// The folder a preset lives in. Two independent guards: the name rules above,
 /// and a containment check that the name is exactly one ordinary path
 /// component — so a gap in the first cannot escape the presets directory.
 pub fn preset_path(app_data: &Path, name: &str) -> Result<PathBuf, NameError> {
     let name = sanitize_name(name)?;
-    let mut comps = Path::new(&name).components();
-    let single = matches!(comps.next(), Some(Component::Normal(_))) && comps.next().is_none();
-    if !single {
+    if !is_single_normal_component(&name) {
         return Err(NameError("Invalid preset name.".into()));
     }
     Ok(presets_dir(app_data).join(name))
@@ -72,7 +78,7 @@ pub fn preset_path(app_data: &Path, name: &str) -> Result<PathBuf, NameError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[test]
     fn accepts_ordinary_names() {
@@ -144,5 +150,18 @@ mod tests {
         assert!(preset_path(Path::new("/data"), "../escape").is_err());
         assert!(preset_path(Path::new("/data"), "/etc/passwd").is_err());
         assert!(preset_path(Path::new("/data"), "a/b").is_err());
+    }
+
+    #[test]
+    fn the_containment_guard_stands_alone() {
+        // These never reach the guard through preset_path, because
+        // sanitize_name rejects them first. Testing the guard directly is what
+        // makes the second line of defence real rather than decorative.
+        for bad in ["..", ".", "a/b", "a\\b", "/etc/passwd", "C:\\Windows", ""] {
+            assert!(!is_single_normal_component(bad), "{bad:?} must not be a single component");
+        }
+        for good in ["PvP layout", "Mining", "v2.1 setup", "a/"] {
+            assert!(is_single_normal_component(good), "{good:?} is a single component");
+        }
     }
 }
