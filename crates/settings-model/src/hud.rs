@@ -73,9 +73,15 @@ const FIELDS: [Field; 9] = [
             elem: Some(0), kind: HudKind::Int, default: "0", scope: HudScope::Char },
     Field { name: "fighter_y", section: b"ui", key: b"fightersDetachedPosition",
             elem: Some(1), kind: HudKind::Int, default: "0", scope: HudScope::Char },
-    Field { name: "badge_x", section: b"ui", key: b"notification_badge_offset",
+    // The badge offset lives under the root `notifications` section, NOT `ui` —
+    // corpus-verified (313/384 character files; `ui → notification_badge_offset`
+    // exists in none). This said `ui` through the whole HUD slice: the badge then
+    // projects as its "0" default and a drag mints a dead `ui` key EVE ignores.
+    // Only `tests/hud_corpus.rs` catches that — every fixture here agrees with
+    // whatever section this table names.
+    Field { name: "badge_x", section: b"notifications", key: b"notification_badge_offset",
             elem: Some(0), kind: HudKind::Int, default: "0", scope: HudScope::Char },
-    Field { name: "badge_y", section: b"ui", key: b"notification_badge_offset",
+    Field { name: "badge_y", section: b"notifications", key: b"notification_badge_offset",
             elem: Some(1), kind: HudKind::Int, default: "0", scope: HudScope::Char },
     // Corpus-verified (not assumed): in a real account file, `shipuialigntop`,
     // `detachFighterUI` and `displayFighterUI` sit under the root `ui` section,
@@ -400,12 +406,12 @@ mod tests {
                 b("windows"),
                 Value::Dict(vec![(b("shipuialignleftoffset"), wrapped(Value::Float(-189.0)))]),
             ),
+            (b("ui"), Value::Dict(vec![(b("fightersDetachedPosition"), wrapped(point(326, 54)))])),
+            // Real files keep the badge offset here, not under `ui` — the shape
+            // the v0.15.0 fixture got wrong, which is why its tests still passed.
             (
-                b("ui"),
-                Value::Dict(vec![
-                    (b("fightersDetachedPosition"), wrapped(point(326, 54))),
-                    (b("notification_badge_offset"), wrapped(point(2519, 131))),
-                ]),
+                b("notifications"),
+                Value::Dict(vec![(b("notification_badge_offset"), wrapped(point(2519, 131)))]),
             ),
         ])
     }
@@ -435,10 +441,25 @@ mod tests {
         assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("326"));
         assert_eq!(entry(&hud, "fighter_y").value.as_deref(), Some("54"));
         assert_eq!(entry(&hud, "badge_x").value.as_deref(), Some("2519"));
+        assert_eq!(entry(&hud, "badge_y").value.as_deref(), Some("131"));
         match &entry(&hud, "fighter_y").set {
             SetTarget::Set { path } => assert_eq!(resolve(&doc, path), Some(&Value::Int(54))),
             other => panic!("expected Set, got {other:?}"),
         }
+    }
+
+    /// The bug the HUD slice carried until release: `badge_*` declared `ui` as
+    /// its section and the fixture agreed, so the wrong section passed its own
+    /// tests. Pin the negative — a badge offset under `ui` is not this field.
+    #[test]
+    fn the_badge_offset_is_not_read_from_the_ui_section() {
+        let doc = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(b("notification_badge_offset"), wrapped(point(2519, 131)))]),
+        )]);
+        let hud = project_hud(&doc, None);
+        assert!(entry(&hud, "badge_x").value.is_none());
+        assert!(matches!(entry(&hud, "badge_x").set, SetTarget::Unavailable));
     }
 
     /// The real-file case that a bare `is_bytes` lookup misses: the root section
