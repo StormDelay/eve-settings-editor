@@ -16,6 +16,12 @@
   let stolenFrom = $state<Record<string, string>>({});
 
   async function reload() {
+    // Both are about the CURRENT table, so neither may outlive it. Command
+    // names are global, so a "taken by X" note left on one account would
+    // silently reattach to the same row on the next one and describe a theft
+    // that never happened there.
+    stolenFrom = {};
+    listening = null;
     if (!userOpen) { binds = null; return; }
     error = null;
     try { binds = await api.keybinds(); }
@@ -88,7 +94,10 @@
   </p>
 {:else if binds}
   <div class="searchbar">
-    <input class="search" bind:value={query} placeholder="Search commands and keys (Ctrl+F)" />
+    <!-- No "(Ctrl+F)" hint: that shortcut still opens the Tree search from the
+         page-level handler. Wiring it per-view is being done on the layout
+         branch; this placeholder gains the hint when that lands. -->
+    <input class="search" bind:value={query} placeholder="Search commands and keys" />
   </div>
   {#each grouped as [group, entries] (group)}
     <h3>{group}</h3>
@@ -134,9 +143,9 @@
 <style>
   /* Native controls render light in the dark WebView2 shell unless told
      otherwise — see the dark-native-controls note in the repo memory. */
-  .search { background: #1b1b1b; color: #e8e8e8; border: 1px solid #3a3a3a; }
-  .chip { background: #232323; color: #e8e8e8; border: 1px solid #3a3a3a; min-width: 7rem; }
-  .chip.listening { border-color: #6aa9ff; }
+  .search { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); }
+  .chip { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); min-width: 7rem; }
+  .chip.listening { border-color: var(--accent); }
   .chip.readonly { opacity: 0.6; }
   .default { opacity: 0.5; }
   tr.malformed { opacity: 0.6; }
