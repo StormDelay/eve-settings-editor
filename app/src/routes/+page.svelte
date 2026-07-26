@@ -7,6 +7,7 @@
   import AccountsView from "$lib/AccountsView.svelte";
   import OverviewView from "$lib/OverviewView.svelte";
   import AutofillView from "$lib/AutofillView.svelte";
+  import KeybindsView from "$lib/KeybindsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
@@ -38,14 +39,14 @@
   // Which file the raw Tree view shows; a Tree-local switch flips it to the
   // account file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
-  type View = "tree" | "layout" | "overview" | "autofill";
+  type View = "tree" | "layout" | "overview" | "autofill" | "keybinds";
   let view = $state<View>("tree");
   // The active document is a consequence of the current view — NOT a manual
   // toggle: Autofill edits the account file, the Tree view honors its file
   // switch, everything else (Layout, Overview, search, backups) follows the
   // character.
   const active = $derived<Slot>(
-    view === "autofill" && slots.user?.status === "opened"
+    (view === "autofill" || view === "keybinds") && slots.user?.status === "opened"
       ? "user"
       : view === "tree" && treeFile === "user" && slots.user?.status === "opened"
         ? "user"
@@ -433,6 +434,7 @@
             {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
+            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "keybinds"} onclick={() => (view = "keybinds")}>Keybinds</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -477,6 +479,15 @@
             charName={openCharName}
             sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
+            onUserDirty={() => (dirtySlots.user = true)} />
+        </div>
+      {:else if view === "keybinds"}
+        <div class="tree-area">
+          <KeybindsView
+            userOpen={slots.user?.status === "opened"}
+            userId={openUserId}
+            onShowAccounts={() => (mainView = "accounts")}
+            onShowBatch={() => (mainView = "batch")}
             onUserDirty={() => (dirtySlots.user = true)} />
         </div>
       {:else}
