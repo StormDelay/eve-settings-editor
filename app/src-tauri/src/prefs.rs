@@ -24,13 +24,22 @@ pub struct LayoutPrefs {
 
 /// Read the file, or defaults. A file we cannot parse is USER DATA: move it
 /// aside so a hand-edit gone wrong is recoverable, rather than silently
-/// overwriting it on the next save.
+/// overwriting it on the next save. Rename is the normal path (atomic, no
+/// extra copy); if it fails — locked file, permission denial, AV
+/// interference — fall back to copying the bytes instead, which preserves
+/// them just the same. If both fail, the file is inaccessible enough that a
+/// later write would likely fail too, so nothing recoverable is lost by
+/// giving up: this stays infallible and still returns defaults so the editor
+/// can open.
 pub fn load_from(path: &Path) -> Preferences {
     let Ok(raw) = std::fs::read_to_string(path) else { return Preferences::default() };
     match serde_json::from_str(&raw) {
         Ok(p) => p,
         Err(_) => {
-            let _ = std::fs::rename(path, path.with_extension("json.bad"));
+            let bad = path.with_extension("json.bad");
+            if std::fs::rename(path, &bad).is_err() {
+                let _ = std::fs::copy(path, &bad);
+            }
             Preferences::default()
         }
     }
@@ -96,9 +105,14 @@ mod tests {
 
     #[test]
     fn an_unknown_key_still_loads() {
-        // The forward-compatibility contract: a file written by a LATER build
-        // must not break this one, and #[serde(default)] must cover a section
-        // this build has never heard of.
+        // The forward-compatibility contract has two halves, each covered by
+        // a different mechanism. THIS test covers the "file is newer than the
+        // build" half: serde ignores unrecognized fields by default (nothing
+        // in this module opts into #[serde(deny_unknown_fields)]), so a
+        // "future" section this build has never heard of doesn't break
+        // parsing. `a_missing_section_defaults` below covers the other half —
+        // a file OLDER than the build, missing a section entirely — which is
+        // what #[serde(default)] is actually for.
         let p = temp_dir("unknown").join("preferences.json");
         std::fs::write(&p, br#"{"layout":{"clutter":["market"]},"future":{"x":1}}"#).unwrap();
         let prefs = load_from(&p);
@@ -111,5 +125,43 @@ mod tests {
         std::fs::write(&p, b"{}").unwrap();
         let prefs = load_from(&p);
         assert!(prefs.layout.clutter.is_empty());
+    }
+
+    // Windows-only: forces the actual failure mode the copy fallback exists
+    // for. Holding the corrupt file open with a share mode that grants
+    // FILE_SHARE_READ/WRITE but withholds FILE_SHARE_DELETE reproduces a real
+    // "locked by another process" condition — Windows then refuses the
+    // rename (it needs delete access) while a plain read, and therefore a
+    // copy, still succeed. This is not arrangeable on the CI (Linux) runner,
+    // which is why it's cfg-gated rather than run everywhere.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_corrupt_file_still_survives_via_the_copy_fallback() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_SHARE_WRITE: u32 = 0x2;
+
+        let dir = temp_dir("locked");
+        let p = dir.join("preferences.json");
+        std::fs::write(&p, b"{ this is not json").unwrap();
+
+        let held_open = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE) // no FILE_SHARE_DELETE
+            .open(&p)
+            .unwrap();
+
+        let prefs = load_from(&p);
+        drop(held_open);
+
+        assert!(prefs.layout.clutter.is_empty(), "a corrupt file must fall back to defaults");
+        // The rename failed (that's the point of the lock), so the fallback
+        // is a copy, not a move: the original is left in place too. Either
+        // way the user's bytes are recoverable, which is the actual contract.
+        assert_eq!(
+            std::fs::read(dir.join("preferences.json.bad")).unwrap(),
+            b"{ this is not json",
+            "the copy fallback must preserve the original bytes"
+        );
     }
 }
