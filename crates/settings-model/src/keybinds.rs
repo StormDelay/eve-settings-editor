@@ -13,7 +13,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{as_dict, bytes_str, collect_shared, effective, find_child, SharedTable};
+use crate::treewalk::{as_dict, bytes_str, child_dict_mut, collect_shared, dict_inner_mut, effective, find_child, inline_all, is_bytes, SharedTable, Entries};
 
 /// Modifier virtual-key codes, in the canonical order EVE writes them.
 pub const MOD_CTRL: i64 = 17;
@@ -81,6 +81,97 @@ fn read_binding(v: &Value, sh: &SharedTable) -> (Option<Vec<i64>>, bool) {
         }
         _ => (None, true),
     }
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum KeybindError {
+    /// No `cmd -> customCmds` in this file.
+    NoTable,
+    /// This client build's table has no such command (spec §2.4 — the table is
+    /// the command set; the editor never mints rows).
+    UnknownCommand,
+    /// No non-modifier code supplied.
+    NoKey,
+    /// More than one non-modifier code; the corpus has none such.
+    MultipleKeys,
+    DuplicateModifier,
+}
+
+/// Bind `command` to `keys` (or unbind it with `None`), stealing the
+/// combination from any other command that holds it — which is what EVE does,
+/// and why no corpus file contains a duplicate.
+///
+/// Returns the commands whose binding was cleared, so the caller can say what
+/// it took. Leaves the `customCmds` timestamp untouched.
+pub fn set_keybind(
+    user: &mut Value,
+    command: &str,
+    keys: Option<Vec<i64>>,
+) -> Result<Vec<String>, KeybindError> {
+    // Validate BEFORE mutating: a rejected write must change nothing.
+    let canon = keys.map(|k| canonical(&k)).transpose()?;
+
+    inline_all(user);
+    let table = custom_cmds_mut(user).ok_or(KeybindError::NoTable)?;
+    if !table.iter().any(|(k, _)| is_bytes(k, command.as_bytes())) {
+        return Err(KeybindError::UnknownCommand);
+    }
+
+    let mut stolen = Vec::new();
+    if let Some(c) = &canon {
+        let want = Value::Tuple(c.iter().map(|&n| Value::Int(n)).collect());
+        for (k, v) in table.iter_mut() {
+            if is_bytes(k, command.as_bytes()) || *v != want {
+                continue;
+            }
+            if let Value::Bytes(name) = k {
+                stolen.push(String::from_utf8_lossy(name).into_owned());
+            }
+            *v = Value::None;
+        }
+    }
+
+    let (_, slot) = table
+        .iter_mut()
+        .find(|(k, _)| is_bytes(k, command.as_bytes()))
+        .expect("presence checked above");
+    *slot = match &canon {
+        Some(c) => Value::Tuple(c.iter().map(|&n| Value::Int(n)).collect()),
+        None => Value::None,
+    };
+    Ok(stolen)
+}
+
+/// Enforce the corpus invariant and impose the canonical order: modifiers
+/// Ctrl, Alt, Shift (in that order), then exactly one non-modifier code.
+fn canonical(keys: &[i64]) -> Result<Vec<i64>, KeybindError> {
+    let mods: Vec<i64> = keys.iter().copied().filter(|c| MODIFIERS.contains(c)).collect();
+    let rest: Vec<i64> = keys.iter().copied().filter(|c| !MODIFIERS.contains(c)).collect();
+
+    let mut seen = mods.clone();
+    seen.sort_unstable();
+    seen.dedup();
+    if seen.len() != mods.len() {
+        return Err(KeybindError::DuplicateModifier);
+    }
+    match rest.len() {
+        0 => return Err(KeybindError::NoKey),
+        1 => {}
+        _ => return Err(KeybindError::MultipleKeys),
+    }
+
+    let mut out: Vec<i64> = MODIFIERS.iter().copied().filter(|m| mods.contains(m)).collect();
+    out.push(rest[0]);
+    Ok(out)
+}
+
+/// Mutable inner dict of root -> cmd -> customCmds -> (ts, dict). Assumes a
+/// plain tree (post-`inline_all`), so keys are plain Bytes.
+fn custom_cmds_mut(user: &mut Value) -> Option<&mut Entries> {
+    let Value::Dict(root) = user else { return None };
+    let cmd = child_dict_mut(root, b"cmd")?;
+    child_dict_mut(cmd, b"customCmds")
 }
 
 #[cfg(test)]
@@ -178,5 +269,114 @@ mod tests {
         assert!(entry(&k, "CmdWeird").malformed);
         assert_eq!(entry(&k, "CmdWeird").keys, None);
         assert!(entry(&k, "CmdEmptyTuple").malformed);
+    }
+
+    #[test]
+    fn binds_an_unbound_command() {
+        let mut user = user_with_binds();
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90])).unwrap();
+        assert!(stolen.is_empty());
+        let k = project_keybinds(Some(&user));
+        assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![17, 90]));
+    }
+
+    #[test]
+    fn unbinding_writes_none() {
+        let mut user = user_with_binds();
+        set_keybind(&mut user, "CmdActivateHighPowerSlot1", None).unwrap();
+        let k = project_keybinds(Some(&user));
+        let e = entry(&k, "CmdActivateHighPowerSlot1");
+        assert_eq!(e.keys, None);
+        assert!(!e.malformed, "an unbound leaf is None, not junk");
+    }
+
+    /// Spec §2.2: no corpus file contains a duplicate combination, so EVE steals
+    /// the key from its previous owner. The editor must do the same or it writes
+    /// a file the client never produces.
+    #[test]
+    fn rebinding_a_taken_combo_steals_it() {
+        let mut user = user_with_binds();
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81])).unwrap();
+        assert_eq!(stolen, vec!["CmdActivateHighPowerSlot1"]);
+        let k = project_keybinds(Some(&user));
+        assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![81]));
+        assert_eq!(entry(&k, "CmdActivateHighPowerSlot1").keys, None, "previous owner cleared");
+    }
+
+    #[test]
+    fn rebinding_a_command_to_its_own_combo_is_a_noop() {
+        let mut user = user_with_binds();
+        let stolen = set_keybind(&mut user, "CmdActivateHighPowerSlot1", Some(vec![81])).unwrap();
+        assert!(stolen.is_empty(), "a command never steals from itself");
+        let k = project_keybinds(Some(&user));
+        assert_eq!(entry(&k, "CmdActivateHighPowerSlot1").keys, Some(vec![81]));
+    }
+
+    #[test]
+    fn modifier_order_is_canonicalised_to_ctrl_alt_shift() {
+        let mut user = user_with_binds();
+        // Supplied Shift, Alt, Ctrl, key — must be stored 17, 18, 16, key.
+        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![16, 18, 17, 68])).unwrap();
+        let k = project_keybinds(Some(&user));
+        assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![17, 18, 16, 68]));
+    }
+
+    #[test]
+    fn canonicalisation_makes_a_reordered_combo_collide() {
+        let mut user = user_with_binds();
+        // CmdActivateMediumPowerSlot1 holds (17, 83). Supplying (83, 17) must
+        // canonicalise to (17, 83) and therefore steal it.
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![83, 17])).unwrap();
+        assert_eq!(stolen, vec!["CmdActivateMediumPowerSlot1"]);
+    }
+
+    #[test]
+    fn rejects_combos_that_break_the_corpus_invariant() {
+        let mut user = user_with_binds();
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![])), Err(KeybindError::NoKey));
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17])), Err(KeybindError::NoKey));
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81, 83])), Err(KeybindError::MultipleKeys));
+        assert_eq!(
+            set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 17, 81])),
+            Err(KeybindError::DuplicateModifier)
+        );
+        // A rejected write changes nothing.
+        let k = project_keybinds(Some(&user));
+        assert_eq!(entry(&k, "CmdToggleAutopilot").keys, None);
+    }
+
+    #[test]
+    fn rejects_an_unknown_command_and_a_missing_table() {
+        let mut user = user_with_binds();
+        assert_eq!(
+            set_keybind(&mut user, "CmdNotInThisClient", Some(vec![81])),
+            Err(KeybindError::UnknownCommand)
+        );
+        let mut bare = Value::Dict(vec![]);
+        assert_eq!(set_keybind(&mut bare, "CmdAnything", None), Err(KeybindError::NoTable));
+    }
+
+    /// GLOBAL CONSTRAINT. Five shipped editors preserve an existing wrapper's
+    /// timestamp and every live smoke passed on that. A leaf must stay BARE.
+    #[test]
+    fn a_write_preserves_the_table_timestamp_and_never_wraps_a_leaf() {
+        let mut user = user_with_binds();
+        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90])).unwrap();
+
+        let Value::Dict(root) = &user else { panic!("root is a dict") };
+        let (_, cmd) = root.iter().find(|(k, _)| is_bytes(k, b"cmd")).expect("cmd section");
+        let Value::Dict(cmd) = cmd else { panic!("cmd is a bare dict, not wrapped") };
+        let (_, wrapper) = cmd.iter().find(|(k, _)| is_bytes(k, b"customCmds")).expect("customCmds");
+        let Value::Tuple(parts) = wrapper else { panic!("customCmds is a (ts, dict) tuple") };
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], ts(), "the table timestamp must survive untouched");
+
+        let Value::Dict(table) = &parts[1] else { panic!("payload is a dict") };
+        let (_, leaf) = table.iter().find(|(k, _)| is_bytes(k, b"CmdToggleAutopilot")).unwrap();
+        assert_eq!(
+            leaf,
+            &codes(&[17, 90]),
+            "the leaf is a bare code tuple — wrapping it produces the malformed value EVE ignores"
+        );
     }
 }
