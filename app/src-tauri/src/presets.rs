@@ -174,8 +174,16 @@ pub fn create(
         std::fs::write(dir.join(MARKER_FILE), br#"{"full":true}"#).map_err(|e| e.to_string())?;
     } else {
         // Overwriting a full preset with a pruned one must drop the marker, or
-        // the preset would keep claiming to be a complete copy.
-        let _ = std::fs::remove_file(dir.join(MARKER_FILE));
+        // the preset would keep claiming to be a complete copy. A marker that
+        // was never there is the normal case and not an error; one that refuses
+        // to go IS, and must fail the save rather than leave a pruned preset
+        // labelled full — that label is what lets a whole-file copy overwrite a
+        // target's settings with these three keys.
+        match std::fs::remove_file(dir.join(MARKER_FILE)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("clearing the full-preset marker failed: {e}")),
+        }
     }
     Ok(dir)
 }
