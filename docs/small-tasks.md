@@ -265,6 +265,16 @@ Workflow:
   list below, since both are "let the user say which windows count".
   _Added 2026-07-26._
 
+- [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
+  dragged out of a stack, which can leave the stack with a single member. The
+  editor leaves it alone: what the client does with a one-member stack was
+  never captured, and the file evidence points at leaving frames behind (a real
+  character file carried 8 orphaned containers, below). Settle it in a live
+  capture — drag the second-to-last window out of a stack in-game, log out, and
+  look at whether `stacksWindows` / `preferredIdxInStack3` still name the last
+  member — then either auto-dissolve on the drag-out or leave this closed.
+  _Added 2026-07-26 (layout stack polish)._
+
 - [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
   numeric-string window id *only* to serve as a window-stack container (see
   `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
