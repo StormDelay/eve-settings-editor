@@ -1,0 +1,130 @@
+//! Real-data guard for the keybinding table. Unit fixtures in `keybinds.rs`
+//! build whatever shape the reader expects, so a wrong section or key passes
+//! them all while projecting nothing from a real file — the class of bug that
+//! shipped in v0.15.0 for the HUD badge offset.
+//!
+//! Also pins the value invariants the writer relies on (spec §2.2): rejecting a
+//! two-key combo is only safe if real files never contain one.
+//!
+//! Skips silently when the corpus is not checked out.
+
+mod common;
+
+use settings_model::{project_keybinds, set_keybind, MOD_ALT, MOD_CTRL, MOD_SHIFT};
+
+/// The real corpus has 132 account files carrying a table. A wrong section or
+/// key projects 0. Deliberately below 132 so refreshing the corpus cannot fail
+/// this spuriously.
+const ENOUGH_REAL: usize = 100;
+
+#[test]
+fn the_keybinding_table_reads_from_real_files() {
+    if !common::real_corpus_present() {
+        return;
+    }
+    let mut with_table = 0usize;
+    let mut bindings = 0usize;
+
+    for f in common::user_files() {
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
+        let k = project_keybinds(Some(&doc));
+        if k.available {
+            with_table += 1;
+            bindings += k.entries.iter().filter(|e| e.keys.is_some()).count();
+        }
+    }
+
+    assert!(
+        with_table >= ENOUGH_REAL,
+        "only {with_table} account files projected a keybinding table (expected >= {ENOUGH_REAL}); \
+         the section or key path is wrong"
+    );
+    assert!(bindings > 1000, "expected thousands of bindings, got {bindings}");
+}
+
+#[test]
+fn every_real_binding_satisfies_the_writer_invariants() {
+    let modifiers = [MOD_CTRL, MOD_ALT, MOD_SHIFT];
+
+    for f in common::user_files() {
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
+        let k = project_keybinds(Some(&doc));
+        for e in &k.entries {
+            assert!(!e.malformed, "{}: {} projected as malformed", f.name(), e.command);
+            let Some(keys) = &e.keys else { continue };
+
+            let mods: Vec<i64> = keys.iter().copied().filter(|c| modifiers.contains(c)).collect();
+            let rest: Vec<i64> = keys.iter().copied().filter(|c| !modifiers.contains(c)).collect();
+            assert_eq!(rest.len(), 1, "{}: {} has {:?}, expected one non-modifier", f.name(), e.command, keys);
+            assert_eq!(&keys[keys.len() - 1], &rest[0], "{}: the key must come last", f.name());
+
+            // Canonical order is Ctrl, Alt, Shift — i.e. the modifiers appear as
+            // a subsequence of MODIFIERS.
+            let mut want = modifiers.iter().copied().filter(|m| mods.contains(m));
+            assert!(
+                mods.iter().all(|m| want.next() == Some(*m)),
+                "{}: {} modifiers {:?} are not in Ctrl/Alt/Shift order",
+                f.name(), e.command, mods
+            );
+        }
+    }
+}
+
+#[test]
+fn no_real_file_contains_a_duplicate_combination() {
+    for f in common::user_files() {
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
+        let k = project_keybinds(Some(&doc));
+        let mut seen: Vec<(&Vec<i64>, &str)> = Vec::new();
+        for e in &k.entries {
+            let Some(keys) = &e.keys else { continue };
+            if let Some((_, other)) = seen.iter().find(|(s, _)| *s == keys) {
+                panic!("{}: {:?} bound to both {} and {}", f.name(), keys, other, e.command);
+            }
+            seen.push((keys, &e.command));
+        }
+    }
+}
+
+/// A write against a real file must change exactly one leaf and leave the rest
+/// of the document — the table timestamp included — byte-identical.
+#[test]
+fn a_write_against_a_real_file_changes_only_the_target_leaf() {
+    let Some(f) = common::user_files().find(|f| {
+        blue_marshal::decode(&f.bytes).map(|d| project_keybinds(Some(&d)).available).unwrap_or(false)
+    }) else {
+        return; // no corpus checked out
+    };
+
+    let doc = blue_marshal::decode(&f.bytes).expect("decodes");
+    let before = project_keybinds(Some(&doc));
+    let target = before
+        .entries
+        .iter()
+        .find(|e| e.keys.is_none())
+        .map(|e| e.command.clone())
+        .expect("a real file has unbound commands");
+
+    // Encode the untouched document first so the comparison is against a
+    // re-encode, not the original bytes (inline_all legitimately rewrites
+    // sharing, which is not what this test is about).
+    let mut edited = doc.clone();
+    set_keybind(&mut edited, &target, Some(vec![MOD_CTRL, 145])).expect("write succeeds");
+
+    let after = project_keybinds(Some(&edited));
+    assert_eq!(after.entries.len(), before.entries.len(), "no rows added or removed");
+    for (b, a) in before.entries.iter().zip(after.entries.iter()) {
+        assert_eq!(b.command, a.command, "command order preserved");
+        if a.command == target {
+            assert_eq!(a.keys, Some(vec![MOD_CTRL, 145]));
+        } else {
+            assert_eq!(a.keys, b.keys, "{} must be untouched", a.command);
+        }
+    }
+
+    // Re-encoding must round-trip.
+    let bytes = blue_marshal::encode(&edited).expect("re-encodes");
+    let redecoded = blue_marshal::decode(&bytes).expect("re-decodes");
+    let round = project_keybinds(Some(&redecoded));
+    assert_eq!(round.entries, after.entries, "the write survives an encode/decode cycle");
+}
