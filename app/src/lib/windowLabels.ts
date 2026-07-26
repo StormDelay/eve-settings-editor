@@ -208,6 +208,11 @@ const CLUTTER_IDS: ReadonlySet<string> = new Set([
   "attributerespecification",
   "EngineTools",
   "outstandingcalls",
+  "mapspalette",
+  "CtrlTabWindow",
+  "probeScannerFilterEditor",
+  "GroupsWnd",
+  "broadcastsettings",
 ]);
 
 /** True for a window EVE spawns per conversation/item/dialog rather than one

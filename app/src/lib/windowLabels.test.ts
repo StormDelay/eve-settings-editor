@@ -129,6 +129,9 @@ const check = (name: string, ok: boolean) => {
 
   // d. the 2026-07-26 expansion: a representative new exact-id dialog.
   check("enterShipPassword is clutter", isClutter("enterShipPassword"));
+  check("CtrlTabWindow is clutter", isClutter("CtrlTabWindow"));
+  check("broadcastsettings is clutter", isClutter("broadcastsettings"));
+  check("probeScannerWindow is not clutter", !isClutter("probeScannerWindow"));
 
   // e. assembleWindow: parent-vs-spawned, same rule as ShipCargo etc.
   check("a spawned assembleWindow instance is clutter", isClutter("assembleWindow_1039455460976"));
