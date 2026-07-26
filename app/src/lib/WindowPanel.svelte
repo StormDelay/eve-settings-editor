@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily, displayName, nameOf } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName, nameOf, stackLabel } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -248,7 +248,7 @@
             }}>
             <option value="" disabled>Add to stack…</option>
             {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{displayName(s.container_id)}</option>
+              <option value={s.container_id}>{stackLabel(s) ?? displayName(s.container_id)}</option>
             {/each}
           </select>
         {/if}
@@ -306,6 +306,7 @@
     {@const containerWindow = findWindow(stack.container_id)}
     {@const matched = matchingMembers(stack)}
     {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter)}
+    {@const label = stackLabel(stack)}
     {#if matched.length > 0 || containerMatches}
     <div class="stack-group">
       {#if containerWindow}
@@ -321,6 +322,11 @@
               {collapsed[stack.container_id] ? "▸" : "▾"}
             </button>
             <span class="frame-label" title="Stack frame">frame</span>
+            <!-- "frame" is the type marker (always present, even for an
+                 unpaired character with no tabgroups entry); the real label,
+                 when EVE has one, shows alongside it — the row then names
+                 both what it is and which stack it is. -->
+            {#if label}<span class="detail">{label}</span>{/if}
             {@render rowHead(containerWindow)}
             <span class="stack-count">{matched.length}</span>
           </div>

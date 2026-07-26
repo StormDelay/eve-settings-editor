@@ -305,6 +305,18 @@ export function nameOf(w: { id: string; name?: string | null }): WindowName {
   return w.name ? { ...derived, label: w.name } : derived;
 }
 
+/**
+ * A stack's own display label — EVE's own string from the account file's
+ * `tabgroups`, or `null` when there wasn't one. The backend (`windows.rs`)
+ * leaves `container_label` equal to `container_id` in that case rather than
+ * signalling absence directly, so equality with the id is exactly "we have
+ * nothing" — the caller supplies its own fallback wording (a type marker like
+ * "frame", or today's derived id name), rather than this showing a bare id.
+ */
+export function stackLabel(s: { container_id: string; container_label: string }): string | null {
+  return s.container_label !== s.container_id ? s.container_label : null;
+}
+
 /** The friendly name as a single string, for places that cannot render the
  * detail as its own element — canvas rectangles, stack tabs, <option> text.
  * The list renders the same two parts as separate spans; both go through

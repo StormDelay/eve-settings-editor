@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, isClutter, displayName, nameOf } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, nameOf, stackLabel } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -192,6 +192,18 @@ const check = (name: string, ok: boolean) => {
 
   const blank = nameOf({ id: "market", name: "" });
   check("an empty name is not a name", blank.label === "Market");
+}
+
+// --- stackLabel: EVE's own stack label wins, "we have nothing" is null -----
+{
+  check(
+    "stackLabel prefers EVE's own label",
+    stackLabel({ container_id: "88", container_label: "Character: Information" }) === "Character: Information",
+  );
+  check(
+    "stackLabel is null when the backend left it equal to the container id",
+    stackLabel({ container_id: "88", container_label: "88" }) === null,
+  );
 }
 
 console.log("windowLabels.test.ts ok");
