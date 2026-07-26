@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
   import { describe, groupByFamily } from "$lib/windowLabels";
+  import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
 
   let {
     windows,
@@ -16,6 +17,7 @@
     onReorder,
     onAddToStack,
     onCreateStack,
+    filter = $bindable({ ...NO_FILTER }),
   }: {
     windows: WindowRect[];
     stacks: Stack[];
@@ -30,6 +32,9 @@
     onReorder: (container: string, members: string[]) => void;
     onAddToStack: (member: string, container: string) => void;
     onCreateStack: (m1: string, m2: string) => void;
+    /** Shared with the canvas — see LayoutView. The panel renders the controls;
+     * LayoutView owns the state and applies the same predicate to the rects. */
+    filter?: WindowFilter;
   } = $props();
 
   // Right-click a property to reveal the value's node in the raw tree.
@@ -69,7 +74,7 @@
   // no window-rect to show) — every lookup below must tolerate a miss.
   const findWindow = (id: string) => windows.find((w) => w.id === id);
 
-  const freeWindows = $derived(windows.filter((w) => w.stack === null));
+  const freeWindows = $derived(windows.filter((w) => w.stack === null && windowMatches(w, filter)));
   // Folding is list presentation only: a family with more than one member
   // renders as one collapsible row. It never changes what the canvas draws —
   // that is the filter's job (LayoutView owns it).
@@ -212,6 +217,21 @@
 {/snippet}
 
 <div class="window-panel">
+  <div class="filters">
+    <input
+      type="search"
+      placeholder="Filter windows…"
+      aria-label="Filter windows"
+      bind:value={filter.text} />
+    <label class="toggle">
+      <input type="checkbox" bind:checked={filter.openOnly} />
+      Open only
+    </label>
+    <label class="toggle">
+      <input type="checkbox" bind:checked={filter.hideNoise} />
+      Hide chat &amp; session windows
+    </label>
+  </div>
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
     <div class="stack-group">
@@ -250,7 +270,7 @@
       {#if !collapsed[stack.container_id]}
         {#each stack.members as memberId, i (memberId)}
           {@const w = findWindow(memberId)}
-          {#if w}
+          {#if w && windowMatches(w, filter)}
             <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
               <div class="row-head">
                 {@render rowHead(w)}
@@ -322,6 +342,39 @@
     border-left: 1px solid var(--border);
     background: var(--bg-panel);
     color: var(--fg);
+  }
+  .filters {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-panel);
+    z-index: 1;
+  }
+  .filters input[type="search"] {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 4px;
+    font: inherit;
+  }
+  .filters input[type="search"]:focus {
+    outline: 1px solid var(--accent);
+  }
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .toggle input {
+    margin: 0;
   }
   .row {
     border-bottom: 1px solid var(--border);
