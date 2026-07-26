@@ -13,6 +13,14 @@ Workflow:
 
 ## Open
 
+- [ ] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
+  ships empty, so the Keybinds view's Default column and per-row reset are
+  disabled. Populating it: on a throwaway account open the in-game keybinding
+  screen, choose Reset to default, log out, and read the table out of the
+  resulting `core_user_<id>.dat`. No factory bindings exist anywhere else — an
+  account that never opened the screen has an empty table, not a default one.
+  _Added 2026-07-26._
+
 - [ ] **HUD furniture follow-ups (task + whole-branch reviews, all ship-as-debt).**
   Non-blocking minors from the layout-depth HUD slice, triaged by the final
   review as none-blocking-merge: (1) `ops::set_hud_field` reshares the whole
