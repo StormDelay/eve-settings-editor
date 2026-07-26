@@ -2,6 +2,7 @@
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
   import { describe, groupByFamily } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
+  import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
   let {
     windows,
@@ -37,13 +38,47 @@
     filter?: WindowFilter;
   } = $props();
 
-  // Right-click a property to reveal the value's node in the raw tree.
-  // TODO(revisit): jump directly for now; a right-click context menu with a
-  // "show in tree" item (and room for more actions) is the intended UX.
-  const reveal = (path: NodePath) => (e: MouseEvent) => {
+  // Right-click opens a menu. This replaces the M2-era direct tree jump — the
+  // TODO that shipped with the layout canvas.
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault();
-    onReveal(path);
-  };
+    menu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  const copyId = (id: string): MenuItem => ({
+    label: "Copy window id",
+    // Best-effort: a clipboard refusal must not throw into the click handler.
+    run: () => void navigator.clipboard.writeText(id).catch(() => {}),
+  });
+
+  const showInTree = (path: NodePath): MenuItem => ({
+    label: "Show in tree",
+    run: () => onReveal(path),
+  });
+
+  // The item lists are built here, not inline in the template: `f.set` is a
+  // discriminated union, and TypeScript only narrows `f.set.path` inside a
+  // plain function body — a narrowing written into a template ternary does not
+  // reach the arrow function it creates.
+  function rowMenu(w: WindowRect): MenuItem[] {
+    const items: MenuItem[] = [];
+    if (w.geom) {
+      const path = w.geom.x_path;
+      items.push({ label: "Show geometry in tree", run: () => onReveal(path) });
+    }
+    items.push(copyId(w.id), { label: "Select on canvas", run: () => onSelect(w.id) });
+    return items;
+  }
+
+  function flagMenu(w: WindowRect, f: BoolFlag): MenuItem[] {
+    const items: MenuItem[] = [];
+    if (f.set.how === "set") items.push(showInTree(f.set.path));
+    items.push(copyId(w.id));
+    return items;
+  }
+
   function geomPath(w: WindowRect, field: "x" | "y" | "w" | "h"): NodePath {
     const g = w.geom!;
     return { x: g.x_path, y: g.y_path, w: g.w_path, h: g.h_path }[field];
@@ -115,7 +150,11 @@
     title="Open (shown on the canvas)"
     aria-label="Open (shown on the canvas)"
     onchange={() => onToggleOpen(w)} />
-  <button class="name" title={w.id} onclick={() => onSelect(w.id)}>
+  <button
+    class="name"
+    title={w.id}
+    onclick={() => onSelect(w.id)}
+    oncontextmenu={(e) => openMenu(e, rowMenu(w))}>
     {n.label}{#if n.detail}<span class="detail">{n.detail}</span>{/if}
   </button>
   {#if !w.renderable}
@@ -134,7 +173,7 @@
   <div class="detail">
     <div class="coords">
       {#each COORDS as field}
-        <label title="right-click: show in tree" oncontextmenu={reveal(geomPath(w, field))}>
+        <label title="right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
           {field}
           <input
             type="number"
@@ -148,12 +187,8 @@
       {#each detailFlags(w) as f (f.name)}
         <label
           class="flag"
-          title={f.set.how === "unavailable"
-            ? "Not present in this file"
-            : f.set.how === "set"
-              ? "right-click: show in tree"
-              : ""}
-          oncontextmenu={f.set.how === "set" ? reveal(f.set.path) : undefined}>
+          title={f.set.how === "unavailable" ? "Not present in this file" : "right-click for actions"}
+          oncontextmenu={(e) => openMenu(e, flagMenu(w, f))}>
           <input
             type="checkbox"
             checked={f.value}
@@ -333,6 +368,10 @@
       </div>
     {/if}
   {/each}
+
+  {#if menu}
+    <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => (menu = null)} />
+  {/if}
 </div>
 
 <style>
