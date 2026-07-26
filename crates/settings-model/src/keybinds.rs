@@ -13,7 +13,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, Entries, SharedTable};
+use crate::treewalk::{as_dict, bytes_str, collect_shared, effective, find_child, SharedTable};
 
 /// Modifier virtual-key codes, in the canonical order EVE writes them.
 pub const MOD_CTRL: i64 = 17;
@@ -80,39 +80,6 @@ fn read_binding(v: &Value, sh: &SharedTable) -> (Option<Vec<i64>>, bool) {
             if codes.is_empty() { (None, true) } else { (Some(codes), false) }
         }
         _ => (None, true),
-    }
-}
-
-// ponytail: these three resolvers duplicate autofill.rs's private copies rather
-// than lifting them into treewalk, for the reason recorded there — the shared
-// surface is ~20 lines and the files that would have to change are the repo's
-// most delicate.
-
-/// Value of the entry whose RESOLVED key is `Bytes(name)`, itself resolved.
-fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
-    dict.iter()
-        .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
-        .map(|(_, v)| effective(v, sh))
-}
-
-/// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper if present.
-/// `cmd` is bare and `customCmds` is wrapped; this handles both.
-fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    match effective(v, sh) {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-fn bytes_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Str(s) => Some(s.clone()),
-        _ => None,
     }
 }
 
