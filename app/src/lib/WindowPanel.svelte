@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
+  import { describe } from "$lib/windowLabels";
 
   let {
     windows,
@@ -82,6 +83,7 @@
 </script>
 
 {#snippet rowHead(w: WindowRect)}
+  {@const n = describe(w.id) }
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
   <input
     type="checkbox"
@@ -90,8 +92,8 @@
     title="Open (shown on the canvas)"
     aria-label="Open (shown on the canvas)"
     onchange={() => onToggleOpen(w)} />
-  <button class="name" onclick={() => onSelect(w.id)}>
-    {w.label}
+  <button class="name" title={w.id} onclick={() => onSelect(w.id)}>
+    {n.label}{#if n.detail}<span class="detail">{n.detail}</span>{/if}
   </button>
   {#if !w.renderable}
     <span class="badge warn" title="Geometry is not a 6-tuple — edit in the raw tree">
@@ -173,7 +175,7 @@
             onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
             {collapsed[stack.container_id] ? "▸" : "▾"}
           </button>
-          <span class="stack-title">{stack.container_label}</span>
+          <span class="stack-title" title={stack.container_id}>{describe(stack.container_id).label}</span>
           <span class="stack-count">{stack.members.length}</span>
         </div>
       {/if}
@@ -240,7 +242,7 @@
               }}>
               <option value="" disabled>Add to stack…</option>
               {#each stacks as s (s.container_id)}
-                <option value={s.container_id}>{s.container_label}</option>
+                <option value={s.container_id}>{describe(s.container_id).label}</option>
               {/each}
             </select>
           {/if}
@@ -257,7 +259,7 @@
               }}>
               <option value="" disabled>Stack with…</option>
               {#each stackTargets as other (other.id)}
-                <option value={other.id}>{other.label}</option>
+                <option value={other.id}>{describe(other.id).label}</option>
               {/each}
             </select>
           {/if}
@@ -303,6 +305,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .detail {
+    color: var(--fg-dim);
+    margin-left: 0.35rem;
+    font-size: 0.9em;
   }
   .badge.warn {
     background: var(--warn);
@@ -388,7 +395,7 @@
     background: var(--bg);
     color: var(--fg);
   }
-  .detail {
+  div.detail {
     padding: 0.4rem 0.6rem 0.6rem;
     display: grid;
     gap: 0.5rem;
