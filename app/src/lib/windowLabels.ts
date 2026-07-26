@@ -1,0 +1,215 @@
+// Friendly names for EVE window ids. Pure — no DOM, no Svelte, no api types —
+// so it unit-tests under `node --test` like layout.ts and search.ts.
+//
+// A real character file carries a median 296 windows whose ids are raw client
+// identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1038711647935`,
+// `('corpassets', 1037014587783L)`, `76`. This turns each into a readable
+// label, an instance discriminator, and a grouping key.
+//
+// The tables are deliberately incomplete: an id nobody has curated falls
+// through to `pretty()`, which is ugly but never wrong, and the raw id is
+// always shown alongside. Grow CURATED/PARAM lazily as ids show up.
+
+export interface WindowName {
+  /** Friendly display name: "Chat", "Market", "Mail message". */
+  label: string;
+  /** The instance discriminator, shown dim beside the label; "" when singular. */
+  detail: string;
+  /** Grouping key — every id with the same family folds into one group. */
+  family: string;
+}
+
+/**
+ * Exact-id → label, for windows that exist once per character. Ids `pretty()`
+ * already gets right (`AgencyWndNew`, `BugReportingWindow`, `multiFitWnd`, …)
+ * are deliberately absent — curating them would be duplication, and the
+ * fallback tests need real uncurated ids to be worth anything.
+ */
+const CURATED: Record<string, string> = {
+  overview: "Overview",
+  overviewsettings: "Overview Settings",
+  market: "Market",
+  marketbuyaction: "Market Order",
+  MultiBuy: "Multibuy",
+  fittingWnd: "Fitting",
+  ViewFitting: "Fitting (View)",
+  FittingMgmt: "Fitting Management",
+  charactersheet: "Character Sheet",
+  assets: "Assets",
+  walletWindow: "Wallet",
+  droneview: "Drones",
+  selecteditemview: "Selected Item",
+  watchlistpanel: "Watchlist",
+  fleetwindow: "Fleet",
+  FleetComposition: "Fleet Composition",
+  RegisterFleetWindow: "Fleet Advert",
+  mail: "EVE Mail",
+  NewMessageWindow: "New Mail",
+  notepad: "Notepad",
+  mapbrowser: "Map Browser",
+  MapCmdWindow: "Map",
+  directionalScannerWindow: "Directional Scanner",
+  probeScannerFilterEditor: "Scanner Filters",
+  InventoryStation: "Inventory (Station)",
+  InventorySpace: "Inventory (Space)",
+  InventoryStructure: "Inventory (Structure)",
+  corporation: "Corporation",
+  addressbook: "People & Places",
+  addressBookSearch: "People & Places Search",
+  contracts: "Contracts",
+  contractdetails: "Contract",
+  createcontract: "Create Contract",
+  redeem: "Redeem Queue",
+  StructureBrowser: "Structure Browser",
+  KillReportWnd: "Kill Report",
+  infowindow: "Show Info",
+  ChatWindowStack: "Chat stack",
+  invitestack: "Invitation stack",
+  XmppChatChannels: "Chat Channels",
+  logger: "Combat Log",
+  previewWnd: "Preview",
+  typecompare: "Compare Tool",
+  help: "Help",
+  lobbyWnd: "Station Services",
+  cloneBay: "Clone Bay",
+  CloneUpgradeWindow: "Clone Upgrade",
+  TransferMoney: "Give ISK",
+  tradeWnd: "Trade",
+  bookmarkLocationWindow: "Save Location",
+  LinkedBookmarkFolderWindow: "Bookmark Folder",
+  GroupsWnd: "Groups",
+  EditMemberDialog: "Edit Member",
+  broadcastsettings: "Broadcast Settings",
+  NotificationSettings: "Notification Settings",
+  PortraitWindow: "Portrait",
+  ScreenshotEditingWnd: "Screenshot",
+  InsuranceTermsWindow: "Insurance",
+  corpassets: "Corp assets",
+  myPlaces: "My Places",
+};
+
+/**
+ * Prefix → label, for windows that exist once per channel / mail / contact.
+ * The id is `<prefix>_<instance>`. Longest matching prefix wins, so adding a
+ * shorter overlapping prefix later cannot steal a longer one's ids.
+ */
+const PARAM: Record<string, string> = {
+  chatchannel: "Chat",
+  ChannelSettingsDlg: "Chat settings",
+  ChatInvitation: "Chat invitation",
+  mail_readingWnd: "Mail message",
+  contactmanagement: "Contacts",
+  groupInfoWnd: "Info",
+  ShipCargo: "Ship cargo",
+  ShipDroneBay: "Drone bay",
+  StructureShipHangar: "Ship hangar",
+  containerWnd: "Container",
+  containerContentWindow: "Container",
+  overview: "Overview",
+};
+
+/**
+ * The families that dominate a real file — 6 of the top 8 by row count. The
+ * "hide chat & session windows" filter drops exactly these. Keys must be
+ * families `describe` actually produces (asserted in the tests).
+ */
+export const NOISE_FAMILIES: ReadonlySet<string> = new Set([
+  "chatchannel",
+  "ChannelSettingsDlg",
+  "ChatInvitation",
+  "mail_readingWnd",
+  "contactmanagement",
+  "groupInfoWnd",
+]);
+
+/** Suffix segments that carry no meaning for a reader: ids, hashes, GUIDs. */
+const OPAQUE = /^(-?\d+L?|[0-9a-f]{16,})$/i;
+
+/** Client naming boilerplate that adds nothing to a label. */
+const BOILERPLATE = /(Wnd|Window|Dlg|Panel|View|New)/g;
+
+/** Mechanical fallback: strip boilerplate, split camelCase and _, title-case. */
+function pretty(id: string): string {
+  const words = id
+    .replace(BOILERPLATE, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_]+/)
+    .filter((w) => w.length > 0);
+  // Everything was boilerplate or separators — keep the id rather than "".
+  if (words.length === 0) return id;
+  return words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+}
+
+/**
+ * The readable part of an instance suffix: leading segments up to the first
+ * opaque one. `player_-78564080` → "player". When every segment is opaque
+ * there is nothing to shorten, so the suffix is kept whole
+ * (`380729425` stays `380729425`).
+ */
+function instanceDetail(rest: string): string {
+  const kept: string[] = [];
+  for (const seg of rest.split("_")) {
+    if (OPAQUE.test(seg)) break;
+    kept.push(seg);
+  }
+  return kept.length > 0 ? kept.join(" ") : rest;
+}
+
+const TUPLE_ID = /^\('([^']*)'\s*,?\s*/;
+
+export function describe(id: string): WindowName {
+  // 1. Stringified Python tuple: ('corpassets', 1037014587783L). Parsed
+  //    shallowly on purpose — these ids are display material only, nothing
+  //    writes them, so the remainder stays an opaque string.
+  const tuple = TUPLE_ID.exec(id);
+  if (tuple) {
+    const family = tuple[1];
+    const detail = id.slice(tuple[0].length).replace(/\)$/, "").trim();
+    return { label: CURATED[family] ?? pretty(family), detail, family };
+  }
+
+  // 2. All digits: a stack container EVE minted. There is no name to find.
+  if (/^\d+$/.test(id)) {
+    return { label: "Window stack", detail: id, family: "stack" };
+  }
+
+  // 3. Parameterized family, longest prefix first.
+  let best = "";
+  for (const prefix of Object.keys(PARAM)) {
+    if (prefix.length > best.length && id.startsWith(prefix + "_")) best = prefix;
+  }
+  if (best !== "") {
+    return {
+      label: PARAM[best],
+      detail: instanceDetail(id.slice(best.length + 1)),
+      family: best,
+    };
+  }
+
+  // 4. Curated singleton, then 5. mechanical fallback. The `|| "(unnamed)"`
+  //    guards the one input pretty() cannot name: the empty id.
+  return { label: (CURATED[id] ?? pretty(id)) || "(unnamed)", detail: "", family: id };
+}
+
+/**
+ * Bucket items by window family, preserving first-seen order so the list does
+ * not reshuffle between renders. Generic over `{id}` to stay free of the api
+ * types — callers pass `WindowRect[]`.
+ */
+export function groupByFamily<T extends { id: string }>(
+  items: T[],
+): { family: string; label: string; items: T[] }[] {
+  const out: { family: string; label: string; items: T[] }[] = [];
+  const byFamily = new Map<string, { family: string; label: string; items: T[] }>();
+  for (const item of items) {
+    const n = describe(item.id);
+    let group = byFamily.get(n.family);
+    if (!group) {
+      group = { family: n.family, label: n.label, items: [] };
+      byFamily.set(n.family, group);
+      out.push(group);
+    }
+    group.items.push(item);
+  }
+  return out;
+}
