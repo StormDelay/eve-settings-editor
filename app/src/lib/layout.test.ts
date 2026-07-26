@@ -209,6 +209,16 @@ check("open filter keeps the right window", open[0].id === "a");
   check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
 }
 
+// --- the filter searches the real channel name -----------------------------
+{
+  const named = { ...win("chatchannel_private_0ee11e4f970011ea", true, true), name: "Alliance HQ" };
+  check("text matches EVE's own name", windowMatches(named, { ...NO_FILTER, text: "alliance" }));
+  check("text still matches the raw id", windowMatches(named, { ...NO_FILTER, text: "chatchannel" }));
+  check("text still matches the derived detail", windowMatches(named, { ...NO_FILTER, text: "private" }));
+  const unnamed = win("market", true, true);
+  check("an unnamed window still matches its derived label", windowMatches(unnamed, { ...NO_FILTER, text: "market" }));
+}
+
 // --- stackUnits under a filter ---------------------------------------------
 {
   const layout = {

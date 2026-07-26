@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, isClutter, displayName } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, nameOf } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -175,6 +175,23 @@ const check = (name: string, ok: boolean) => {
   check("a group is labelled by its family", chat.label === "Chat");
   check("singleton families are groups of one", groups[0].items.length === 1);
   check("empty input yields no groups", groupByFamily([]).length === 0);
+}
+
+// --- nameOf: EVE's own name wins, the derived one is the fallback ----------
+{
+  const real = nameOf({ id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" });
+  check("nameOf prefers the file's own name", real.label === "Alliance HQ");
+  check("nameOf keeps the derived detail", real.detail === "private");
+  check("nameOf keeps the derived family", real.family === "chatchannel");
+
+  const derived = nameOf({ id: "market", name: null });
+  check("nameOf falls back to describe when there is no name", derived.label === "Market");
+
+  const missing = nameOf({ id: "market" });
+  check("an absent name field is the same as null", missing.label === "Market");
+
+  const blank = nameOf({ id: "market", name: "" });
+  check("an empty name is not a name", blank.label === "Market");
 }
 
 console.log("windowLabels.test.ts ok");

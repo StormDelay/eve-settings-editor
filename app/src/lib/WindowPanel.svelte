@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily, displayName } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName, nameOf } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -162,7 +162,7 @@
 </script>
 
 {#snippet rowHead(w: WindowRect)}
-  {@const n = describe(w.id)}
+  {@const n = nameOf(w)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
   <input
     type="checkbox"
@@ -265,7 +265,13 @@
             }}>
             <option value="" disabled>Stack with…</option>
             {#each stackTargets as other (other.id)}
-              <option value={other.id}>{displayName(other.id)}</option>
+              {@const on = nameOf(other)}
+              <!-- An <option> has no hover title, so unlike rowHead's two
+                   separate spans this keeps the detail inline — dropping it
+                   would make two same-family unnamed windows (e.g. two chat
+                   channels) indistinguishable in the dropdown again (the bug
+                   854b0d7 "Disambiguate stack dropdowns" fixed). -->
+              <option value={other.id}>{on.detail ? `${on.label} · ${on.detail}` : on.label}</option>
             {/each}
           </select>
         {/if}

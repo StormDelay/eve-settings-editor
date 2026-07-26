@@ -1,7 +1,7 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
-import { describe, isClutter } from "./windowLabels.ts";
+import { isClutter, nameOf } from "./windowLabels.ts";
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -259,7 +259,7 @@ export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
   // is a dead frame whose members are gone — it paints a phantom "Window stack"
   // rectangle. Structural, so unlike the curated tables it needs no maintenance.
   if (f.hideClutter && w.stack === null && /^\d+$/.test(w.id)) return false;
-  const n = describe(w.id);
+  const n = nameOf(w);
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
   // Same contract search.ts documents for the tree: label, detail and the raw
