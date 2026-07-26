@@ -106,6 +106,8 @@ const PARAM: Record<string, string> = {
   containerWnd: "Container",
   containerContentWindow: "Container",
   overview: "Overview",
+  assembleWindow: "Assemble",
+  bookmarkLocationWindow: "Save Location",
 };
 
 // --- clutter -----------------------------------------------------------
@@ -117,6 +119,14 @@ const PARAM: Record<string, string> = {
 // the former only, regardless of open/closed: hiding it must be safe in
 // both the list AND the canvas.
 //
+// There is no reliable "is this actually on screen" signal to check against:
+// `openWindows` only accumulates the ids EVE would restore, it is never
+// cleared, and nothing else stored (minimized/collapsed/geometry) tracks
+// real visibility either. So this is a curated approximation, not a
+// derivation — it will always be incomplete, and an unrecognised id is
+// deliberately left visible rather than guessed at (the safe failure
+// direction: showing a harmless extra row beats hiding a real window).
+//
 // `describe()` only assigns these families to a SUFFIXED id
 // (`<family>_<instance>`); a bare id falls through to describe's rule 4/5
 // and gets `family === id`, which for e.g. `ShipCargo` collides with the
@@ -125,7 +135,9 @@ const PARAM: Record<string, string> = {
 // `detail` to tell a spawned instance from its bare parent.
 
 /** Families that exist ONLY as spawned instances — a parent window search
- * (`describe(id).family`) is not enough; isClutter also checks `detail`. */
+ * (`describe(id).family`) is not enough; isClutter also checks `detail`.
+ * Every entry here must also be a PARAM prefix, or describe() never groups
+ * the suffixed id into this family in the first place. */
 const CLUTTER_FAMILIES: ReadonlySet<string> = new Set([
   "ChatInvitation",
   "ChannelSettingsDlg",
@@ -136,6 +148,8 @@ const CLUTTER_FAMILIES: ReadonlySet<string> = new Set([
   "ShipDroneBay",
   "containerWnd",
   "StructureShipHangar",
+  "assembleWindow",
+  "bookmarkLocationWindow",
 ]);
 
 /** Chat is clutter only for private/direct conversations — defined
@@ -144,7 +158,10 @@ const CLUTTER_FAMILIES: ReadonlySet<string> = new Set([
 const CLUTTER_CHAT_DETAILS: ReadonlySet<string> = new Set(["player", "private"]);
 
 /** One-off transient dialogs: exact id, never a family (there's only ever
- * one at a time, so there's no parent/spawned distinction to make). */
+ * one at a time, so there's no parent/spawned distinction to make).
+ * `bookmarkLocationWindow` is also in CLUTTER_FAMILIES — a real file carries
+ * both the bare id and a suffixed `bookmarkLocationWindow_<itemID>`, and both
+ * are transient; the exact-id check runs first so this needs no special case. */
 const CLUTTER_IDS: ReadonlySet<string> = new Set([
   "setQuantityPopup",
   "setNewName",
@@ -157,6 +174,40 @@ const CLUTTER_IDS: ReadonlySet<string> = new Set([
   "addressBookSearch",
   "contractFinishStepSearch",
   "contractEndpointSearch",
+  "ship_name_dialog",
+  "enterShipPassword",
+  "AddToBlockSearch",
+  "kickCharacterFromChat",
+  "skill_requirement_dialog",
+  "message",
+  "missingSkillbooksWnd",
+  "locationsearch",
+  "newMessageReceiverSearch",
+  "AccessGroupsAddMember",
+  "SellItemsWindow",
+  "CrateWindow",
+  "marketmodifyaction",
+  "marketbuyaction",
+  "createcontract",
+  "contractdetails",
+  "TaskConversationWindow",
+  "WarReportWnd",
+  "StoreFleetSetupWnd",
+  "StoredFleetSetupListWnd",
+  "bookmarkLocationWindow",
+  "previewWnd",
+  "tradeWnd",
+  "MultiBuy",
+  "overviewsettings",
+  "TransferMoney",
+  "EditMemberDialog",
+  "InsuranceTermsWindow",
+  "ActivateMultiTrainingWindow",
+  "CloneUpgradeWindow",
+  "multiFitWnd",
+  "attributerespecification",
+  "EngineTools",
+  "outstandingcalls",
 ]);
 
 /** True for a window EVE spawns per conversation/item/dialog rather than one
