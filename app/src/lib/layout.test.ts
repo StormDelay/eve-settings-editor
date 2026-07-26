@@ -155,6 +155,7 @@ check("open filter keeps the right window", open[0].id === "a");
 {
   const market = win("market", true, true);
   const chat = win("chatchannel_local", true, true);
+  const closedChat = win("chatchannel_corp", false, true);
   const closed = win("assets", false, true);
 
   check("an empty filter is not active", !filterIsActive(NO_FILTER));
@@ -171,11 +172,19 @@ check("open filter keeps the right window", open[0].id === "a");
   check("text excludes a non-match", !windowMatches(market, { ...NO_FILTER, text: "zzz" }));
   check("openOnly drops a closed window", !windowMatches(closed, { ...NO_FILTER, openOnly: true }));
   check("openOnly keeps an open window", windowMatches(market, { ...NO_FILTER, openOnly: true }));
-  check("hideNoise drops a chat window", !windowMatches(chat, { ...NO_FILTER, hideNoise: true }));
+  // hideNoise only drops CLOSED noise-family windows — the canvas only ever
+  // draws open windows, so an open chat window is a real visible rect, not
+  // clutter. The clutter is the closed rows.
+  check("hideNoise keeps an OPEN chat window", windowMatches(chat, { ...NO_FILTER, hideNoise: true }));
+  check("hideNoise drops a CLOSED chat window", !windowMatches(closedChat, { ...NO_FILTER, hideNoise: true }));
   check("hideNoise keeps a real window", windowMatches(market, { ...NO_FILTER, hideNoise: true }));
 
-  const ids = visibleIds([market, chat, closed], { ...NO_FILTER, hideNoise: true, openOnly: true });
-  check("visibleIds composes every clause", ids.size === 1 && ids.has("market"));
+  // openOnly already drops every closed window, which would make hideNoise
+  // vacuous in this composition — so compose hideNoise with text instead,
+  // where it still has something of its own to contribute: an open and a
+  // closed window of the same noise family, narrowed further by text.
+  const ids = visibleIds([chat, closedChat, market], { ...NO_FILTER, hideNoise: true, text: "chat" });
+  check("visibleIds composes hideNoise with text", ids.size === 1 && ids.has("chatchannel_local"));
 }
 
 // --- stackUnits under a filter ---------------------------------------------
