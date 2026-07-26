@@ -167,8 +167,10 @@ their native arrow behaviour); the key is one of the four arrows; no Ctrl/Meta.
 
 - **Arrow** moves the selected unit by 1 data px; **Shift+arrow** by 10.
 - Each keydown updates `preview` only — the same state a drag writes, so the
-  rectangle and the panel's numbers both follow live, and nothing reaches the
-  backend.
+  rectangle follows live and nothing reaches the backend. WindowPanel reads
+  its x/y/w/h inputs from `layout.windows`, not `preview`, so the panel's
+  numbers don't move with a held glide — they update when the commit lands
+  on key release.
 - **Keyup commits**, through the drag's existing drop path: fan the previewed
   rect out to `fanTargets` with `geomMutations`, `commit`, then clear the
   preview unless a new nudge or drag has claimed it in the meantime (the guard
