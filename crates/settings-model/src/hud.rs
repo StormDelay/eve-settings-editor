@@ -255,6 +255,11 @@ fn scalar_text(v: &Value, kind: HudKind, shared: &SharedTable) -> Option<String>
         // `format!` prints -189.0 as "-189", which is what the number input wants;
         // set_scalar keeps the leaf's Float wire kind on the way back in.
         (HudKind::Float, Value::Float(f)) => Some(format!("{f}")),
+        // A Float field written as Int: 2 of the 315 corpus character files that
+        // carry `shipuialignleftoffset` store it that way (the client is not
+        // type-stable across generations — see docs/settings-field-reference.md
+        // §3.5). Matching Float alone read nothing from those files.
+        (HudKind::Float, Value::Int(i)) => Some(i.to_string()),
         (HudKind::Int, Value::Int(i)) => Some(i.to_string()),
         (HudKind::Bool, Value::Bool(b)) => Some(b.to_string()),
         _ => None,
