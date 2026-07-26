@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily, displayName, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -287,13 +287,12 @@
             }}>
             <option value="" disabled>Stack with…</option>
             {#each stackTargets as other (other.id)}
-              {@const on = nameOf(other)}
               <!-- An <option> has no hover title, so unlike rowHead's two
                    separate spans this keeps the detail inline — dropping it
                    would make two same-family unnamed windows (e.g. two chat
                    channels) indistinguishable in the dropdown again (the bug
                    854b0d7 "Disambiguate stack dropdowns" fixed). -->
-              <option value={other.id}>{on.detail ? `${on.label} · ${on.detail}` : on.label}</option>
+              <option value={other.id}>{displayNameOf(other)}</option>
             {/each}
           </select>
         {/if}
@@ -364,7 +363,7 @@
             onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
             {collapsed[stack.container_id] ? "▸" : "▾"}
           </button>
-          <span class="stack-title" title={stack.container_id}>{describe(stack.container_id).label}</span>
+          <span class="stack-title" title={stack.container_id}>{label ?? describe(stack.container_id).label}</span>
           <span class="stack-count">{matched.length}</span>
         </div>
       {/if}
