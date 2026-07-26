@@ -254,6 +254,11 @@ export function filterIsActive(f: WindowFilter): boolean {
 export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
   if (f.openOnly && !w.open) return false;
   if (f.hideClutter && isClutter(w.id)) return false;
+  // A minted numeric window id exists only to be a stack container (see
+  // docs/format-notes.md, "Window stacks"). One that belongs to no stack at all
+  // is a dead frame whose members are gone — it paints a phantom "Window stack"
+  // rectangle. Structural, so unlike the curated tables it needs no maintenance.
+  if (f.hideClutter && w.stack === null && /^\d+$/.test(w.id)) return false;
   const n = describe(w.id);
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
