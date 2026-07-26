@@ -247,6 +247,16 @@ export interface RememberedList {
   entries: string[];
 }
 
+export type KeybindEntry = {
+  command: string;
+  /** null = unbound. Otherwise [17?, 18?, 16?, key]. */
+  keys: number[] | null;
+  /** The stored value was not a recognised binding; shown read-only. */
+  malformed: boolean;
+};
+export type Keybinds = { entries: KeybindEntry[]; available: boolean };
+export type SetKeybindResult = { keybinds: Keybinds; stolen: string[] };
+
 export interface BatchTargetResult {
   path: string;
   ok: boolean;
@@ -356,6 +366,9 @@ export const api = {
   setAutofillList: (widget: string, entries: string[]) =>
     invoke<RememberedList[]>("set_autofill_list", { widget, entries }),
   clearAllAutofill: () => invoke<RememberedList[]>("clear_all_autofill"),
+  keybinds: () => invoke<Keybinds>("keybinds"),
+  setKeybind: (command: string, keys: number[] | null) =>
+    invoke<SetKeybindResult>("set_keybind", { command, keys }),
   setupPreview: (
     sourceCharPath: string,
     targetCharPaths: string[],
