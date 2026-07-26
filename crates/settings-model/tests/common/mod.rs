@@ -82,6 +82,9 @@ pub fn real_root() -> Option<PathBuf> {
         return None;
     }
     if let Some(dir) = std::env::var_os("EVE_CORPUS_DIR") {
+        // Deliberately no fallback to the default path below: a typo'd override
+        // must fail closed (silently synthetic-only), not silently succeed
+        // against the wrong directory.
         let p = PathBuf::from(dir);
         return p.is_dir().then_some(p);
     }
