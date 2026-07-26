@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-26
+
+Set your keybindings once, then give them to every other account.
+
+### Added
+- **Keybindings editor.** The account's key bindings are now readable and
+  editable in a new Keybinds view: every command the client knows, grouped and
+  labelled with EVE's own strings, rebindable by pressing the combination.
+  Rebinding a combination already in use takes it from its previous owner, as
+  the game does. A new Keybinds batch category copies a whole binding table
+  between accounts — the only way to give an account bindings without setting
+  them up by hand in-game.
+
+The one thing the view cannot show yet is EVE's factory defaults: the client
+stores them nowhere in the settings files, so the Default column and the
+per-row reset button stay empty until those bindings are captured separately.
+An account that has never opened the in-game keybinding screen has no table at
+all rather than a default one — that account is exactly the case the batch copy
+exists for.
+
 ## [0.17.0] - 2026-07-26
 
 Windows land where you mean them: edges snap, arrow keys nudge.
