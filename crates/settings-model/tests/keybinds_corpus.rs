@@ -15,11 +15,12 @@ use settings_model::{project_keybinds, set_keybind, MOD_ALT, MOD_CTRL, MOD_SHIFT
 /// A wrong section or key path projects 0, which is the whole point of this
 /// gate; the exact figure only has to be comfortably above that.
 ///
-/// Measured: 98. Note this is NOT the 132 quoted in the design spec — that
-/// counted files by path within a single corpus snapshot, whereas `common`
-/// deduplicates by content across every snapshot, collapsing the many
-/// byte-identical account files this corpus carries. Set well below 98 so
-/// refreshing the corpus cannot fail this spuriously.
+/// Measured: 97 real account files (counted separately from the synthetic
+/// corpus — see `with_table` below). Note this is NOT the 132 quoted in the
+/// design spec — that counted files by path within a single corpus snapshot,
+/// whereas `common` deduplicates by content across every snapshot, collapsing
+/// the many byte-identical account files this corpus carries. Set well below
+/// 97 so refreshing the corpus cannot fail this spuriously.
 const ENOUGH_REAL: usize = 80;
 
 #[test]
@@ -30,7 +31,7 @@ fn the_keybinding_table_reads_from_real_files() {
     let mut with_table = 0usize;
     let mut bindings = 0usize;
 
-    for f in common::user_files() {
+    for f in common::user_files().filter(|f| !f.synthetic) {
         let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
         let k = project_keybinds(Some(&doc));
         if k.available {
@@ -39,12 +40,13 @@ fn the_keybinding_table_reads_from_real_files() {
         }
     }
 
+    eprintln!("{with_table} real account file(s) with a keybinding table, {bindings} binding(s)");
     assert!(
         with_table >= ENOUGH_REAL,
-        "only {with_table} account files projected a keybinding table (expected >= {ENOUGH_REAL}); \
+        "only {with_table} real account files projected a keybinding table (expected >= {ENOUGH_REAL}); \
          the section or key path is wrong"
     );
-    assert!(bindings > 1000, "expected thousands of bindings, got {bindings}");
+    assert!(bindings > 1000, "expected thousands of real bindings, got {bindings}");
 }
 
 #[test]
@@ -96,10 +98,12 @@ fn no_real_file_contains_a_duplicate_combination() {
 #[test]
 fn a_write_against_a_real_file_changes_only_the_target_leaf() {
     let Some(f) = common::user_files().find(|f| {
-        blue_marshal::decode(&f.bytes).map(|d| project_keybinds(Some(&d)).available).unwrap_or(false)
+        !f.synthetic
+            && blue_marshal::decode(&f.bytes).map(|d| project_keybinds(Some(&d)).available).unwrap_or(false)
     }) else {
-        return; // no corpus checked out
+        return; // no real corpus checked out
     };
+    eprintln!("round-trip target: {}", f.name());
 
     let doc = blue_marshal::decode(&f.bytes).expect("decodes");
     let before = project_keybinds(Some(&doc));
@@ -108,7 +112,7 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
         .iter()
         .find(|e| e.keys.is_none())
         .map(|e| e.command.clone())
-        .expect("a real file has unbound commands");
+        .expect("a real corpus file has unbound commands");
 
     // Encode the untouched document first so the comparison is against a
     // re-encode, not the original bytes (inline_all legitimately rewrites
