@@ -1616,6 +1616,14 @@ mod tests {
         assert!(w.writes_account() && !w.writes_char());
     }
 
+    #[test]
+    fn keybinds_is_account_only() {
+        let w = aspect_writes(&[Aspect::Keybinds]);
+        assert!(w.char_categories.is_empty());
+        assert_eq!(w.account_categories, vec![Category::Keybinds]);
+        assert!(w.writes_account() && !w.writes_char());
+    }
+
     fn store_2accounts() -> accounts::AccountsStore {
         // account 10 has chars {1,2}; account 20 has char {3}. char 4 unpaired.
         let mut s = accounts::AccountsStore::default();
