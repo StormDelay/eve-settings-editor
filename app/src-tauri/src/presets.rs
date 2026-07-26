@@ -5,6 +5,11 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use blue_marshal::{encode, Value};
+use settings_model::{apply_to_tree, extract_categories, Category};
+
+use crate::ops::{aspect_writes, Aspect};
+
 pub const CHAR_FILE: &str = "char.dat";
 pub const USER_FILE: &str = "user.dat";
 /// Written only for a full (Everything) preset. Its absence means "pruned",
@@ -75,11 +80,6 @@ pub fn preset_path(app_data: &Path, name: &str) -> Result<PathBuf, NameError> {
     Ok(presets_dir(app_data).join(name))
 }
 
-use blue_marshal::{encode, Value};
-use settings_model::{apply_to_tree, extract_categories, Category};
-
-use crate::ops::{aspect_writes, Aspect};
-
 /// The documents a preset is cut from — whichever slots are open.
 pub struct CreateInput<'a> {
     pub char_doc: Option<&'a Value>,
@@ -99,6 +99,10 @@ fn parent_entries(cats: &[Category]) -> Vec<(Value, Value)> {
     let mut out: Vec<(Value, Value)> = Vec::new();
     for cat in cats {
         let keys = cat.key_path();
+        // ponytail: handles one parent level, which covers every Category today
+        // (max depth 2). A three-level key path would silently produce a preset
+        // missing that category — make this build the full parent chain if one
+        // is ever added.
         debug_assert!(keys.len() <= 2, "prune handles at most one parent level");
         if keys.len() < 2 {
             continue;
@@ -153,21 +157,25 @@ pub fn create(
         (false, Some(d)) => prune(d, cats),
         (_, None) => Value::Dict(Vec::new()),
     };
-    // Encode BEFORE creating anything, so a failure leaves no half-written
-    // preset behind.
+    // Encode before touching the filesystem, so an encode failure writes
+    // nothing at all. The writes themselves are in place and not atomic: a
+    // failure part way through leaves a preset with one side updated, which is
+    // recoverable by saving again. It never leaves the user with NO preset,
+    // which deleting the folder first would have risked.
     let char_bytes = encode(&side(docs.char_doc, &w.char_categories))
         .map_err(|e| format!("encoding the character side failed: {e}"))?;
     let user_bytes = encode(&side(docs.user_doc, &w.account_categories))
         .map_err(|e| format!("encoding the account side failed: {e}"))?;
 
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("replacing the preset failed: {e}"))?;
-    }
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating the preset failed: {e}"))?;
     std::fs::write(dir.join(CHAR_FILE), &char_bytes).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(USER_FILE), &user_bytes).map_err(|e| e.to_string())?;
     if full {
         std::fs::write(dir.join(MARKER_FILE), br#"{"full":true}"#).map_err(|e| e.to_string())?;
+    } else {
+        // Overwriting a full preset with a pruned one must drop the marker, or
+        // the preset would keep claiming to be a complete copy.
+        let _ = std::fs::remove_file(dir.join(MARKER_FILE));
     }
     Ok(dir)
 }
@@ -434,5 +442,20 @@ mod tests {
         assert!(err.contains("account file"), "got: {err}");
         // Nothing was written.
         assert!(!preset_path(&data, "No account").unwrap().exists());
+    }
+
+    #[test]
+    fn overwriting_a_full_preset_with_a_pruned_one_drops_the_marker() {
+        let data = temp_data("full-to-pruned");
+        let (c, u) = (char_doc(), user_doc());
+        let input = || CreateInput { char_doc: Some(&c), user_doc: Some(&u) };
+        create(&data, "Switch", &[Aspect::Everything], input(), false).unwrap();
+        let dir = preset_path(&data, "Switch").unwrap();
+        assert!(dir.join(MARKER_FILE).exists(), "the full preset is marked");
+
+        create(&data, "Switch", &[Aspect::Layout], input(), true).unwrap();
+        assert!(!dir.join(MARKER_FILE).exists(), "a pruned overwrite must drop the marker");
+        // And the documents really were replaced, not left as the full copy.
+        assert!(!has_category(&read_doc(&dir.join(USER_FILE)), Category::Autofill));
     }
 }
