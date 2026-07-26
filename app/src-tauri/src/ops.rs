@@ -13,6 +13,7 @@ use settings_model::{
     set_column_order, set_column_visible, set_column_width,
     window_layout as project_window_layout,
     clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList,
+    project_keybinds, Keybinds,
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
@@ -70,6 +71,7 @@ pub enum Aspect {
     Layout,
     Overview,
     Autofill,
+    Keybinds,
     Everything,
 }
 
@@ -117,6 +119,7 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
                 account_categories.push(Category::Overview);
             }
             Aspect::Autofill => account_categories.push(Category::Autofill),
+            Aspect::Keybinds => account_categories.push(Category::Keybinds),
             Aspect::Everything => unreachable!("handled above"),
         }
     }
@@ -1023,6 +1026,37 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
     edit_user_autofill(state, |v| clear_all_history(v))
 }
 
+pub fn keybinds(state: &AppState) -> Result<Keybinds, ErrDto> {
+    let user = state.user.lock().unwrap();
+    Ok(project_keybinds(user.as_ref().map(|d| &d.value)))
+}
+
+#[derive(serde::Serialize)]
+pub struct SetKeybindResult {
+    pub keybinds: Keybinds,
+    /// Commands whose binding this write cleared, so the UI can name them.
+    pub stolen: Vec<String>,
+}
+
+pub fn set_keybind_cmd(
+    state: &AppState,
+    command: &str,
+    keys: Option<Vec<i64>>,
+) -> Result<SetKeybindResult, ErrDto> {
+    let stolen = {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        let stolen = settings_model::set_keybind(&mut doc.value, command, keys)
+            .map_err(|e| ErrDto::new("keybind", format!("{e:?}")))?;
+        doc.value = blue_marshal::reshare(&doc.value);
+        stolen
+    };
+    Ok(SetKeybindResult { keybinds: keybinds(state)?, stolen })
+}
+
 /// Edit the CHAR slot's window stacks, reshare, then re-project the layout.
 fn edit_char_stacks<F>(state: &AppState, edit: F) -> Result<WindowLayout, ErrDto>
 where
@@ -1579,6 +1613,14 @@ mod tests {
         let w = aspect_writes(&[Aspect::Autofill]);
         assert!(w.char_categories.is_empty());
         assert_eq!(w.account_categories, vec![Category::Autofill]);
+        assert!(w.writes_account() && !w.writes_char());
+    }
+
+    #[test]
+    fn keybinds_is_account_only() {
+        let w = aspect_writes(&[Aspect::Keybinds]);
+        assert!(w.char_categories.is_empty());
+        assert_eq!(w.account_categories, vec![Category::Keybinds]);
         assert!(w.writes_account() && !w.writes_char());
     }
 

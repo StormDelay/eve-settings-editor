@@ -55,9 +55,24 @@ fn corpus() -> &'static [CorpusFile] {
         // `EVE_SYNTHETIC_ONLY=1` ignores the real corpus: reproduces exactly what
         // CI sees, and turns a full run into a seconds-long loop locally.
         let synthetic_only = std::env::var_os("EVE_SYNTHETIC_ONLY").is_some_and(|v| v != "0");
-        let real = base.join("../../testdata/corpus");
-        if !synthetic_only && real.is_dir() {
-            roots.push(real);
+        if !synthetic_only {
+            // `testdata/` is gitignored (personal data), so a git worktree never
+            // carries it and this gate silently degrades to synthetic-only there.
+            // Point `EVE_CORPUS_DIR` at the main checkout's `testdata/corpus` to
+            // run it from a worktree. Deliberately no fallback to the default path
+            // below when the override is set: a typo'd override must fail closed
+            // (silently synthetic-only), not silently succeed against the wrong
+            // directory.
+            let real = if let Some(dir) = std::env::var_os("EVE_CORPUS_DIR") {
+                let p = PathBuf::from(dir);
+                p.is_dir().then_some(p)
+            } else {
+                let p = base.join("../../testdata/corpus");
+                p.is_dir().then_some(p)
+            };
+            if let Some(real) = real {
+                roots.push(real);
+            }
         }
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();

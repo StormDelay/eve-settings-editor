@@ -891,6 +891,53 @@ a naive "give window 0 every tab, then filter the rest" re-point wrong: window
 0 must be built from what the OTHER windows don't claim, not the other way
 around.
 
+### Keybindings (spec `2026-07-26-keybindings-editor-design.md` §2.1–§2.2)
+
+Path: `core_user_<id>.dat` root → `b"cmd"` → `b"customCmds"`.
+
+```
+root → cmd                      bare Dict, NOT timestamp-wrapped
+     → customCmds               Tuple(FILETIME, Dict)   ← ONE stamp, whole table
+          → { Bytes command : value }
+                None            unbound
+                Tuple(Int…)     [17?, 18?, 16?, key]
+```
+
+Measured over the 2026-07-22 corpus snapshot: **12,117 binding entries across
+132 account files** (by path, within that one snapshot — the other 43 files in
+it have an empty `customCmds`; the corpus-gate test in `keybinds_corpus.rs`
+measures 97 after deduplicating byte-identical files across every snapshot —
+both counts are correct, they're just different bases). Of the 12,117 entries,
+4,765 are bound and 7,352 are `None`.
+
+**Exception to the value-wrapper convention.** `customCmds` carries the
+`(FILETIME, value)` wrapper on the *container*; the leaves inside are bare —
+the reverse of the usual placement (see "Value-wrapper convention" above).
+Verified on a live TQ account: `Tuple[1]<Int(82)>`, `Tuple[2]<Int(16), Int(83)>`.
+0 of 93 leaves on that sampled real file are wrapped. Wrapping one produces a
+malformed value the client ignores while keeping its stale binding.
+
+Over the 4,765 bound entries, five invariants hold with **zero exceptions**:
+
+| invariant | evidence |
+|---|---|
+| Exactly one non-modifier code per binding | `{1: 4765}` — no binding has 0 or 2+ |
+| Modifiers precede the key | 4,765/4,765 |
+| Modifier order is Ctrl(17) → Alt(18) → Shift(16) | `Alt+Shift` = `(18,16,…)`, `Ctrl+Alt+Shift` = `(17,18,16,…)` |
+| No duplicate combination within a file | 0 of 132 files contain one |
+| Dict keys are `Bytes` | 132/132 files |
+
+Observed combinations: none (1,575), Alt (1,282), Ctrl (1,004), Shift (768),
+Alt+Shift (131), Ctrl+Alt+Shift (5). Tuple lengths run 1–4.
+
+The no-duplicates result means **EVE enforces uniqueness**: rebinding a
+combination already in use steals it from its previous owner.
+
+The sampled file's `cmd` root key was a plain `Bytes`, but sibling root keys
+can be `Ref`/`Shared` (the same trap as the account file's `ui` key, above), so
+section lookup must still resolve through `effective` rather than matching
+`Value::Bytes` on the section key directly.
+
 ### Name presence (Task 11 decision: local extraction NOT viable)
 
 Investigated on fresh current-client files with the account's real
