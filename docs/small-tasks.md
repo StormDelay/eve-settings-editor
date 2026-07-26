@@ -136,6 +136,39 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
+- [ ] **Per-environment canvas views (in space / NPC station / player structure).**
+  A player's screen differs by environment, and the canvas currently mixes all of
+  them into one picture — which is part of why it shows far more windows than are
+  ever visible at once. Explore a view selector that shows only the windows
+  relevant to a chosen environment.
+
+  **What the data actually supports (measured on a live char file — read this
+  before designing):** EVE's context concept is real and explicit, but it is
+  **per-feature, not a whole-layout switch**, and there are more than three:
+  - `ui → InfoPanelModes_<context>` enumerates the client's own context list:
+    `hangar`, `inflight`, `structure`, `charsel`, `planet`, `starmap`,
+    `starmap_new`, `systemmap_new`, `skill_plan` (plus `ActivityTracker`).
+  - The Inventory window carries three context-specific **window ids** —
+    `InventoryStation`, `InventoryStructure`, `InventorySpace` — each with its own
+    `ui → containerSortIconsBy_*` entry. Note these are the *same* unified
+    Inventory window per docking context; they are NOT parents of the standalone
+    `ShipCargo_<itemID>` windows, which are a different type.
+  - `dockPanels` stores separate `widthProportion_docked` / `heightProportion_docked`.
+  - **But `windows → windowSizesAndPositions_1` is FLAT**: one geometry per window
+    id, with no per-environment copies. So EVE does not store three layouts — most
+    windows have a single position shared across every environment.
+
+  **Design implication:** this is a *view filter* over the existing single layout,
+  in the same shape as the slice-1a clutter filter (a third dimension on
+  `WindowFilter`), not a new data model and not a backend change. The hard part is
+  the mapping — which window belongs to which environment — and only a few are
+  self-evident from their ids (the three Inventory variants, `lobbyWnd` for
+  station services, `StructureItemHangar`/`StructureShipHangar` for structures).
+  The rest needs either curation or an in-game capture: dock and undock with known
+  windows open and diff the files. Worth pairing with the user-editable clutter
+  list below, since both are "let the user say which windows count".
+  _Added 2026-07-26._
+
 - [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
   numeric-string window id *only* to serve as a window-stack container (see
   `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
