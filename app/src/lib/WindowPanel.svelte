@@ -138,6 +138,24 @@
     [next[i], next[j]] = [next[j], next[i]];
     return next;
   }
+
+  // An <option> is the one place the friendly label alone is not enough: the
+  // native popup shows no title, so two same-family windows would be literally
+  // indistinguishable in a control that commits a mutation.
+  function optionLabel(id: string): string {
+    const n = describe(id);
+    return n.detail ? `${n.label} · ${n.detail}` : n.label;
+  }
+
+  // Members currently matching the filter, for gating the stack's frame row
+  // and its count badge (I2) — a stack whose members are all filtered out
+  // must disappear from the list exactly as it disappears from the canvas.
+  function matchingMembers(stack: Stack): string[] {
+    return stack.members.filter((id) => {
+      const w = findWindow(id);
+      return !!w && windowMatches(w, filter);
+    });
+  }
 </script>
 
 {#snippet rowHead(w: WindowRect)}
@@ -202,6 +220,11 @@
 {/snippet}
 
 {#snippet freeRow(w: WindowRect)}
+  <!-- stackTargets is deliberately filtered too: it derives from freeWindows,
+       so "Hide chat & session windows" also hides those windows from "Stack
+       with…" (M7). Falls out of freeWindows being the shared source, but it's
+       defensible on its own — you can only stack with what you can see — so
+       it stays, recorded rather than silently inherited. -->
   {@const stackTargets = freeWindows.filter((o) => o.id !== w.id && o.renderable)}
   <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
     <div class="row-head">
@@ -222,7 +245,7 @@
             }}>
             <option value="" disabled>Add to stack…</option>
             {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{describe(s.container_id).label}</option>
+              <option value={s.container_id}>{optionLabel(s.container_id)}</option>
             {/each}
           </select>
         {/if}
@@ -239,7 +262,7 @@
             }}>
             <option value="" disabled>Stack with…</option>
             {#each stackTargets as other (other.id)}
-              <option value={other.id}>{describe(other.id).label}</option>
+              <option value={other.id}>{optionLabel(other.id)}</option>
             {/each}
           </select>
         {/if}
@@ -269,6 +292,9 @@
   </div>
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
+    {@const matched = matchingMembers(stack)}
+    {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter)}
+    {#if matched.length > 0 || containerMatches}
     <div class="stack-group">
       {#if containerWindow}
         <div
@@ -284,7 +310,7 @@
             </button>
             <span class="frame-label" title="Stack frame">frame</span>
             {@render rowHead(containerWindow)}
-            <span class="stack-count">{stack.members.length}</span>
+            <span class="stack-count">{matched.length}</span>
           </div>
           {#if stack.container_id === selectedId && containerWindow.geom}
             {@render detail(containerWindow)}
@@ -299,7 +325,7 @@
             {collapsed[stack.container_id] ? "▸" : "▾"}
           </button>
           <span class="stack-title" title={stack.container_id}>{describe(stack.container_id).label}</span>
-          <span class="stack-count">{stack.members.length}</span>
+          <span class="stack-count">{matched.length}</span>
         </div>
       {/if}
       {#if !collapsed[stack.container_id]}
@@ -342,6 +368,7 @@
         {/each}
       {/if}
     </div>
+    {/if}
   {/each}
 
   {#each freeGroups as group (group.family)}
