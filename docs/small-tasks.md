@@ -136,10 +136,131 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
-- [ ] **Add a search/filter to the window list in the Layout editor.** The Layout
-  view's window list can get long (many windows on a real char); a filter box to
-  narrow it by name would help find a specific window. Mirror the autofill-search
-  pattern. _Added 2026-07-20._
+- [ ] **Per-environment canvas views (in space / NPC station / player structure).**
+  A player's screen differs by environment, and the canvas currently mixes all of
+  them into one picture — which is part of why it shows far more windows than are
+  ever visible at once. Explore a view selector that shows only the windows
+  relevant to a chosen environment.
+
+  **What the data actually supports (measured on a live char file — read this
+  before designing):** EVE's context concept is real and explicit, but it is
+  **per-feature, not a whole-layout switch**, and there are more than three:
+  - `ui → InfoPanelModes_<context>` enumerates the client's own context list:
+    `hangar`, `inflight`, `structure`, `charsel`, `planet`, `starmap`,
+    `starmap_new`, `systemmap_new`, `skill_plan` (plus `ActivityTracker`).
+  - The Inventory window carries three context-specific **window ids** —
+    `InventoryStation`, `InventoryStructure`, `InventorySpace` — each with its own
+    `ui → containerSortIconsBy_*` entry. Note these are the *same* unified
+    Inventory window per docking context; they are NOT parents of the standalone
+    `ShipCargo_<itemID>` windows, which are a different type.
+  - `dockPanels` stores separate `widthProportion_docked` / `heightProportion_docked`.
+  - **But `windows → windowSizesAndPositions_1` is FLAT**: one geometry per window
+    id, with no per-environment copies. So EVE does not store three layouts — most
+    windows have a single position shared across every environment.
+
+  **Design implication:** this is a *view filter* over the existing single layout,
+  in the same shape as the slice-1a clutter filter (a third dimension on
+  `WindowFilter`), not a new data model and not a backend change. The hard part is
+  the mapping — which window belongs to which environment — and only a few are
+  self-evident from their ids (the three Inventory variants, `lobbyWnd` for
+  station services, `StructureItemHangar`/`StructureShipHangar` for structures).
+  The rest needs either curation or an in-game capture: dock and undock with known
+  windows open and diff the files. Worth pairing with the user-editable clutter
+  list below, since both are "let the user say which windows count".
+  _Added 2026-07-26._
+
+- [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
+  numeric-string window id *only* to serve as a window-stack container (see
+  `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
+  stack is a dead frame whose members are all gone. A real live character file had
+  **8** of them (`43`, `51`, `63`, `82`, `156`, `181`, `219`, `221`), all flagged
+  open, each painting a phantom "Window stack" rectangle. Slice 1a *hides* them
+  when `Hide clutter` is on — this task is to actually **remove** them: a cleanup
+  action that deletes the id from `windowSizesAndPositions_1` and from every
+  window-id-keyed flag dict (`openWindows`, `minimizedWindows`,
+  `isLightBackgroundWindows`, `isOverlayedWindows`, `lockedWindows`,
+  `collapsedWindows`, `compactWindows`, `pinnedWindows`, `stacksWindows`,
+  `preferredIdxInStack3`). Structural, so it belongs in `windows.rs`/`stacks.rs`
+  with the usual inline-first-then-reshare discipline, and it needs a confirm step
+  plus a live smoke — deleting window state is not something to get wrong. Check
+  first whether EVE simply re-creates them, in which case it is not worth doing.
+  _Added 2026-07-26._
+
+- [ ] **Let the user edit the Layout clutter list.** `windowLabels.ts`'s
+  `CLUTTER_IDS` / `CLUTTER_FAMILIES` / `CLUTTER_CHAT_DETAILS` are hard-coded, and
+  they can never be complete — see the finding below. Give the user control:
+  add/remove a window from the clutter set from the window list's right-click
+  context menu ("Treat as clutter" / "Stop treating as clutter"), persisted as
+  editor settings (NOT written into the EVE files — this is our view state), with
+  the built-in tables as the default and a way to see and reset the overrides.
+  That turns an unwinnable curation problem into a one-click fix per window.
+  _Added 2026-07-26._
+
+  **Why the built-in list can never be complete (measured, keep this):** EVE's
+  `windows → openWindows` flag **accumulates** — it records which windows EVE
+  would restore, not which are on screen, and it is never reliably cleared. On a
+  real live character file: **381 windows, 134 flagged open, 83 canvas draw units,
+  versus about 9 windows actually visible in the client**. The open set includes
+  one-shot modals (`setQuantityPopup`, `enterShipPassword`, `ship_name_dialog`,
+  `kickCharacterFromChat`, `DisconnectNotice`, `skill_requirement_dialog`).
+  Nothing else in the file separates them: `minimizedWindows` true for 1,
+  `collapsedWindows` for 0, only 14 of 134 saved at a stale resolution, and 82
+  distinct rects among the 134 (so no "never positioned" default-position
+  cluster). The closest correlate found was *having an entry* in
+  `compactWindows` (10 windows, 8 of them matching the visible set), but that
+  means "the user toggled compact mode here", not visibility — and it misses
+  `directionalScannerWindow`, which was plainly on screen. Worth recording in
+  `format-notes.md` too: `openWindows` is a restore list, not a visibility flag.
+
+- [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
+  Today the only way to abandon edits is to open a different file and accept the
+  discard prompt, then come back — or to quit. Add a button next to the
+  `character: unsaved` / `account: unsaved` badges (`+page.svelte`, around the
+  `{#if dirtySlots.char}` / `{#if dirtySlots.user}` spans) that throws the edits
+  away and reloads the *same* file fresh from disk. Shown only while something is
+  dirty. Should reuse the existing machinery rather than grow its own: the
+  confirm prompt is `confirmDiscardIfDirty()`, and reloading is what `openFile()`
+  already does — the open path re-reads the file, resets `dirtySlots[slot]`,
+  bumps `savedAt` so every view refreshes, and reconciles the paired char/account
+  slot. Decide whether it discards both slots at once or one per badge (the
+  editors write to both, so per-badge could leave a half-reverted pair — probably
+  discard both and say so on the button). Must not touch the backup chain: this
+  is a re-read, not a restore. _Added 2026-07-26._
+
+- [ ] **Real chat-channel names in the Layout view (and its filter).** A chat
+  window's id is `chatchannel_private_<guid>` / `chatchannel_player_<hash>`, which
+  contains none of the channel's display name — so the list, the canvas and the
+  slice-1a filter can only ever show and match `Chat · private`. Searching the
+  channel's actual name finds nothing, which is what surfaced this. The name *is*
+  in the character file: `ui → chatchannels` is a `List[Tuple(kind, channelKey,
+  label)]` (367/384 files) whose `channelKey` corresponds to the window-id suffix
+  — verified against a real file. Fix by having `window_layout` read that section
+  and return the mapping, so `windowLabels.describe()` can use the real name; the
+  filter then matches it for free, since it already searches the label. Same shape
+  as the `tabgroups` item below — both are "EVE's own display strings live in a
+  section the layout projection doesn't read", so they are worth doing together.
+  Deliberately deferred out of slice 1a, which was scoped frontend-only.
+  _Added 2026-07-26 (slice 1a live smoke)._
+
+- [ ] **Stack labels from the account file's `tabgroups`.** The account file stores
+  `tabgroups → <containerId>_names` → EVE's own tab label (e.g.
+  `"Character: Information"`), which beats anything derivable from the container
+  id — layout slice 1a labels a stack `Window stack · 76` from `describe()`
+  instead. Taking the real string needs `window_layout` to accept the user root,
+  which ripples through `ops.rs` and every call site. Supersedes half of the older
+  "friendlier stack-frame labels" item. _Added 2026-07-26 (slice 1a design)._
+
+- [ ] **Layout slice 1a follow-ups (final whole-branch review, both ship-as-debt).**
+  (1) `layout.test.ts`'s third `drawnWindowCount` case compares
+  `stackUnits(x, null)` with `stackUnits(x)` — the same call, since `null` is the
+  default — so it is tautological and never exercises the regression it names
+  (a stack container matching the filter while none of its members do). The
+  production wiring in `LayoutView.svelte` was verified correct by direct source
+  read; add a `Set`-based filtered case next time the file is touched. (2) A
+  stack's ↑/↓ reorder button stays enabled on the first *visible* member when a
+  hidden member precedes it at true index 0, so it swaps with a row the filter is
+  hiding — correct per the true-index contract that keeps reordering from
+  scrambling under a filter, but an odd edge case. _Added 2026-07-26._
 
 - [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
@@ -329,6 +450,16 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Add a search/filter to the window list in the Layout editor.** Shipped by
+  layout slice 1a as a filter box plus `Open only` and `Hide chat & session
+  windows` toggles — and the predicate drives the *canvas* as well as the list,
+  so narrowing one narrows the other, with a `showing N of M windows · reset`
+  counter so nothing hides silently. _Added 2026-07-20; done 2026-07-26._
+- [x] **Panel right-click is a context menu, not a direct tree jump.** The M2
+  deferral (and its `TODO(revisit)` in `WindowPanel.svelte`) is closed: rows,
+  coordinate fields and flags open a menu with *Show in tree*, *Copy window id*
+  and *Select on canvas*. _Done 2026-07-26 (layout slice 1a)._
 
 - [x] **No flash to Tree when switching files.** `+page.svelte` holds the current
   view across the file load instead of reset-to-Tree-then-restore, falling back to

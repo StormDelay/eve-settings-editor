@@ -1,7 +1,12 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
-  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, hudPointFromRect, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
+  import {
+    canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
+    hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
+    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter,
+  } from "$lib/layout";
+  import { displayName } from "$lib/windowLabels";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -16,6 +21,7 @@
     onReveal,
     onDirty,
     sharedNames = [],
+    focusFilter = $bindable(undefined),
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -30,6 +36,10 @@
      * fields are account-wide, so the warning belongs on those rows, not
      * above the whole view. */
     sharedNames?: string[];
+    /** Exposed so +page.svelte's global Ctrl+F handler can focus the window
+     * filter input when this view is active. Forwarded from WindowPanel,
+     * where the input actually lives — see its own focusFilter doc. */
+    focusFilter?: () => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -45,6 +55,15 @@
   // `selectedId`; the two are kept mutually exclusive (see selectWindow).
   let selectedFurniture = $state<FurnitureRect["kind"] | null>(null);
 
+  // The filter is shared: it narrows the window list AND what the canvas draws.
+  // Folding families in the panel is separate and list-only.
+  // Deliberately persists across file switches (slot/refreshToken/userOpen
+  // changes below do NOT clear it) — that lets the same subset stay applied
+  // while flipping between characters to compare them. The "showing N of M
+  // · reset" counter is what keeps a carried-over filter visible instead of
+  // silently misleading.
+  let filter = $state<WindowFilter>({ ...NO_FILTER });
+
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its
   // reactive getter), so a `layout ? layout.x : ...` ternary won't type-check
@@ -52,7 +71,23 @@
   // reference dimension as "no-op", so reading through with `?? 0` is exact,
   // not an approximation.
   const scale = $derived(canvasScale(layout?.reference_w ?? 0, containerWidth));
-  const units = $derived(stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }));
+  const visible = $derived(
+    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter) : null,
+  );
+  const units = $derived(
+    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+  );
+  // Both ends counted from what stackUnits actually draws, not the raw window
+  // list (M5): a stack draws one rectangle but represents each of its visible
+  // tabs, and a container that matches the filter while none of its members do
+  // draws nothing at all, so counting the raw list over-reports that case.
+  // The denominator re-runs stackUnits unfiltered rather than reusing
+  // `drawable`, or the unfiltered case would read "67 of 68".
+  const allUnits = $derived(
+    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, null),
+  );
+  const shownCount = $derived(drawnWindowCount(units));
+  const totalCount = $derived(drawnWindowCount(allUnits));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
 
   async function load() {
@@ -380,12 +415,12 @@
               <div class="tabs">
                 {#each unit.tabs as tab (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <span class="tab" class:active={tab.id === selectedId}
-                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{tab.label}</span>
+                  <span class="tab" class:active={tab.id === selectedId} title={tab.id}
+                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayName(tab.id)}</span>
                 {/each}
               </div>
             {:else}
-              <span class="win-label">{unit.anchor.label}</span>
+              <span class="win-label" title={unit.anchor.id}>{displayName(unit.anchor.id)}</span>
             {/if}
             {#if unit.anchor.id === selectedId || unit.tabs.some((t) => t.id === selectedId)}
               {#each (["tl", "tr", "bl", "br"] as const) as c}
@@ -396,7 +431,15 @@
           </div>
         {/each}
       </div>
-      <p class="ref">reference {layout.reference_w}×{layout.reference_h}</p>
+      <p class="ref">
+        reference {layout.reference_w}×{layout.reference_h}
+        {#if filterIsActive(filter)}
+          <span class="showing">
+            · showing {shownCount} of {totalCount} windows
+            <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
+          </span>
+        {/if}
+      </p>
     </div>
     <div class="side">
       {#if hud}
@@ -421,7 +464,9 @@
         {onUnstack}
         {onReorder}
         {onAddToStack}
-        {onCreateStack} />
+        {onCreateStack}
+        bind:filter
+        bind:focusFilter />
     </div>
   </div>
 {/if}
@@ -506,7 +551,12 @@
   }
   .win-label {
     padding: 1px 3px;
-    display: inline-block;
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     pointer-events: none;
   }
   .tabs {
@@ -544,6 +594,18 @@
     color: #888;
     font-size: 11px;
     margin: 0.3rem 0 0;
+  }
+  .showing {
+    color: var(--warn);
+  }
+  .linkish {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
   }
   .hint {
     color: #888;

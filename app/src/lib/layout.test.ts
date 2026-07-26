@@ -1,6 +1,9 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching search.test.ts.
-import { canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits } from "./layout.ts";
+import {
+  canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
+  NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
+} from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -146,6 +149,138 @@ check("open filter keeps the right window", open[0].id === "a");
   check("a stack with no open members is not drawn", !units.some((u) => u.stack));
   check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
   check("unrelated free windows still draw", units.some((u) => u.key === "free"));
+}
+
+// --- the shared filter predicate -------------------------------------------
+{
+  const market = win("market", true, true);
+  const closedMarket = win("market", false, true);
+  const standingChat = win("chatchannel_local", true, true);
+  const privateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", true, true);
+  const closedPrivateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", false, true);
+  const bareCargo = win("ShipCargo", true, true);
+  const spawnedCargo = win("ShipCargo_1033391582929", true, true);
+
+  check("an empty filter is not active", !filterIsActive(NO_FILTER));
+  check("text makes it active", filterIsActive({ ...NO_FILTER, text: "a" }));
+  check("whitespace-only text does not", !filterIsActive({ ...NO_FILTER, text: "  " }));
+  check("openOnly makes it active", filterIsActive({ ...NO_FILTER, openOnly: true }));
+  check("hideClutter makes it active", filterIsActive({ ...NO_FILTER, hideClutter: true }));
+
+  check("an empty filter matches everything", windowMatches(standingChat, NO_FILTER));
+  check("text matches the friendly label", windowMatches(market, { ...NO_FILTER, text: "mark" }));
+  check("text matches case-insensitively", windowMatches(market, { ...NO_FILTER, text: "MARK" }));
+  check("text matches the raw id", windowMatches(standingChat, { ...NO_FILTER, text: "chatchannel" }));
+  check("text matches the detail", windowMatches(standingChat, { ...NO_FILTER, text: "local" }));
+  check("text excludes a non-match", !windowMatches(market, { ...NO_FILTER, text: "zzz" }));
+  check("openOnly drops a closed window", !windowMatches(closedMarket, { ...NO_FILTER, openOnly: true }));
+  check("openOnly keeps an open window", windowMatches(market, { ...NO_FILTER, openOnly: true }));
+
+  // hideClutter is about KIND of window, not open/closed — the old
+  // "hide closed chat" axis was wrong and is gone.
+  check("hideClutter drops an OPEN private chat", !windowMatches(privateChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter drops a CLOSED private chat too", !windowMatches(closedPrivateChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps an OPEN standing channel", windowMatches(standingChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a bare parent window (ShipCargo)", windowMatches(bareCargo, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter drops a spawned instance (ShipCargo_<id>)", !windowMatches(spawnedCargo, { ...NO_FILTER, hideClutter: true }));
+  // A closed non-clutter window is untouched by hideClutter — only openOnly
+  // reaches it.
+  check("hideClutter leaves a closed non-clutter window alone", !windowMatches(closedMarket, { ...NO_FILTER, hideClutter: true, openOnly: true }));
+  check("hideClutter alone keeps a closed non-clutter window", windowMatches(closedMarket, { ...NO_FILTER, hideClutter: true }));
+
+  // openOnly already drops every closed window, which would make hideClutter
+  // vacuous in this composition — so compose hideClutter with text instead,
+  // where it still has something of its own to contribute: a clutter and a
+  // non-clutter chat window, narrowed further by text.
+  const ids = visibleIds([standingChat, privateChat, market], { ...NO_FILTER, hideClutter: true, text: "chat" });
+  check("visibleIds composes hideClutter with text", ids.size === 1 && ids.has("chatchannel_local"));
+
+  // Orphaned stack frames: a minted numeric id with no stack membership at all
+  // is a dead frame (its members are gone) — structural, not curated.
+  const orphanFrame = win("219", true, true, null);
+  const containerFrame = win("219", true, true, { container_id: "219", role: "container" });
+  const memberFrame = win("219", true, true, { container_id: "C", role: "member" });
+  check("hideClutter drops an orphaned numeric stack frame", !windowMatches(orphanFrame, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a numeric id that IS a stack container", windowMatches(containerFrame, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a numeric id that is a stack member", windowMatches(memberFrame, { ...NO_FILTER, hideClutter: true }));
+  check("a non-numeric id with no stack is unaffected by the orphan rule", windowMatches(market, { ...NO_FILTER, hideClutter: true }));
+  check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
+}
+
+// --- stackUnits under a filter ---------------------------------------------
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", true, true, { container_id: "C", role: "member" }),
+      win("free", true, true, null),
+    ],
+  } as any;
+
+  // No-regression: omitting the set is exactly today's behaviour.
+  const before = stackUnits(layout);
+  const same = stackUnits(layout, null);
+  check("a null visible set is the unfiltered result", JSON.stringify(before.map((u) => u.key)) === JSON.stringify(same.map((u) => u.key)));
+
+  // One matching member keeps the stack alive with only that tab.
+  const oneTab = stackUnits(layout, new Set(["m1"]));
+  const su = oneTab.find((u) => u.stack)!;
+  check("a stack with one visible member survives", su !== undefined);
+  check("only the visible member is a tab", su.tabs.map((t) => t.id).join(",") === "m1");
+  check("the free window is filtered out", oneTab.length === 1);
+
+  // The anchor and the fan are NOT filtered — the anchor is the geometry
+  // source and the fan is what a drag writes to.
+  check("the anchor ignores the filter", su.anchor.id === "C");
+  const fan = su.fanTargets.map((w) => w.id).sort().join(",");
+  check("fanTargets ignore the filter", fan === "C,m1,m2");
+
+  // A stack with no visible member disappears entirely.
+  const none = stackUnits(layout, new Set(["free"]));
+  check("a stack with no visible member is dropped", none.length === 1 && none[0].key === "free");
+  check("an empty visible set draws nothing", stackUnits(layout, new Set()).length === 0);
+}
+
+// --- drawnWindowCount: windows painted, not rectangles drawn (M5) ----------
+{
+  // Free-window-only layout: one rectangle per window, so the count equals
+  // the unit count.
+  const freeOnly = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [],
+    windows: [win("a", true, true), win("b", true, true)],
+  } as any;
+  check("free-only: count equals the number of open windows", drawnWindowCount(stackUnits(freeOnly)) === 2);
+
+  // A stack contributes its open tab count, not 1 — the whole point of the
+  // fix: a 3-tab stack is one rectangle but three windows.
+  const stacked = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2", "m3"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", true, true, { container_id: "C", role: "member" }),
+      win("m3", false, true, { container_id: "C", role: "member" }), // closed: not a tab
+      win("free", true, true, null),
+    ],
+  } as any;
+  const units = stackUnits(stacked);
+  check("stacked: one draw unit for the stack", units.filter((u) => u.stack).length === 1);
+  check("stacked: count is tabs (2) + free (1), not units (2)", drawnWindowCount(units) === 3);
+
+  // Filtered vs. unfiltered must agree when no filter is active — the
+  // regression this fix targets: a container matching the filter while no
+  // member does must not be counted, but the unfiltered case must still count
+  // everything stackUnits(layout, null) draws.
+  const noFilterUnits = stackUnits(stacked, null);
+  check(
+    "filtered-with-no-filter agrees with unfiltered",
+    drawnWindowCount(noFilterUnits) === drawnWindowCount(units),
+  );
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------

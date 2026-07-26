@@ -1,6 +1,7 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
+import { describe, isClutter } from "./windowLabels.ts";
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -71,20 +72,31 @@ export interface DrawUnit {
  * the stack's anchor, with its open members as tabs in preferred order) and one
  * per non-stacked window. A stack with no open members — or whose anchor is not
  * open/renderable — is not drawn (nothing to show).
+ *
+ * `visible`, when given, is the set of window ids the filter admits. It narrows
+ * which units are drawn and which tabs a stack shows, but NOT the unit's anchor
+ * or its `fanTargets`: the anchor is where the rectangle's geometry comes from
+ * and what a drag starts at, and `fanTargets` is what a drag writes to, so
+ * filtering either would move the stack or strand its hidden members.
  */
-export function stackUnits(layout: WindowLayout): DrawUnit[] {
+export function stackUnits(layout: WindowLayout, visible: Set<string> | null = null): DrawUnit[] {
   const drawn = openWindows(layout.windows);
   const byId = new Map(drawn.map((w) => [w.id, w]));
   const renderableById = new Map(layout.windows.filter((w) => w.renderable).map((w) => [w.id, w]));
   const units: DrawUnit[] = [];
   const claimed = new Set<string>();
+  const shown = (id: string) => visible === null || visible.has(id);
 
   for (const s of layout.stacks) {
-    const tabs = s.members.map((id) => byId.get(id)).filter((w): w is WindowRect => !!w);
+    const tabs = s.members
+      .map((id) => byId.get(id))
+      .filter((w): w is WindowRect => !!w && shown(w.id));
     // A stack with no open members has nothing to show — hide it, and claim its
     // (possibly open) container so it doesn't fall through as a lone window.
+    // Under a filter this also covers "no member matched".
     if (tabs.length === 0) {
       claimed.add(s.container_id);
+      for (const id of s.members) claimed.add(id);
       continue;
     }
     const anchor = byId.get(s.anchor_id);
@@ -92,15 +104,23 @@ export function stackUnits(layout: WindowLayout): DrawUnit[] {
     // The container itself is not a tab unless it is also a member.
     for (const w of tabs) claimed.add(w.id);
     claimed.add(s.container_id);
+    for (const id of s.members) claimed.add(id);
     const fanIds = new Set<string>([s.anchor_id, s.container_id, ...s.members]);
     const fanTargets = [...fanIds].map((id) => renderableById.get(id)).filter((w): w is WindowRect => !!w);
     units.push({ key: s.container_id, anchor, stack: s, tabs, fanTargets });
   }
   for (const w of drawn) {
-    if (claimed.has(w.id)) continue;
+    if (claimed.has(w.id) || !shown(w.id)) continue;
     units.push({ key: w.id, anchor: w, stack: null, tabs: [w], fanTargets: [w] });
   }
   return units;
+}
+
+/** How many windows a set of draw units actually paints: a stack unit draws one
+ * rectangle but represents each of its visible tabs, a free unit exactly one.
+ * The counter reports windows, not rectangles — "showing 3 of 68 windows". */
+export function drawnWindowCount(units: DrawUnit[]): number {
+  return units.reduce((n, u) => n + (u.stack ? u.tabs.length : 1), 0);
 }
 
 export interface FurnitureRect {
@@ -206,4 +226,47 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
   }
 
   return out;
+}
+
+// --- filtering -------------------------------------------------------------
+// One predicate, applied to the window list AND to what the canvas draws, so
+// decluttering the list declutters the picture. Folding families in the panel
+// is a separate, list-only affair — it must never reach this code.
+
+export interface WindowFilter {
+  /** Free text, matched against the friendly label, the detail and the raw id. */
+  text: string;
+  /** Drop windows EVE has not flagged open (roughly 77% of a real file). */
+  openOnly: boolean;
+  /** Drop windows EVE spawns per conversation, item or dialog — clutter, not
+   * windows the player placed. Applies whether open or closed: kind of
+   * window is the axis, not open/closed (see isClutter). */
+  hideClutter: boolean;
+}
+
+export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false };
+
+/** Whether the filter narrows anything — drives the "showing N of M" line. */
+export function filterIsActive(f: WindowFilter): boolean {
+  return f.text.trim() !== "" || f.openOnly || f.hideClutter;
+}
+
+export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
+  if (f.openOnly && !w.open) return false;
+  if (f.hideClutter && isClutter(w.id)) return false;
+  // A minted numeric window id exists only to be a stack container (see
+  // docs/format-notes.md, "Window stacks"). One that belongs to no stack at all
+  // is a dead frame whose members are gone — it paints a phantom "Window stack"
+  // rectangle. Structural, so unlike the curated tables it needs no maintenance.
+  if (f.hideClutter && w.stack === null && /^\d+$/.test(w.id)) return false;
+  const n = describe(w.id);
+  const q = f.text.trim().toLowerCase();
+  if (q === "") return true;
+  // Same contract search.ts documents for the tree: label, detail and the raw
+  // id all match, so "market", "corpassets" and "1037014587783" all work.
+  return `${n.label} ${n.detail} ${w.id}`.toLowerCase().includes(q);
+}
+
+export function visibleIds(windows: WindowRect[], f: WindowFilter): Set<string> {
+  return new Set(windows.filter((w) => windowMatches(w, f)).map((w) => w.id));
 }
