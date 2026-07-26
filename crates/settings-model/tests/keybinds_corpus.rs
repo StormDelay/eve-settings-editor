@@ -107,6 +107,7 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
 
     let doc = blue_marshal::decode(&f.bytes).expect("decodes");
     let before = project_keybinds(Some(&doc));
+    let before_timestamp = customcmds_timestamp(&doc);
     let target = before
         .entries
         .iter()
@@ -114,9 +115,6 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
         .map(|e| e.command.clone())
         .expect("a real corpus file has unbound commands");
 
-    // Encode the untouched document first so the comparison is against a
-    // re-encode, not the original bytes (inline_all legitimately rewrites
-    // sharing, which is not what this test is about).
     let mut edited = doc.clone();
     set_keybind(&mut edited, &target, Some(vec![MOD_CTRL, 145])).expect("write succeeds");
 
@@ -130,10 +128,37 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
             assert_eq!(a.keys, b.keys, "{} must be untouched", a.command);
         }
     }
+    assert_eq!(
+        customcmds_timestamp(&edited),
+        before_timestamp,
+        "the customCmds table timestamp must survive the write untouched"
+    );
 
     // Re-encoding must round-trip.
     let bytes = blue_marshal::encode(&edited).expect("re-encodes");
     let redecoded = blue_marshal::decode(&bytes).expect("re-decodes");
     let round = project_keybinds(Some(&redecoded));
     assert_eq!(round.entries, after.entries, "the write survives an encode/decode cycle");
+}
+
+/// Pull the raw `cmd -> customCmds` FILETIME (tuple element 0) out of a
+/// decoded document. `blue_marshal::inline` resolves any `Shared`/`Ref` on `cmd` and
+/// `customCmds` first (real account files may wrap either — see the format
+/// note atop `keybinds.rs`), so the walk below only has to match bare `Bytes`
+/// keys.
+fn customcmds_timestamp(doc: &blue_marshal::Value) -> blue_marshal::Value {
+    use blue_marshal::Value;
+    let plain = blue_marshal::inline(doc);
+    let Value::Dict(root) = &plain else { panic!("root is a dict") };
+    let (_, cmd) = root
+        .iter()
+        .find(|(k, _)| matches!(k, Value::Bytes(b) if b == b"cmd"))
+        .expect("cmd section");
+    let Value::Dict(cmd) = cmd else { panic!("cmd is a bare dict") };
+    let (_, wrapper) = cmd
+        .iter()
+        .find(|(k, _)| matches!(k, Value::Bytes(b) if b == b"customCmds"))
+        .expect("customCmds");
+    let Value::Tuple(parts) = wrapper else { panic!("customCmds is a (ts, dict) tuple") };
+    parts[0].clone()
 }
