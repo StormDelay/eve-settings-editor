@@ -13,7 +13,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{as_dict, bytes_str, child_dict_mut, collect_shared, dict_inner_mut, effective, find_child, inline_all, is_bytes, SharedTable, Entries};
+use crate::treewalk::{as_dict, bytes_str, child_dict_mut, collect_shared, effective, find_child, inline_all, is_bytes, SharedTable, Entries};
 
 /// Modifier virtual-key codes, in the canonical order EVE writes them.
 pub const MOD_CTRL: i64 = 17;
