@@ -8,6 +8,7 @@
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines,
   } from "$lib/layout";
   import { nameOf } from "$lib/windowLabels";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "./prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -73,7 +74,7 @@
   // not an approximation.
   const scale = $derived(canvasScale(layout?.reference_w ?? 0, containerWidth));
   const visible = $derived(
-    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter) : null,
+    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter, clutterOverrides()) : null,
   );
   const units = $derived(
     stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
@@ -570,6 +571,12 @@
             <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
           </span>
         {/if}
+        {#if overrideCount() > 0}
+          <span class="showing">
+            · {overrideCount()} overridden
+            <button class="linkish" onclick={clearClutterOverrides}>clear</button>
+          </span>
+        {/if}
       </p>
     </div>
     <div class="side">
@@ -596,6 +603,8 @@
         {onReorder}
         {onAddToStack}
         {onCreateStack}
+        overrides={clutterOverrides()}
+        onClutterOverride={setClutterOverride}
         bind:filter
         bind:focusFilter />
     </div>

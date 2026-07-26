@@ -206,4 +206,23 @@ const check = (name: string, ok: boolean) => {
   );
 }
 
+// --- clutter overrides ------------------------------------------------------
+{
+  const none = { clutter: new Set<string>(), visible: new Set<string>() };
+  check("no overrides leaves the built-in verdict alone (clutter)", isClutter("ChatInvitation_x", none));
+  check("no overrides leaves the built-in verdict alone (ordinary)", !isClutter("market", none));
+  check("an absent overrides argument is the same as empty", isClutter("ChatInvitation_x"));
+
+  const forced = { clutter: new Set(["market"]), visible: new Set<string>() };
+  check("an override can make an ordinary window clutter", isClutter("market", forced));
+
+  const freed = { clutter: new Set<string>(), visible: new Set(["ChatInvitation_x"]) };
+  check("an override can rescue a window the tables call clutter", !isClutter("ChatInvitation_x", freed));
+
+  // Only reachable by hand-editing preferences.json: the UI keeps the two sets
+  // disjoint. Pinned so the precedence is not accidental.
+  const both = { clutter: new Set(["market"]), visible: new Set(["market"]) };
+  check("visible wins when a hand-edited file lists an id twice", !isClutter("market", both));
+}
+
 console.log("windowLabels.test.ts ok");

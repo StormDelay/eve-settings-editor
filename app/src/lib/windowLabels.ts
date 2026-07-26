@@ -215,10 +215,23 @@ const CLUTTER_IDS: ReadonlySet<string> = new Set([
   "broadcastsettings",
 ]);
 
+/** Per-window user overrides of the built-in clutter tables. The two sets are
+ * kept disjoint by the UI; `visible` wins if a hand-edited file lists an id in
+ * both. */
+export interface ClutterOverrides {
+  clutter: ReadonlySet<string>;
+  visible: ReadonlySet<string>;
+}
+
 /** True for a window EVE spawns per conversation/item/dialog rather than one
  * the player placed. Hidden in both the list and the canvas, whether open or
- * closed — open/closed is not the axis; kind of window is. */
-export function isClutter(id: string): boolean {
+ * closed — open/closed is not the axis; kind of window is.
+ *
+ * The built-in tables can never be complete (see the note above CLUTTER_IDS),
+ * so a user override outranks them in both directions. */
+export function isClutter(id: string, o?: ClutterOverrides): boolean {
+  if (o?.visible.has(id)) return false;
+  if (o?.clutter.has(id)) return true;
   if (CLUTTER_IDS.has(id)) return true;
   const n = describe(id);
   if (n.family === "chatchannel") return CLUTTER_CHAT_DETAILS.has(n.detail);
