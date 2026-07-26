@@ -210,7 +210,9 @@ here and nothing else mutates the section.
 pub struct KeybindEntry {
     pub command: String,          // "CmdActivateHighPowerSlot1"
     pub keys: Option<Vec<i64>>,   // None = unbound, else [17?,18?,16?,key]
-    pub set: SetTarget,
+    /// The stored value is neither `None` nor an all-`Int` tuple. Projected as
+    /// `keys: None` so the row reads honestly instead of silently blank.
+    pub malformed: bool,
 }
 
 pub struct Keybinds {
@@ -225,8 +227,12 @@ pub fn project_keybinds(user_root: Option<&Value>) -> Keybinds;
 
 Entries are reported in file order. Grouping, ordering and labelling are display
 concerns and stay in TypeScript. A leaf whose shape violates §2.2 projects as
-`keys: None` with a non-writable `SetTarget` and is passed through untouched on
-save, rather than being normalised.
+`keys: None, malformed: true` and is passed through untouched on save unless the
+user deliberately rebinds that row.
+
+No `SetTarget` here, unlike `hud.rs`: that type carries a resolved `NodePath` so
+a field can drive the generic `set_scalar`, whereas `set_keybind` looks the
+command up by name. A `NodePath` would be unused weight.
 
 ### 5.2 The setter
 
