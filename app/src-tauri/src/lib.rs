@@ -3,6 +3,7 @@ mod groups;
 mod names;
 mod ops;
 mod prefs;
+mod presets;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;
