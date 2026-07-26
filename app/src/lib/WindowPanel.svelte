@@ -167,14 +167,19 @@
     return next;
   }
 
+  // Whether a stack member currently passes the filter (and still exists).
+  // Shared by matchingMembers (below) and the ↑/↓ reorder buttons, which must
+  // disable rather than swap with a neighbour the filter is hiding.
+  function memberVisible(id: string): boolean {
+    const w = findWindow(id);
+    return !!w && windowMatches(w, filter, overrides);
+  }
+
   // Members currently matching the filter, for gating the stack's frame row
   // and its count badge (I2) — a stack whose members are all filtered out
   // must disappear from the list exactly as it disappears from the canvas.
   function matchingMembers(stack: Stack): string[] {
-    return stack.members.filter((id) => {
-      const w = findWindow(id);
-      return !!w && windowMatches(w, filter, overrides);
-    });
+    return stack.members.filter(memberVisible);
   }
 </script>
 
@@ -372,7 +377,7 @@
                 {@render rowHead(w)}
                 <button
                   class="stack-btn"
-                  disabled={readOnly || i === 0}
+                  disabled={readOnly || i === 0 || !memberVisible(stack.members[i - 1])}
                   title="Move up in stack order"
                   aria-label="Move up in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i - 1))}>
@@ -380,7 +385,7 @@
                 </button>
                 <button
                   class="stack-btn"
-                  disabled={readOnly || i === stack.members.length - 1}
+                  disabled={readOnly || i === stack.members.length - 1 || !memberVisible(stack.members[i + 1])}
                   title="Move down in stack order"
                   aria-label="Move down in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i + 1))}>

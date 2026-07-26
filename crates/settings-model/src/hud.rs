@@ -139,15 +139,15 @@ fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetT
         return (None, SetTarget::Unavailable);
     };
     match locate(entries, &base, f, shared) {
-        (Located::Writable(path), text) => (text, SetTarget::Set { path }),
+        Located::Writable(path, text) => (Some(text), SetTarget::Set { path }),
         // Key present but unreadable (wrong wire kind, or a malformed point
         // tuple): refuse to write rather than clobber it or mint a duplicate key.
-        (Located::Unwritable, _) => (None, SetTarget::Unavailable),
+        Located::Unwritable => (None, SetTarget::Unavailable),
         // Genuinely absent: `set_hud_value` mints the `(timestamp, value)`
         // leaf. The parent/key here document the target; the op does the
         // insert, because a generic InsertDictEntry cannot build the
         // timestamp wrapper.
-        (Located::Absent, _) => (
+        Located::Absent => (
             None,
             SetTarget::Insert { parent: base, key: crate::mutate::NewValue::BytesHex(hex(f.key)) },
         ),
@@ -158,8 +158,10 @@ fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetT
 /// the projection (`probe`) and the setter (`set_hud_value`), so the two can
 /// never disagree about whether a key is absent or merely unreadable.
 enum Located {
-    /// Key present and readable: overwrite the scalar at this path.
-    Writable(NodePath),
+    /// Key present and readable: overwrite the scalar at this path. Carries the
+    /// scalar text too — `probe` shows it to the user; `set_hud_value` (which
+    /// only needs the path) ignores it.
+    Writable(NodePath, String),
     /// Key present but not readable as this field's kind (wrong wire kind, or a
     /// malformed point tuple): refuse — overwriting would change its type and
     /// minting would duplicate the key.
@@ -168,16 +170,14 @@ enum Located {
     Absent,
 }
 
-/// Decide what a write to `f` may do. The `Option<String>` alongside `Located`
-/// is the scalar text `probe` shows the user (present only for `Writable`) —
-/// returned here, rather than re-derived by each caller, so the branch logic
-/// that tells "absent" apart from "present but unreadable" (see `leaf`'s doc)
-/// lives in exactly one place.
-fn locate(entries: &Entries, base: &NodePath, f: &Field, shared: &SharedTable) -> (Located, Option<String>) {
+/// Decide what a write to `f` may do — the branch logic that tells "absent"
+/// apart from "present but unreadable" (see `leaf`'s doc) lives in exactly one
+/// place, shared by `probe` and `set_hud_value`.
+fn locate(entries: &Entries, base: &NodePath, f: &Field, shared: &SharedTable) -> Located {
     match leaf(entries, base, f.key, f.elem, shared) {
         Some((v, path)) => match scalar_text(v, f.kind, shared) {
-            Some(text) => (Located::Writable(path), Some(text)),
-            None => (Located::Unwritable, None),
+            Some(text) => Located::Writable(path, text),
+            None => Located::Unwritable,
         },
         // `leaf` returns a bare `None` for two different reasons: the key is
         // genuinely absent, or it's present but unreadable (a malformed point
@@ -185,8 +185,8 @@ fn locate(entries: &Entries, base: &NodePath, f: &Field, shared: &SharedTable) -
         // `Vec`, not a deduping map, so inserting on the latter would push a
         // second entry with the same key — reads keep finding the first
         // (malformed) one via `.find()`, silently orphaning every write.
-        None if key_present(entries, f.key, shared) => (Located::Unwritable, None),
-        None => (Located::Absent, None),
+        None if key_present(entries, f.key, shared) => Located::Unwritable,
+        None => Located::Absent,
     }
 }
 
@@ -297,11 +297,11 @@ pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), Hud
         let mut shared = SharedTable::new();
         collect_shared(root, &mut shared);
         let (entries, base) = section(root, f.section, &shared).ok_or(HudError::NoSection)?;
-        locate(entries, &base, f, &shared).0
+        locate(entries, &base, f, &shared)
     };
 
     match located {
-        Located::Writable(path) => {
+        Located::Writable(path, _) => {
             let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
             crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))
         }
@@ -313,6 +313,9 @@ pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), Hud
 /// Insert the absent leaf. After `inline_all` every key is a plain byte-string,
 /// so this half needs no `Shared`/`Ref` resolution.
 fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
+    inline_all(root);
+    let section_entries = section_dict_mut(root, f.section).ok_or(HudError::NoSection)?;
+
     let value = build_scalar(f.kind, text)?;
     let leaf_value = match f.elem {
         None => value,
@@ -330,18 +333,23 @@ fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
             Value::Tuple(items)
         }
     };
-    inline_all(root);
-    let Value::Dict(entries) = root else { return Err(HudError::NoSection) };
-    let (_, section_value) = entries
-        .iter_mut()
-        .find(|(k, _)| is_bytes(k, f.section))
-        .ok_or(HudError::NoSection)?;
-    let Value::Dict(section_entries) = section_value else { return Err(HudError::NoSection) };
     section_entries.push((
         Value::Bytes(f.key.to_vec()),
         Value::Tuple(vec![Value::Long(vec![0u8; 8]), leaf_value]),
     ));
     Ok(())
+}
+
+/// A top-level section's entries, mutably, by plain byte-string key. Only valid
+/// after `inline_all` (no `Ref`/`Shared` resolution — see `treewalk::section`
+/// for the read-only, sharing-aware counterpart used before that point).
+fn section_dict_mut<'a>(root: &'a mut Value, section: &[u8]) -> Option<&'a mut Entries> {
+    let Value::Dict(entries) = root else { return None };
+    let (_, v) = entries.iter_mut().find(|(k, _)| is_bytes(k, section))?;
+    match v {
+        Value::Dict(d) => Some(d),
+        _ => None,
+    }
 }
 
 fn build_scalar(kind: HudKind, text: &str) -> Result<Value, HudError> {
