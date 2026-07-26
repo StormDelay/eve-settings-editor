@@ -108,19 +108,67 @@ const PARAM: Record<string, string> = {
   overview: "Overview",
 };
 
-/**
- * The families that dominate a real file — 6 of the top 8 by row count. The
- * "hide chat & session windows" filter drops exactly these. Keys must be
- * families `describe` actually produces (asserted in the tests).
- */
-export const NOISE_FAMILIES: ReadonlySet<string> = new Set([
-  "chatchannel",
-  "ChannelSettingsDlg",
+// --- clutter -----------------------------------------------------------
+// EVE spawns some windows per conversation, per item or per dialog — the
+// player never placed them, and once opened they never really close (they
+// pile up as ~160 closed rows in a real file). Others are windows the
+// player actually positioned — even a chat, if it's Local/Corp/Alliance/
+// Fleet rather than a one-off invitation or private convo. "Clutter" means
+// the former only, regardless of open/closed: hiding it must be safe in
+// both the list AND the canvas.
+//
+// `describe()` only assigns these families to a SUFFIXED id
+// (`<family>_<instance>`); a bare id falls through to describe's rule 4/5
+// and gets `family === id`, which for e.g. `ShipCargo` collides with the
+// suffixed family string. So membership here is necessary but not
+// sufficient — see isClutter, which additionally requires a non-empty
+// `detail` to tell a spawned instance from its bare parent.
+
+/** Families that exist ONLY as spawned instances — a parent window search
+ * (`describe(id).family`) is not enough; isClutter also checks `detail`. */
+const CLUTTER_FAMILIES: ReadonlySet<string> = new Set([
   "ChatInvitation",
+  "ChannelSettingsDlg",
   "mail_readingWnd",
-  "contactmanagement",
   "groupInfoWnd",
+  "contactmanagement",
+  "ShipCargo",
+  "ShipDroneBay",
+  "containerWnd",
+  "StructureShipHangar",
 ]);
+
+/** Chat is clutter only for private/direct conversations — defined
+ * positively so an unrecognised future channel is kept, not hidden. Standing
+ * channels (local/corp/alliance/fleet/incursion/invasion) stay visible. */
+const CLUTTER_CHAT_DETAILS: ReadonlySet<string> = new Set(["player", "private"]);
+
+/** One-off transient dialogs: exact id, never a family (there's only ever
+ * one at a time, so there's no parent/spawned distinction to make). */
+const CLUTTER_IDS: ReadonlySet<string> = new Set([
+  "setQuantityPopup",
+  "setNewName",
+  "mySearch",
+  "DisconnectNotice",
+  "NewFeatureNotifyWnd",
+  "ScreenshotEditingWnd",
+  "BugReportingWindow",
+  "contractSelectItemTypeDlg",
+  "addressBookSearch",
+  "contractFinishStepSearch",
+  "contractEndpointSearch",
+]);
+
+/** True for a window EVE spawns per conversation/item/dialog rather than one
+ * the player placed. Hidden in both the list and the canvas, whether open or
+ * closed — open/closed is not the axis; kind of window is. */
+export function isClutter(id: string): boolean {
+  if (CLUTTER_IDS.has(id)) return true;
+  const n = describe(id);
+  if (n.family === "chatchannel") return CLUTTER_CHAT_DETAILS.has(n.detail);
+  // detail === "" means a bare parent window (e.g. plain "ShipCargo") — keep it.
+  return CLUTTER_FAMILIES.has(n.family) && n.detail !== "";
+}
 
 /** Suffix segments that carry no meaning for a reader: ids, hashes, GUIDs. */
 const OPAQUE = /^(-?\d+L?|[0-9a-f]{16,})$/i;

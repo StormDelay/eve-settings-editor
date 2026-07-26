@@ -224,10 +224,10 @@
 
 {#snippet freeRow(w: WindowRect)}
   <!-- stackTargets is deliberately filtered too: it derives from freeWindows,
-       so "Hide chat & session windows" also hides those windows from "Stack
-       with…" (M7). Falls out of freeWindows being the shared source, but it's
-       defensible on its own — you can only stack with what you can see — so
-       it stays, recorded rather than silently inherited. -->
+       so "Hide clutter" also hides those windows from "Stack with…" (M7).
+       Falls out of freeWindows being the shared source, but it's defensible
+       on its own — you can only stack with what you can see — so it stays,
+       recorded rather than silently inherited. -->
   {@const stackTargets = freeWindows.filter((o) => o.id !== w.id && o.renderable)}
   <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
     <div class="row-head">
@@ -289,9 +289,11 @@
       <input type="checkbox" bind:checked={filter.openOnly} />
       Open only
     </label>
-    <label class="toggle">
-      <input type="checkbox" bind:checked={filter.hideNoise} />
-      Hide closed chat &amp; session windows
+    <label
+      class="toggle"
+      title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay.">
+      <input type="checkbox" bind:checked={filter.hideClutter} />
+      Hide clutter
     </label>
   </div>
   {#each stacks as stack (stack.container_id)}
