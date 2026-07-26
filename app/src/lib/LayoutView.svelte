@@ -1,7 +1,11 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
-  import { canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX, hudPointFromRect, type Corner, type DrawUnit, type FurnitureRect } from "$lib/layout";
+  import {
+    canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
+    hudPointFromRect, openWindows, NO_FILTER, filterIsActive, visibleIds,
+    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter,
+  } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -45,6 +49,10 @@
   // `selectedId`; the two are kept mutually exclusive (see selectWindow).
   let selectedFurniture = $state<FurnitureRect["kind"] | null>(null);
 
+  // The filter is shared: it narrows the window list AND what the canvas draws.
+  // Folding families in the panel is separate and list-only.
+  let filter = $state<WindowFilter>({ ...NO_FILTER });
+
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its
   // reactive getter), so a `layout ? layout.x : ...` ternary won't type-check
@@ -52,7 +60,16 @@
   // reference dimension as "no-op", so reading through with `?? 0` is exact,
   // not an approximation.
   const scale = $derived(canvasScale(layout?.reference_w ?? 0, containerWidth));
-  const units = $derived(stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }));
+  const visible = $derived(
+    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter) : null,
+  );
+  const units = $derived(
+    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+  );
+  // Counted over drawable windows, not draw units — a stack is one unit but
+  // several windows, and "showing 3 of 68 windows" is what the user is asking.
+  const drawable = $derived(openWindows(layout?.windows ?? []));
+  const shownCount = $derived(visible === null ? drawable.length : drawable.filter((w) => visible.has(w.id)).length);
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
 
   async function load() {
@@ -79,6 +96,10 @@
   let lastUserOpen = false;
   $effect(() => {
     if (refreshToken !== lastToken || slot !== lastSlot || userOpen !== lastUserOpen) {
+      // A filter carried over from another character reads as "this file has
+      // three windows". Clear it on a real file switch, but not on a save or
+      // an account pairing, which must not disturb what the user is doing.
+      if (slot !== lastSlot) filter = { ...NO_FILTER };
       lastToken = refreshToken;
       lastSlot = slot;
       lastUserOpen = userOpen;
@@ -396,7 +417,15 @@
           </div>
         {/each}
       </div>
-      <p class="ref">reference {layout.reference_w}×{layout.reference_h}</p>
+      <p class="ref">
+        reference {layout.reference_w}×{layout.reference_h}
+        {#if filterIsActive(filter)}
+          <span class="showing">
+            · showing {shownCount} of {drawable.length} windows
+            <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
+          </span>
+        {/if}
+      </p>
     </div>
     <div class="side">
       {#if hud}
@@ -421,7 +450,8 @@
         {onUnstack}
         {onReorder}
         {onAddToStack}
-        {onCreateStack} />
+        {onCreateStack}
+        bind:filter />
     </div>
   </div>
 {/if}
@@ -544,6 +574,18 @@
     color: #888;
     font-size: 11px;
     margin: 0.3rem 0 0;
+  }
+  .showing {
+    color: var(--warn);
+  }
+  .linkish {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
   }
   .hint {
     color: #888;
