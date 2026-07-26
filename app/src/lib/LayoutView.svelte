@@ -122,8 +122,11 @@
       // EVE window ids are per-character dict keys and common ones (overview,
       // market, ...) repeat across characters, so a preview left over from
       // the previous document could otherwise be committed onto a same-named
-      // window belonging to whatever just loaded.
+      // window belonging to whatever just loaded. fPreview has the same
+      // hazard and worse: it's keyed by furniture `kind`, which collides
+      // across every document by construction (there's only one "shipui").
       preview = {};
+      fPreview = {};
       nudging = null;
       load();
     }
@@ -325,7 +328,9 @@
     }
     // Six CANVAS px, so the grab feels identical however far the canvas is
     // scaled down. Alt held passes the drag straight through — read off the
-    // event, so pressing or releasing it mid-drag takes effect immediately.
+    // event, so pressing or releasing it mid-drag takes effect on the next
+    // pointer move (there's no key listener here to catch it sooner; holding
+    // Alt without moving the mouse leaves the last snap applied).
     const tol = toData(6, scale);
     const raw = drag.kind === "move"
       ? { ...rectOf(drag.unit.anchor), x: drag.ox + dx, y: drag.oy + dy }
@@ -460,16 +465,28 @@
     preview = { ...preview, [unit.anchor.id]: { ...r, x: r.x + step[0] * n, y: r.y + step[1] * n } };
   }
 
-  async function onKeyUp(e: KeyboardEvent) {
-    if (!nudging || !(e.key in NUDGE)) return;
+  /** Commit whatever nudge is in flight, if any. Shared by keyup and window
+   * blur: if the webview loses focus mid-hold (Alt+Tab, a taskbar click, an OS
+   * notification), the keyup fires elsewhere and `nudging` would otherwise
+   * stay stuck on the old unit — the next arrow press on a freshly selected
+   * window would then resolve `nudging`'s stale unit instead, committing the
+   * wrong window's stranded glide to the file on the eventual keyup. */
+  async function endNudge() {
+    if (!nudging) return;
     const id = nudging;
     nudging = null;
     const unit = units.find((u) => u.anchor.id === id);
     if (unit) await commitUnit(unit);
   }
+
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key in NUDGE) return endNudge();
+  };
 </script>
 
-<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
+<!-- blur doesn't bubble, so this only fires for the window itself (an inner
+     input losing focus to another inner element won't trip it) — see endNudge. -->
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
 {#if layout === null}
   <p class="hint">Loading layout…</p>
