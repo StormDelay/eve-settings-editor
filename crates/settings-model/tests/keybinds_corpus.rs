@@ -12,10 +12,15 @@ mod common;
 
 use settings_model::{project_keybinds, set_keybind, MOD_ALT, MOD_CTRL, MOD_SHIFT};
 
-/// The real corpus has 132 account files carrying a table. A wrong section or
-/// key projects 0. Deliberately below 132 so refreshing the corpus cannot fail
-/// this spuriously.
-const ENOUGH_REAL: usize = 100;
+/// A wrong section or key path projects 0, which is the whole point of this
+/// gate; the exact figure only has to be comfortably above that.
+///
+/// Measured: 98. Note this is NOT the 132 quoted in the design spec — that
+/// counted files by path within a single corpus snapshot, whereas `common`
+/// deduplicates by content across every snapshot, collapsing the many
+/// byte-identical account files this corpus carries. Set well below 98 so
+/// refreshing the corpus cannot fail this spuriously.
+const ENOUGH_REAL: usize = 80;
 
 #[test]
 fn the_keybinding_table_reads_from_real_files() {
