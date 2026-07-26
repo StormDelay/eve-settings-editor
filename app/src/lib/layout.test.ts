@@ -3,6 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
+  snapLines, movingEdges, snapDelta,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -402,6 +403,78 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     "hudPointFromRect inverts hudRects' badge placement",
     badgePoint.x === hudNum(hud, "badge_x") && badgePoint.y === hudNum(hud, "badge_y"),
   );
+}
+
+// --- snapping: candidate lines ---------------------------------------------
+{
+  // The canvas edges are candidates even when nothing is drawn.
+  const empty = snapLines([], 2560, 1440);
+  check("snapLines always offers the canvas x edges", empty.x.join(",") === "0,2560");
+  check("snapLines always offers the canvas y edges", empty.y.join(",") === "0,1440");
+
+  // Each rect contributes exactly its two edges per axis.
+  const lines = snapLines([{ x: 100, y: 50, w: 200, h: 80 }], 2560, 1440);
+  check("a rect contributes its left and right edges", lines.x.includes(100) && lines.x.includes(300));
+  check("a rect contributes its top and bottom edges", lines.y.includes(50) && lines.y.includes(130));
+  check("a rect adds exactly two x candidates", lines.x.length === 4);
+  check("a rect adds exactly two y candidates", lines.y.length === 4);
+}
+
+// --- snapping: which edges a drag moves -------------------------------------
+{
+  const r = { x: 100, y: 50, w: 200, h: 80 }; // right = 300, bottom = 130
+
+  const move = movingEdges(r, null);
+  check("a move tests both x edges", move.x.join(",") === "100,300");
+  check("a move tests both y edges", move.y.join(",") === "50,130");
+
+  // Each corner moves exactly one edge per axis: the one it is named for.
+  check("tl moves left and top", movingEdges(r, "tl").x.join(",") === "100" && movingEdges(r, "tl").y.join(",") === "50");
+  check("tr moves right and top", movingEdges(r, "tr").x.join(",") === "300" && movingEdges(r, "tr").y.join(",") === "50");
+  check("bl moves left and bottom", movingEdges(r, "bl").x.join(",") === "100" && movingEdges(r, "bl").y.join(",") === "130");
+  check("br moves right and bottom", movingEdges(r, "br").x.join(",") === "300" && movingEdges(r, "br").y.join(",") === "130");
+}
+
+// --- snapping: the search ---------------------------------------------------
+{
+  const lines = { x: [0, 100, 500, 2560], y: [0, 200, 1440] };
+
+  // The correction is what CLOSES the gap: an edge at 98 with a candidate at
+  // 100 corrects by +2 and lands on 100 — not 102. This is the sign test.
+  const near = snapDelta({ x: [98], y: [] }, lines, 6);
+  check("a near edge corrects toward the candidate", near.dx === 2);
+  check("the caught candidate is reported as the guide", near.gx === 100);
+  check("an axis with no moving edge does not move", near.dy === 0 && near.gy === null);
+
+  // Outside the tolerance nothing happens at all.
+  const far = snapDelta({ x: [90], y: [] }, lines, 6);
+  check("an edge outside the tolerance is untouched", far.dx === 0 && far.gx === null);
+
+  // The tolerance is inclusive at the boundary.
+  const edge = snapDelta({ x: [94], y: [] }, lines, 6);
+  check("an edge exactly at the tolerance still snaps", edge.dx === 6 && edge.gx === 100);
+
+  // A rect's RIGHT edge snaps as readily as its left: the rect spans 400..502,
+  // so it is the trailing edge that is 2px from the candidate at 500.
+  const byRight = snapDelta({ x: [400, 502], y: [] }, lines, 6);
+  check("the right edge can win the snap", byRight.dx === -2 && byRight.gx === 500);
+
+  // Nearest wins when several candidates are in range.
+  const nearest = snapDelta({ x: [102], y: [] }, { x: [100, 104], y: [] }, 6);
+  check("the nearest candidate wins", nearest.dx === -2 && nearest.gx === 100);
+
+  // Ties go to the LOWER candidate, so the result never depends on array order.
+  const tie = snapDelta({ x: [102], y: [] }, { x: [104, 100], y: [] }, 6);
+  check("a tie goes to the lower candidate", tie.gx === 100 && tie.dx === -2);
+
+  // Both axes resolve independently in one call.
+  const both = snapDelta({ x: [3], y: [198] }, lines, 6);
+  check("both axes snap in one call", both.dx === -3 && both.dy === 2);
+  check("both guides are reported", both.gx === 0 && both.gy === 200);
+
+  // No candidates at all (an empty canvas) is a clean no-op, not a crash.
+  const none = snapDelta({ x: [50], y: [50] }, { x: [], y: [] }, 6);
+  check("no candidates is a no-op", none.dx === 0 && none.dy === 0 && none.gx === null && none.gy === null);
 }
 
 console.log("layout: all checks passed");

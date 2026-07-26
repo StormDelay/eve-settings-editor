@@ -270,3 +270,82 @@ export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
 export function visibleIds(windows: WindowRect[], f: WindowFilter): Set<string> {
   return new Set(windows.filter((w) => windowMatches(w, f)).map((w) => w.id));
 }
+
+// --- snapping ---------------------------------------------------------------
+// Edge snapping, in data px. EVE has no layout grid; it snaps windows to each
+// other and to the screen, so these candidates are edges, never a fixed step.
+
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/** Candidate edge coordinates a drag can lock onto, split by axis. */
+export interface SnapLines { x: number[]; y: number[] }
+
+/**
+ * Every edge worth snapping to: the four edges of each rect, plus the screen's
+ * own. The caller decides what is in `rects` — what the canvas DRAWS (so the
+ * filter already applies), minus the dragged unit's own windows, plus the
+ * furniture. Duplicates are kept: a few hundred numbers scanned linearly per
+ * pointer move is nothing next to the DOM update that move triggers.
+ */
+export function snapLines(rects: Rect[], referenceW: number, referenceH: number): SnapLines {
+  const x = [0, referenceW];
+  const y = [0, referenceH];
+  for (const r of rects) {
+    x.push(r.x, r.x + r.w);
+    y.push(r.y, r.y + r.h);
+  }
+  return { x, y };
+}
+
+/**
+ * The edges a drag actually moves. A move carries all four; a corner resize
+ * moves only the two edges its name points at (the opposite corner is the fixed
+ * anchor — see resizeRect), and snapping an edge that isn't moving would drag
+ * the anchor along with it.
+ */
+export function movingEdges(r: Rect, corner: Corner | null): { x: number[]; y: number[] } {
+  if (corner === null) return { x: [r.x, r.x + r.w], y: [r.y, r.y + r.h] };
+  const left = corner === "tl" || corner === "bl";
+  const top = corner === "tl" || corner === "tr";
+  return { x: [left ? r.x : r.x + r.w], y: [top ? r.y : r.y + r.h] };
+}
+
+/** A correction to add to a drag's delta, plus the candidates it caught. */
+export interface SnapResult { dx: number; dy: number; gx: number | null; gy: number | null }
+
+/** Nearest candidate within `tol` wins; ties go to the lower coordinate, so the
+ * outcome never depends on the order rects were collected in. */
+function nearest(edges: number[], lines: number[], tol: number): { d: number; line: number | null } {
+  let d = 0;
+  let line: number | null = null;
+  let best = Infinity;
+  for (const e of edges) {
+    for (const c of lines) {
+      const diff = c - e;
+      const dist = Math.abs(diff);
+      if (dist > tol) continue;
+      if (dist < best || (dist === best && line !== null && c < line)) {
+        best = dist;
+        d = diff;
+        line = c;
+      }
+    }
+  }
+  return { d, line };
+}
+
+/**
+ * Snap a drag. `moving` is the edges that move, already displaced by the raw
+ * pointer delta; the returned dx/dy is the extra correction that lands them on
+ * a candidate, and gx/gy the lines caught (null when nothing was in range, in
+ * which case the drag passes through untouched).
+ */
+export function snapDelta(
+  moving: { x: number[]; y: number[] },
+  lines: SnapLines,
+  tol: number,
+): SnapResult {
+  const x = nearest(moving.x, lines.x, tol);
+  const y = nearest(moving.y, lines.y, tol);
+  return { dx: x.d, dy: y.d, gx: x.line, gy: y.line };
+}
