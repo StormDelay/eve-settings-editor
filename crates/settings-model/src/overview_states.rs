@@ -217,11 +217,21 @@ pub const OVERVIEW_BOOLS: [&str; 6] = [
     "hideCorpTicker",
 ];
 
+/// The client is not type-stable for these flags: `hideCorpTicker` is stored as
+/// `Int` in 132 of the 135 corpus accounts that carry it and as `Bool` in the
+/// other 3 (`applyToStructures`, `FMBQsearchTitles` and others vary the same
+/// way — see docs/settings-field-reference.md §3.5). Matching `Bool` alone read
+/// nothing from ~98 % of real accounts, so the UI showed the box unticked
+/// whatever the account actually had. Ints follow Python truthiness.
 fn as_bool<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<bool> {
     match effective(v, sh) {
         Value::Bool(b) => Some(*b),
+        Value::Int(n) => Some(*n != 0),
+        // The `(FILETIME, value)` wrapper: the timestamp is a `Long`, never a
+        // `Bool` or `Int`, so scanning for the first match cannot pick it up.
         Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
             Value::Bool(b) => Some(*b),
+            Value::Int(n) => Some(*n != 0),
             _ => None,
         }),
         _ => None,
@@ -258,7 +268,15 @@ pub fn set_overview_bool(v: &mut Value, key: &str, on: bool) -> Result<(), Overv
 
     match ov.iter_mut().find(|(k, _)| is_b(k, key.as_bytes())) {
         Some((_, existing)) => match existing {
-            Value::Tuple(items) => match items.iter_mut().find(|e| matches!(e, Value::Bool(_))) {
+            // Replace the VALUE half of the `(FILETIME, value)` wrapper, which
+            // is whichever element is not the `Long` timestamp. Hunting for a
+            // `Value::Bool` to overwrite instead silently appended a third
+            // element on the ~98 % of real accounts that store these flags as
+            // `Int` — leaving `(Long, Int, Bool)`, a malformed wrapper whose
+            // stale `Int` the read path still returned, so the toggle appeared
+            // to do nothing. `inline_all` above means no Shared/Ref can hide
+            // here.
+            Value::Tuple(items) => match items.iter_mut().find(|e| !matches!(e, Value::Long(_))) {
                 Some(slot) => *slot = Value::Bool(on),
                 None => items.push(Value::Bool(on)),
             },
@@ -620,6 +638,38 @@ mod tests {
         let Value::Tuple(items) = val else { panic!("the (ts, bool) wrapper must be preserved") };
         let ts = items.iter().find(|e| matches!(e, Value::Long(_))).expect("a Long timestamp element");
         assert_eq!(ts, &seeded_ts(), "the ORIGINAL timestamp must survive the edit, not be replaced");
+    }
+
+    /// The client stores these flags as `Int` on ~98 % of real accounts
+    /// (`hideCorpTicker`: 132 of the 135 corpus accounts that carry it). Setting
+    /// one must REPLACE the value half of the wrapper — an earlier version hunted
+    /// for a `Value::Bool` to overwrite, found none, and pushed a third element,
+    /// leaving a malformed `(Long, Int, Bool)` whose stale `Int` the read path
+    /// still returned. Behaviour is covered by `tests/mutation_smoke.rs`; this
+    /// asserts the on-disk SHAPE, which is what would silently regress.
+    #[test]
+    fn setting_an_int_valued_boolean_replaces_it_rather_than_appending() {
+        let mut v = user_with_bools();
+        // Rewrite one flag the way the client usually does: `(ts, Int)`.
+        {
+            let Value::Dict(root) = &mut v else { panic!() };
+            let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).unwrap();
+            let Value::Dict(ovd) = ov else { panic!() };
+            let (_, val) = ovd.iter_mut().find(|(k, _)| is_b(k, b"applyToStructures")).unwrap();
+            *val = Value::Tuple(vec![seeded_ts(), Value::Int(1)]);
+        }
+        assert!(overview_bools(&v).contains(&("applyToStructures".to_string(), true)));
+
+        set_overview_bool(&mut v, "applyToStructures", false).unwrap();
+
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, val) = ovd.iter().find(|(k, _)| is_b(k, b"applyToStructures")).unwrap();
+        let Value::Tuple(items) = val else { panic!("wrapper must be preserved") };
+        assert_eq!(items.len(), 2, "the wrapper must stay a 2-tuple, got {items:?}");
+        assert_eq!(items[1], Value::Bool(false));
+        assert!(overview_bools(&v).contains(&("applyToStructures".to_string(), false)));
     }
 
     #[test]
