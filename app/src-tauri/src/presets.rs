@@ -240,8 +240,10 @@ pub fn list(app_data: &Path) -> Vec<PresetInfo> {
             continue;
         }
         let (char_path, user_path) = (dir.join(CHAR_FILE), dir.join(USER_FILE));
-        // A folder without both documents is not a preset — this is also what
-        // skips the backups directory, which holds neither.
+        // A folder without both documents is not a preset, which is what keeps
+        // a stray directory out of the library. (The save chain's backups
+        // folder never reaches here at all: it is created INSIDE an individual
+        // preset's folder, and this scan does not recurse.)
         if !char_path.is_file() || !user_path.is_file() {
             continue;
         }
@@ -300,7 +302,17 @@ pub fn rename(app_data: &Path, old: &str, new: &str) -> Result<(), String> {
     if !from.is_dir() {
         return Err(format!("No preset called \u{201c}{old}\u{201d}."));
     }
-    if to.exists() {
+    // `exists()` is case-insensitive on NTFS, so renaming "mining" to "Mining"
+    // would otherwise report a collision with the very folder being renamed and
+    // make fixing a preset's capitalisation impossible. Canonicalizing both
+    // sides tells the two cases apart: the same directory resolves to the same
+    // real path, while two genuinely distinct folders (possible on a
+    // case-sensitive filesystem) do not.
+    let same_folder = match (std::fs::canonicalize(&from), std::fs::canonicalize(&to)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if to.exists() && !same_folder {
         return Err(format!("A preset called \u{201c}{new}\u{201d} already exists."));
     }
     std::fs::rename(&from, &to).map_err(|e| format!("renaming the preset failed: {e}"))
@@ -628,10 +640,13 @@ mod tests {
     #[test]
     fn list_is_sorted_by_name_case_insensitively() {
         let data = temp_data("sorted");
-        make(&data, "zeta", &[Aspect::Layout]);
-        make(&data, "Alpha", &[Aspect::Layout]);
+        // "banana" vs "Cherry" discriminates: uppercase ASCII sorts BELOW
+        // lowercase, so a naive byte sort would put "Cherry" first. Only a
+        // case-folded key gets this order, which is what the assertion pins.
+        make(&data, "banana", &[Aspect::Layout]);
+        make(&data, "Cherry", &[Aspect::Layout]);
         let names: Vec<String> = list(&data).into_iter().map(|p| p.name).collect();
-        assert_eq!(names, vec!["Alpha".to_string(), "zeta".to_string()]);
+        assert_eq!(names, vec!["banana".to_string(), "Cherry".to_string()]);
     }
 
     #[test]
@@ -682,6 +697,19 @@ mod tests {
         assert!(!preset_path(&data, "Old").unwrap().exists());
         assert!(rename(&data, "New", "Taken").is_err(), "collision refused");
         assert!(rename(&data, "New", "../escape").is_err(), "traversal refused");
+    }
+
+    #[test]
+    fn a_case_only_rename_fixes_the_capitalisation() {
+        let data = temp_data("case-rename");
+        make(&data, "mining", &[Aspect::Layout]);
+        // On NTFS the destination "exists" because it IS the folder being
+        // renamed, so a naive collision guard would make fixing a preset's
+        // capitalisation impossible. On a case-sensitive filesystem this is
+        // simply a rename to a free name. Both must succeed.
+        rename(&data, "mining", "Mining").expect("capitalisation must be fixable");
+        let names: Vec<String> = list(&data).into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Mining".to_string()], "one preset, newly capitalised");
     }
 
     #[test]
