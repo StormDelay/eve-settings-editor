@@ -70,6 +70,7 @@ pub enum Aspect {
     Layout,
     Overview,
     Autofill,
+    Keybinds,
     Everything,
 }
 
@@ -117,6 +118,7 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
                 account_categories.push(Category::Overview);
             }
             Aspect::Autofill => account_categories.push(Category::Autofill),
+            Aspect::Keybinds => account_categories.push(Category::Keybinds),
             Aspect::Everything => unreachable!("handled above"),
         }
     }
