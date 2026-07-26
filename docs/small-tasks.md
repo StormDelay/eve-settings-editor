@@ -136,10 +136,25 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
-- [ ] **Add a search/filter to the window list in the Layout editor.** The Layout
-  view's window list can get long (many windows on a real char); a filter box to
-  narrow it by name would help find a specific window. Mirror the autofill-search
-  pattern. _Added 2026-07-20._
+- [ ] **Stack labels from the account file's `tabgroups`.** The account file stores
+  `tabgroups → <containerId>_names` → EVE's own tab label (e.g.
+  `"Character: Information"`), which beats anything derivable from the container
+  id — layout slice 1a labels a stack `Window stack · 76` from `describe()`
+  instead. Taking the real string needs `window_layout` to accept the user root,
+  which ripples through `ops.rs` and every call site. Supersedes half of the older
+  "friendlier stack-frame labels" item. _Added 2026-07-26 (slice 1a design)._
+
+- [ ] **Layout slice 1a follow-ups (final whole-branch review, both ship-as-debt).**
+  (1) `layout.test.ts`'s third `drawnWindowCount` case compares
+  `stackUnits(x, null)` with `stackUnits(x)` — the same call, since `null` is the
+  default — so it is tautological and never exercises the regression it names
+  (a stack container matching the filter while none of its members do). The
+  production wiring in `LayoutView.svelte` was verified correct by direct source
+  read; add a `Set`-based filtered case next time the file is touched. (2) A
+  stack's ↑/↓ reorder button stays enabled on the first *visible* member when a
+  hidden member precedes it at true index 0, so it swaps with a row the filter is
+  hiding — correct per the true-index contract that keeps reordering from
+  scrambling under a filter, but an odd edge case. _Added 2026-07-26._
 
 - [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
@@ -329,6 +344,16 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Add a search/filter to the window list in the Layout editor.** Shipped by
+  layout slice 1a as a filter box plus `Open only` and `Hide chat & session
+  windows` toggles — and the predicate drives the *canvas* as well as the list,
+  so narrowing one narrows the other, with a `showing N of M windows · reset`
+  counter so nothing hides silently. _Added 2026-07-20; done 2026-07-26._
+- [x] **Panel right-click is a context menu, not a direct tree jump.** The M2
+  deferral (and its `TODO(revisit)` in `WindowPanel.svelte`) is closed: rows,
+  coordinate fields and flags open a menu with *Show in tree*, *Copy window id*
+  and *Select on canvas*. _Done 2026-07-26 (layout slice 1a)._
 
 - [x] **No flash to Tree when switching files.** `+page.svelte` holds the current
   view across the file load instead of reset-to-Tree-then-restore, falling back to
