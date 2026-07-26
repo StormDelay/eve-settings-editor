@@ -157,7 +157,12 @@ mod tests {
         // These never reach the guard through preset_path, because
         // sanitize_name rejects them first. Testing the guard directly is what
         // makes the second line of defence real rather than decorative.
-        for bad in ["..", ".", "a/b", "a\\b", "/etc/passwd", "C:\\Windows", ""] {
+        //
+        // Only cases that behave the same on every platform belong here: CI is
+        // Linux, where `\` and `:` are ordinary filename characters, so `a\b`
+        // and `C:\Windows` ARE single components there. Both are already
+        // covered as literal bad characters by rejects_path_separators_and_wildcards.
+        for bad in ["..", ".", "a/b", "/etc/passwd", ""] {
             assert!(!is_single_normal_component(bad), "{bad:?} must not be a single component");
         }
         for good in ["PvP layout", "Mining", "v2.1 setup", "a/"] {
