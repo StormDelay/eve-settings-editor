@@ -3,7 +3,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, openWindows, NO_FILTER, filterIsActive, visibleIds,
+    hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter,
   } from "$lib/layout";
   import WindowPanel from "$lib/WindowPanel.svelte";
@@ -71,10 +71,17 @@
   const units = $derived(
     stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
   );
-  // Counted over drawable windows, not draw units — a stack is one unit but
-  // several windows, and "showing 3 of 68 windows" is what the user is asking.
-  const drawable = $derived(openWindows(layout?.windows ?? []));
-  const shownCount = $derived(visible === null ? drawable.length : drawable.filter((w) => visible.has(w.id)).length);
+  // Both ends counted from what stackUnits actually draws, not the raw window
+  // list (M5): a stack draws one rectangle but represents each of its visible
+  // tabs, and a container that matches the filter while none of its members do
+  // draws nothing at all, so counting the raw list over-reports that case.
+  // The denominator re-runs stackUnits unfiltered rather than reusing
+  // `drawable`, or the unfiltered case would read "67 of 68".
+  const allUnits = $derived(
+    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, null),
+  );
+  const shownCount = $derived(drawnWindowCount(units));
+  const totalCount = $derived(drawnWindowCount(allUnits));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
 
   async function load() {
@@ -422,7 +429,7 @@
         reference {layout.reference_w}×{layout.reference_h}
         {#if filterIsActive(filter)}
           <span class="showing">
-            · showing {shownCount} of {drawable.length} windows
+            · showing {shownCount} of {totalCount} windows
             <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
           </span>
         {/if}

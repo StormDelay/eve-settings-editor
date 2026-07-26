@@ -2,7 +2,7 @@
 // framework — matching search.test.ts.
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
-  NO_FILTER, filterIsActive, windowMatches, visibleIds,
+  NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -213,6 +213,45 @@ check("open filter keeps the right window", open[0].id === "a");
   const none = stackUnits(layout, new Set(["free"]));
   check("a stack with no visible member is dropped", none.length === 1 && none[0].key === "free");
   check("an empty visible set draws nothing", stackUnits(layout, new Set()).length === 0);
+}
+
+// --- drawnWindowCount: windows painted, not rectangles drawn (M5) ----------
+{
+  // Free-window-only layout: one rectangle per window, so the count equals
+  // the unit count.
+  const freeOnly = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [],
+    windows: [win("a", true, true), win("b", true, true)],
+  } as any;
+  check("free-only: count equals the number of open windows", drawnWindowCount(stackUnits(freeOnly)) === 2);
+
+  // A stack contributes its open tab count, not 1 — the whole point of the
+  // fix: a 3-tab stack is one rectangle but three windows.
+  const stacked = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2", "m3"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", true, true, { container_id: "C", role: "member" }),
+      win("m3", false, true, { container_id: "C", role: "member" }), // closed: not a tab
+      win("free", true, true, null),
+    ],
+  } as any;
+  const units = stackUnits(stacked);
+  check("stacked: one draw unit for the stack", units.filter((u) => u.stack).length === 1);
+  check("stacked: count is tabs (2) + free (1), not units (2)", drawnWindowCount(units) === 3);
+
+  // Filtered vs. unfiltered must agree when no filter is active — the
+  // regression this fix targets: a container matching the filter while no
+  // member does must not be counted, but the unfiltered case must still count
+  // everything stackUnits(layout, null) draws.
+  const noFilterUnits = stackUnits(stacked, null);
+  check(
+    "filtered-with-no-filter agrees with unfiltered",
+    drawnWindowCount(noFilterUnits) === drawnWindowCount(units),
+  );
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
