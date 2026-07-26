@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, NOISE_FAMILIES, displayName } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -81,24 +81,51 @@ const check = (name: string, ok: boolean) => {
   }
 }
 
-// --- the noise set ---------------------------------------------------------
+// --- isClutter ---------------------------------------------------------
 {
-  check("chatchannel is noise", NOISE_FAMILIES.has("chatchannel"));
-  check("mail_readingWnd is noise", NOISE_FAMILIES.has("mail_readingWnd"));
-  check("market is not noise", !NOISE_FAMILIES.has("market"));
-  // Every noise family must be a family describe() actually produces, or the
-  // "hide chat & session windows" filter would silently match nothing.
-  const samples: Record<string, string> = {
-    chatchannel: "chatchannel_local",
-    ChannelSettingsDlg: "ChannelSettingsDlg_fleet_1038711647935",
-    ChatInvitation: "ChatInvitation_1111922349",
-    mail_readingWnd: "mail_readingWnd_380729425",
-    contactmanagement: "contactmanagement_98477766",
-    groupInfoWnd: "groupInfoWnd_494332",
-  };
-  for (const fam of NOISE_FAMILIES) {
-    check(`noise family ${fam} is reachable`, describe(samples[fam]).family === fam);
-  }
+  // a. whole families that only ever exist as spawned instances.
+  check("ChatInvitation is clutter", isClutter("ChatInvitation_1111922349"));
+  check("ChannelSettingsDlg is clutter", isClutter("ChannelSettingsDlg_fleet_1038711647935"));
+  check("mail_readingWnd is clutter", isClutter("mail_readingWnd_380729425"));
+  check("groupInfoWnd is clutter", isClutter("groupInfoWnd_494332"));
+  check("contactmanagement is clutter", isClutter("contactmanagement_98477766"));
+  check("a spawned ShipCargo instance is clutter", isClutter("ShipCargo_1033391582929"));
+  check("a spawned ShipDroneBay instance is clutter", isClutter("ShipDroneBay_1033391582929"));
+  check("a spawned StructureShipHangar instance is clutter", isClutter("StructureShipHangar_1033391582929"));
+  check("a containerWnd instance is clutter", isClutter("containerWnd_1033391582929"));
+
+  // The exact case the developer asked about: a BARE parent window shares
+  // its family string with the suffixed one (`describe("ShipCargo").family
+  // === "ShipCargo"` too) but must stay visible — it's the player's window,
+  // not a spawned instance. Distinguishing on `detail` (empty for a bare id)
+  // is the whole point of isClutter, not just family membership.
+  check("a bare ShipCargo stays visible", !isClutter("ShipCargo"));
+  check("a bare InventoryStation stays visible", !isClutter("InventoryStation"));
+  check("a bare InventorySpace stays visible", !isClutter("InventorySpace"));
+  check("a bare InventoryStructure stays visible", !isClutter("InventoryStructure"));
+  check("a bare containerContentWindow stays visible", !isClutter("containerContentWindow"));
+
+  // b. chat: only private/direct conversations are clutter; standing
+  // channels are defined by what they are NOT, so an unrecognised future
+  // channel is kept, not hidden (the safe failure direction).
+  check("a private chat is clutter", isClutter("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483"));
+  check("a player (direct) chat is clutter", isClutter("chatchannel_player_-78564080"));
+  check("Local chat is not clutter", !isClutter("chatchannel_local"));
+  check("Corp chat is not clutter", !isClutter("chatchannel_corp"));
+  check("Alliance chat is not clutter", !isClutter("chatchannel_alliance"));
+  check("Fleet chat is not clutter", !isClutter("chatchannel_fleet"));
+  check("Incursion chat is not clutter", !isClutter("chatchannel_incursion"));
+  check("Invasion chat is not clutter", !isClutter("chatchannel_invasion"));
+  check("an unrecognised future channel is kept, not hidden", !isClutter("chatchannel_newthing"));
+
+  // c. one-off transient dialogs, exact id.
+  check("setQuantityPopup is clutter", isClutter("setQuantityPopup"));
+  check("BugReportingWindow is clutter", isClutter("BugReportingWindow"));
+  check("contractEndpointSearch is clutter", isClutter("contractEndpointSearch"));
+
+  // Ordinary windows are never clutter.
+  check("market is not clutter", !isClutter("market"));
+  check("overview is not clutter", !isClutter("overview"));
 }
 
 // --- displayName -------------------------------------------------------------

@@ -1,7 +1,7 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
-import { describe, NOISE_FAMILIES } from "./windowLabels.ts";
+import { describe, isClutter } from "./windowLabels.ts";
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -238,23 +238,23 @@ export interface WindowFilter {
   text: string;
   /** Drop windows EVE has not flagged open (roughly 77% of a real file). */
   openOnly: boolean;
-  /** Drop CLOSED chat/mail/contact windows — the canvas only ever draws open
-   * windows, so an open one is a real, currently-visible rect, not clutter.
-   * The clutter is the ~160 closed rows these families leave in the list. */
-  hideNoise: boolean;
+  /** Drop windows EVE spawns per conversation, item or dialog — clutter, not
+   * windows the player placed. Applies whether open or closed: kind of
+   * window is the axis, not open/closed (see isClutter). */
+  hideClutter: boolean;
 }
 
-export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideNoise: false };
+export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false };
 
 /** Whether the filter narrows anything — drives the "showing N of M" line. */
 export function filterIsActive(f: WindowFilter): boolean {
-  return f.text.trim() !== "" || f.openOnly || f.hideNoise;
+  return f.text.trim() !== "" || f.openOnly || f.hideClutter;
 }
 
 export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
   if (f.openOnly && !w.open) return false;
+  if (f.hideClutter && isClutter(w.id)) return false;
   const n = describe(w.id);
-  if (f.hideNoise && !w.open && NOISE_FAMILIES.has(n.family)) return false;
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
   // Same contract search.ts documents for the tree: label, detail and the raw

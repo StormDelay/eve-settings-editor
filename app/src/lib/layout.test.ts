@@ -154,37 +154,46 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- the shared filter predicate -------------------------------------------
 {
   const market = win("market", true, true);
-  const chat = win("chatchannel_local", true, true);
-  const closedChat = win("chatchannel_corp", false, true);
-  const closed = win("assets", false, true);
+  const closedMarket = win("market", false, true);
+  const standingChat = win("chatchannel_local", true, true);
+  const privateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", true, true);
+  const closedPrivateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", false, true);
+  const bareCargo = win("ShipCargo", true, true);
+  const spawnedCargo = win("ShipCargo_1033391582929", true, true);
 
   check("an empty filter is not active", !filterIsActive(NO_FILTER));
   check("text makes it active", filterIsActive({ ...NO_FILTER, text: "a" }));
   check("whitespace-only text does not", !filterIsActive({ ...NO_FILTER, text: "  " }));
   check("openOnly makes it active", filterIsActive({ ...NO_FILTER, openOnly: true }));
-  check("hideNoise makes it active", filterIsActive({ ...NO_FILTER, hideNoise: true }));
+  check("hideClutter makes it active", filterIsActive({ ...NO_FILTER, hideClutter: true }));
 
-  check("an empty filter matches everything", windowMatches(chat, NO_FILTER));
+  check("an empty filter matches everything", windowMatches(standingChat, NO_FILTER));
   check("text matches the friendly label", windowMatches(market, { ...NO_FILTER, text: "mark" }));
   check("text matches case-insensitively", windowMatches(market, { ...NO_FILTER, text: "MARK" }));
-  check("text matches the raw id", windowMatches(chat, { ...NO_FILTER, text: "chatchannel" }));
-  check("text matches the detail", windowMatches(chat, { ...NO_FILTER, text: "local" }));
+  check("text matches the raw id", windowMatches(standingChat, { ...NO_FILTER, text: "chatchannel" }));
+  check("text matches the detail", windowMatches(standingChat, { ...NO_FILTER, text: "local" }));
   check("text excludes a non-match", !windowMatches(market, { ...NO_FILTER, text: "zzz" }));
-  check("openOnly drops a closed window", !windowMatches(closed, { ...NO_FILTER, openOnly: true }));
+  check("openOnly drops a closed window", !windowMatches(closedMarket, { ...NO_FILTER, openOnly: true }));
   check("openOnly keeps an open window", windowMatches(market, { ...NO_FILTER, openOnly: true }));
-  // hideNoise only drops CLOSED noise-family windows — the canvas only ever
-  // draws open windows, so an open chat window is a real visible rect, not
-  // clutter. The clutter is the closed rows.
-  check("hideNoise keeps an OPEN chat window", windowMatches(chat, { ...NO_FILTER, hideNoise: true }));
-  check("hideNoise drops a CLOSED chat window", !windowMatches(closedChat, { ...NO_FILTER, hideNoise: true }));
-  check("hideNoise keeps a real window", windowMatches(market, { ...NO_FILTER, hideNoise: true }));
 
-  // openOnly already drops every closed window, which would make hideNoise
-  // vacuous in this composition — so compose hideNoise with text instead,
-  // where it still has something of its own to contribute: an open and a
-  // closed window of the same noise family, narrowed further by text.
-  const ids = visibleIds([chat, closedChat, market], { ...NO_FILTER, hideNoise: true, text: "chat" });
-  check("visibleIds composes hideNoise with text", ids.size === 1 && ids.has("chatchannel_local"));
+  // hideClutter is about KIND of window, not open/closed — the old
+  // "hide closed chat" axis was wrong and is gone.
+  check("hideClutter drops an OPEN private chat", !windowMatches(privateChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter drops a CLOSED private chat too", !windowMatches(closedPrivateChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps an OPEN standing channel", windowMatches(standingChat, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a bare parent window (ShipCargo)", windowMatches(bareCargo, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter drops a spawned instance (ShipCargo_<id>)", !windowMatches(spawnedCargo, { ...NO_FILTER, hideClutter: true }));
+  // A closed non-clutter window is untouched by hideClutter — only openOnly
+  // reaches it.
+  check("hideClutter leaves a closed non-clutter window alone", !windowMatches(closedMarket, { ...NO_FILTER, hideClutter: true, openOnly: true }));
+  check("hideClutter alone keeps a closed non-clutter window", windowMatches(closedMarket, { ...NO_FILTER, hideClutter: true }));
+
+  // openOnly already drops every closed window, which would make hideClutter
+  // vacuous in this composition — so compose hideClutter with text instead,
+  // where it still has something of its own to contribute: a clutter and a
+  // non-clutter chat window, narrowed further by text.
+  const ids = visibleIds([standingChat, privateChat, market], { ...NO_FILTER, hideClutter: true, text: "chat" });
+  check("visibleIds composes hideClutter with text", ids.size === 1 && ids.has("chatchannel_local"));
 }
 
 // --- stackUnits under a filter ---------------------------------------------
