@@ -19,6 +19,20 @@ Workflow:
   screen, choose Reset to default, log out, and read the table out of the
   resulting `core_user_<id>.dat`. No factory bindings exist anywhere else — an
   account that never opened the screen has an empty table, not a default one.
+  **The keybindings live smoke was deferred to this same session** — it needs a
+  running client either way. Three gates, from the slice's design spec §7.4:
+  (1) rebind in the app, log in, confirm EVE honours it and does not revert;
+  (2) batch-copy a table onto an account whose `customCmds` is empty and
+  confirm the in-game screen shows it — the copied table carries another
+  account's timestamp, a shape the client has not been observed to read;
+  (3) spot-check labels against the in-game keybinding screen, particularly
+  `OpenAgencyNew`, `OpenSkillQueueWindow` and the hand-corrected
+  `CmdPickPortrait0..3` / `ToggleCurrentSystemLocationWnd` — they are
+  provenance-verified from the client's localization data but never seen
+  in-game, and `gen-default-preset-names.py`'s header records that its own map
+  was only coincidentally right. Note the write order: the editor saves on
+  demand, EVE writes its settings on **logout**, so log the character out
+  before saving or the client overwrites it on exit.
   _Added 2026-07-26._
 
 - [ ] **HUD furniture follow-ups (task + whole-branch reviews, all ship-as-debt).**
