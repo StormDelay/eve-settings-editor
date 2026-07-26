@@ -272,6 +272,19 @@ fn clear_all_autofill(state: tauri::State<'_, AppState>) -> Result<Vec<settings_
 }
 
 #[tauri::command]
+fn keybinds(state: tauri::State<'_, AppState>) -> Result<settings_model::Keybinds, ErrDto> {
+    ops::keybinds(&state)
+}
+#[tauri::command]
+fn set_keybind(
+    state: tauri::State<'_, AppState>,
+    command: String,
+    keys: Option<Vec<i64>>,
+) -> Result<ops::SetKeybindResult, ErrDto> {
+    ops::set_keybind_cmd(&state, &command, keys)
+}
+
+#[tauri::command]
 fn stack_unstack(state: tauri::State<'_, AppState>, member: String) -> Result<settings_model::WindowLayout, ErrDto> {
     ops::stack_unstack(&state, &member)
 }
@@ -369,6 +382,7 @@ pub fn run() {
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
             pack_preview, pack_import, pack_export,
             autofill_lists, set_autofill_list, clear_all_autofill,
+            keybinds, set_keybind,
             setup_preview, setup_apply,
             stack_unstack, stack_add, stack_reorder, stack_create,
             hud_layout, set_hud_value,

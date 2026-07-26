@@ -48,6 +48,7 @@
     { key: "layout", label: "Window layout", account: false },
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
+    { key: "keybinds", label: "Keybindings", account: true },
     { key: "everything", label: "Everything (full clone of both files)", account: true },
   ];
   let selected = $state<Set<Aspect>>(new Set());
@@ -124,6 +125,12 @@
   function clearTargets() {
     selectedTargets = new Set();
   }
+
+  // Short names for the account-write warning, in the order checked in ASPECTS
+  // (excluding "everything", which is reported as a full copy instead).
+  const changedAspectNames = $derived(
+    ASPECTS.filter((a) => a.account && a.key !== "everything" && selected.has(a.key)).map((a) => a.label),
+  );
 
   const nameOfChar = (id: number | null, fileName: string) =>
     id == null ? fileName : (resolvedName("char", id) ?? `char ${id}`);
@@ -240,7 +247,7 @@
             <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
           {/each}
           {#each plan.account_writes as w}
-            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : "Overview / autofill changed"} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
+            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}
           {#each plan.excluded as ex}
             <p class="muted">Excluded {nameOfChar(ex.char_id, `char ${ex.char_id}`)} — {ex.reason}</p>

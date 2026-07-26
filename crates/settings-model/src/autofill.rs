@@ -8,7 +8,10 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, Entries, SharedTable};
+use crate::treewalk::{
+    as_dict, as_list, bytes_str, child_dict_mut, collect_shared, effective, find_child, inline_all,
+    is_bytes, list_inner_mut, Entries, SharedTable,
+};
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct RememberedList {
@@ -29,48 +32,6 @@ pub fn project_edit_history(user: &Value) -> Vec<RememberedList> {
             Some(RememberedList { widget, entries })
         })
         .collect()
-}
-
-// ponytail: these four resolvers duplicate overview.rs's private copies rather
-// than lifting them into treewalk — overview.rs is the repo's most-delicate code
-// (mis-modeled three times) and not worth re-touching for ~20 shared lines.
-
-/// Value of the entry whose RESOLVED key is `Bytes(name)`, itself resolved.
-fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
-    dict.iter()
-        .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
-        .map(|(_, v)| effective(v, sh))
-}
-
-/// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper.
-fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    match effective(v, sh) {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-/// Resolve to a list, unwrapping a `(timestamp, list)` wrapper.
-fn as_list<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
-    match effective(v, sh) {
-        Value::List(l) => Some(l),
-        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-fn bytes_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        _ => None,
-    }
 }
 
 /// Coerce a remembered entry to a display string. Entries are Str; the
@@ -110,33 +71,6 @@ fn edit_history_mut(user: &mut Value) -> Option<&mut Entries> {
     let Value::Dict(root) = user else { return None };
     let ui = child_dict_mut(root, b"ui")?;
     child_dict_mut(ui, b"editHistory")
-}
-
-fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
-    let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
-    dict_inner_mut(v)
-}
-
-fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
-    match v {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
-    match v {
-        Value::List(l) => Some(l),
-        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
-    }
 }
 
 /// Empty every remembered-string list in the file (widget keys kept). A no-op

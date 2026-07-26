@@ -13,6 +13,17 @@ Workflow:
 
 ## Open
 
+- [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
+  near-duplicate string readers that arrived from opposite sides of a merge:
+  `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
+  `&Value` and handles `Bytes`/`Str`; `text` (from the names-and-noise slice)
+  resolves through `Shared`/`Ref` via `effective` first and also handles
+  `StrUcs2`. `text` is the strictly more capable of the two, so the fold is
+  probably "delete `bytes_str`, pass a `SharedTable` at its call sites" — but
+  check each call site first, since a caller that deliberately does NOT want
+  `Ref` resolution would change behaviour. Kept both at merge time rather than
+  refactoring two live APIs inside a conflict resolution. _Added 2026-07-26._
+
 - [ ] **Run the names-and-noise live in-game smoke — deliberately deferred past
   the merge.** The slice merged on a green CI and a clean whole-branch review, but
   nothing in it has been proven against a running client. Outstanding checks, in
@@ -40,6 +51,28 @@ Workflow:
      read "· 3 overridden" on a file none of them apply to, and `clear` would wipe
      another character's. Decide from real use whether to scope it to the open
      layout. _Added 2026-07-26._
+
+- [ ] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
+  ships empty, so the Keybinds view's Default column and per-row reset are
+  disabled. Populating it: on a throwaway account open the in-game keybinding
+  screen, choose Reset to default, log out, and read the table out of the
+  resulting `core_user_<id>.dat`. No factory bindings exist anywhere else — an
+  account that never opened the screen has an empty table, not a default one.
+  **The keybindings live smoke was deferred to this same session** — it needs a
+  running client either way. Three gates, from the slice's design spec §7.4:
+  (1) rebind in the app, log in, confirm EVE honours it and does not revert;
+  (2) batch-copy a table onto an account whose `customCmds` is empty and
+  confirm the in-game screen shows it — the copied table carries another
+  account's timestamp, a shape the client has not been observed to read;
+  (3) spot-check labels against the in-game keybinding screen, particularly
+  `OpenAgencyNew`, `OpenSkillQueueWindow` and the hand-corrected
+  `CmdPickPortrait0..3` / `ToggleCurrentSystemLocationWnd` — they are
+  provenance-verified from the client's localization data but never seen
+  in-game, and `gen-default-preset-names.py`'s header records that its own map
+  was only coincidentally right. Note the write order: the editor saves on
+  demand, EVE writes its settings on **logout**, so log the character out
+  before saving or the client overwrites it on exit.
+  _Added 2026-07-26._
 
 - [ ] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
   `HUD_NOMINAL`'s sizes, the centre-relative ship offset and the top-left point
