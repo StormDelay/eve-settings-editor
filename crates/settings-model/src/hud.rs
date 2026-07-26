@@ -12,7 +12,9 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::{NodePath, Step};
-use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, unwrap_shared, Entries, SharedTable};
+use crate::treewalk::{
+    collect_shared, effective, hex, inline_all, is_bytes, section, unwrap_shared, Entries, SharedTable,
+};
 use crate::windows::SetTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -188,22 +190,6 @@ fn locate(entries: &Entries, base: &NodePath, f: &Field, shared: &SharedTable) -
     }
 }
 
-/// Find a root section by name. Section KEYS are resolved through `Ref`/`Shared`:
-/// real account files store the `ui` section under a `Ref` to a byte-string
-/// defined later in the stream (the trailing shared-object table makes that
-/// legal), which `treewalk::child_dict`'s bare `is_bytes` comparison misses.
-/// A section whose VALUE is a `Ref` is reported missing — there is no path step
-/// into a ref, so it could be read but never written.
-fn section<'a>(root: &'a Value, name: &[u8], shared: &SharedTable<'a>) -> Option<(&'a Entries, NodePath)> {
-    let Value::Dict(entries) = effective(root, shared) else { return None };
-    let (i, (_, v)) = entries.iter().enumerate().find(|(_, (k, _))| is_bytes(effective(k, shared), name))?;
-    let (v, p) = unwrap_shared(v, vec![Step::DictValue(i)]);
-    match v {
-        Value::Dict(d) => Some((d, p)),
-        _ => None,
-    }
-}
-
 /// Locate `key` in a section and step through the `(timestamp, value)` wrapper
 /// (and then into tuple element `elem`, for a point field), returning the scalar
 /// and its path. Keys are resolved through `Ref`/`Shared` as in `section`.
@@ -264,10 +250,6 @@ fn scalar_text(v: &Value, kind: HudKind, shared: &SharedTable) -> Option<String>
         (HudKind::Bool, Value::Bool(b)) => Some(b.to_string()),
         _ => None,
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Debug, PartialEq, Serialize)]

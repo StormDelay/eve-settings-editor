@@ -162,3 +162,111 @@ pub(crate) fn timestamped_dict<'a>(
         _ => None,
     }
 }
+
+/// Resolve a top-level section of a document root by name.
+///
+/// Hides three things callers keep getting wrong: the root itself may be
+/// `Shared` (and the hop MUST appear in the returned path, or `resolve_mut`
+/// fails on it), the section key may be a `Ref`/`Shared` rather than plain
+/// `Bytes` (account files store it that way), and the section value may be
+/// `Shared` too.
+pub(crate) fn section<'a>(
+    root: &'a Value,
+    name: &[u8],
+    shared: &SharedTable<'a>,
+) -> Option<(&'a Entries, NodePath)> {
+    let (root, base) = unwrap_shared(root, Vec::new());
+    let Value::Dict(entries) = effective(root, shared) else { return None };
+    let (i, (_, v)) = entries
+        .iter()
+        .enumerate()
+        .find(|(_, (k, _))| is_bytes(effective(k, shared), name))?;
+    let mut p = base;
+    p.push(Step::DictValue(i));
+    let (v, p) = unwrap_shared(v, p);
+    match v {
+        Value::Dict(d) => Some((d, p)),
+        _ => None,
+    }
+}
+
+/// A value's text, whatever string shape the client stored it in.
+pub(crate) fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
+    match effective(v, sh) {
+        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        Value::Str(s) | Value::StrUcs2(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Lowercase hex, for rendering a non-UTF8 key as a stable id.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blue_marshal::Value;
+
+    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+
+    #[test]
+    fn section_finds_a_plain_top_level_dict() {
+        let root = Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![(b("a"), Value::Int(1))])),
+            (b("ui"), Value::Dict(vec![(b("chatchannels"), Value::Int(2))])),
+        ]);
+        let sh = SharedTable::new();
+        let (entries, path) = section(&root, b"ui", &sh).expect("ui section");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(path, vec![Step::DictValue(1)]);
+    }
+
+    #[test]
+    fn section_sees_through_a_shared_root_and_records_the_step() {
+        // A Shared-wrapped root is what an account file looks like. The old
+        // hud.rs copy resolved the VALUE but never pushed Step::SharedInner,
+        // so every path it returned was wrong by one hop and resolve_mut
+        // failed on it.
+        let inner = Value::Dict(vec![(b("tabgroups"), Value::Dict(vec![(b("76_names"), b("Character: Information"))]))]);
+        let root = Value::Shared { slot: 1, value: Box::new(inner) };
+        let mut sh = SharedTable::new();
+        collect_shared(&root, &mut sh);
+        let (entries, path) = section(&root, b"tabgroups", &sh).expect("tabgroups section");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(path.first(), Some(&Step::SharedInner), "the Shared hop must be in the path");
+        assert_eq!(path.last(), Some(&Step::DictValue(0)));
+    }
+
+    #[test]
+    fn section_resolves_a_ref_wrapped_section_key() {
+        // Account files store the root section KEY as a Ref — is_bytes alone
+        // misses it, which is the gotcha this helper exists to hide.
+        let key = Value::Shared { slot: 7, value: Box::new(b("tabgroups")) };
+        let root = Value::Dict(vec![
+            (key, Value::Dict(vec![(b("76_names"), b("Character: Information"))])),
+            (Value::Ref(7), Value::Dict(vec![(b("x"), Value::Int(1))])),
+        ]);
+        let mut sh = SharedTable::new();
+        collect_shared(&root, &mut sh);
+        // The SECOND entry's key is a Ref to "tabgroups"; the finder must match
+        // the first (a Shared wrapping the same bytes) and stop there.
+        let (entries, _) = section(&root, b"tabgroups", &sh).expect("tabgroups section");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn text_reads_every_string_shape_and_refuses_others() {
+        let sh = SharedTable::new();
+        assert_eq!(text(&b("Local"), &sh).as_deref(), Some("Local"));
+        assert_eq!(text(&Value::Str("Local".into()), &sh).as_deref(), Some("Local"));
+        assert_eq!(text(&Value::StrUcs2("Local".into()), &sh).as_deref(), Some("Local"));
+        assert_eq!(text(&Value::Int(3), &sh), None);
+    }
+
+    #[test]
+    fn hex_renders_lowercase_two_digit_bytes() {
+        assert_eq!(hex(&[0x00, 0x0f, 0xff]), "000fff");
+    }
+}
