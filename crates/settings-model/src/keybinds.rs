@@ -352,6 +352,15 @@ mod tests {
             set_keybind(&mut user, "CmdNotInThisClient", Some(vec![81])),
             Err(KeybindError::UnknownCommand)
         );
+        // A rejected write changes nothing. The attempted bind to [81] would have stolen
+        // CmdActivateHighPowerSlot1's binding if the existence check had run after stealing.
+        let k = project_keybinds(Some(&user));
+        assert_eq!(
+            entry(&k, "CmdActivateHighPowerSlot1").keys,
+            Some(vec![81]),
+            "rejected write must not steal CmdActivateHighPowerSlot1's binding"
+        );
+
         let mut bare = Value::Dict(vec![]);
         assert_eq!(set_keybind(&mut bare, "CmdAnything", None), Err(KeybindError::NoTable));
     }
