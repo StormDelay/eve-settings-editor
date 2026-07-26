@@ -171,15 +171,15 @@ pub fn plan_setup(
     user_paths: &HashMap<u64, PathBuf>,
     store: &accounts::AccountsStore,
     resolutions: &HashMap<u64, (i64, i64)>,
-    source_char: u64,
+    source_char: Option<u64>,
     target_chars: &[u64],
     aspects: &[Aspect],
 ) -> SetupPlan {
     let w = aspect_writes(aspects);
     let mut plan = SetupPlan::default();
 
-    let source_account = account_of(store, source_char);
-    if w.writes_account() {
+    let source_account = source_char.and_then(|c| account_of(store, c));
+    if w.writes_account() && source_char.is_some() {
         match source_account {
             None => {
                 plan.source_error = Some(
@@ -195,11 +195,11 @@ pub fn plan_setup(
             _ => {}
         }
     }
-    let src_res = resolutions.get(&source_char).copied();
+    let src_res = source_char.and_then(|c| resolutions.get(&c).copied());
 
     let mut included: Vec<u64> = Vec::new();
     for &t in target_chars {
-        if t == source_char {
+        if Some(t) == source_char {
             continue;
         }
         if !char_paths.contains_key(&t) {
@@ -355,7 +355,7 @@ pub fn setup_preview(
     } else {
         HashMap::new()
     };
-    let mut plan = plan_setup(&char_paths, &user_paths, &store, &resolutions, src_id, &targets, aspects);
+    let mut plan = plan_setup(&char_paths, &user_paths, &store, &resolutions, Some(src_id), &targets, aspects);
 
     // Drop no-op splice writes: a splice aspect whose categories are all absent
     // from the source would just back up and rewrite every target for nothing and
@@ -1648,7 +1648,7 @@ mod tests {
         // Source char 3 (account 20). Targets 1 and 2 both on account 10.
         let cp = paths(&[1, 2, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 2], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 2], &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 2, "both targets get a char (widths) write");
         assert_eq!(plan.account_writes.len(), 1, "one account write for account 10, deduped");
         assert_eq!(plan.account_writes[0].user_id, 10);
@@ -1662,7 +1662,7 @@ mod tests {
         // Source char 3. Target 1 on account 10 (whose other char 2 is NOT selected).
         let cp = paths(&[1, 2, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
         assert_eq!(plan.account_writes.len(), 1);
         assert_eq!(plan.account_writes[0].collateral_char_ids, vec![2], "char 2 is collateral");
     }
@@ -1671,7 +1671,7 @@ mod tests {
     fn account_aspect_excludes_an_unpaired_target() {
         let cp = paths(&[1, 3, 4], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Autofill]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 4], &[Aspect::Autofill]);
         assert_eq!(plan.excluded.len(), 1);
         assert_eq!(plan.excluded[0].char_id, 4);
         assert_eq!(plan.account_writes.len(), 1, "only the paired target's account is written");
@@ -1681,7 +1681,7 @@ mod tests {
     fn layout_only_includes_unpaired_targets_no_account_write() {
         let cp = paths(&[1, 3, 4], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 3, &[1, 4], &[Aspect::Layout]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 4], &[Aspect::Layout]);
         assert!(plan.excluded.is_empty(), "layout needs no pairing");
         assert_eq!(plan.char_writes.len(), 2);
         assert!(plan.account_writes.is_empty());
@@ -1692,7 +1692,7 @@ mod tests {
         // Source char 1 (account 10). Target char 2, same account 10.
         let cp = paths(&[1, 2], "char");
         let up = paths(&[10], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 1, &[2], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(1), &[2], &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
         assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
     }
@@ -1713,7 +1713,7 @@ mod tests {
     fn unpaired_source_with_account_aspect_is_a_source_error() {
         let cp = paths(&[3, 4], "char");
         let up = paths(&[20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), 4, &[3], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(4), &[3], &[Aspect::Overview]);
         assert!(plan.source_error.is_some());
         assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty());
     }
@@ -1725,8 +1725,54 @@ mod tests {
         let mut res = HashMap::new();
         res.insert(3u64, (2560i64, 1440i64)); // source
         res.insert(1u64, (1920i64, 1080i64)); // target differs
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, 3, &[1], &[Aspect::Layout]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, Some(3), &[1], &[Aspect::Layout]);
         assert!(plan.char_writes[0].resolution_mismatch);
+    }
+
+    #[test]
+    fn a_preset_source_needs_no_pairing_and_excludes_nobody() {
+        // Two targets on two different accounts, and NO source character.
+        let cp = paths(&[1, 2], "char");
+        let up = paths(&[10, 20], "user");
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] });
+        store.accounts.insert(20, accounts::Account { alias: None, characters: vec![2] });
+        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &[1, 2], &[Aspect::Overview]);
+        assert!(plan.source_error.is_none(), "a preset source needs no paired account");
+        assert_eq!(plan.char_writes.len(), 2, "both targets get their overview widths");
+        assert_eq!(plan.account_writes.len(), 2, "neither account is skipped as 'the source's'");
+        assert!(plan.excluded.is_empty());
+    }
+
+    #[test]
+    fn a_preset_source_still_excludes_an_unpaired_target() {
+        let cp = paths(&[1, 2], "char");
+        let up = paths(&[10], "user");
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] }); // char 2 unpaired
+        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &[1, 2], &[Aspect::Autofill]);
+        assert_eq!(plan.excluded.len(), 1);
+        assert_eq!(plan.excluded[0].char_id, 2);
+    }
+
+    #[test]
+    fn a_preset_source_warns_on_no_resolution_mismatch() {
+        // With no source character there is no source resolution, so the
+        // off-screen warning is correctly silent.
+        let cp = paths(&[1], "char");
+        let mut res = HashMap::new();
+        res.insert(1u64, (1920i64, 1080i64));
+        let plan = plan_setup(
+            &cp,
+            &HashMap::new(),
+            &accounts::AccountsStore::default(),
+            &res,
+            None,
+            &[1],
+            &[Aspect::Layout],
+        );
+        assert_eq!(plan.char_writes.len(), 1);
+        assert!(!plan.char_writes[0].resolution_mismatch);
     }
 
     fn stacked_char_bytes() -> Vec<u8> {
