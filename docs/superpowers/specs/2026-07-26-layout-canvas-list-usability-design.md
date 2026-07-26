@@ -236,6 +236,13 @@ safe, since the id is what `format-notes.md` and the raw tree speak.
   ours and are never written to the file.
 - Hiding windows *from EVE*. `Open only` and the noise filter are editor-side
   view state, not edits — nothing toggles `openWindows` as a side effect.
-- Persisting filter state across files or sessions. It resets with the view;
-  add persistence only if the live smoke says it is missed.
+- Persisting filter state across sessions (a restart). Within a session the
+  filter DELIBERATELY persists across file and character switches — a slot,
+  refreshToken or userOpen change does not clear it — so the same subset can
+  stay applied while flipping between characters to compare them; this
+  reverses the plan as originally written, per the project owner's ruling
+  during the slice. The "showing N of M · reset" counter exists precisely so a
+  carried-over filter is never silently misleading. It still resets when
+  leaving and returning to the Layout view, since the view is `{#if}`-gated
+  and its state is destroyed with it.
 - Reordering or bulk-editing the list. Selection stays one window at a time.
