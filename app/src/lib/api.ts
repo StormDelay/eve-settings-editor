@@ -160,6 +160,8 @@ export interface Stack {
 export interface WindowRect {
   id: string;
   label: string;
+  /** EVE's own name for this window when the file has one; null otherwise. */
+  name: string | null;
   open: boolean;
   renderable: boolean;
   resolution_matches: boolean;
