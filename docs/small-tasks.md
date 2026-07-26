@@ -136,6 +136,21 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
+- [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
+  Today the only way to abandon edits is to open a different file and accept the
+  discard prompt, then come back — or to quit. Add a button next to the
+  `character: unsaved` / `account: unsaved` badges (`+page.svelte`, around the
+  `{#if dirtySlots.char}` / `{#if dirtySlots.user}` spans) that throws the edits
+  away and reloads the *same* file fresh from disk. Shown only while something is
+  dirty. Should reuse the existing machinery rather than grow its own: the
+  confirm prompt is `confirmDiscardIfDirty()`, and reloading is what `openFile()`
+  already does — the open path re-reads the file, resets `dirtySlots[slot]`,
+  bumps `savedAt` so every view refreshes, and reconciles the paired char/account
+  slot. Decide whether it discards both slots at once or one per badge (the
+  editors write to both, so per-badge could leave a half-reverted pair — probably
+  discard both and say so on the button). Must not touch the backup chain: this
+  is a re-read, not a restore. _Added 2026-07-26._
+
 - [ ] **Real chat-channel names in the Layout view (and its filter).** A chat
   window's id is `chatchannel_private_<guid>` / `chatchannel_player_<hash>`, which
   contains none of the channel's display name — so the list, the canvas and the
