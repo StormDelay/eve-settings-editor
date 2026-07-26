@@ -4,8 +4,8 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
-    snapLines, movingEdges, snapDelta,
-    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines,
+    snapLines, movingEdges, snapDelta, unitAt, dropAction,
+    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction,
   } from "$lib/layout";
   import { displayNameOf } from "$lib/windowLabels";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
@@ -129,6 +129,7 @@
       preview = {};
       fPreview = {};
       nudging = null;
+      dropTarget = null;
       load();
     }
   });
@@ -214,13 +215,15 @@
 
   // --- Stack membership ------------------------------------------------------
 
-  async function runStack(p: Promise<WindowLayout>) {
+  async function runStack(p: Promise<WindowLayout>): Promise<boolean> {
     try {
       layout = await p;
       onDirty("char"); // stack ops edit the character document in the backend
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
+      return true;
     } catch (e) {
       await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
+      return false;
     }
   }
   const onUnstack = (id: string) => runStack(api.stackUnstack(id));
@@ -251,12 +254,30 @@
   // isn't snapped. Drawn as guides, cleared on drop.
   let guides = $state<{ x: number | null; y: number | null }>({ x: null, y: null });
 
+  // The DrawUnit.key of the unit a Shift-drag (or a tab drag) is hovering as a
+  // stack target; null when the drop would not stack anything. Drives the
+  // highlight only — the drop re-resolves the target from the up event.
+  let dropTarget = $state<string | null>(null);
+
   // The window id a key-repeat nudge is currently in flight for (Task 3), so a
   // commit landing mid-nudge doesn't clear the preview under it.
   let nudging: string | null = null;
 
   const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
+
+  /** Pointer position in data px, relative to the canvas origin. */
+  function pointerData(e: PointerEvent) {
+    const box = canvasEl!.getBoundingClientRect();
+    return { x: toData(e.clientX - box.left, scale), y: toData(e.clientY - box.top, scale) };
+  }
+
+  /** The unit under the pointer, excluding the one being dragged. */
+  function targetAt(e: PointerEvent, dragged: DrawUnit): DrawUnit | null {
+    const p = pointerData(e);
+    const u = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
+    return u && u.key !== dragged.key ? u : null;
+  }
 
   /** Candidate edges for a drag of `unit`: every rect the canvas currently
    * draws except the dragged unit's own windows, plus the furniture, plus the
@@ -327,6 +348,13 @@
       };
       return;
     }
+    // Shift over another unit marks it as a stack target. Read off the event
+    // like Alt is, so pressing or releasing Shift mid-drag takes effect on the
+    // next pointer move. A stack can't be merged into another (spec §2), so a
+    // stack drag never highlights anything.
+    dropTarget = e.shiftKey && drag.kind === "move" && !drag.unit.stack
+      ? (targetAt(e, drag.unit)?.key ?? null)
+      : null;
     // Six CANVAS px, so the grab feels identical however far the canvas is
     // scaled down. Alt held passes the drag straight through — read off the
     // event, so pressing or releasing it mid-drag takes effect on the next
@@ -357,7 +385,7 @@
     preview = rest;
   }
 
-  async function onPointerUp() {
+  async function onPointerUp(e: PointerEvent) {
     if (!drag) return;
     const d = drag;
     drag = null;
@@ -403,7 +431,12 @@
       return;
     }
 
-    await commitUnit(d.unit);
+    const target = d.kind === "move" && e.shiftKey ? targetAt(e, d.unit) : null;
+    dropTarget = null;
+    await applyDrop(
+      dropAction({ unit: d.unit, tabId: null, rect: rectOf(d.unit.anchor) }, target, e.shiftKey, null),
+      d.unit,
+    );
   }
 
   /** Commit a unit's previewed rect: fan it out to every renderable window in
@@ -424,6 +457,29 @@
     const active = drag as Drag | null;
     const dragging = active && active.kind !== "furniture" && active.unit.anchor.id === unit.anchor.id;
     if (!dragging && nudging !== unit.anchor.id) clearPreview(unit.anchor.id);
+  }
+
+  /** Carry out a decided drop. A stacking drop deliberately does NOT commit the
+   * drag's geometry: the joining window adopts the stack's rect in the backend
+   * (stacks.rs), so writing the drag coordinates first would be a write the
+   * next projection immediately overwrites. */
+  async function applyDrop(a: DropAction, unit: DrawUnit) {
+    switch (a.op) {
+      case "move":
+        await commitUnit(unit);
+        return;
+      case "none":
+        clearPreview(unit.anchor.id);
+        return;
+      case "create":
+        clearPreview(unit.anchor.id);
+        await runStack(api.stackCreate(a.first, a.second));
+        return;
+      case "add":
+        clearPreview(unit.anchor.id);
+        await runStack(api.stackAdd(a.member, a.container));
+        return;
+    }
   }
 
   // --- Arrow-key nudge -------------------------------------------------------
@@ -540,6 +596,7 @@
             class="win"
             class:selected={unit.tabs.some((t) => t.id === selectedId) || unit.anchor.id === selectedId}
             class:stacked={!!unit.stack}
+            class:droptarget={dropTarget === unit.key}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
             onpointerdown={(e) => startMove(unit, e)}>
@@ -565,6 +622,9 @@
       </div>
       <p class="ref">
         reference {layout.reference_w}×{layout.reference_h}
+        {#if !readOnly}
+          <span class="hintish">· Shift-drag onto another window to stack</span>
+        {/if}
         {#if filterIsActive(filter)}
           <span class="showing">
             · showing {shownCount} of {totalCount} windows
@@ -689,6 +749,14 @@
   .win.stacked {
     border-width: 2px;
   }
+  /* The unit a Shift-drag would stack onto. Deliberately NOT the amber of a
+     selection — this is a transient "drop here", not a state. */
+  .win.droptarget {
+    border-color: #34d399;
+    background: rgba(52, 211, 153, 0.3);
+    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.5);
+    z-index: 1;
+  }
   /* Snap feedback: the edge the dragged rect locked onto. Same amber as a
      selection, above every rect, never in the way of the pointer. */
   .guide {
@@ -755,6 +823,9 @@
   }
   .showing {
     color: var(--warn);
+  }
+  .hintish {
+    color: #666;
   }
   .linkish {
     background: none;
