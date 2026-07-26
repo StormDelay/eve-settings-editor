@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -150,14 +150,6 @@
     return next;
   }
 
-  // An <option> is the one place the friendly label alone is not enough: the
-  // native popup shows no title, so two same-family windows would be literally
-  // indistinguishable in a control that commits a mutation.
-  function optionLabel(id: string): string {
-    const n = describe(id);
-    return n.detail ? `${n.label} · ${n.detail}` : n.label;
-  }
-
   // Members currently matching the filter, for gating the stack's frame row
   // and its count badge (I2) — a stack whose members are all filtered out
   // must disappear from the list exactly as it disappears from the canvas.
@@ -256,7 +248,7 @@
             }}>
             <option value="" disabled>Add to stack…</option>
             {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{optionLabel(s.container_id)}</option>
+              <option value={s.container_id}>{displayName(s.container_id)}</option>
             {/each}
           </select>
         {/if}
@@ -273,7 +265,7 @@
             }}>
             <option value="" disabled>Stack with…</option>
             {#each stackTargets as other (other.id)}
-              <option value={other.id}>{optionLabel(other.id)}</option>
+              <option value={other.id}>{displayName(other.id)}</option>
             {/each}
           </select>
         {/if}

@@ -191,6 +191,15 @@ export function describe(id: string): WindowName {
   return { label: (CURATED[id] ?? pretty(id)) || "(unnamed)", detail: "", family: id };
 }
 
+/** The friendly name as a single string, for places that cannot render the
+ * detail as its own element — canvas rectangles, stack tabs, <option> text.
+ * The list renders the same two parts as separate spans; both go through
+ * `describe`, so they cannot drift. */
+export function displayName(id: string): string {
+  const n = describe(id);
+  return n.detail ? `${n.label} · ${n.detail}` : n.label;
+}
+
 /**
  * Bucket items by window family, preserving first-seen order so the list does
  * not reshuffle between renders. Generic over `{id}` to stay free of the api

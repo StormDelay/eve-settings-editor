@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, NOISE_FAMILIES } from "./windowLabels.ts";
+import { describe, groupByFamily, NOISE_FAMILIES, displayName } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -99,6 +99,15 @@ const check = (name: string, ok: boolean) => {
   for (const fam of NOISE_FAMILIES) {
     check(`noise family ${fam} is reachable`, describe(samples[fam]).family === fam);
   }
+}
+
+// --- displayName -------------------------------------------------------------
+// The single-string form used where the label/detail can't render as their
+// own elements (canvas rects, stack tabs, <option> text). Must agree with
+// what the list renders as separate spans, since both go through describe().
+{
+  check("displayName joins label and detail with a middot", displayName("chatchannel_local") === "Chat · local");
+  check("displayName is just the label when there is no detail", displayName("market") === "Market");
 }
 
 // --- groupByFamily ---------------------------------------------------------

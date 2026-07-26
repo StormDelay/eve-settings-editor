@@ -6,6 +6,7 @@
     hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter,
   } from "$lib/layout";
+  import { displayName } from "$lib/windowLabels";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -414,12 +415,12 @@
               <div class="tabs">
                 {#each unit.tabs as tab (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <span class="tab" class:active={tab.id === selectedId}
-                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{tab.label}</span>
+                  <span class="tab" class:active={tab.id === selectedId} title={tab.id}
+                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayName(tab.id)}</span>
                 {/each}
               </div>
             {:else}
-              <span class="win-label">{unit.anchor.label}</span>
+              <span class="win-label" title={unit.anchor.id}>{displayName(unit.anchor.id)}</span>
             {/if}
             {#if unit.anchor.id === selectedId || unit.tabs.some((t) => t.id === selectedId)}
               {#each (["tl", "tr", "bl", "br"] as const) as c}
@@ -550,7 +551,12 @@
   }
   .win-label {
     padding: 1px 3px;
-    display: inline-block;
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     pointer-events: none;
   }
   .tabs {
