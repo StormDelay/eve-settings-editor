@@ -377,6 +377,10 @@ pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), Ov
     Ok(())
 }
 
+/// Each new overview window is offset from the primary so it does not land
+/// exactly on top of it.
+const OVERVIEW_WINDOW_OFFSET: i64 = 40;
+
 /// Char-file: mint the window `overview_{window_idx}` by cloning the primary
 /// `overview` window's value in every `windows` subdict (geometry + all flag
 /// dicts) and offsetting the new window's on-screen position so it doesn't sit
@@ -405,8 +409,8 @@ pub fn add_overview_window_geometry(v: &mut Value, window_idx: usize) {
         let mut newval = prim;
         if is_geom {
             if let Value::Tuple(items) = &mut newval {
-                if let Some(x) = items.get_mut(0) { offset_coord(x, 40); }
-                if let Some(y) = items.get_mut(1) { offset_coord(y, 40); }
+                if let Some(x) = items.get_mut(0) { offset_coord(x, OVERVIEW_WINDOW_OFFSET); }
+                if let Some(y) = items.get_mut(1) { offset_coord(y, OVERVIEW_WINDOW_OFFSET); }
             }
         }
         entries.push((Value::Bytes(key.as_bytes().to_vec()), newval));
@@ -710,6 +714,12 @@ mod tests {
     fn remove_the_only_window_is_refused() {
         let mut v = user_with_tabs(); // one window
         assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::LastWindow)));
+    }
+
+    #[test]
+    fn remove_unknown_window_errors() {
+        let mut v = user_two_windows(); // two windows, indices 0 and 1
+        assert!(matches!(remove_overview_window(&mut v, 2), Err(OverviewTabError::UnknownWindow { index: 2 })));
     }
 
     /// A char tree: `windows` (plain dict) -> two `(ts,dict)` subdicts, each with

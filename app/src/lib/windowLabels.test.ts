@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, isClutter, displayName } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -160,6 +160,20 @@ const check = (name: string, ok: boolean) => {
   check("displayName is just the label when there is no detail", displayName("market") === "Market");
 }
 
+// --- displayNameOf: the nameOf equivalent of displayName -------------------
+// A window with a real name still keeps its detail visible — dropping it
+// reintroduces the ambiguity 854b0d7 fixed (two unnamed chat tabs in one
+// stack both reading "Chat").
+{
+  const named = { id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" };
+  check("displayNameOf joins the real name and the derived detail", displayNameOf(named) === "Alliance HQ · private");
+
+  const unnamed = { id: "chatchannel_private_0ee11e4f970011ea", name: null };
+  check("displayNameOf falls back to the derived label and detail", displayNameOf(unnamed) === "Chat · private");
+
+  check("displayNameOf is just the label when there is no detail", displayNameOf({ id: "market" }) === "Market");
+}
+
 // --- groupByFamily ---------------------------------------------------------
 {
   const items = [
@@ -175,6 +189,54 @@ const check = (name: string, ok: boolean) => {
   check("a group is labelled by its family", chat.label === "Chat");
   check("singleton families are groups of one", groups[0].items.length === 1);
   check("empty input yields no groups", groupByFamily([]).length === 0);
+}
+
+// --- nameOf: EVE's own name wins, the derived one is the fallback ----------
+{
+  const real = nameOf({ id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" });
+  check("nameOf prefers the file's own name", real.label === "Alliance HQ");
+  check("nameOf keeps the derived detail", real.detail === "private");
+  check("nameOf keeps the derived family", real.family === "chatchannel");
+
+  const derived = nameOf({ id: "market", name: null });
+  check("nameOf falls back to describe when there is no name", derived.label === "Market");
+
+  const missing = nameOf({ id: "market" });
+  check("an absent name field is the same as null", missing.label === "Market");
+
+  const blank = nameOf({ id: "market", name: "" });
+  check("an empty name is not a name", blank.label === "Market");
+}
+
+// --- stackLabel: EVE's own stack label wins, "we have nothing" is null -----
+{
+  check(
+    "stackLabel prefers EVE's own label",
+    stackLabel({ container_id: "88", container_label: "Character: Information" }) === "Character: Information",
+  );
+  check(
+    "stackLabel is null when the backend left it equal to the container id",
+    stackLabel({ container_id: "88", container_label: "88" }) === null,
+  );
+}
+
+// --- clutter overrides ------------------------------------------------------
+{
+  const none = { clutter: new Set<string>(), visible: new Set<string>() };
+  check("no overrides leaves the built-in verdict alone (clutter)", isClutter("ChatInvitation_x", none));
+  check("no overrides leaves the built-in verdict alone (ordinary)", !isClutter("market", none));
+  check("an absent overrides argument is the same as empty", isClutter("ChatInvitation_x"));
+
+  const forced = { clutter: new Set(["market"]), visible: new Set<string>() };
+  check("an override can make an ordinary window clutter", isClutter("market", forced));
+
+  const freed = { clutter: new Set<string>(), visible: new Set(["ChatInvitation_x"]) };
+  check("an override can rescue a window the tables call clutter", !isClutter("ChatInvitation_x", freed));
+
+  // Only reachable by hand-editing preferences.json: the UI keeps the two sets
+  // disjoint. Pinned so the precedence is not accidental.
+  const both = { clutter: new Set(["market"]), visible: new Set(["market"]) };
+  check("visible wins when a hand-edited file lists an id twice", !isClutter("market", both));
 }
 
 console.log("windowLabels.test.ts ok");

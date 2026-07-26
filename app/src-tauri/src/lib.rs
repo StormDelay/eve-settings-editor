@@ -2,6 +2,7 @@ mod accounts;
 mod groups;
 mod names;
 mod ops;
+mod prefs;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;
@@ -349,6 +350,19 @@ fn setup_apply(
     )
 }
 
+#[tauri::command]
+fn preferences(app: tauri::AppHandle) -> Result<prefs::Preferences, ErrDto> {
+    let path = prefs::path(&app).map_err(|m| ErrDto { code: "no_config_dir".into(), message: m })?;
+    Ok(prefs::load_from(&path))
+}
+
+#[tauri::command]
+fn set_preferences(app: tauri::AppHandle, prefs: prefs::Preferences) -> Result<(), ErrDto> {
+    let path = crate::prefs::path(&app).map_err(|m| ErrDto { code: "no_config_dir".into(), message: m })?;
+    crate::prefs::save_to(&path, &prefs)
+        .map_err(|e| ErrDto { code: "write_failed".into(), message: e.to_string() })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -371,7 +385,8 @@ pub fn run() {
             keybinds, set_keybind,
             setup_preview, setup_apply,
             stack_unstack, stack_add, stack_reorder, stack_create,
-            hud_layout, set_hud_value
+            hud_layout, set_hud_value,
+            preferences, set_preferences
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

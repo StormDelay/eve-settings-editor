@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily, displayName } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -18,6 +18,8 @@
     onReorder,
     onAddToStack,
     onCreateStack,
+    overrides,
+    onClutterOverride,
     filter = $bindable({ ...NO_FILTER }),
     focusFilter = $bindable(undefined),
   }: {
@@ -34,6 +36,11 @@
     onReorder: (container: string, members: string[]) => void;
     onAddToStack: (member: string, container: string) => void;
     onCreateStack: (m1: string, m2: string) => void;
+    /** The user's per-window clutter overrides — owned by prefs.svelte, passed
+     * down so this stays a presentational component like every other prop
+     * it takes. */
+    overrides: ClutterOverrides;
+    onClutterOverride: (id: string, mode: "clutter" | "visible" | "default") => void;
     /** Shared with the canvas — see LayoutView. The panel renders the controls;
      * LayoutView owns the state and applies the same predicate to the rects. */
     filter?: WindowFilter;
@@ -80,6 +87,16 @@
       items.push({ label: "Show geometry in tree", run: () => onReveal(path) });
     }
     items.push(copyId(w.id), { label: "Select on canvas", run: () => onSelect(w.id) });
+    // One item, never both, labelled for what the click will do. The built-in
+    // tables can never be complete, so this is the per-window escape hatch.
+    const overridden = overrides.clutter.has(w.id) || overrides.visible.has(w.id);
+    if (overridden) {
+      items.push({ label: "Use the default clutter rule", run: () => onClutterOverride(w.id, "default") });
+    } else if (isClutter(w.id, overrides)) {
+      items.push({ label: "Stop treating as clutter", run: () => onClutterOverride(w.id, "visible") });
+    } else {
+      items.push({ label: "Treat as clutter", run: () => onClutterOverride(w.id, "clutter") });
+    }
     return items;
   }
 
@@ -120,7 +137,7 @@
   // no window-rect to show) — every lookup below must tolerate a miss.
   const findWindow = (id: string) => windows.find((w) => w.id === id);
 
-  const freeWindows = $derived(windows.filter((w) => w.stack === null && windowMatches(w, filter)));
+  const freeWindows = $derived(windows.filter((w) => w.stack === null && windowMatches(w, filter, overrides)));
   // Folding is list presentation only: a family with more than one member
   // renders as one collapsible row. It never changes what the canvas draws —
   // that is the filter's job (LayoutView owns it).
@@ -150,19 +167,24 @@
     return next;
   }
 
+  // Whether a stack member currently passes the filter (and still exists).
+  // Shared by matchingMembers (below) and the ↑/↓ reorder buttons, which must
+  // disable rather than swap with a neighbour the filter is hiding.
+  function memberVisible(id: string): boolean {
+    const w = findWindow(id);
+    return !!w && windowMatches(w, filter, overrides);
+  }
+
   // Members currently matching the filter, for gating the stack's frame row
   // and its count badge (I2) — a stack whose members are all filtered out
   // must disappear from the list exactly as it disappears from the canvas.
   function matchingMembers(stack: Stack): string[] {
-    return stack.members.filter((id) => {
-      const w = findWindow(id);
-      return !!w && windowMatches(w, filter);
-    });
+    return stack.members.filter(memberVisible);
   }
 </script>
 
 {#snippet rowHead(w: WindowRect)}
-  {@const n = describe(w.id)}
+  {@const n = nameOf(w)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
   <input
     type="checkbox"
@@ -248,7 +270,7 @@
             }}>
             <option value="" disabled>Add to stack…</option>
             {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{displayName(s.container_id)}</option>
+              <option value={s.container_id}>{stackLabel(s) ?? displayName(s.container_id)}</option>
             {/each}
           </select>
         {/if}
@@ -265,7 +287,12 @@
             }}>
             <option value="" disabled>Stack with…</option>
             {#each stackTargets as other (other.id)}
-              <option value={other.id}>{displayName(other.id)}</option>
+              <!-- An <option> has no hover title, so unlike rowHead's two
+                   separate spans this keeps the detail inline — dropping it
+                   would make two same-family unnamed windows (e.g. two chat
+                   channels) indistinguishable in the dropdown again (the bug
+                   854b0d7 "Disambiguate stack dropdowns" fixed). -->
+              <option value={other.id}>{displayNameOf(other)}</option>
             {/each}
           </select>
         {/if}
@@ -299,7 +326,8 @@
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
     {@const matched = matchingMembers(stack)}
-    {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter)}
+    {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter, overrides)}
+    {@const label = stackLabel(stack)}
     {#if matched.length > 0 || containerMatches}
     <div class="stack-group">
       {#if containerWindow}
@@ -315,6 +343,11 @@
               {collapsed[stack.container_id] ? "▸" : "▾"}
             </button>
             <span class="frame-label" title="Stack frame">frame</span>
+            <!-- "frame" is the type marker (always present, even for an
+                 unpaired character with no tabgroups entry); the real label,
+                 when EVE has one, shows alongside it — the row then names
+                 both what it is and which stack it is. -->
+            {#if label}<span class="detail">{label}</span>{/if}
             {@render rowHead(containerWindow)}
             <span class="stack-count">{matched.length}</span>
           </div>
@@ -330,20 +363,20 @@
             onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
             {collapsed[stack.container_id] ? "▸" : "▾"}
           </button>
-          <span class="stack-title" title={stack.container_id}>{describe(stack.container_id).label}</span>
+          <span class="stack-title" title={stack.container_id}>{label ?? describe(stack.container_id).label}</span>
           <span class="stack-count">{matched.length}</span>
         </div>
       {/if}
       {#if !collapsed[stack.container_id]}
         {#each stack.members as memberId, i (memberId)}
           {@const w = findWindow(memberId)}
-          {#if w && windowMatches(w, filter)}
+          {#if w && windowMatches(w, filter, overrides)}
             <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
               <div class="row-head">
                 {@render rowHead(w)}
                 <button
                   class="stack-btn"
-                  disabled={readOnly || i === 0}
+                  disabled={readOnly || i === 0 || !memberVisible(stack.members[i - 1])}
                   title="Move up in stack order"
                   aria-label="Move up in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i - 1))}>
@@ -351,7 +384,7 @@
                 </button>
                 <button
                   class="stack-btn"
-                  disabled={readOnly || i === stack.members.length - 1}
+                  disabled={readOnly || i === stack.members.length - 1 || !memberVisible(stack.members[i + 1])}
                   title="Move down in stack order"
                   aria-label="Move down in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i + 1))}>

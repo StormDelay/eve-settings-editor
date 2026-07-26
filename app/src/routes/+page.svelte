@@ -14,6 +14,7 @@
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
   import { aliasFor, accountsStore } from "$lib/accounts.svelte";
+  import { loadPrefs } from "$lib/prefs.svelte";
   import {
     pairedFilePath,
     associatedCharacters,
@@ -69,6 +70,7 @@
   // the same profile folder as an already-open file (see pairedFilePath).
   let profiles = $state<Profile[]>([]);
   api.discover().then((p) => (profiles = p)).catch(() => {});
+  void loadPrefs();
 
   let insertTarget: TreeNodeData | null = $state(null);
   let savedAt = $state(0); // bumped after each save; BackupsPanel refetches on change
