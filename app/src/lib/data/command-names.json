@@ -1,0 +1,406 @@
+{
+  "CmdActivateHighPowerSlot1": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 1"
+  },
+  "CmdActivateHighPowerSlot2": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 2"
+  },
+  "CmdActivateHighPowerSlot3": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 3"
+  },
+  "CmdActivateHighPowerSlot4": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 4"
+  },
+  "CmdActivateHighPowerSlot5": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 5"
+  },
+  "CmdActivateHighPowerSlot6": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 6"
+  },
+  "CmdActivateHighPowerSlot7": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 7"
+  },
+  "CmdActivateHighPowerSlot8": {
+    "group": "Modules",
+    "label": "Activate High Power Slot 8"
+  },
+  "CmdActivateLowPowerSlot1": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 1"
+  },
+  "CmdActivateLowPowerSlot2": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 2"
+  },
+  "CmdActivateLowPowerSlot3": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 3"
+  },
+  "CmdActivateLowPowerSlot4": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 4"
+  },
+  "CmdActivateLowPowerSlot5": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 5"
+  },
+  "CmdActivateLowPowerSlot6": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 6"
+  },
+  "CmdActivateLowPowerSlot7": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 7"
+  },
+  "CmdActivateLowPowerSlot8": {
+    "group": "Modules",
+    "label": "Activate Low Power Slot 8"
+  },
+  "CmdActivateMediumPowerSlot1": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 1"
+  },
+  "CmdActivateMediumPowerSlot2": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 2"
+  },
+  "CmdActivateMediumPowerSlot3": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 3"
+  },
+  "CmdActivateMediumPowerSlot4": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 4"
+  },
+  "CmdActivateMediumPowerSlot5": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 5"
+  },
+  "CmdActivateMediumPowerSlot6": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 6"
+  },
+  "CmdActivateMediumPowerSlot7": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 7"
+  },
+  "CmdActivateMediumPowerSlot8": {
+    "group": "Modules",
+    "label": "Activate Medium Power Slot 8"
+  },
+  "CmdAlignToItem": {
+    "group": "Navigation",
+    "label": "Align to"
+  },
+  "CmdApproachItem": {
+    "group": "Navigation",
+    "label": "Approach"
+  },
+  "CmdDockOrJumpOrActivateGate": {
+    "group": "Navigation",
+    "label": "Dock/Jump/Activate gate"
+  },
+  "CmdDronesEngage": {
+    "group": "Drones & Fighters",
+    "label": "All Drones: Engage"
+  },
+  "CmdDronesReturnAndOrbit": {
+    "group": "Drones & Fighters",
+    "label": "All Drones: Return and Orbit"
+  },
+  "CmdDronesReturnToBay": {
+    "group": "Drones & Fighters",
+    "label": "All Drones: Return to Drone Bay"
+  },
+  "CmdFleetBroadcast_EnemySpotted": {
+    "group": "Fleet broadcasts",
+    "label": "Broadcast: Spotted an Enemy"
+  },
+  "CmdFleetBroadcast_HealArmor": {
+    "group": "Fleet broadcasts",
+    "label": "Broadcast: Need Armor"
+  },
+  "CmdFleetBroadcast_HealShield": {
+    "group": "Fleet broadcasts",
+    "label": "Broadcast: Need Shield"
+  },
+  "CmdFleetBroadcast_JumpBeacon": {
+    "group": "Fleet broadcasts",
+    "label": "Broadcast: Jump to Beacon"
+  },
+  "CmdKeepItemAtRange": {
+    "group": "Navigation",
+    "label": "Keep at Range"
+  },
+  "CmdLaunchFavoriteDrones": {
+    "group": "Drones & Fighters",
+    "label": "Launch Favorite Drones"
+  },
+  "CmdLockTargetItem": {
+    "group": "Targeting",
+    "label": "Lock target"
+  },
+  "CmdOverloadHighPowerRack": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Rack"
+  },
+  "CmdOverloadHighPowerSlot1": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 1"
+  },
+  "CmdOverloadHighPowerSlot2": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 2"
+  },
+  "CmdOverloadHighPowerSlot3": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 3"
+  },
+  "CmdOverloadHighPowerSlot4": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 4"
+  },
+  "CmdOverloadHighPowerSlot5": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 5"
+  },
+  "CmdOverloadHighPowerSlot6": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 6"
+  },
+  "CmdOverloadHighPowerSlot7": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 7"
+  },
+  "CmdOverloadHighPowerSlot8": {
+    "group": "Overload",
+    "label": "Toggle Overload on High Power Slot 8"
+  },
+  "CmdOverloadLowPowerRack": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Rack"
+  },
+  "CmdOverloadLowPowerSlot1": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 1"
+  },
+  "CmdOverloadLowPowerSlot2": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 2"
+  },
+  "CmdOverloadLowPowerSlot3": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 3"
+  },
+  "CmdOverloadLowPowerSlot4": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 4"
+  },
+  "CmdOverloadLowPowerSlot5": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 5"
+  },
+  "CmdOverloadLowPowerSlot6": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 6"
+  },
+  "CmdOverloadLowPowerSlot7": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 7"
+  },
+  "CmdOverloadLowPowerSlot8": {
+    "group": "Overload",
+    "label": "Toggle Overload on Low Power Slot 8"
+  },
+  "CmdOverloadMediumPowerRack": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Rack"
+  },
+  "CmdOverloadMediumPowerSlot1": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 1"
+  },
+  "CmdOverloadMediumPowerSlot2": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 2"
+  },
+  "CmdOverloadMediumPowerSlot3": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 3"
+  },
+  "CmdOverloadMediumPowerSlot4": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 4"
+  },
+  "CmdOverloadMediumPowerSlot5": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 5"
+  },
+  "CmdOverloadMediumPowerSlot6": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 6"
+  },
+  "CmdOverloadMediumPowerSlot7": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 7"
+  },
+  "CmdOverloadMediumPowerSlot8": {
+    "group": "Overload",
+    "label": "Toggle Overload on Medium Power Slot 8"
+  },
+  "CmdPickPortrait0": {
+    "group": "Misc",
+    "label": "Pick Portrait 0"
+  },
+  "CmdPickPortrait1": {
+    "group": "Misc",
+    "label": "Pick Portrait 1"
+  },
+  "CmdPickPortrait2": {
+    "group": "Misc",
+    "label": "Pick Portrait 2"
+  },
+  "CmdPickPortrait3": {
+    "group": "Misc",
+    "label": "Pick Portrait 3"
+  },
+  "CmdReconnectToDrones": {
+    "group": "Drones & Fighters",
+    "label": "Reconnect To Drones"
+  },
+  "CmdRefreshDirectionalScan": {
+    "group": "Misc",
+    "label": "Directional Scan"
+  },
+  "CmdRefreshProbeScan": {
+    "group": "Misc",
+    "label": "Refresh Probe Scan"
+  },
+  "CmdSelectAllFighters": {
+    "group": "Drones & Fighters",
+    "label": "Select All Fighters"
+  },
+  "CmdSelectNextTarget": {
+    "group": "Targeting",
+    "label": "Select next target"
+  },
+  "CmdSelectPrevTarget": {
+    "group": "Targeting",
+    "label": "Select previous target"
+  },
+  "CmdSendBroadcast_Target": {
+    "group": "Fleet broadcasts",
+    "label": "Broadcast: Target (Selected)"
+  },
+  "CmdSetSearchBarFocus": {
+    "group": "Misc",
+    "label": "Set Search Bar Focus"
+  },
+  "CmdShowItemInfo": {
+    "group": "Misc",
+    "label": "Show info"
+  },
+  "CmdToggleActivityTracker": {
+    "group": "Misc",
+    "label": "Toggle Activity Tracker"
+  },
+  "CmdToggleAutopilot": {
+    "group": "Navigation",
+    "label": "Toggle Autopilot"
+  },
+  "CmdToggleLookAtItem": {
+    "group": "Targeting",
+    "label": "Look at"
+  },
+  "CmdToggleShipSelection": {
+    "group": "Targeting",
+    "label": "Toggle Ship Selection"
+  },
+  "CmdToggleTacticalOverlay": {
+    "group": "Misc",
+    "label": "Toggle tactical overlay"
+  },
+  "CmdUnlockTargetItem": {
+    "group": "Targeting",
+    "label": "Unlock target"
+  },
+  "CmdWarpToItem": {
+    "group": "Navigation",
+    "label": "Warp to"
+  },
+  "OpenAccessGroupsWindow": {
+    "group": "Windows",
+    "label": "Open Access Groups Window"
+  },
+  "OpenAgencyNew": {
+    "group": "Windows",
+    "label": "Open Agency New"
+  },
+  "OpenAssets": {
+    "group": "Windows",
+    "label": "Open Assets"
+  },
+  "OpenContracts": {
+    "group": "Windows",
+    "label": "Open Contracts"
+  },
+  "OpenDirectionalScanner": {
+    "group": "Windows",
+    "label": "Open Directional Scanner"
+  },
+  "OpenFitting": {
+    "group": "Windows",
+    "label": "Open Fitting Service"
+  },
+  "OpenFittingMgmt": {
+    "group": "Windows",
+    "label": "Open Fitting Management"
+  },
+  "OpenFpsMonitor": {
+    "group": "Windows",
+    "label": "Open FPS Monitor"
+  },
+  "OpenIndustry": {
+    "group": "Windows",
+    "label": "Open Industry"
+  },
+  "OpenMail": {
+    "group": "Windows",
+    "label": "Open Mail"
+  },
+  "OpenMarketOrders": {
+    "group": "Windows",
+    "label": "Open Market Orders"
+  },
+  "OpenOverviewSettings": {
+    "group": "Windows",
+    "label": "Open Overview Settings"
+  },
+  "OpenShipHangar": {
+    "group": "Windows",
+    "label": "Open Ship Hangar"
+  },
+  "OpenSkillQueueWindow": {
+    "group": "Windows",
+    "label": "Open Training Queue"
+  },
+  "OpenSkillsWindow": {
+    "group": "Windows",
+    "label": "Open Skills Window"
+  },
+  "ToggleCurrentSystemLocationWnd": {
+    "group": "Windows",
+    "label": "Toggle Current System Location Window"
+  },
+  "ToggleProbeScanner": {
+    "group": "Windows",
+    "label": "Toggle Probe Scanner"
+  }
+}
