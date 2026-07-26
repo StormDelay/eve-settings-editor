@@ -24,6 +24,23 @@
     item.run();
     onClose();
   }
+
+  // The list sits flush against the app's right edge and a row's clickable
+  // name area runs to the row's edge, so a right-click near the right or
+  // bottom of the window opens a menu that would otherwise render partly
+  // off-screen — potentially clipping "Copy window id", the escape hatch for
+  // reading a raw id. Clamp once the element exists and can be measured;
+  // starts at the raw click point and snaps onscreen a frame later.
+  let menuEl: HTMLDivElement | undefined = $state();
+  let pos = $state({ x, y });
+  $effect(() => {
+    if (!menuEl) return;
+    const r = menuEl.getBoundingClientRect();
+    pos = {
+      x: Math.max(0, Math.min(x, window.innerWidth - r.width)),
+      y: Math.max(0, Math.min(y, window.innerHeight - r.height)),
+    };
+  });
 </script>
 
 <svelte:window
@@ -38,7 +55,8 @@
   class="menu"
   role="menu"
   tabindex="-1"
-  style="left: {x}px; top: {y}px;"
+  bind:this={menuEl}
+  style="left: {pos.x}px; top: {pos.y}px;"
   onpointerdown={(e) => e.stopPropagation()}>
   {#each items as item (item.label)}
     <button role="menuitem" onclick={() => pick(item)}>{item.label}</button>
