@@ -365,8 +365,8 @@ CmdActivateLowPowerSlot1    -> None           unbound
 Modifiers observed: 16 = Shift, 17 = Ctrl, 18 = Alt; the remainder are standard
 VK codes. Two things cross-validate that reading: the codes decode to physically
 adjacent keys (`Q S D F G H` for module slots 1–6), and EVE's *factory* module
-bindings are F1–F8 (VK 112–119), which appear nowhere — consistent with this dict
-holding only what the user changed. Command names group cleanly:
+bindings are F1–F8 (VK 112–119), which appear nowhere in any file's bindings
+(see below for what that absence means). Command names group cleanly:
 
 - `CmdActivate{High,Medium,Low}PowerSlot1..8` — module activation (24)
 - `CmdOverload{High,Medium,Low}Power{Rack,Slot1..8}` — overload (27)
@@ -382,9 +382,19 @@ holding only what the user changed. Command names group cleanly:
 - `CmdRefreshDirectionalScan`, `CmdRefreshProbeScan`, `CmdToggleAutopilot`,
   `CmdToggleTacticalOverlay`, `CmdSetSearchBarFocus`, `CmdShowItemInfo`
 
-The name suggests this holds **only user-customised bindings**; commands left at
-their factory default are simply absent, and an explicit `None` means the user
-cleared the binding. That inference has not been verified in-game.
+**Corrected: EVE writes the whole command table for the client build, not a
+diff of user edits.** The per-file command-name sets nest strictly by client
+generation — 79 ⊂ 90 ⊂ 91 ⊂ 92 ⊂ 93 names, each step adding exactly one
+command — which is what a client-owned table looks like as CCP adds commands
+over time; under "only user edits" the player would have had to touch exactly
+one additional command per client version, monotonically, never removing one.
+The F1–F8 absence noted above corroborates it: the factory default does not
+survive anywhere in the file once overwritten. `None` means **unbound**, not
+"fall back to the default" — and an account that has never opened the in-game
+keybinding screen has an **empty** table, not a default one (verified on a live
+Tranquility account file). See
+`docs/superpowers/specs/2026-07-26-keybindings-editor-design.md` §2.4–§2.5 for
+the full evidence.
 
 ### 5.4 `audio` — 22 keys
 
@@ -708,16 +718,21 @@ Ranked by value ÷ effort. "Scope" is what one edit changes.
 
 ### Tier 1 — high value, self-contained
 
-**1. Keybindings editor** — account scope, `cmd → customCmds`.
+**1. Keybindings editor (SHIPPED)** — account scope, `cmd → customCmds`.
+
+**Shipped on the `keybindings-editor` branch** — see `KeybindsView.svelte` and
+`crates/settings-model/src/keybinds.rs`. No longer the top candidate; kept here
+because the analysis is still useful background. The original finding follows.
+
 The single biggest missing feature. 101 commands, values are VK-code tuples, one
 flat dict, no cross-file link, no structural editing (the dict already exists in
-175/175 files). Needs two hand-authored vocabularies — VK code → key label, and
-command name → friendly label + group — exactly the pattern already used for
-overview state ids. Unlocks the thing EVE has never shipped: copy one account's
-keybinds to every other account. Add a `Keybinds` batch category and it composes
-with the existing Batch view for free.
-*Risk:* the "absent = factory default" inference is unverified; a live smoke that
-binds one key in-game and diffs the file settles it in five minutes.
+175/175 files). Needs one hand-authored vocabulary — VK code → key label — the
+same pattern already used for overview state ids; command name → friendly label
++ group turned out to be harvestable from the client's own localization data (84
+of 101 resolve, the rest fall back to a de-camelcased name). Unlocks the thing
+EVE has never shipped: copy one account's keybinds to every other account. Add a
+`Keybinds` batch category and it composes with the existing Batch view for
+free.
 
 **2. Overview appearance completion** — account scope, `overview`.
 Extend `OVERVIEW_BOOLS` from 6 to 13 (`targetCrosshair`, `showInTargetRange`,
