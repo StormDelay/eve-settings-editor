@@ -84,6 +84,9 @@
     (v === "keybinds" && (openCharId !== null || slots.user?.status === "opened"));
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
+  // Bound down through LayoutView -> WindowPanel, where the filter input
+  // actually lives; lets the global Ctrl+F handler focus it (see below).
+  let layoutFocusFilter = $state<(() => void) | undefined>(undefined);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
   let reveal = $state<{ path: NodePath; n: number } | null>(null);
 
@@ -390,9 +393,15 @@
       saveFile();
     }
     // Take Ctrl+F off the webview: its find-on-page cannot see collapsed nodes.
+    // On the Layout view the tree search box isn't even rendered, so focus its
+    // own window filter instead — otherwise Ctrl+F silently does nothing there.
     if ((e.ctrlKey || e.metaKey) && e.key === "f") {
       e.preventDefault();
-      openSearch();
+      if (view === "layout") {
+        layoutFocusFilter?.();
+      } else {
+        openSearch();
+      }
     }
     if (e.key === "Escape" && searching) closeSearch();
   }}
@@ -455,7 +464,8 @@
             bind:selectedId={selectedWindowId}
             onReveal={revealInTree}
             onDirty={(slot) => (dirtySlots[slot] = true)}
-            {sharedNames} />
+            {sharedNames}
+            bind:focusFilter={layoutFocusFilter} />
         </div>
       {:else if view === "overview"}
         <div class="tree-area">
