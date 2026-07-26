@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
-use crate::treewalk::{child_dict, collect_shared, effective, timestamped_dict, Entries, SharedTable};
+use crate::treewalk::{child_dict, collect_shared, effective, hex, timestamped_dict, Entries, SharedTable};
 
 /// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
@@ -333,10 +333,6 @@ fn key_as_new_value(key: &Value) -> Option<NewValue> {
         Value::StrUcs2(s) => Some(NewValue::StrUcs2(s.clone())),
         _ => None,
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The resolution the most windows agree on. Prefers open windows (what the
