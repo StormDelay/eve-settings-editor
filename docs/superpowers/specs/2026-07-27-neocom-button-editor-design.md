@@ -138,11 +138,16 @@ the existing error-dialog path.
 
 ## 5. The catalog
 
-`tools/gen-neocom-catalog.py` harvests the 25 known ids with their canonical
-`btnType` and `iconPath` into `app/src/lib/data/neocom-buttons.json` — the same
-pattern as the bundled `default-presets.json` and `command-defaults.json`. The
-generated file carries only client-generic ids and texture paths; no character
-data goes into it.
+A generator harvests the 25 known ids with their canonical `btnType` and
+`iconPath` into `app/src/lib/data/neocom-buttons.json`, alongside the bundled
+`default-presets.json` and `command-defaults.json`. It is a **Rust bin**
+(`crates/settings-model/src/bin/neocom_catalog.rs`), not a `tools/*.py` script
+like the other generators: the source is the marshal corpus, and Python has no
+decoder for it. `pack_palette.rs` is the precedent — a research tool kept as a
+bin because it needs the codec.
+
+The generated file carries only client-generic ids and texture paths; no
+character data goes into it.
 
 The frontend owns the catalog, unions it with the character's own `Original`,
 and passes the three fields to `neocom_add`. The backend writes what it is told
@@ -189,9 +194,10 @@ a resolution mismatch has no bearing on them.
   (including a `Tuple`-shaped id and a button with one child), each of the four
   commands, `reorder`'s three rejection paths, `add`'s key order and count,
   `reset` against a `Tuple`-stored `Original`, and the missing-`Original` error.
-- **`neocom_realshape.rs`**, a corpus gate in the style of the existing
-  `*_realshape.rs` tests: every corpus character file projects without error, and
-  a reorder-then-encode round-trips.
+- **`neocom_corpus.rs`**, a real-data gate through the shared corpus walker (the
+  `*_corpus.rs` naming, not `*_realshape.rs` — in this repo the latter are
+  synthetic fixtures shaped like real files): every corpus character file
+  projects without error, and a reorder-then-encode round-trips.
 - **`batch.rs`**: a `Category::NeocomButtons` extract/apply case, plus one
   asserting `Original` is not carried across.
 - **`HudPanel.spec.ts`**: the list renders in bar order, ↑/↓ disable at the ends,
