@@ -295,6 +295,16 @@ export function describe(id: string): WindowName {
   return { label: (CURATED[id] ?? pretty(id)) || "(unnamed)", detail: "", family: id };
 }
 
+/**
+ * The name to show for a window: EVE's own, when the file carries one, else the
+ * one derived from the id. Detail and family always come from the id — they
+ * describe the id's shape, which a display name says nothing about.
+ */
+export function nameOf(w: { id: string; name?: string | null }): WindowName {
+  const derived = describe(w.id);
+  return w.name ? { ...derived, label: w.name } : derived;
+}
+
 /** The friendly name as a single string, for places that cannot render the
  * detail as its own element — canvas rectangles, stack tabs, <option> text.
  * The list renders the same two parts as separate spans; both go through
