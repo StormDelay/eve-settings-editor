@@ -243,7 +243,15 @@ One pass, one commit:
    order supplied. The caller cannot produce a non-conforming file.
 2. Find every other command holding the same combination and set it to `None`.
 3. Write the new value for `command`.
-4. Bump the **`customCmds`** FILETIME exactly once. Never wrap a leaf.
+4. **Leave the `customCmds` timestamp untouched.** Never wrap a leaf.
+
+On (4): the repo convention is to preserve an existing wrapper's timestamp and
+mint a zero one only when the wrapper is absent — see
+`autofill.rs::set_list_entries_preserves_the_timestamp_list_wrapper` and
+`overview_pack.rs::apply_pack_preserves_an_existing_wrappers_timestamp`. Five
+shipped editors do this and every live smoke passed, so the client does not
+require a fresh stamp. Since `customCmds` is present whenever there is anything
+to edit (§2.5), the minting path is unreachable here and must not be written.
 
 Unbinding is `set_keybind(cmd, None)`. Binding a command to the combination it
 already holds is a no-op that still returns `Ok(vec![])`.
@@ -340,7 +348,8 @@ not built now.
 Projection of a synthetic account; `available: false` for a missing section and
 for an empty dict; set, unbind, steal; order canonicalisation; rejection of a
 zero-key and a two-key binding; malformed leaves projecting as unwritable and
-surviving a round-trip; and the timestamp bumping on `customCmds` **only**.
+surviving a round-trip; and the `customCmds` timestamp surviving a write
+untouched.
 
 ### 7.2 Corpus gate — `crates/settings-model/tests/keybinds_corpus.rs`
 
@@ -354,7 +363,7 @@ offset bug. Over the real corpus:
    modifier order.
 3. No file projects a duplicate combination.
 4. Round-trip: project → `set_keybind` → encode → decode leaves the file
-   identical except the one leaf and the `customCmds` timestamp.
+   identical except the one leaf — the `customCmds` timestamp included.
 
 ### 7.3 TypeScript — `keybinds.test.ts`
 
