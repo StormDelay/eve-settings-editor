@@ -1,6 +1,9 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching search.test.ts.
-import { canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits } from "./layout.ts";
+import {
+  canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
+  NO_FILTER, filterIsActive, windowMatches, visibleIds,
+} from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -146,6 +149,70 @@ check("open filter keeps the right window", open[0].id === "a");
   check("a stack with no open members is not drawn", !units.some((u) => u.stack));
   check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
   check("unrelated free windows still draw", units.some((u) => u.key === "free"));
+}
+
+// --- the shared filter predicate -------------------------------------------
+{
+  const market = win("market", true, true);
+  const chat = win("chatchannel_local", true, true);
+  const closed = win("assets", false, true);
+
+  check("an empty filter is not active", !filterIsActive(NO_FILTER));
+  check("text makes it active", filterIsActive({ ...NO_FILTER, text: "a" }));
+  check("whitespace-only text does not", !filterIsActive({ ...NO_FILTER, text: "  " }));
+  check("openOnly makes it active", filterIsActive({ ...NO_FILTER, openOnly: true }));
+  check("hideNoise makes it active", filterIsActive({ ...NO_FILTER, hideNoise: true }));
+
+  check("an empty filter matches everything", windowMatches(chat, NO_FILTER));
+  check("text matches the friendly label", windowMatches(market, { ...NO_FILTER, text: "mark" }));
+  check("text matches case-insensitively", windowMatches(market, { ...NO_FILTER, text: "MARK" }));
+  check("text matches the raw id", windowMatches(chat, { ...NO_FILTER, text: "chatchannel" }));
+  check("text matches the detail", windowMatches(chat, { ...NO_FILTER, text: "local" }));
+  check("text excludes a non-match", !windowMatches(market, { ...NO_FILTER, text: "zzz" }));
+  check("openOnly drops a closed window", !windowMatches(closed, { ...NO_FILTER, openOnly: true }));
+  check("openOnly keeps an open window", windowMatches(market, { ...NO_FILTER, openOnly: true }));
+  check("hideNoise drops a chat window", !windowMatches(chat, { ...NO_FILTER, hideNoise: true }));
+  check("hideNoise keeps a real window", windowMatches(market, { ...NO_FILTER, hideNoise: true }));
+
+  const ids = visibleIds([market, chat, closed], { ...NO_FILTER, hideNoise: true, openOnly: true });
+  check("visibleIds composes every clause", ids.size === 1 && ids.has("market"));
+}
+
+// --- stackUnits under a filter ---------------------------------------------
+{
+  const layout = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("m1", true, true, { container_id: "C", role: "member" }),
+      win("m2", true, true, { container_id: "C", role: "member" }),
+      win("free", true, true, null),
+    ],
+  } as any;
+
+  // No-regression: omitting the set is exactly today's behaviour.
+  const before = stackUnits(layout);
+  const same = stackUnits(layout, null);
+  check("a null visible set is the unfiltered result", JSON.stringify(before.map((u) => u.key)) === JSON.stringify(same.map((u) => u.key)));
+
+  // One matching member keeps the stack alive with only that tab.
+  const oneTab = stackUnits(layout, new Set(["m1"]));
+  const su = oneTab.find((u) => u.stack)!;
+  check("a stack with one visible member survives", su !== undefined);
+  check("only the visible member is a tab", su.tabs.map((t) => t.id).join(",") === "m1");
+  check("the free window is filtered out", oneTab.length === 1);
+
+  // The anchor and the fan are NOT filtered — the anchor is the geometry
+  // source and the fan is what a drag writes to.
+  check("the anchor ignores the filter", su.anchor.id === "C");
+  const fan = su.fanTargets.map((w) => w.id).sort().join(",");
+  check("fanTargets ignore the filter", fan === "C,m1,m2");
+
+  // A stack with no visible member disappears entirely.
+  const none = stackUnits(layout, new Set(["free"]));
+  check("a stack with no visible member is dropped", none.length === 1 && none[0].key === "free");
+  check("an empty visible set draws nothing", stackUnits(layout, new Set()).length === 0);
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
