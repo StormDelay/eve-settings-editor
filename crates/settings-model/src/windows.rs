@@ -985,13 +985,26 @@ mod tests {
 
     #[test]
     fn the_account_sections_resolve_through_ref_wrapped_keys() {
-        // The shape a REAL account file has: the root section key is a Ref. A
-        // hand-made flat dict would pass even with the bug this guards.
+        // The shape a REAL account file has: the root section key is Shared,
+        // not bare Bytes — section() must resolve through it.
+        //
+        // The part this test actually guards is the shared TABLE: slot
+        // numbers are per-document, and stacked_root() (the char root) already
+        // defines slot 3 as the container id "88". Here the "88_names" label
+        // is stored as Ref(3), resolved against a DIFFERENT Shared(3, ...)
+        // defined only inside `user`. If stack_tab_labels ever resolved
+        // through the wrong table — the character's, reused by mistake, or an
+        // empty one never populated from `user` — Ref(3) either resolves to
+        // stacked_root()'s "88" (a real, present, WRONG string pulled from the
+        // other document) or fails to resolve at all. Either way the result
+        // is never "Character: Information" by accident, so a table mix-up
+        // fails this assertion loudly instead of passing as a silent no-op.
         let root = stacked_root();
-        let key = Value::Shared { slot: 3, value: Box::new(bytes("tabgroups")) };
+        let key = Value::Shared { slot: 9, value: Box::new(bytes("tabgroups")) };
+        let label = Value::Shared { slot: 3, value: Box::new(bytes("Character: Information")) };
         let user = Value::Dict(vec![
-            (key, Value::Dict(vec![(bytes("88_names"), bytes("Character: Information"))])),
-            (Value::Ref(3), Value::Int(0)),
+            (key, Value::Dict(vec![(bytes("88_names"), Value::Ref(3))])),
+            (label, Value::Int(0)), // definition site for slot 3; this entry's value is unused
         ]);
         let layout = window_layout(&root, Some(&user));
         let s = layout.stacks.iter().find(|s| s.container_id == "88").expect("the stack");
