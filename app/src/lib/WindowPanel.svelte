@@ -83,7 +83,7 @@
 </script>
 
 {#snippet rowHead(w: WindowRect)}
-  {@const n = describe(w.id) }
+  {@const n = describe(w.id)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
   <input
     type="checkbox"
@@ -306,7 +306,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .detail {
+  span.detail {
     color: var(--fg-dim);
     margin-left: 0.35rem;
     font-size: 0.9em;
