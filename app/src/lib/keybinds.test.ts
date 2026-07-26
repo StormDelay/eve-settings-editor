@@ -1,5 +1,6 @@
 // Run: npm test (node --test). Throw-based checks, no framework.
 import { labelFor, groupFor, GROUP_ORDER, defaultFor } from "./keybinds.ts";
+import names from "./data/command-names.json" with { type: "json" };
 
 const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
 
@@ -16,3 +17,13 @@ check("unknown falls back to Misc", groupFor("CmdSomeFutureThing") === "Misc");
 check("every group used is in GROUP_ORDER", GROUP_ORDER.includes(groupFor("CmdActivateHighPowerSlot1")));
 
 check("defaults are empty until captured", defaultFor("CmdActivateHighPowerSlot1") === null);
+
+// The catalog is generated, so a bad regen or merge can silently shrink it and
+// every probe above still passes as long as its handful of keys survive. 101 is
+// the corpus-measured command count (docs/settings-field-reference.md §5.3); a
+// legitimate change to it means EVE added or removed commands, so update this
+// number deliberately rather than deleting the check.
+check("catalog carries all 101 commands", Object.keys(names).length === 101);
+check("every catalog entry has a label and a group",
+  Object.values(names).every((e) => typeof e.label === "string" && e.label !== ""
+    && typeof e.group === "string" && e.group !== ""));
