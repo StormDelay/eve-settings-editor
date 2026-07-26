@@ -70,7 +70,7 @@ Create `app/src-tauri/src/presets.rs` containing ONLY the test module for now:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn accepts_ordinary_names() {
@@ -409,7 +409,10 @@ Append to the `mod tests` block in `app/src-tauri/src/presets.rs`:
     #[test]
     fn a_collision_is_refused_unless_overwrite() {
         let data = temp_data("collision");
-        let input = || CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&user_doc()) };
+        // Bind the documents first: a closure returning CreateInput built from
+        // `&char_doc()` would borrow a temporary that dies with the expression.
+        let (c, u) = (char_doc(), user_doc());
+        let input = || CreateInput { char_doc: Some(&c), user_doc: Some(&u) };
         create(&data, "Same", &[Aspect::Layout], input(), false).unwrap();
         let err = create(&data, "Same", &[Aspect::Layout], input(), false).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
@@ -1500,6 +1503,10 @@ pub fn setup_preview(
     let targets = target_ids(&char_paths, target_char_paths);
     let store = accounts::load_store(dir);
     let w = aspect_writes(aspects);
+    // A preset source issues no resolution warning: plan_setup needs a source
+    // resolution to compare against, and there is no source character. The
+    // preset's char.dat does carry `reference_w/h`, so wiring the warning up is
+    // a later, additive change — see the spec's §6.
     let resolutions = if w.copies_char_geometry() {
         let mut ids = targets.clone();
         if let Some(id) = sides.char_id {
@@ -1509,18 +1516,6 @@ pub fn setup_preview(
     } else {
         HashMap::new()
     };
-    // A preset carries its own screen resolution in its char document, so the
-    // off-screen warning works without any stored metadata.
-    let mut resolutions = resolutions;
-    if sides.char_id.is_none() && w.copies_char_geometry() {
-        if let Some(p) = sides.char_path.as_deref() {
-            if let Some(res) = resolution_of(p) {
-                // A sentinel id no character can have, matched by plan_setup's
-                // `source_char` being None -> it is only used for the warning.
-                let _ = res; // see below
-            }
-        }
-    }
     let mut plan = plan_setup(
         &char_paths,
         &user_paths,
@@ -1609,16 +1604,9 @@ pub fn setup_apply(
 }
 ```
 
-**Simplify the resolution block before moving on.** The block marked `// see below` in `setup_preview` is dead as written — `plan_setup` only warns when it has BOTH a source resolution and a target one, and with `source_char: None` it has neither. Delete that whole `if sides.char_id.is_none()` block and the `let mut resolutions` shadow, leaving the original `let resolutions = ...`. The spec's claim that a preset carries its own resolution is about a **later** enhancement; for this slice a preset source simply issues no resolution warning, which is honest and matches Task 6's third test. Add this comment where the block was:
+Note the deliberate gap, already commented in the code above: a preset source issues **no** resolution-mismatch warning. `plan_setup` only warns when it has both a source resolution and a target one, and with `source_char: None` it has neither. That is honest for this slice and matches Task 6's third test; the spec's §6 claim that the warning comes for free is wrong, and Task 13 ledgers the additive fix. Do not try to make it warn here.
 
-```rust
-    // A preset source issues no resolution warning: plan_setup needs a source
-    // resolution to compare against, and there is no source character. The
-    // preset's char.dat does carry `reference_w/h`, so wiring the warning up is
-    // a later, additive change — see the spec's §6.
-```
-
-Then add the missing import for `Value` if it is not already in scope: `use blue_marshal::Value;`.
+Add the missing import for `Value` if it is not already in scope: `use blue_marshal::Value;`.
 
 - [ ] **Step 5: Update the two Tauri command wrappers**
 
