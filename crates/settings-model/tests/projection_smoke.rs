@@ -37,6 +37,7 @@ fn no_projection_panics_on_any_corpus_file() {
 
         let _ = project(&doc);
         let _ = window_layout(&doc, None);
+        let _ = window_layout(&doc, Some(&doc));
         let _ = project_hud(&doc, None);
         let _ = project_hud(&doc, Some(&doc));
         let _ = project_edit_history(&doc);

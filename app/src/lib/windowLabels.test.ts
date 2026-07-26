@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, isClutter, displayName, nameOf, stackLabel } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -158,6 +158,20 @@ const check = (name: string, ok: boolean) => {
 {
   check("displayName joins label and detail with a middot", displayName("chatchannel_local") === "Chat · local");
   check("displayName is just the label when there is no detail", displayName("market") === "Market");
+}
+
+// --- displayNameOf: the nameOf equivalent of displayName -------------------
+// A window with a real name still keeps its detail visible — dropping it
+// reintroduces the ambiguity 854b0d7 fixed (two unnamed chat tabs in one
+// stack both reading "Chat").
+{
+  const named = { id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" };
+  check("displayNameOf joins the real name and the derived detail", displayNameOf(named) === "Alliance HQ · private");
+
+  const unnamed = { id: "chatchannel_private_0ee11e4f970011ea", name: null };
+  check("displayNameOf falls back to the derived label and detail", displayNameOf(unnamed) === "Chat · private");
+
+  check("displayNameOf is just the label when there is no detail", displayNameOf({ id: "market" }) === "Market");
 }
 
 // --- groupByFamily ---------------------------------------------------------

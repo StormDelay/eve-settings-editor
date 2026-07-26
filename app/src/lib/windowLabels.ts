@@ -339,6 +339,18 @@ export function displayName(id: string): string {
   return n.detail ? `${n.label} · ${n.detail}` : n.label;
 }
 
+/** The `nameOf` equivalent of `displayName`: EVE's own name when the file has
+ * one, else the derived one, with `· detail` appended when there is a detail.
+ * Same places as `displayName` — canvas rectangles, stack tabs, <option>
+ * text — wherever the window might carry a real name and the detail can't
+ * render as its own element. Dropping the detail here reintroduces the
+ * ambiguity `854b0d7` fixed: two unnamed chat tabs in one stack would both
+ * read "Chat". */
+export function displayNameOf(w: { id: string; name?: string | null }): string {
+  const n = nameOf(w);
+  return n.detail ? `${n.label} · ${n.detail}` : n.label;
+}
+
 /**
  * Bucket items by window family, preserving first-seen order so the list does
  * not reshuffle between renders. Generic over `{id}` to stay free of the api
