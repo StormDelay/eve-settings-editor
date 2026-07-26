@@ -509,4 +509,22 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("a tl corner resize lands its moving edge on the candidate", fin2.x === 95);
 }
 
+// --- overrides reach the filter --------------------------------------------
+{
+  const market = win("market", true, true);
+  const invite = win("ChatInvitation_x", true, true);
+  const forced = { clutter: new Set(["market"]), visible: new Set<string>() };
+  check("hideClutter drops an overridden-clutter window",
+    !windowMatches(market, { ...NO_FILTER, hideClutter: true }, forced));
+  check("without hideClutter the override changes nothing",
+    windowMatches(market, { ...NO_FILTER }, forced));
+
+  const freed = { clutter: new Set<string>(), visible: new Set(["ChatInvitation_x"]) };
+  check("hideClutter keeps a rescued window",
+    windowMatches(invite, { ...NO_FILTER, hideClutter: true }, freed));
+
+  const ids = visibleIds([market, invite], { ...NO_FILTER, hideClutter: true }, freed);
+  check("visibleIds honours the overrides", ids.has("ChatInvitation_x") && ids.has("market"));
+}
+
 console.log("layout: all checks passed");
