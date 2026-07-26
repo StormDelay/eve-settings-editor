@@ -13,6 +13,23 @@ Workflow:
 
 ## Open
 
+- [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
+  Two non-blocking minors from the layout slice 1b branch, ruled deferred at
+  review time: (1) a keyup for a *different* arrow than the one being held ends
+  the nudge early — hold Right, tap Down, release Down, and the glide commits
+  while Right is still repeating. The outcome is correct (the next keydown
+  re-acquires, and `commitUnit`'s `nudging` guard protects the new preview); it
+  just costs one extra round-trip mid-glide, and ref-counting held keys to avoid
+  it is not worth the state. (2) The drag path commits against the `DrawUnit`
+  captured at drag start, while the nudge path re-resolves from live `units`. If
+  a commit lands *during* a drag — newly possible now that a nudge keyup can fire
+  mid-drag — the captured `WindowRect`s carry pre-reload `geom`, so
+  `geomMutations`' per-field diff can skip a write that is actually needed
+  (stale-but-valid paths, not corruption). Re-resolving inside `commitUnit` would
+  fix it but would silently skip the commit when the unit has since been filtered
+  out, which is worse; decide whether a third path (re-resolve, fall back to the
+  captured unit) earns its keep. _Added 2026-07-26._
+
 - [ ] **HUD furniture follow-ups (task + whole-branch reviews, all ship-as-debt).**
   Non-blocking minors from the layout-depth HUD slice, triaged by the final
   review as none-blocking-merge: (1) `ops::set_hud_field` reshares the whole
