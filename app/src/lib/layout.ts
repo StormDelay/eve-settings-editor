@@ -349,3 +349,33 @@ export function snapDelta(
   const y = nearest(moving.y, lines.y, tol);
   return { dx: x.d, dy: y.d, gx: x.line, gy: y.line };
 }
+
+/**
+ * The topmost drawn unit whose displayed rect contains a data-px point, or
+ * null for empty canvas. The canvas paints `units` in array order, so the LAST
+ * match is the one on top — the one a click would hit — hence the reverse walk.
+ * `rectOf` is passed in rather than read off the unit because the displayed
+ * rect is the live drag preview when there is one, which only the component
+ * knows.
+ */
+export function unitAt(
+  units: DrawUnit[],
+  rectOf: (u: DrawUnit) => Rect,
+  x: number,
+  y: number,
+): DrawUnit | null {
+  for (let i = units.length - 1; i >= 0; i--) {
+    const r = rectOf(units[i]);
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return units[i];
+  }
+  return null;
+}
+
+/** `ids` with `id` moved to `toIndex` (clamped into range). This is the whole
+ * ordering, because `reorder_stack` rewrites `preferredIdxInStack3[container]`
+ * from the list it is given. Pure — the input array is not touched. */
+export function moveInOrder(ids: string[], id: string, toIndex: number): string[] {
+  const rest = ids.filter((x) => x !== id);
+  const at = Math.max(0, Math.min(toIndex, rest.length));
+  return [...rest.slice(0, at), id, ...rest.slice(at)];
+}
