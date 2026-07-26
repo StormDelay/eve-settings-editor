@@ -20,6 +20,7 @@
     onReveal,
     onDirty,
     sharedNames = [],
+    focusFilter = $bindable(undefined),
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -34,6 +35,10 @@
      * fields are account-wide, so the warning belongs on those rows, not
      * above the whole view. */
     sharedNames?: string[];
+    /** Exposed so +page.svelte's global Ctrl+F handler can focus the window
+     * filter input when this view is active. Forwarded from WindowPanel,
+     * where the input actually lives — see its own focusFilter doc. */
+    focusFilter?: () => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -459,7 +464,8 @@
         {onReorder}
         {onAddToStack}
         {onCreateStack}
-        bind:filter />
+        bind:filter
+        bind:focusFilter />
     </div>
   </div>
 {/if}
