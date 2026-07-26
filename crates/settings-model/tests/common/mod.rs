@@ -72,9 +72,18 @@ pub fn synthetic_only() -> bool {
     std::env::var_os("EVE_SYNTHETIC_ONLY").is_some_and(|v| v != "0")
 }
 
+/// `testdata/` is gitignored (personal data), so a git worktree never carries
+/// it and every real-corpus gate silently degrades to synthetic-only there —
+/// passing while verifying nothing, which is the exact failure these gates
+/// exist to prevent. Point `EVE_CORPUS_DIR` at the main checkout's
+/// `testdata/corpus` to run them from a worktree.
 pub fn real_root() -> Option<PathBuf> {
     if synthetic_only() {
         return None;
+    }
+    if let Some(dir) = std::env::var_os("EVE_CORPUS_DIR") {
+        let p = PathBuf::from(dir);
+        return p.is_dir().then_some(p);
     }
     let p = crate_root().join("../../testdata/corpus");
     p.is_dir().then_some(p)
