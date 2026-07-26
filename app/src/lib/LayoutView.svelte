@@ -118,6 +118,13 @@
       lastToken = refreshToken;
       lastSlot = slot;
       lastUserOpen = userOpen;
+      // A preview belongs to the document that was open when it was made.
+      // EVE window ids are per-character dict keys and common ones (overview,
+      // market, ...) repeat across characters, so a preview left over from
+      // the previous document could otherwise be committed onto a same-named
+      // window belonging to whatever just loaded.
+      preview = {};
+      nudging = null;
       load();
     }
   });
@@ -427,6 +434,8 @@
     units.find((u) => u.anchor.id === selectedId || u.tabs.some((t) => t.id === selectedId)) ?? null;
 
   function onKeyDown(e: KeyboardEvent) {
+    // Alt is the snap-disable modifier for drags; a nudge never snaps, so
+    // Alt+Arrow has nothing to disable and is left to do nothing.
     if (readOnly || drag || e.ctrlKey || e.metaKey || e.altKey) return;
     const step = NUDGE[e.key as keyof typeof NUDGE];
     if (!step) return;
@@ -434,7 +443,11 @@
     // panel's own x/y/w/h number inputs both want them.
     const t = e.target as HTMLElement | null;
     if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return;
-    const unit = selectedUnit();
+    // A held nudge owns its unit until keyup: re-resolving from the live
+    // selection on every auto-repeat keydown would let a mid-hold selection
+    // change (e.g. a click in the window panel) retarget onto a different
+    // unit, stranding the first unit's accumulated preview uncommitted.
+    const unit = nudging ? (units.find((u) => u.anchor.id === nudging) ?? null) : selectedUnit();
     if (!unit) return;
     e.preventDefault(); // or the canvas pane scrolls out from under the nudge
     const n = e.shiftKey ? 10 : 1;
