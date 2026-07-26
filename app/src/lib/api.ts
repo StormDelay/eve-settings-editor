@@ -177,6 +177,14 @@ export interface WindowLayout {
   stacks: Stack[];
 }
 
+export interface LayoutPrefs {
+  clutter: string[];
+  visible: string[];
+}
+export interface Preferences {
+  layout: LayoutPrefs;
+}
+
 export interface AccountView {
   user_id: number;
   alias: string | null;
@@ -295,6 +303,8 @@ export const api = {
   restoreBackup: (slot: Slot, backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
   windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
+  preferences: () => invoke<Preferences>("preferences"),
+  setPreferences: (prefs: Preferences) => invoke<void>("set_preferences", { prefs }),
   hud: () => invoke<Hud>("hud_layout"),
   setHudValue: (name: string, text: string) =>
     invoke<Hud>("set_hud_value", { name, text }),
