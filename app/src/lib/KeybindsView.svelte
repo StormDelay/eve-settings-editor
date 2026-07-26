@@ -3,9 +3,9 @@
   import { labelFor, groupFor, GROUP_ORDER, defaultFor, keysToLabel, eventToKeys } from "./keybinds";
   import { message } from "@tauri-apps/plugin-dialog";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {} }:
+  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, sharedLabel = "" }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
-      onShowAccounts?: () => void; onShowBatch?: () => void } = $props();
+      onShowAccounts?: () => void; onShowBatch?: () => void; sharedLabel?: string } = $props();
 
   let binds = $state<Keybinds | null>(null);
   let error = $state<string | null>(null);
@@ -93,6 +93,7 @@
     <button class="link" onclick={onShowBatch}>Copy bindings from another account…</button>
   </p>
 {:else if binds}
+  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
   <div class="searchbar">
     <!-- No "(Ctrl+F)" hint: that shortcut still opens the Tree search from the
          page-level handler. Wiring it per-view is being done on the layout
@@ -150,4 +151,8 @@
   .default { opacity: 0.5; }
   tr.malformed { opacity: 0.6; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  .shared-banner {
+    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
+    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
+  }
 </style>

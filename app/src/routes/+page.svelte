@@ -487,6 +487,7 @@
           <KeybindsView
             userOpen={slots.user?.status === "opened"}
             userId={openUserId}
+            sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
             onShowBatch={() => (mainView = "batch")}
             onUserDirty={() => (dirtySlots.user = true)} />
