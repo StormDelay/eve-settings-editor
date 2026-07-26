@@ -6,6 +6,61 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The overview appearance checkboxes now read and write correctly on real
+  accounts.** They only understood a boolean value, but the client stores these
+  flags as a number on almost every account — 132 of the 135 corpus accounts
+  that carry "hide corp ticker" store it that way. Reading one returned nothing,
+  so the box showed unticked whatever the account had; ticking it then appended
+  a second value instead of replacing the first, leaving a malformed entry whose
+  stale original value the client kept using. Both halves are fixed: the box
+  shows the real state, and toggling it takes effect.
+- **The ship HUD offset now reads when stored as a whole number** rather than a
+  decimal, as two corpus characters have it.
+
+### Internal
+- **A committed synthetic corpus** (`fixtures/`, see `fixtures/README.md`).
+  The corpus gates previously skipped whenever `testdata/` was absent, so they
+  asserted nothing on CI. Thirteen generated fixtures now cover the whole shape
+  surface — including a negative `LONG`, a non-empty `REDUCE` tail, the `STREAM`
+  opcode and the deprecated string opcodes, none of which appear in any real
+  file — and the gates run everywhere. `EVE_SYNTHETIC_ONLY=1` skips the real
+  corpus for a fast local loop.
+- **The real corpus is deduplicated by content hash.** Of its 6140 files only
+  413 are distinct; decoding the rest proved nothing. Full-suite corpus gate
+  time drops from ~295 s to ~30 s.
+- **New cross-feature projection gate** (`projection_smoke.rs`): every
+  projection runs over every corpus file, and the curated fixtures assert each
+  one actually reads the data it was built to contain. This is the guard against
+  the "passes every hand-built unit test while reading nothing from a real file"
+  class that produced the read-side bugs above.
+- **New mutation gate** (`mutation_smoke.rs`): 24 tests that run each editor's
+  write path through the app's real chain — mutate, reshare, encode, decode,
+  bit-exact verify — and then re-project to prove the edit survived the round
+  trip. It covers every mutation the app exposes, including on an account whose
+  every list is reached through a shared reference, which is the shape that turns
+  a structural edit into an unsaveable file. This is what caught the appearance
+  write bug above.
+- **Component tests.** The frontend had 4248 lines of Svelte covered by nothing:
+  the pure-module suite could only reach logic that had already been extracted.
+  `vitest` + `jsdom` + `@testing-library/svelte` now mount components, fire
+  events and assert both on the DOM and on what the component sends over IPC.
+  The two suites split by extension — `*.test.ts` stays on `node --test` with no
+  framework, `*.spec.ts` is vitest — and `npm test` runs both. Conventions and
+  the two traps that cost the most time are written down in
+  `app/src/lib/test/README.md`.
+- **First component coverage**: the HUD panel (the rounding and
+  refuse-to-write rules that decide what text reaches the backend's parser) and
+  the Batch view (which files a copy actually overwrites — "Everything" being
+  exclusive, unpaired characters excluded from account-scoped aspects, apply
+  sending the effective targets rather than the raw ticks, and a stale preview
+  response not clobbering a newer one).
+- **IPC contract test.** `invoke` is stringly-typed on both sides, so a renamed
+  command or argument compiled, type-checked and then failed at runtime. All 53
+  commands are now pinned: every one `api.ts` calls exists in Rust, every
+  `#[tauri::command]` is registered in `generate_handler!`, no Rust command is
+  unreachable, and the argument names agree.
+
 ## [0.15.0] - 2026-07-26
 
 The ship HUD, fighter UI and neocom on the layout canvas.
