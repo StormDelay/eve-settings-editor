@@ -61,15 +61,15 @@ Same shape as the file's existing helpers (`resizeRect`, `stackUnits`): no DOM,
 no Svelte, unit-tested in `layout.test.ts`.
 
 ```ts
+export interface Rect { x: number; y: number; w: number; h: number }
+
 /** Candidate edge coordinates, in data px, split by axis. */
 export interface SnapLines { x: number[]; y: number[] }
 
-export function snapLines(
-  units: DrawUnit[],
-  furniture: FurnitureRect[],
-  layout: WindowLayout,
-  exclude: Set<string>,
-): SnapLines;
+export function snapLines(rects: Rect[], referenceW: number, referenceH: number): SnapLines;
+
+/** The edges a drag actually moves: all four for a move, two for a resize. */
+export function movingEdges(r: Rect, corner: Corner | null): { x: number[]; y: number[] };
 
 /** The correction to add to a raw drag delta, plus the lines it caught. */
 export interface SnapResult { dx: number; dy: number; gx: number | null; gy: number | null }
@@ -83,14 +83,17 @@ export function snapDelta(
 
 **Candidates (`snapLines`).** Collected once, at drag start:
 
-- every draw unit's displayed rect contributes `x` and `x + w` to `lines.x`, and
-  `y` and `y + h` to `lines.y`;
-- every furniture rect contributes the same four edges;
-- the canvas contributes `0` and `layout.reference_w` to `lines.x`, `0` and
-  `layout.reference_h` to `lines.y`.
+- every rect contributes `x` and `x + w` to `lines.x`, and `y` and `y + h` to
+  `lines.y`;
+- the canvas contributes `0` and `referenceW` to `lines.x`, `0` and
+  `referenceH` to `lines.y`.
 
-`exclude` is the dragged unit's own ids — its `fanTargets` — so a window never
-snaps to itself or to a stack sibling it is carrying along.
+The caller assembles the rect list: the *displayed* rect of every draw unit
+(`rectOf`, so a rect still showing a preview contributes where it is seen, not
+where it was committed) plus every furniture rect, minus the dragged unit's own
+ids — its `fanTargets` — so a window never snaps to itself or to a stack sibling
+it is carrying along. Taking plain rects rather than `DrawUnit[]` keeps the
+function honest about what it needs and keeps its tests free of stack fixtures.
 
 Units, not the raw window list: what the canvas *draws* is what snaps, so the
 1a filter already applies. Snapping to a window that isn't on screen would be
@@ -101,12 +104,12 @@ Duplicate coordinates are not deduplicated; on a real file the candidate arrays
 run to a few hundred numbers and the search below is a linear scan per move,
 which is nothing next to the DOM update the same move triggers.
 
-**The search (`snapDelta`).** `moving` holds the edges that the drag actually
-moves, in data px, already displaced by the raw delta:
+**The search (`snapDelta`).** `moving` — built by `movingEdges` from the
+raw-displaced rect — holds the edges the drag actually moves, in data px:
 
-- a **move** passes all four: `x: [x, x + w]`, `y: [y, y + h]`;
-- a **corner resize** passes only the two edges that corner moves — `tl` passes
-  `x: [x]`, `y: [y]`; `br` passes `x: [x + w]`, `y: [y + h]`; and so on.
+- a **move** (`corner: null`) passes all four: `x: [x, x + w]`, `y: [y, y + h]`;
+- a **corner resize** passes only the two edges that corner moves — `tl` gives
+  `x: [x]`, `y: [y]`; `br` gives `x: [x + w]`, `y: [y + h]`; and so on.
 
 Per axis, every moving edge is tested against every candidate. The smallest
 absolute distance within `tol` wins and its signed difference becomes the
@@ -186,9 +189,10 @@ it. Snapping it back would make the two features fight.
 ## 6. Testing
 
 - `layout.test.ts` (node `--test`, zero-dep) gains:
-  - `snapLines`: canvas edges always present; a unit's own ids excluded via
-    `exclude`; furniture edges included; a filtered-out window contributes
-    nothing (its unit isn't passed in).
+  - `snapLines`: canvas edges always present even with no rects; each rect
+    contributes exactly its two edges per axis.
+  - `movingEdges`: all four edges for a move; exactly the two edges each of the
+    four corners moves.
   - `snapDelta`: nearest candidate wins; a candidate outside `tol` is a no-op
     with `null` guides; both moving edges are tested, so a rect snaps by its
     right edge as readily as its left; the tie rule picks the lower coordinate;
