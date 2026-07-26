@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe, groupByFamily, displayName, nameOf, stackLabel } from "$lib/windowLabels";
+  import { describe, groupByFamily, displayName, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
@@ -18,6 +18,8 @@
     onReorder,
     onAddToStack,
     onCreateStack,
+    overrides,
+    onClutterOverride,
     filter = $bindable({ ...NO_FILTER }),
     focusFilter = $bindable(undefined),
   }: {
@@ -34,6 +36,11 @@
     onReorder: (container: string, members: string[]) => void;
     onAddToStack: (member: string, container: string) => void;
     onCreateStack: (m1: string, m2: string) => void;
+    /** The user's per-window clutter overrides — owned by prefs.svelte, passed
+     * down so this stays a presentational component like every other prop
+     * it takes. */
+    overrides: ClutterOverrides;
+    onClutterOverride: (id: string, mode: "clutter" | "visible" | "default") => void;
     /** Shared with the canvas — see LayoutView. The panel renders the controls;
      * LayoutView owns the state and applies the same predicate to the rects. */
     filter?: WindowFilter;
@@ -80,6 +87,16 @@
       items.push({ label: "Show geometry in tree", run: () => onReveal(path) });
     }
     items.push(copyId(w.id), { label: "Select on canvas", run: () => onSelect(w.id) });
+    // One item, never both, labelled for what the click will do. The built-in
+    // tables can never be complete, so this is the per-window escape hatch.
+    const overridden = overrides.clutter.has(w.id) || overrides.visible.has(w.id);
+    if (overridden) {
+      items.push({ label: "Use the default clutter rule", run: () => onClutterOverride(w.id, "default") });
+    } else if (isClutter(w.id, overrides)) {
+      items.push({ label: "Stop treating as clutter", run: () => onClutterOverride(w.id, "visible") });
+    } else {
+      items.push({ label: "Treat as clutter", run: () => onClutterOverride(w.id, "clutter") });
+    }
     return items;
   }
 
@@ -120,7 +137,7 @@
   // no window-rect to show) — every lookup below must tolerate a miss.
   const findWindow = (id: string) => windows.find((w) => w.id === id);
 
-  const freeWindows = $derived(windows.filter((w) => w.stack === null && windowMatches(w, filter)));
+  const freeWindows = $derived(windows.filter((w) => w.stack === null && windowMatches(w, filter, overrides)));
   // Folding is list presentation only: a family with more than one member
   // renders as one collapsible row. It never changes what the canvas draws —
   // that is the filter's job (LayoutView owns it).
@@ -156,7 +173,7 @@
   function matchingMembers(stack: Stack): string[] {
     return stack.members.filter((id) => {
       const w = findWindow(id);
-      return !!w && windowMatches(w, filter);
+      return !!w && windowMatches(w, filter, overrides);
     });
   }
 </script>
@@ -305,7 +322,7 @@
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
     {@const matched = matchingMembers(stack)}
-    {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter)}
+    {@const containerMatches = !!containerWindow && windowMatches(containerWindow, filter, overrides)}
     {@const label = stackLabel(stack)}
     {#if matched.length > 0 || containerMatches}
     <div class="stack-group">
@@ -349,7 +366,7 @@
       {#if !collapsed[stack.container_id]}
         {#each stack.members as memberId, i (memberId)}
           {@const w = findWindow(memberId)}
-          {#if w && windowMatches(w, filter)}
+          {#if w && windowMatches(w, filter, overrides)}
             <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
               <div class="row-head">
                 {@render rowHead(w)}
