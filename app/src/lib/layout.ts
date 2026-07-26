@@ -116,6 +116,13 @@ export function stackUnits(layout: WindowLayout, visible: Set<string> | null = n
   return units;
 }
 
+/** How many windows a set of draw units actually paints: a stack unit draws one
+ * rectangle but represents each of its visible tabs, a free unit exactly one.
+ * The counter reports windows, not rectangles — "showing 3 of 68 windows". */
+export function drawnWindowCount(units: DrawUnit[]): number {
+  return units.reduce((n, u) => n + (u.stack ? u.tabs.length : 1), 0);
+}
+
 export interface FurnitureRect {
   kind: "neocom" | "shipui" | "fighter" | "badge";
   label: string;
