@@ -126,6 +126,26 @@ const check = (name: string, ok: boolean) => {
   // Ordinary windows are never clutter.
   check("market is not clutter", !isClutter("market"));
   check("overview is not clutter", !isClutter("overview"));
+
+  // d. the 2026-07-26 expansion: a representative new exact-id dialog.
+  check("enterShipPassword is clutter", isClutter("enterShipPassword"));
+
+  // e. assembleWindow: parent-vs-spawned, same rule as ShipCargo etc.
+  check("a spawned assembleWindow instance is clutter", isClutter("assembleWindow_1039455460976"));
+  check("a bare assembleWindow stays visible", !isClutter("assembleWindow"));
+
+  // f. bookmarkLocationWindow deliberately lives in BOTH CLUTTER_IDS (bare
+  // id, exact-id branch) and CLUTTER_FAMILIES (suffixed id, family branch).
+  check("a bare bookmarkLocationWindow is clutter", isClutter("bookmarkLocationWindow"));
+  check(
+    "a spawned bookmarkLocationWindow instance is clutter",
+    isClutter("bookmarkLocationWindow_1026274319209"),
+  );
+
+  // g. regression guard: real placeable windows must never be reclassified
+  // as clutter by a future edit to the blocklists.
+  check("directionalScannerWindow is not clutter", !isClutter("directionalScannerWindow"));
+  check("overview_1 is not clutter", !isClutter("overview_1"));
 }
 
 // --- displayName -------------------------------------------------------------
