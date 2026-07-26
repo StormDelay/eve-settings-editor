@@ -19,6 +19,7 @@
     onAddToStack,
     onCreateStack,
     filter = $bindable({ ...NO_FILTER }),
+    focusFilter = $bindable(undefined),
   }: {
     windows: WindowRect[];
     stacks: Stack[];
@@ -36,7 +37,17 @@
     /** Shared with the canvas — see LayoutView. The panel renders the controls;
      * LayoutView owns the state and applies the same predicate to the rects. */
     filter?: WindowFilter;
+    /** Exposed so the global Ctrl+F handler in +page.svelte can focus this
+     * input from outside — LayoutView forwards it up. The input lives here,
+     * so this is where the bind:this actually is. */
+    focusFilter?: () => void;
   } = $props();
+
+  let filterInput: HTMLInputElement | undefined = $state();
+  focusFilter = () => {
+    filterInput?.focus();
+    filterInput?.select();
+  };
 
   // Right-click opens a menu. This replaces the M2-era direct tree jump — the
   // TODO that shipped with the layout canvas.
@@ -280,6 +291,7 @@
       type="search"
       placeholder="Filter windows…"
       aria-label="Filter windows"
+      bind:this={filterInput}
       bind:value={filter.text} />
     <label class="toggle">
       <input type="checkbox" bind:checked={filter.openOnly} />
