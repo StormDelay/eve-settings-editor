@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-26
+
+A usable Layout editor: named windows, folded families, and one filter for the
+list and the canvas.
+
+### Added
+- **Windows have readable names.** The Layout list and canvas showed raw client
+  ids — `ChannelSettingsDlg_fleet_1038711647935`, `('corpassets', 1037014587783L)`,
+  `76`. They now read as *Chat · fleet*, *Corp assets*, *Window stack · 76*, with
+  the raw id still on hover, in the context menu, and one click from the
+  clipboard. An id nobody has named falls back to a tidied-up version of itself,
+  so it can look plain but never wrong.
+- **Repeated windows fold away.** A real character carries a median of 296
+  windows, most of them one per chat channel, mail or contact. Those now collapse
+  into a single counted row you can expand.
+- **A filter that drives the list *and* the canvas.** A search box plus
+  `Open only` and `Hide clutter`, so narrowing the list narrows the picture too.
+  A `showing N of M windows · reset` line keeps a filter honest — nothing ever
+  disappears without saying so. `Hide clutter` drops the windows EVE spawns per
+  conversation, item or dialog while keeping the ones you placed: on a real
+  character it takes the canvas from 83 rectangles to 18. The filter is kept when
+  you switch character, so you can compare the same subset across pilots.
+- **Right-click menu** in the window list — *Show in tree*, *Copy window id*,
+  *Select on canvas* — replacing the old jump-straight-to-the-raw-tree behaviour.
+- **`Ctrl+F`** focuses the window filter while the Layout view is open.
+
 ### Fixed
 - **The overview appearance checkboxes now read and write correctly on real
   accounts.** They only understood a boolean value, but the client stores these
