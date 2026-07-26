@@ -718,7 +718,12 @@ Ranked by value ÷ effort. "Scope" is what one edit changes.
 
 ### Tier 1 — high value, self-contained
 
-**1. Keybindings editor** — account scope, `cmd → customCmds`.
+**1. Keybindings editor (SHIPPED)** — account scope, `cmd → customCmds`.
+
+**Shipped on the `keybindings-editor` branch** — see `KeybindsView.svelte` and
+`crates/settings-model/src/keybinds.rs`. No longer the top candidate; kept here
+because the analysis is still useful background. The original finding follows.
+
 The single biggest missing feature. 101 commands, values are VK-code tuples, one
 flat dict, no cross-file link, no structural editing (the dict already exists in
 175/175 files). Needs one hand-authored vocabulary — VK code → key label — the
