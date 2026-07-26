@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-26
+
+Windows called what EVE calls them, and clutter you get to define.
+
+### Added
+- **Chat windows show their real channel name.** A chat window's id contains
+  none of the channel's name, so the list and the canvas could only ever say
+  *Chat · private* — and searching for a channel by name found nothing, which is
+  how this surfaced. The name was in the character file the whole time; it is now
+  read, shown, and searchable.
+- **Window stacks show EVE's own label.** *Window stack · 76* becomes
+  *Character: Information* — the label the client itself uses for that stack,
+  which lives in the account file. A stack the editor created has no such label
+  yet and still shows its number.
+- **You decide what counts as clutter.** `Hide clutter` guesses from a built-in
+  list, and that list can never be complete: EVE's "open windows" flag
+  accumulates rather than tracking what is on screen, so a real character has 134
+  windows flagged open against about 9 actually visible, one-shot dialogs
+  included. Right-click any window in the list to *Treat as clutter* or *Stop
+  treating as clutter*, and the counter grows a `· N overridden · clear` note so
+  the choice is never invisibly in effect.
+- **A preferences file.** Those overrides are the first thing the editor
+  remembers about *you* rather than about EVE, so they live in a
+  `preferences.json` of its own, alongside the app's settings rather than in the
+  game's files. Nothing here writes to an EVE settings file. A file it cannot
+  read is moved aside rather than overwritten.
+
+The raw window id is still on hover and one click away in the right-click menu:
+friendly names are only ever an improvement on top of it, never a replacement.
+
 ## [0.18.0] - 2026-07-26
 
 Set your keybindings once, then give them to every other account.
