@@ -194,6 +194,17 @@ check("open filter keeps the right window", open[0].id === "a");
   // non-clutter chat window, narrowed further by text.
   const ids = visibleIds([standingChat, privateChat, market], { ...NO_FILTER, hideClutter: true, text: "chat" });
   check("visibleIds composes hideClutter with text", ids.size === 1 && ids.has("chatchannel_local"));
+
+  // Orphaned stack frames: a minted numeric id with no stack membership at all
+  // is a dead frame (its members are gone) — structural, not curated.
+  const orphanFrame = win("219", true, true, null);
+  const containerFrame = win("219", true, true, { container_id: "219", role: "container" });
+  const memberFrame = win("219", true, true, { container_id: "C", role: "member" });
+  check("hideClutter drops an orphaned numeric stack frame", !windowMatches(orphanFrame, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a numeric id that IS a stack container", windowMatches(containerFrame, { ...NO_FILTER, hideClutter: true }));
+  check("hideClutter keeps a numeric id that is a stack member", windowMatches(memberFrame, { ...NO_FILTER, hideClutter: true }));
+  check("a non-numeric id with no stack is unaffected by the orphan rule", windowMatches(market, { ...NO_FILTER, hideClutter: true }));
+  check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
 }
 
 // --- stackUnits under a filter ---------------------------------------------
