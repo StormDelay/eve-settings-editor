@@ -24,14 +24,24 @@ export const overrideCount = () => prefs.layout.clutter.length + prefs.layout.vi
  * independently — this is a single-user desktop app with one UI, so awaiting
  * the prior write is enough to stop two rapid toggles from resolving out of
  * order and leaving the file one step behind what's on screen. A failure
- * surfaces the usual error dialog and rolls the in-memory state back to what
- * it was before this change, per spec §4. */
+ * surfaces the usual error dialog, matching `LayoutView`'s `commit`/`runStack`/
+ * `setHud`.
+ *
+ * Deliberately no rollback. `prefs` is written whole, not as a delta, so if a
+ * later write lands (as `loadPrefs` would after a restart, or the next
+ * successful toggle) it carries the full current state and self-heals the
+ * file regardless of an earlier failure. A hand-restored `prev` snapshot
+ * would instead risk *reverting* a concurrent edit that queued after the one
+ * that failed — WA fails and restores state0 while WB, already queued on top
+ * of state1, still succeeds and writes state2 to disk; memory then holds the
+ * stale state0, and the next edit builds on it, silently overwriting the good
+ * on-disk state2. Per spec §4: a failed write "leaves the in-memory state
+ * alone" — with no rollback there is no stale value to diverge from. */
 let writeQueue: Promise<void> = Promise.resolve();
 
-function persist(next: Preferences, prev: Preferences): void {
+function persist(next: Preferences): void {
   writeQueue = writeQueue.then(() =>
     api.setPreferences($state.snapshot(next)).catch(async (e) => {
-      prefs = prev;
       await message(errMessage(e), { title: "Preferences not saved", kind: "error" });
     }),
   );
@@ -41,7 +51,6 @@ function persist(next: Preferences, prev: Preferences): void {
  * two lists are kept disjoint here, which is what lets `isClutter` treat them
  * as independent. */
 export function setClutterOverride(id: string, mode: "clutter" | "visible" | "default"): void {
-  const prev = prefs;
   const l = prefs.layout;
   prefs = {
     ...prefs,
@@ -50,11 +59,10 @@ export function setClutterOverride(id: string, mode: "clutter" | "visible" | "de
       visible: l.visible.filter((x) => x !== id).concat(mode === "visible" ? [id] : []),
     },
   };
-  persist(prefs, prev);
+  persist(prefs);
 }
 
 export function clearClutterOverrides(): void {
-  const prev = prefs;
   prefs = { ...prefs, layout: { clutter: [], visible: [] } };
-  persist(prefs, prev);
+  persist(prefs);
 }
