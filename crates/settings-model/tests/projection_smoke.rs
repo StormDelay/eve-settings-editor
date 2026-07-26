@@ -36,7 +36,7 @@ fn no_projection_panics_on_any_corpus_file() {
         scanned += 1;
 
         let _ = project(&doc);
-        let _ = window_layout(&doc);
+        let _ = window_layout(&doc, None);
         let _ = project_hud(&doc, None);
         let _ = project_hud(&doc, Some(&doc));
         let _ = project_edit_history(&doc);
@@ -68,7 +68,7 @@ fn fixture(name: &str) -> blue_marshal::Value {
 fn modern_character_projects_its_whole_layout() {
     let doc = fixture("core_char_90000001.dat");
 
-    let layout = window_layout(&doc);
+    let layout = window_layout(&doc, None);
     assert_eq!((layout.reference_w, layout.reference_h), (2560, 1440));
     assert!(layout.windows.len() >= 11, "windows: {}", layout.windows.len());
     assert!(
@@ -133,7 +133,7 @@ fn overview_columns_join_across_both_files() {
 fn minimal_character_projects_absences_as_absences() {
     let doc = fixture("core_char_90000002.dat");
 
-    let layout = window_layout(&doc);
+    let layout = window_layout(&doc, None);
     assert_eq!(layout.windows.len(), 1);
     assert!(layout.stacks.is_empty());
     assert_eq!((layout.reference_w, layout.reference_h), (1920, 1080));
@@ -151,7 +151,7 @@ fn minimal_character_projects_absences_as_absences() {
 fn legacy_character_survives_type_instability() {
     let doc = fixture("core_char_90000003.dat");
 
-    let layout = window_layout(&doc);
+    let layout = window_layout(&doc, None);
     assert_eq!((layout.reference_w, layout.reference_h), (1920, 1080));
     assert_eq!(layout.windows.len(), 2);
 

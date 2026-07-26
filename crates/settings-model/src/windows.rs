@@ -5,14 +5,17 @@
 //! window ids, tuple element order) lives here so the UI never reconstructs a
 //! path from format details. Nothing in this module mutates.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
-use crate::treewalk::{child_dict, collect_shared, effective, hex, timestamped_dict, Entries, SharedTable};
+use crate::treewalk::{
+    child_dict, collect_shared, effective, hex, is_bytes, section, text, timestamped_dict, Entries,
+    SharedTable,
+};
 
 /// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
@@ -39,6 +42,10 @@ pub struct WindowLayout {
 pub struct WindowRect {
     pub id: String,
     pub label: String,
+    /// EVE's own display name for this window, when the file carries one.
+    /// `None` for the vast majority — only chat windows have one today — in
+    /// which case the frontend derives a name from the id.
+    pub name: Option<String>,
     pub open: bool,
     pub renderable: bool,
     pub resolution_matches: bool,
@@ -103,7 +110,7 @@ pub enum SetTarget {
     Unavailable,
 }
 
-pub fn window_layout(root: &Value) -> WindowLayout {
+pub fn window_layout(root: &Value, user: Option<&Value>) -> WindowLayout {
     let empty = WindowLayout { reference_w: 0, reference_h: 0, windows: Vec::new(), stacks: Vec::new() };
 
     let Some((windows_dict, windows_path)) = child_dict(root, b"windows", Vec::new()) else {
@@ -168,6 +175,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         windows.push(WindowRect {
             id: id.clone(),
             label: id,
+            name: None, // filled in below, once chat channel names are resolved
             open,
             renderable: geom.is_some(),
             resolution_matches: true, // fixed up below
@@ -181,6 +189,17 @@ pub fn window_layout(root: &Value) -> WindowLayout {
     for w in &mut windows {
         if let Some(g) = &w.geom {
             w.resolution_matches = g.screen_w == reference_w && g.screen_h == reference_h;
+        }
+    }
+
+    // EVE's own name for a chat window, where it has one. Everything else keeps
+    // `None` and is named by the frontend from its id.
+    let chat = chat_channel_names(root, &shared);
+    if !chat.is_empty() {
+        for w in &mut windows {
+            if let Some(key) = w.id.strip_prefix("chatchannel_") {
+                w.name = chat.get(key).cloned();
+            }
         }
     }
 
@@ -230,6 +249,8 @@ pub fn window_layout(root: &Value) -> WindowLayout {
         windows.iter().filter(|w| w.geom.is_some()).map(|w| w.id.as_str()).collect();
     let open_ids: HashSet<&str> = windows.iter().filter(|w| w.open).map(|w| w.id.as_str()).collect();
 
+    let tab_labels = user.map(stack_tab_labels).unwrap_or_default();
+
     let mut stacks = Vec::new();
     for container in order {
         let mut members = groups.remove(&container).unwrap_or_default();
@@ -247,7 +268,7 @@ pub fn window_layout(root: &Value) -> WindowLayout {
                 .unwrap_or_else(|| members.first().cloned().unwrap_or_else(|| container.clone()))
         };
         stacks.push(Stack {
-            container_label: container.clone(),
+            container_label: tab_labels.get(&container).cloned().unwrap_or_else(|| container.clone()),
             anchor_id,
             members,
             container_id: container,
@@ -344,6 +365,52 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
         .unwrap_or((0, 0))
 }
 
+/// `ui → chatchannels` is `List[Tuple(kind, channelKey, label)]` (367 of 384
+/// corpus files). Returns channelKey → label; the window id for a channel is
+/// `chatchannel_<channelKey>`. An absent section is normal, not an error.
+fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some((ui, _)) = section(root, b"ui", sh) else { return out };
+    let Some((_, v)) = ui.iter().find(|(k, _)| is_bytes(effective(k, sh), b"chatchannels")) else {
+        return out;
+    };
+    let Value::List(items) = effective(v, sh) else { return out };
+    for it in items {
+        let Value::Tuple(parts) = effective(it, sh) else { continue };
+        if parts.len() < 3 { continue }
+        if let (Some(key), Some(label)) = (text(&parts[1], sh), text(&parts[2], sh)) {
+            if !key.is_empty() && !label.is_empty() {
+                out.insert(key, label);
+            }
+        }
+    }
+    out
+}
+
+/// The ACCOUNT file's root `tabgroups` section, in pairs: `<containerId>` →
+/// selected tab index, `<containerId>_names` → that tab's label. The container
+/// ids are the same numeric ids minted in the character file's
+/// `windows → stacksWindows`, so the join needs no translation.
+fn stack_tab_labels(user: &Value) -> HashMap<String, String> {
+    // The account root needs its OWN shared table: slot numbers are
+    // per-document, and resolving one document's Ref against another's table
+    // yields the wrong node.
+    let mut sh = SharedTable::new();
+    collect_shared(user, &mut sh);
+    let mut out = HashMap::new();
+    let Some((groups, _)) = section(user, b"tabgroups", &sh) else { return out };
+    for (k, v) in groups {
+        let Some(key) = text(k, &sh) else { continue };
+        let Some(id) = key.strip_suffix("_names") else { continue };
+        if let Some(label) = text(v, &sh) {
+            if !label.is_empty() {
+                out.insert(id.to_string(), label);
+            }
+        }
+    }
+    out
+}
+
 fn mode(it: impl Iterator<Item = (i64, i64)>) -> Option<(i64, i64)> {
     let mut counts: Vec<((i64, i64), usize)> = Vec::new();
     for res in it {
@@ -373,6 +440,28 @@ mod tests {
         ])
     }
 
+    fn bytes(s: &str) -> Value {
+        Value::Bytes(s.as_bytes().to_vec())
+    }
+
+    /// A `windows` value containing just `windowSizesAndPositions_1` (screen
+    /// fixed at 2560x1440 — irrelevant to the tests that use this), for fixtures
+    /// that need to nest it alongside other top-level sections (e.g. `ui`).
+    fn windows_section(entries: &[(&str, i64, i64, i64, i64)]) -> Value {
+        Value::Dict(vec![(
+            bytes("windowSizesAndPositions_1"),
+            Value::Tuple(vec![
+                ts(),
+                Value::Dict(
+                    entries
+                        .iter()
+                        .map(|(id, x, y, w, h)| (bytes(id), geom(*x, *y, *w, *h, 2560, 1440)))
+                        .collect(),
+                ),
+            ]),
+        )])
+    }
+
     /// root -> b"windows" -> { b"windowSizesAndPositions_1": (ts, { id: 6tuple }) }
     fn doc_with(geom_entries: Vec<(Value, Value)>) -> Value {
         Value::Dict(vec![(
@@ -390,7 +479,7 @@ mod tests {
             (Value::Bytes(b"overview".to_vec()), geom(100, 200, 400, 1000, 2560, 1440)),
             (Value::Bytes(b"market".to_vec()), geom(16, 825, 500, 600, 2560, 1440)),
         ]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!(wl.reference_w, 2560);
         assert_eq!(wl.reference_h, 1440);
         assert_eq!(wl.windows.len(), 2);
@@ -416,7 +505,7 @@ mod tests {
             (Value::Bytes(b"broken".to_vec()),
              Value::Tuple(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4), Value::Int(5)])),
         ]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!(wl.windows.len(), 2);
         assert!(!wl.windows[1].renderable);
         assert!(wl.windows[1].geom.is_none());
@@ -429,7 +518,7 @@ mod tests {
             (Value::Bytes(b"b".to_vec()), geom(0, 0, 10, 10, 2560, 1440)),
             (Value::Bytes(b"c".to_vec()), geom(0, 0, 10, 10, 1920, 1080)),
         ]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
         assert!(wl.windows[0].resolution_matches);
         assert!(!wl.windows[2].resolution_matches);
@@ -438,7 +527,7 @@ mod tests {
     #[test]
     fn a_file_without_geometry_is_empty() {
         let doc = Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), Value::Dict(vec![]))]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert!(wl.windows.is_empty());
     }
 
@@ -493,7 +582,7 @@ mod tests {
     #[test]
     fn open_and_present_flags_carry_set_targets() {
         let doc = doc_with_flags();
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         let ov = &wl.windows[0];
         assert!(ov.open, "overview is open");
         assert_eq!(ov.flags.len(), 8);
@@ -509,7 +598,7 @@ mod tests {
     #[test]
     fn an_absent_flag_carries_insert_params() {
         let doc = doc_with_flags();
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         let market = &wl.windows[1];
         assert!(!market.open, "market is closed");
         let locked = flag(market, "lockedWindows");
@@ -527,7 +616,7 @@ mod tests {
     fn a_missing_flag_dict_is_unavailable() {
         // doc_with (Task 1) has geometry but no flag dicts at all.
         let doc = doc_with(vec![(Value::Bytes(b"overview".to_vec()), geom(1, 2, 3, 4, 2560, 1440))]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert!(matches!(flag(&wl.windows[0], "openWindows").set, SetTarget::Unavailable));
     }
 
@@ -554,7 +643,7 @@ mod tests {
                 ),
             ]),
         )]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         let pinned = flag(&wl.windows[0], "pinnedWindows");
         assert!(pinned.value);
         match &pinned.set {
@@ -589,7 +678,7 @@ mod tests {
                 ),
             ]),
         )]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!((wl.reference_w, wl.reference_h), (2560, 1440));
     }
 
@@ -630,7 +719,7 @@ mod tests {
                 ),
             ]),
         )]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!(wl.windows.len(), 2);
         assert_eq!(wl.windows[0].id, "overview", "Ref key resolves to the real id");
         assert_eq!(wl.windows[1].id, "market");
@@ -648,7 +737,7 @@ mod tests {
             (Value::Ref(8), geom(5, 6, 7, 8, 2560, 1440)),
             (Value::Ref(9), geom(9, 9, 9, 9, 2560, 1440)),
         ]);
-        let wl = window_layout(&doc);
+        let wl = window_layout(&doc, None);
         assert_eq!(wl.windows.len(), 3);
         let ids: HashSet<&String> = wl.windows.iter().map(|w| &w.id).collect();
         assert_eq!(ids.len(), 3, "ids must be unique even on fallback collision");
@@ -695,7 +784,7 @@ mod tests {
 
     #[test]
     fn groups_members_by_container_through_ref_and_shared() {
-        let wl = window_layout(&stacked_root());
+        let wl = window_layout(&stacked_root(), None);
         assert_eq!(wl.stacks.len(), 1);
         let s = &wl.stacks[0];
         assert_eq!(s.container_id, "88");
@@ -705,7 +794,7 @@ mod tests {
 
     #[test]
     fn per_window_stack_ref_tags_container_and_members() {
-        let wl = window_layout(&stacked_root());
+        let wl = window_layout(&stacked_root(), None);
         let role = |id: &str| wl.windows.iter().find(|w| w.id == id).unwrap().stack.as_ref();
         assert!(matches!(role("88").map(|r| &r.role), Some(StackRole::Container)));
         assert!(matches!(role("m1").map(|r| &r.role), Some(StackRole::Member)));
@@ -715,7 +804,7 @@ mod tests {
 
     #[test]
     fn anchor_is_the_container_when_it_has_geom() {
-        let wl = window_layout(&stacked_root());
+        let wl = window_layout(&stacked_root(), None);
         assert_eq!(wl.stacks[0].anchor_id, "88");
     }
 
@@ -732,7 +821,7 @@ mod tests {
                 }
             }
         }
-        let wl = window_layout(&root);
+        let wl = window_layout(&root, None);
         assert_eq!(wl.stacks[0].anchor_id, "m1", "frontmost open member (tab 0)");
     }
 
@@ -756,7 +845,7 @@ mod tests {
                 }
             }
         }
-        let wl = window_layout(&root);
+        let wl = window_layout(&root, None);
         assert_eq!(wl.stacks[0].anchor_id, "m1", "closed container must not anchor");
     }
 
@@ -803,7 +892,7 @@ mod tests {
         let root = Value::Dict(vec![(b("windows"), windows)]);
 
         let reshared = blue_marshal::reshare(&root);
-        let wl = window_layout(&reshared);
+        let wl = window_layout(&reshared, None);
 
         assert_eq!(wl.stacks.len(), 1, "the stack still surfaces after reshare");
         let anchor = wl.windows.iter().find(|w| w.id == "C").unwrap();
@@ -834,7 +923,78 @@ mod tests {
                 ])),
             ])])),
         ]);
-        let wl = window_layout(&Value::Dict(vec![(b("windows"), windows)]));
+        let wl = window_layout(&Value::Dict(vec![(b("windows"), windows)]), None);
         assert_eq!(wl.stacks[0].members, vec!["alpha".to_string(), "zeta".to_string(), "mid".to_string()]);
+    }
+
+    #[test]
+    fn a_chat_window_takes_its_real_channel_name() {
+        // ui → chatchannels is List[Tuple(kind, channelKey, label)]; the
+        // channelKey is the window id's suffix after "chatchannel_".
+        let root = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("chatchannel_local", 10, 20, 300, 200)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::List(vec![Value::Tuple(vec![
+                    Value::Int(1), bytes("local"), bytes("Local"),
+                ])]),
+            )])),
+        ]);
+        let layout = window_layout(&root, None);
+        let w = layout.windows.iter().find(|w| w.id == "chatchannel_local").expect("the chat window");
+        assert_eq!(w.name.as_deref(), Some("Local"));
+    }
+
+    #[test]
+    fn a_window_with_no_entry_gets_no_name() {
+        let root = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("market", 0, 0, 100, 100)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::List(vec![Value::Tuple(vec![Value::Int(1), bytes("local"), bytes("Local")])]),
+            )])),
+        ]);
+        let layout = window_layout(&root, None);
+        let w = layout.windows.iter().find(|w| w.id == "market").expect("the market window");
+        assert_eq!(w.name, None, "the frontend derives a name for these; the backend must not guess");
+    }
+
+    #[test]
+    fn a_stack_takes_its_label_from_the_account_file() {
+        // stacked_root()'s stack container id is "88" (see the fixture above).
+        let root = stacked_root();
+        let user = Value::Dict(vec![(
+            bytes("tabgroups"),
+            Value::Dict(vec![
+                (bytes("88"), Value::Int(0)),
+                (bytes("88_names"), bytes("Character: Information")),
+            ]),
+        )]);
+        let layout = window_layout(&root, Some(&user));
+        let s = layout.stacks.iter().find(|s| s.container_id == "88").expect("the stack");
+        assert_eq!(s.container_label, "Character: Information");
+    }
+
+    #[test]
+    fn a_stack_with_no_account_entry_keeps_the_container_id() {
+        let root = stacked_root();
+        let layout = window_layout(&root, None);
+        let s = layout.stacks.iter().find(|s| s.container_id == "88").expect("the stack");
+        assert_eq!(s.container_label, "88", "an unpaired character must project exactly as before");
+    }
+
+    #[test]
+    fn the_account_sections_resolve_through_ref_wrapped_keys() {
+        // The shape a REAL account file has: the root section key is a Ref. A
+        // hand-made flat dict would pass even with the bug this guards.
+        let root = stacked_root();
+        let key = Value::Shared { slot: 3, value: Box::new(bytes("tabgroups")) };
+        let user = Value::Dict(vec![
+            (key, Value::Dict(vec![(bytes("88_names"), bytes("Character: Information"))])),
+            (Value::Ref(3), Value::Int(0)),
+        ]);
+        let layout = window_layout(&root, Some(&user));
+        let s = layout.stacks.iter().find(|s| s.container_id == "88").expect("the stack");
+        assert_eq!(s.container_label, "Character: Information");
     }
 }
