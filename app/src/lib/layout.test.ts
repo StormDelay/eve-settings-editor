@@ -477,4 +477,25 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("no candidates is a no-op", none.dx === 0 && none.dy === 0 && none.gx === null && none.gy === null);
 }
 
+// --- onPointerMove's composition: resizeRect(dx + snap.dx, dy + snap.dy) ---
+// This guards the composition the canvas actually performs — resizeRect and
+// snapDelta are each tested pure above, but onPointerMove feeds snapDelta's
+// correction back INTO resizeRect's delta rather than adding it to the
+// output rect, so resizeRect's own anchor-crossing clamp still runs on the
+// final numbers. Covers both corner branches: br (the "else" path, where
+// resizeRect grows w) and tl (the "if (left)" path, where it moves x).
+{
+  const orig = { x: 100, y: 50, w: 200, h: 80 };
+
+  const rawR = resizeRect(orig, "br", 3, 0);
+  const s = snapDelta(movingEdges(rawR, "br"), { x: [300], y: [] }, 6);
+  const fin = resizeRect(orig, "br", 3 + s.dx, s.dy);
+  check("a br corner resize lands its moving edge on the candidate", fin.x + fin.w === 300);
+
+  const rawL = resizeRect(orig, "tl", -3, 0);
+  const s2 = snapDelta(movingEdges(rawL, "tl"), { x: [95], y: [] }, 6);
+  const fin2 = resizeRect(orig, "tl", -3 + s2.dx, s2.dy);
+  check("a tl corner resize lands its moving edge on the candidate", fin2.x === 95);
+}
+
 console.log("layout: all checks passed");
