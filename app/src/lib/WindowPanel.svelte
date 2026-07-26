@@ -287,7 +287,7 @@
     </label>
     <label class="toggle">
       <input type="checkbox" bind:checked={filter.hideNoise} />
-      Hide chat &amp; session windows
+      Hide closed chat &amp; session windows
     </label>
   </div>
   {#each stacks as stack (stack.container_id)}
