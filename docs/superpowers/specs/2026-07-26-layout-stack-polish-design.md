@@ -141,9 +141,12 @@ been.
 What a tab drag does is decided entirely by where it is dropped:
 
 - **Inside its own stack's rect** — reorder. The insertion index is the tab the
-  pointer is over, found from the tab elements' own bounding boxes (each carries
-  a `data-tab-id`); dropping over the rect's body rather than the strip yields
-  the tab's current index, which `dropAction` reports as `none`.
+  pointer is over, read off the tab elements themselves (each carries a
+  `data-tab-index`, found with `elementsFromPoint`, which still sees them while
+  the canvas holds pointer capture) — tab widths come from their text, so there
+  is nothing in the data to compute them from. Dropping over the rect's body
+  rather than the strip yields no index at all, which `dropAction` reports as
+  `none`.
 - **Over another unit** — leave and join, per the table. A stack target needs no
   modifier (a tab drag has no competing meaning); a free-window target needs
   Shift, matching window-onto-window, so that a tab dropped on a big background
