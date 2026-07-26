@@ -313,9 +313,10 @@ pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), Hud
 /// Insert the absent leaf. After `inline_all` every key is a plain byte-string,
 /// so this half needs no `Shared`/`Ref` resolution.
 fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
-    inline_all(root);
-    let section_entries = section_dict_mut(root, f.section).ok_or(HudError::NoSection)?;
-
+    // Build the leaf value BEFORE touching the document: a rejected input
+    // (HudError::Parse) must leave the document exactly as it was, not
+    // partway de-shared by inline_all with no compensating reshare (the
+    // caller returns early on this error, so reshare never runs).
     let value = build_scalar(f.kind, text)?;
     let leaf_value = match f.elem {
         None => value,
@@ -333,6 +334,9 @@ fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
             Value::Tuple(items)
         }
     };
+
+    inline_all(root);
+    let section_entries = section_dict_mut(root, f.section).ok_or(HudError::NoSection)?;
     section_entries.push((
         Value::Bytes(f.key.to_vec()),
         Value::Tuple(vec![Value::Long(vec![0u8; 8]), leaf_value]),

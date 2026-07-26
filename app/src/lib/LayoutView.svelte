@@ -7,8 +7,8 @@
     snapLines, movingEdges, snapDelta,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines,
   } from "$lib/layout";
-  import { nameOf } from "$lib/windowLabels";
-  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "./prefs.svelte";
+  import { displayNameOf } from "$lib/windowLabels";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -548,11 +548,11 @@
                 {#each unit.tabs as tab (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <span class="tab" class:active={tab.id === selectedId} title={tab.id}
-                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{nameOf(tab).label}</span>
+                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayNameOf(tab)}</span>
                 {/each}
               </div>
             {:else}
-              <span class="win-label" title={unit.anchor.id}>{nameOf(unit.anchor).label}</span>
+              <span class="win-label" title={unit.anchor.id}>{displayNameOf(unit.anchor)}</span>
             {/if}
             {#if unit.anchor.id === selectedId || unit.tabs.some((t) => t.id === selectedId)}
               {#each (["tl", "tr", "bl", "br"] as const) as c}
