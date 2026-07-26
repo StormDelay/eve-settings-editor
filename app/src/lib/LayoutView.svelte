@@ -412,7 +412,51 @@
     const dragging = active && active.kind !== "furniture" && active.unit.anchor.id === unit.anchor.id;
     if (!dragging && nudging !== unit.anchor.id) clearPreview(unit.anchor.id);
   }
+
+  // --- Arrow-key nudge -------------------------------------------------------
+  // Bound on the window rather than a focusable canvas: the selection can just
+  // as well have been made in the window panel, and a focus-scoped handler
+  // would silently do nothing in that case.
+
+  const NUDGE = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
+
+  /** The unit the nudge moves: the one whose anchor or tabs carry the
+   * selection, so nudging a stacked window moves its whole stack — the same
+   * unit a canvas drag would have grabbed. */
+  const selectedUnit = () =>
+    units.find((u) => u.anchor.id === selectedId || u.tabs.some((t) => t.id === selectedId)) ?? null;
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (readOnly || drag || e.ctrlKey || e.metaKey || e.altKey) return;
+    const step = NUDGE[e.key as keyof typeof NUDGE];
+    if (!step) return;
+    // Never steal the arrows from a text field: the window filter and the
+    // panel's own x/y/w/h number inputs both want them.
+    const t = e.target as HTMLElement | null;
+    if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return;
+    const unit = selectedUnit();
+    if (!unit) return;
+    e.preventDefault(); // or the canvas pane scrolls out from under the nudge
+    const n = e.shiftKey ? 10 : 1;
+    const r = rectOf(unit.anchor);
+    // Preview only — no backend traffic per keypress. Key auto-repeat fires
+    // dozens of keydowns and exactly ONE keyup, so a glide costs one commit.
+    // No snapping: nudging is the tool you reach for when a snap put the window
+    // one pixel off, and snapping it back would make the two fight.
+    nudging = unit.anchor.id;
+    preview = { ...preview, [unit.anchor.id]: { ...r, x: r.x + step[0] * n, y: r.y + step[1] * n } };
+  }
+
+  async function onKeyUp(e: KeyboardEvent) {
+    if (!nudging || !(e.key in NUDGE)) return;
+    const id = nudging;
+    nudging = null;
+    const unit = units.find((u) => u.anchor.id === id);
+    if (unit) await commitUnit(unit);
+  }
 </script>
+
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 {#if layout === null}
   <p class="hint">Loading layout…</p>
