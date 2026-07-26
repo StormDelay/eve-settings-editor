@@ -99,6 +99,7 @@
          page-level handler. Wiring it per-view is being done on the layout
          branch; this placeholder gains the hint when that lands. -->
     <input class="search" bind:value={query} placeholder="Search commands and keys" />
+    <span class="meta">Click a binding, then press the combination you want.</span>
   </div>
   {#each grouped as [group, entries] (group)}
     <h3>{group}</h3>
@@ -119,7 +120,12 @@
                   {listening === e.command ? "press a key…" : keysToLabel(e.keys)}
                 </button>
               {/if}
-              {#if stolenFrom[e.command]}
+              {#if listening === e.command}
+                <!-- Beside the chip, not at the foot of the list: with ~100 rows
+                     a hint down there is several screens from the row you just
+                     clicked, which is the one moment it is needed. -->
+                <span class="meta">Esc cancels · Backspace unbinds</span>
+              {:else if stolenFrom[e.command]}
                 <span class="meta">taken by {stolenFrom[e.command]}</span>
               {/if}
             </td>
@@ -136,9 +142,6 @@
       </tbody>
     </table>
   {/each}
-  {#if listening}
-    <p class="meta">Esc cancels · Backspace unbinds</p>
-  {/if}
 {/if}
 
 <style>
