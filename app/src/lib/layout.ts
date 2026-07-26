@@ -379,3 +379,74 @@ export function moveInOrder(ids: string[], id: string, toIndex: number): string[
   const at = Math.max(0, Math.min(toIndex, rest.length));
   return [...rest.slice(0, at), id, ...rest.slice(at)];
 }
+
+/** What a canvas drop does. One variant per row of the stack-polish spec's
+ * gesture table; `none` is a drop that asks for nothing. */
+export type DropAction =
+  | { op: "move" }
+  | { op: "none" }
+  | { op: "create"; first: string; second: string }
+  | { op: "add"; member: string; container: string }
+  | { op: "unstack"; member: string; rect: Rect }
+  | { op: "unstackInto"; member: string; container: string }
+  | { op: "unstackCreate"; member: string; target: string }
+  | { op: "reorder"; container: string; order: string[] };
+
+/** What is being dragged: a unit, optionally by one of its tabs, and the rect
+ * it would land at (the live preview). */
+export interface DragSubject {
+  unit: DrawUnit;
+  /** The dragged tab's window id, or null when the whole rect is being moved. */
+  tabId: string | null;
+  rect: Rect;
+}
+
+/**
+ * Decide a drop. `target` is the unit under the pointer (`unitAt`), `shift`
+ * whether Shift is down, `hoverTabIndex` which of the target's VISIBLE tabs the
+ * pointer is over (null when it is not over the strip) — the one input that has
+ * to be measured from the DOM.
+ *
+ * Shift is only what disambiguates a drag that also has a plain-move meaning:
+ * a window drag always could have been a move, so stacking needs the modifier;
+ * a tab dropped on another *stack* has no competing meaning and needs none.
+ */
+export function dropAction(
+  drag: DragSubject,
+  target: DrawUnit | null,
+  shift: boolean,
+  hoverTabIndex: number | null,
+): DropAction {
+  const { unit, tabId } = drag;
+
+  if (tabId === null) {
+    // Whole-rect drag. A stack can't be dragged into another stack (merging is
+    // out of scope), so Shift is ignored for one.
+    if (!shift || !target || target.key === unit.key || unit.stack) return { op: "move" };
+    return target.stack
+      ? { op: "add", member: unit.anchor.id, container: target.stack.container_id }
+      // create_stack(m1, m2) puts the stack at m1's rect: the window that
+      // stayed put keeps its position and becomes tab 0.
+      : { op: "create", first: target.anchor.id, second: unit.anchor.id };
+  }
+
+  // Tab drag. It always leaves its stack unless it is dropped back on it.
+  if (!unit.stack) return { op: "none" }; // unreachable: a tab implies a stack
+  if (target && target.key === unit.key) {
+    if (hoverTabIndex === null) return { op: "none" }; // over the body, not the strip
+    const over = unit.tabs[hoverTabIndex]?.id;
+    if (over === undefined) return { op: "none" };
+    // Reorder against the FULL member list, not the visible tabs: reorder_stack
+    // rewrites the container's whole index dict from what it is given, so a
+    // member the filter is hiding must still be in the list.
+    const members = unit.stack.members;
+    const to = members.indexOf(over);
+    if (to < 0) return { op: "none" };
+    const order = moveInOrder(members, tabId, to);
+    if (order.join(" ") === members.join(" ")) return { op: "none" };
+    return { op: "reorder", container: unit.stack.container_id, order };
+  }
+  if (target?.stack) return { op: "unstackInto", member: tabId, container: target.stack.container_id };
+  if (target && shift) return { op: "unstackCreate", member: tabId, target: target.anchor.id };
+  return { op: "unstack", member: tabId, rect: drag.rect };
+}
