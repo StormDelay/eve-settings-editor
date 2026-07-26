@@ -136,6 +136,32 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
+- [ ] **Let the user edit the Layout clutter list.** `windowLabels.ts`'s
+  `CLUTTER_IDS` / `CLUTTER_FAMILIES` / `CLUTTER_CHAT_DETAILS` are hard-coded, and
+  they can never be complete — see the finding below. Give the user control:
+  add/remove a window from the clutter set from the window list's right-click
+  context menu ("Treat as clutter" / "Stop treating as clutter"), persisted as
+  editor settings (NOT written into the EVE files — this is our view state), with
+  the built-in tables as the default and a way to see and reset the overrides.
+  That turns an unwinnable curation problem into a one-click fix per window.
+  _Added 2026-07-26._
+
+  **Why the built-in list can never be complete (measured, keep this):** EVE's
+  `windows → openWindows` flag **accumulates** — it records which windows EVE
+  would restore, not which are on screen, and it is never reliably cleared. On a
+  real live character file: **381 windows, 134 flagged open, 83 canvas draw units,
+  versus about 9 windows actually visible in the client**. The open set includes
+  one-shot modals (`setQuantityPopup`, `enterShipPassword`, `ship_name_dialog`,
+  `kickCharacterFromChat`, `DisconnectNotice`, `skill_requirement_dialog`).
+  Nothing else in the file separates them: `minimizedWindows` true for 1,
+  `collapsedWindows` for 0, only 14 of 134 saved at a stale resolution, and 82
+  distinct rects among the 134 (so no "never positioned" default-position
+  cluster). The closest correlate found was *having an entry* in
+  `compactWindows` (10 windows, 8 of them matching the visible set), but that
+  means "the user toggled compact mode here", not visibility — and it misses
+  `directionalScannerWindow`, which was plainly on screen. Worth recording in
+  `format-notes.md` too: `openWindows` is a restore list, not a visibility flag.
+
 - [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
   Today the only way to abandon edits is to open a different file and accept the
   discard prompt, then come back — or to quit. Add a button next to the
