@@ -5,7 +5,7 @@
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, dropAction,
-    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction,
+    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayNameOf } from "$lib/windowLabels";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
@@ -130,6 +130,8 @@
       fPreview = {};
       nudging = null;
       dropTarget = null;
+      draggingTab = null;
+      hoverTab = null;
       load();
     }
   });
@@ -247,7 +249,8 @@
   type Drag =
     | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number; lines: SnapLines }
     | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number; lines: SnapLines }
-    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number };
+    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number }
+    | { kind: "tab"; unit: DrawUnit; tabId: string; startX: number; startY: number; gx: number; gy: number };
   let drag: Drag | null = null;
 
   // The lines the current drag has locked onto, in data px; null when this axis
@@ -258,6 +261,16 @@
   // stack target; null when the drop would not stack anything. Drives the
   // highlight only — the drop re-resolves the target from the up event.
   let dropTarget = $state<string | null>(null);
+
+  // The tab id of a tab drag that has passed the travel threshold; null while a
+  // press is still just a click. Without the threshold, selecting a tab with a
+  // twitchy mouse would unstack it. $state because the template reads it (the
+  // `drag` variable itself is deliberately not reactive and must not be read
+  // from markup).
+  let draggingTab = $state<string | null>(null);
+  // Which of the hovered unit's VISIBLE tabs the pointer is over, or null.
+  // Handler-only, so a plain let.
+  let hoverTab: number | null = null;
 
   // The window id a key-repeat nudge is currently in flight for (Task 3), so a
   // commit landing mid-nudge doesn't clear the preview under it.
@@ -270,6 +283,18 @@
   function pointerData(e: PointerEvent) {
     const box = canvasEl!.getBoundingClientRect();
     return { x: toData(e.clientX - box.left, scale), y: toData(e.clientY - box.top, scale) };
+  }
+
+  /** The index of the tab element under the pointer, or null. Read off the
+   * elements' own data attribute rather than computed: tab widths come from
+   * their text, so there is nothing in the data to compute from.
+   * elementsFromPoint still sees them while the canvas holds pointer capture. */
+  function tabIndexAt(clientX: number, clientY: number): number | null {
+    for (const el of document.elementsFromPoint(clientX, clientY)) {
+      const i = (el as HTMLElement).dataset?.tabIndex;
+      if (i !== undefined) return Number(i);
+    }
+    return null;
   }
 
   /** The unit under the pointer, excluding the one being dragged. */
@@ -321,6 +346,21 @@
     e.preventDefault();
   }
 
+  /** A tab press selects (as it always has) and arms a drag. Whether that drag
+   * reorders, moves the window to another stack, or pulls it out is decided
+   * entirely by where it is released — see dropAction. */
+  function startTab(unit: DrawUnit, tabId: string, e: PointerEvent) {
+    e.stopPropagation(); // or the stack's own move drag starts underneath
+    selectWindow(tabId);
+    if (readOnly) return;
+    const r = rectOf(unit.anchor);
+    const p = pointerData(e);
+    drag = { kind: "tab", unit, tabId, startX: e.clientX, startY: e.clientY, gx: p.x - r.x, gy: p.y - r.y };
+    draggingTab = null;
+    canvasEl?.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
   function startResize(unit: DrawUnit, corner: Corner, e: PointerEvent) {
     if (readOnly) return;
     selectWindow(unit.anchor.id);
@@ -346,6 +386,22 @@
         ...fPreview,
         [f.kind]: { x: drag.ox + dx, y: f.drag === "xy" ? drag.oy + dy : drag.oy },
       };
+      return;
+    }
+    if (drag.kind === "tab") {
+      // 4 canvas px of travel turns the press into a drag. Compared in client
+      // px because it is a hand-tremor threshold, not a data-space distance.
+      if (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4) {
+        draggingTab = drag.tabId;
+      }
+      if (draggingTab === null) return;
+      const p = pointerData(e);
+      const over = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
+      const own = over?.key === drag.unit.key;
+      // Highlight only a drop that goes somewhere else; hovering the tab's own
+      // stack is a reorder, which the strip itself shows.
+      dropTarget = own ? null : (over?.key ?? null);
+      hoverTab = own ? tabIndexAt(e.clientX, e.clientY) : null;
       return;
     }
     // Shift over another unit marks it as a stack target. Read off the event
@@ -431,6 +487,28 @@
       return;
     }
 
+    if (d.kind === "tab") {
+      const wasDrag = draggingTab !== null;
+      draggingTab = null;
+      const index = hoverTab;
+      hoverTab = null;
+      dropTarget = null;
+      if (!wasDrag) return; // a press that never travelled is just a select
+      const p = pointerData(e);
+      const r = rectOf(d.unit.anchor);
+      const target = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
+      await applyDrop(
+        dropAction(
+          { unit: d.unit, tabId: d.tabId, rect: { x: p.x - d.gx, y: p.y - d.gy, w: r.w, h: r.h } },
+          target,
+          e.shiftKey,
+          index,
+        ),
+        d.unit,
+      );
+      return;
+    }
+
     const target = d.kind === "move" && e.shiftKey ? targetAt(e, d.unit) : null;
     dropTarget = null;
     await applyDrop(
@@ -479,7 +557,31 @@
         clearPreview(unit.anchor.id);
         await runStack(api.stackAdd(a.member, a.container));
         return;
+      case "reorder":
+        await runStack(api.stackReorder(a.container, a.order));
+        return;
+      case "unstack":
+        await unstackTo(a.member, a.rect);
+        return;
+      case "unstackInto":
+        if (await runStack(api.stackUnstack(a.member))) await runStack(api.stackAdd(a.member, a.container));
+        return;
+      case "unstackCreate":
+        if (await runStack(api.stackUnstack(a.member))) await runStack(api.stackCreate(a.target, a.member));
+        return;
     }
+  }
+
+  /** Free a window from its stack and put it where it was dropped. The geometry
+   * paths MUST come from the layout the unstack returned: the projection
+   * captured before it describes a document that no longer exists in that
+   * shape. Without the placement half the freed window would take the stack's
+   * exact rect and sit invisibly behind it. */
+  async function unstackTo(member: string, rect: Rect) {
+    if (!(await runStack(api.stackUnstack(member)))) return;
+    const w = layout?.windows.find((x) => x.id === member);
+    if (!w?.geom) return;
+    await commit(geomMutations(w, rect));
   }
 
   // --- Arrow-key nudge -------------------------------------------------------
@@ -602,10 +704,12 @@
             onpointerdown={(e) => startMove(unit, e)}>
             {#if unit.stack}
               <div class="tabs">
-                {#each unit.tabs as tab (tab.id)}
+                {#each unit.tabs as tab, i (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <span class="tab" class:active={tab.id === selectedId} title={tab.id}
-                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayNameOf(tab)}</span>
+                  <span class="tab" class:active={tab.id === selectedId}
+                    class:dragging={draggingTab === tab.id}
+                    data-tab-index={i} title={tab.id}
+                    onpointerdown={(e) => startTab(unit, tab.id, e)}>{displayNameOf(tab)}</span>
                 {/each}
               </div>
             {:else}
@@ -623,7 +727,7 @@
       <p class="ref">
         reference {layout.reference_w}×{layout.reference_h}
         {#if !readOnly}
-          <span class="hintish">· Shift-drag onto another window to stack</span>
+          <span class="hintish">· Shift-drag onto another window to stack · drag a tab to reorder or pull out</span>
         {/if}
         {#if filterIsActive(filter)}
           <span class="showing">
@@ -803,6 +907,12 @@
   .tab.active {
     background: #f59e0b;
     color: #1b1f27;
+  }
+  /* The tab being dragged. No floating ghost rect: the target highlight and
+     this are enough to read the gesture, and a ghost would need its own
+     hit-test exclusions. */
+  .tab.dragging {
+    opacity: 0.45;
   }
   .resize {
     position: absolute;
