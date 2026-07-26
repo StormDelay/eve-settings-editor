@@ -7,7 +7,8 @@
     snapLines, movingEdges, snapDelta,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines,
   } from "$lib/layout";
-  import { displayName } from "$lib/windowLabels";
+  import { displayNameOf } from "$lib/windowLabels";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
@@ -73,7 +74,7 @@
   // not an approximation.
   const scale = $derived(canvasScale(layout?.reference_w ?? 0, containerWidth));
   const visible = $derived(
-    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter) : null,
+    layout && filterIsActive(filter) ? visibleIds(layout.windows, filter, clutterOverrides()) : null,
   );
   const units = $derived(
     stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
@@ -547,11 +548,11 @@
                 {#each unit.tabs as tab (tab.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <span class="tab" class:active={tab.id === selectedId} title={tab.id}
-                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayName(tab.id)}</span>
+                    onpointerdown={(e) => { e.stopPropagation(); selectWindow(tab.id); }}>{displayNameOf(tab)}</span>
                 {/each}
               </div>
             {:else}
-              <span class="win-label" title={unit.anchor.id}>{displayName(unit.anchor.id)}</span>
+              <span class="win-label" title={unit.anchor.id}>{displayNameOf(unit.anchor)}</span>
             {/if}
             {#if unit.anchor.id === selectedId || unit.tabs.some((t) => t.id === selectedId)}
               {#each (["tl", "tr", "bl", "br"] as const) as c}
@@ -568,6 +569,12 @@
           <span class="showing">
             · showing {shownCount} of {totalCount} windows
             <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
+          </span>
+        {/if}
+        {#if overrideCount() > 0}
+          <span class="showing">
+            · {overrideCount()} overridden
+            <button class="linkish" onclick={clearClutterOverrides}>clear</button>
           </span>
         {/if}
       </p>
@@ -596,6 +603,8 @@
         {onReorder}
         {onAddToStack}
         {onCreateStack}
+        overrides={clutterOverrides()}
+        onClutterOverride={setClutterOverride}
         bind:filter
         bind:focusFilter />
     </div>

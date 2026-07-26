@@ -160,6 +160,8 @@ export interface Stack {
 export interface WindowRect {
   id: string;
   label: string;
+  /** EVE's own name for this window when the file has one; null otherwise. */
+  name: string | null;
   open: boolean;
   renderable: boolean;
   resolution_matches: boolean;
@@ -173,6 +175,14 @@ export interface WindowLayout {
   reference_h: number;
   windows: WindowRect[];
   stacks: Stack[];
+}
+
+export interface LayoutPrefs {
+  clutter: string[];
+  visible: string[];
+}
+export interface Preferences {
+  layout: LayoutPrefs;
 }
 
 export interface AccountView {
@@ -303,6 +313,8 @@ export const api = {
   restoreBackup: (slot: Slot, backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
   windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
+  preferences: () => invoke<Preferences>("preferences"),
+  setPreferences: (prefs: Preferences) => invoke<void>("set_preferences", { prefs }),
   hud: () => invoke<Hud>("hud_layout"),
   setHudValue: (name: string, text: string) =>
     invoke<Hud>("set_hud_value", { name, text }),

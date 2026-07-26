@@ -215,10 +215,23 @@ const CLUTTER_IDS: ReadonlySet<string> = new Set([
   "broadcastsettings",
 ]);
 
+/** Per-window user overrides of the built-in clutter tables. The two sets are
+ * kept disjoint by the UI; `visible` wins if a hand-edited file lists an id in
+ * both. */
+export interface ClutterOverrides {
+  clutter: ReadonlySet<string>;
+  visible: ReadonlySet<string>;
+}
+
 /** True for a window EVE spawns per conversation/item/dialog rather than one
  * the player placed. Hidden in both the list and the canvas, whether open or
- * closed — open/closed is not the axis; kind of window is. */
-export function isClutter(id: string): boolean {
+ * closed — open/closed is not the axis; kind of window is.
+ *
+ * The built-in tables can never be complete (see the note above CLUTTER_IDS),
+ * so a user override outranks them in both directions. */
+export function isClutter(id: string, o?: ClutterOverrides): boolean {
+  if (o?.visible.has(id)) return false;
+  if (o?.clutter.has(id)) return true;
   if (CLUTTER_IDS.has(id)) return true;
   const n = describe(id);
   if (n.family === "chatchannel") return CLUTTER_CHAT_DETAILS.has(n.detail);
@@ -295,12 +308,46 @@ export function describe(id: string): WindowName {
   return { label: (CURATED[id] ?? pretty(id)) || "(unnamed)", detail: "", family: id };
 }
 
+/**
+ * The name to show for a window: EVE's own, when the file carries one, else the
+ * one derived from the id. Detail and family always come from the id — they
+ * describe the id's shape, which a display name says nothing about.
+ */
+export function nameOf(w: { id: string; name?: string | null }): WindowName {
+  const derived = describe(w.id);
+  return w.name ? { ...derived, label: w.name } : derived;
+}
+
+/**
+ * A stack's own display label — EVE's own string from the account file's
+ * `tabgroups`, or `null` when there wasn't one. The backend (`windows.rs`)
+ * leaves `container_label` equal to `container_id` in that case rather than
+ * signalling absence directly, so equality with the id is exactly "we have
+ * nothing" — the caller supplies its own fallback wording (a type marker like
+ * "frame", or today's derived id name), rather than this showing a bare id.
+ */
+export function stackLabel(s: { container_id: string; container_label: string }): string | null {
+  return s.container_label !== s.container_id ? s.container_label : null;
+}
+
 /** The friendly name as a single string, for places that cannot render the
  * detail as its own element — canvas rectangles, stack tabs, <option> text.
  * The list renders the same two parts as separate spans; both go through
  * `describe`, so they cannot drift. */
 export function displayName(id: string): string {
   const n = describe(id);
+  return n.detail ? `${n.label} · ${n.detail}` : n.label;
+}
+
+/** The `nameOf` equivalent of `displayName`: EVE's own name when the file has
+ * one, else the derived one, with `· detail` appended when there is a detail.
+ * Same places as `displayName` — canvas rectangles, stack tabs, <option>
+ * text — wherever the window might carry a real name and the detail can't
+ * render as its own element. Dropping the detail here reintroduces the
+ * ambiguity `854b0d7` fixed: two unnamed chat tabs in one stack would both
+ * read "Chat". */
+export function displayNameOf(w: { id: string; name?: string | null }): string {
+  const n = nameOf(w);
   return n.detail ? `${n.label} · ${n.detail}` : n.label;
 }
 

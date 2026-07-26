@@ -123,7 +123,7 @@ fn stack_edits_survive_the_save_chain() {
     let mut v = fixture(MODERN_CHAR);
     unstack(&mut v, "calendar").expect("unstack");
     let back = saved(&v);
-    let layout = window_layout(&back);
+    let layout = window_layout(&back, None);
     assert!(
         layout.stacks.iter().all(|s| !s.members.contains(&"calendar".to_string())),
         "calendar should no longer be a stack member"
@@ -143,7 +143,7 @@ fn stack_edits_survive_the_save_chain() {
     )
     .expect("reorder stack");
     let back = saved(&v);
-    let stack = window_layout(&back)
+    let stack = window_layout(&back, None)
         .stacks
         .into_iter()
         .find(|s| s.container_id == "7001")
@@ -157,13 +157,13 @@ fn stack_edits_survive_the_save_chain() {
 fn creating_a_stack_mints_a_free_container_that_round_trips() {
     let mut v = fixture(MODERN_CHAR);
     let before: Vec<String> =
-        window_layout(&v).windows.into_iter().map(|w| w.id).collect();
+        window_layout(&v, None).windows.into_iter().map(|w| w.id).collect();
 
     let container = create_stack(&mut v, "market", "fitting").expect("create stack");
     assert!(!before.contains(&container), "minted id {container} was already in use");
 
     let back = saved(&v);
-    let layout = window_layout(&back);
+    let layout = window_layout(&back, None);
     let stack = layout
         .stacks
         .iter()
@@ -279,7 +279,7 @@ fn overview_window_add_and_remove_survive_across_both_files() {
     assert_eq!(ov.windows.len(), 4, "a fourth overview window");
     assert!(!ov.windows[idx].tab_indices.is_empty(), "the new window must own its tab");
     assert!(
-        window_layout(&char_back).windows.iter().any(|w| w.id == format!("overview_{idx}")),
+        window_layout(&char_back, None).windows.iter().any(|w| w.id == format!("overview_{idx}")),
         "the new window needs geometry in the character file"
     );
 
@@ -292,7 +292,7 @@ fn overview_window_add_and_remove_survive_across_both_files() {
     let char_back = saved(&char_tree);
     assert_eq!(project_overview(&user_back, Some(&char_back)).windows.len(), 3);
     assert!(
-        !window_layout(&char_back).windows.iter().any(|w| w.id == format!("overview_{idx}")),
+        !window_layout(&char_back, None).windows.iter().any(|w| w.id == format!("overview_{idx}")),
         "removing the window must remove its geometry too"
     );
 }
@@ -521,7 +521,7 @@ fn batch_category_copy_survives_the_save_chain() {
         &extract_categories(&source_char, &[Category::Layout, Category::OverviewWidths]),
     );
     let target_char = saved(&target_char);
-    let layout = window_layout(&target_char);
+    let layout = window_layout(&target_char, None);
     assert!(layout.windows.len() >= 11, "layout did not copy: {}", layout.windows.len());
     assert_eq!(layout.stacks.len(), 1, "stacks must come along with the layout");
 
