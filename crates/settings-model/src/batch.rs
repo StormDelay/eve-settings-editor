@@ -21,6 +21,7 @@ pub enum Category {
     Autofill,
     Overview,
     OverviewWidths,
+    Keybinds,
 }
 
 impl Category {
@@ -31,6 +32,7 @@ impl Category {
             Category::Autofill => &[b"ui", b"editHistory"],
             Category::Overview => &[b"overview"],
             Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
+            Category::Keybinds => &[b"cmd", b"customCmds"],
         }
     }
 }
@@ -364,5 +366,62 @@ mod tests {
         // Smaller than if we had left it fully inlined.
         let inlined_len = encode(&blue_marshal::inline(&target)).unwrap().len();
         assert!(bytes.len() < inlined_len, "{} !< {}", bytes.len(), inlined_len);
+    }
+
+    /// `cmd -> customCmds` is the same two-step path shape as Autofill's
+    /// `ui -> editHistory`, so extract/apply need no new machinery.
+    #[test]
+    fn keybinds_category_round_trips_the_whole_table() {
+        let ts = || Value::Long(vec![0u8; 8]);
+        let bts = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let table = |code: i64| {
+            Value::Dict(vec![(
+                bts("customCmds"),
+                Value::Tuple(vec![
+                    ts(),
+                    Value::Dict(vec![(bts("CmdApproachItem"), Value::Tuple(vec![Value::Int(code)]))]),
+                ]),
+            )])
+        };
+        let source = Value::Dict(vec![(bts("cmd"), table(65))]);
+        let mut target = Value::Dict(vec![(bts("cmd"), table(90))]);
+
+        let extracted = extract_categories(&source, &[Category::Keybinds]);
+        assert_eq!(extracted.len(), 1);
+        apply_to_tree(&mut target, &extracted);
+
+        let binds = settings_model_project(&target);
+        assert_eq!(binds, Some(vec![65]), "the source's binding replaced the target's");
+    }
+
+    /// The load-bearing case: an account whose table is EMPTY gets one.
+    #[test]
+    fn keybinds_category_populates_an_empty_table() {
+        let ts = || Value::Long(vec![0u8; 8]);
+        let bts = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let source = Value::Dict(vec![(
+            bts("cmd"),
+            Value::Dict(vec![(
+                bts("customCmds"),
+                Value::Tuple(vec![
+                    ts(),
+                    Value::Dict(vec![(bts("CmdApproachItem"), Value::Tuple(vec![Value::Int(65)]))]),
+                ]),
+            )]),
+        )]);
+        let mut target = Value::Dict(vec![(
+            bts("cmd"),
+            Value::Dict(vec![(bts("customCmds"), Value::Tuple(vec![ts(), Value::Dict(vec![])]))]),
+        )]);
+
+        apply_to_tree(&mut target, &extract_categories(&source, &[Category::Keybinds]));
+        assert_eq!(settings_model_project(&target), Some(vec![65]));
+    }
+
+    /// Local helper: read CmdApproachItem's codes back out of a tree.
+    fn settings_model_project(v: &Value) -> Option<Vec<i64>> {
+        let k = crate::keybinds::project_keybinds(Some(v));
+        let e = k.entries.iter().find(|e| e.command == "CmdApproachItem")?;
+        e.keys.clone()
     }
 }

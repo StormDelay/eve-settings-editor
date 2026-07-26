@@ -48,6 +48,7 @@
     { key: "layout", label: "Window layout", account: false },
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
+    { key: "keybinds", label: "Keybindings", account: true },
     { key: "everything", label: "Everything (full clone of both files)", account: true },
   ];
   let selected = $state<Set<Aspect>>(new Set());

@@ -254,7 +254,7 @@ export interface BatchTargetResult {
   error: string | null;
 }
 
-export type Aspect = "layout" | "overview" | "autofill" | "everything";
+export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "everything";
 export interface CharWrite {
   char_id: number;
   path: string;
