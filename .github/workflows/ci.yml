@@ -37,4 +37,8 @@ jobs:
         run: npm run build
       - name: Test workspace
         run: cargo test --workspace
-        # Corpus gates skip on CI: testdata/ is local-only by design (spec §8).
+        # The corpus gates run here against the committed synthetic corpus in
+        # fixtures/ (see fixtures/README.md). The real corpus is local-only by
+        # design (spec §8) — testdata/ is personal data and stays gitignored, so
+        # the byte-identity gate is a golden-file check on CI and an independence
+        # proof only on a machine that has testdata/ checked out.
