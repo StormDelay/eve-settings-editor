@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
-  import { describe } from "$lib/windowLabels";
+  import { describe, groupByFamily } from "$lib/windowLabels";
 
   let {
     windows,
@@ -70,6 +70,24 @@
   const findWindow = (id: string) => windows.find((w) => w.id === id);
 
   const freeWindows = $derived(windows.filter((w) => w.stack === null));
+  // Folding is list presentation only: a family with more than one member
+  // renders as one collapsible row. It never changes what the canvas draws —
+  // that is the filter's job (LayoutView owns it).
+  const freeGroups = $derived(groupByFamily(freeWindows));
+
+  // Per-family collapse of the member rows. Families start folded: a real file
+  // carries ~47 chat windows and folding is the whole point.
+  let famOpen = $state<Record<string, boolean>>({});
+
+  // A canvas click can select a window inside a folded family — unfold it, or
+  // the selection is invisible and scrollOnSelect has nothing to scroll to.
+  $effect(() => {
+    if (selectedId === null) return;
+    const fam = describe(selectedId).family;
+    if (freeGroups.some((g) => g.family === fam && g.items.length > 1)) {
+      famOpen[fam] = true;
+    }
+  });
 
   // Per-stack collapse of the member sub-rows (default expanded); the frame
   // row itself always stays visible.
@@ -140,6 +158,56 @@
         </label>
       {/each}
     </div>
+  </div>
+{/snippet}
+
+{#snippet freeRow(w: WindowRect)}
+  {@const stackTargets = freeWindows.filter((o) => o.id !== w.id && o.renderable)}
+  <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
+    <div class="row-head">
+      {@render rowHead(w)}
+    </div>
+    {#if w.renderable && (stacks.length > 0 || stackTargets.length > 0)}
+      <div class="free-controls">
+        {#if stacks.length > 0}
+          <select
+            aria-label="Add to stack"
+            disabled={readOnly}
+            value=""
+            onchange={(e) => {
+              const el = e.currentTarget as HTMLSelectElement;
+              const v = el.value;
+              el.value = "";
+              if (v) onAddToStack(w.id, v);
+            }}>
+            <option value="" disabled>Add to stack…</option>
+            {#each stacks as s (s.container_id)}
+              <option value={s.container_id}>{describe(s.container_id).label}</option>
+            {/each}
+          </select>
+        {/if}
+        {#if stackTargets.length > 0}
+          <select
+            aria-label="Stack with another window"
+            disabled={readOnly}
+            value=""
+            onchange={(e) => {
+              const el = e.currentTarget as HTMLSelectElement;
+              const v = el.value;
+              el.value = "";
+              if (v) onCreateStack(w.id, v);
+            }}>
+            <option value="" disabled>Stack with…</option>
+            {#each stackTargets as other (other.id)}
+              <option value={other.id}>{describe(other.id).label}</option>
+            {/each}
+          </select>
+        {/if}
+      </div>
+    {/if}
+    {#if w.id === selectedId && w.geom}
+      {@render detail(w)}
+    {/if}
   </div>
 {/snippet}
 
@@ -221,54 +289,29 @@
     </div>
   {/each}
 
-  {#each freeWindows as w (w.id)}
-    {@const stackTargets = freeWindows.filter((o) => o.id !== w.id && o.renderable)}
-    <div class="row" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
-      <div class="row-head">
-        {@render rowHead(w)}
-      </div>
-      {#if w.renderable && (stacks.length > 0 || stackTargets.length > 0)}
-        <div class="free-controls">
-          {#if stacks.length > 0}
-            <select
-              aria-label="Add to stack"
-              disabled={readOnly}
-              value=""
-              onchange={(e) => {
-                const el = e.currentTarget as HTMLSelectElement;
-                const v = el.value;
-                el.value = "";
-                if (v) onAddToStack(w.id, v);
-              }}>
-              <option value="" disabled>Add to stack…</option>
-              {#each stacks as s (s.container_id)}
-                <option value={s.container_id}>{describe(s.container_id).label}</option>
-              {/each}
-            </select>
-          {/if}
-          {#if stackTargets.length > 0}
-            <select
-              aria-label="Stack with another window"
-              disabled={readOnly}
-              value=""
-              onchange={(e) => {
-                const el = e.currentTarget as HTMLSelectElement;
-                const v = el.value;
-                el.value = "";
-                if (v) onCreateStack(w.id, v);
-              }}>
-              <option value="" disabled>Stack with…</option>
-              {#each stackTargets as other (other.id)}
-                <option value={other.id}>{describe(other.id).label}</option>
-              {/each}
-            </select>
-          {/if}
+  {#each freeGroups as group (group.family)}
+    {#if group.items.length === 1}
+      {@render freeRow(group.items[0])}
+    {:else}
+      <div class="fam-group">
+        <div class="fam-head">
+          <button
+            class="caret"
+            aria-label="Expand family"
+            aria-expanded={!!famOpen[group.family]}
+            onclick={() => (famOpen[group.family] = !famOpen[group.family])}>
+            {famOpen[group.family] ? "▾" : "▸"}
+          </button>
+          <span class="fam-title">{group.label}</span>
+          <span class="stack-count">{group.items.length}</span>
         </div>
-      {/if}
-      {#if w.id === selectedId && w.geom}
-        {@render detail(w)}
-      {/if}
-    </div>
+        {#if famOpen[group.family]}
+          {#each group.items as w (w.id)}
+            <div class="fam-member">{@render freeRow(w)}</div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
   {/each}
 </div>
 
@@ -440,5 +483,31 @@
   .flag input {
     margin: 0;
     flex: 0 0 auto;
+  }
+  .fam-group {
+    border-bottom: 1px solid var(--border);
+  }
+  .fam-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .fam-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fam-member .row {
+    border-bottom: none;
+  }
+  .fam-member .row-head {
+    padding-left: 1.1rem;
   }
 </style>
