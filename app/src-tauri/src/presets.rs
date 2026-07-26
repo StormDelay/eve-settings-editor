@@ -6,6 +6,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use blue_marshal::{encode, Value};
+use serde::Serialize;
 use settings_model::{apply_to_tree, extract_categories, Category};
 
 use crate::ops::{aspect_writes, Aspect};
@@ -186,6 +187,131 @@ pub fn create(
         }
     }
     Ok(dir)
+}
+
+/// One row of the library. Everything except `full` is derived by looking at
+/// the two documents — there is no stored aspect list to keep in sync.
+#[derive(Debug, Clone, Serialize)]
+pub struct PresetInfo {
+    pub name: String,
+    pub dir: String,
+    pub char_path: String,
+    pub user_path: String,
+    pub modified_unix: Option<u64>,
+    pub aspects: Vec<Aspect>,
+    pub full: bool,
+    /// Set when a document failed to decode. Such a preset is still listed —
+    /// one that silently vanishes is worse than one that says it is broken.
+    pub error: Option<String>,
+}
+
+/// Whether the marker file says this preset is a complete copy. Any failure to
+/// read or parse it reads as `false`: the safe direction.
+pub fn is_full(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join(MARKER_FILE))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("full").and_then(|f| f.as_bool()))
+        .unwrap_or(false)
+}
+
+fn modified_of(paths: [&Path; 2]) -> Option<u64> {
+    paths
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .filter_map(|m| m.modified().ok())
+        .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .max()
+}
+
+// ponytail: list decodes every preset on every call. Presets are small (pruned)
+// or settings-file sized (full), there will be a handful, and the list is only
+// rebuilt on user action. If a large library ever drags, cache by (path, mtime).
+/// Every preset in the library, sorted by name. A missing presets directory is
+/// an empty library, not an error — and listing never creates it.
+pub fn list(app_data: &Path) -> Vec<PresetInfo> {
+    let root = presets_dir(app_data);
+    let Ok(entries) = std::fs::read_dir(&root) else { return Vec::new() };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let (char_path, user_path) = (dir.join(CHAR_FILE), dir.join(USER_FILE));
+        // A folder without both documents is not a preset — this is also what
+        // skips the backups directory, which holds neither.
+        if !char_path.is_file() || !user_path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let full = is_full(&dir);
+        let (aspects, error) = match (load(&char_path), load(&user_path)) {
+            (Ok(c), Ok(u)) => (derive_aspects(&c, &u, full), None),
+            (Err(e), _) | (_, Err(e)) => (Vec::new(), Some(e)),
+        };
+        out.push(PresetInfo {
+            name,
+            dir: dir.to_string_lossy().into_owned(),
+            char_path: char_path.to_string_lossy().into_owned(),
+            user_path: user_path.to_string_lossy().into_owned(),
+            modified_unix: modified_of([&char_path, &user_path]),
+            aspects,
+            full,
+            error,
+        });
+    }
+    out.sort_by_key(|p| p.name.to_lowercase());
+    out
+}
+
+/// Decode one of a preset's documents.
+pub fn load(path: &Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    blue_marshal::decode(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// What a preset holds, read off the documents themselves. Adding a `Category`
+/// and its `Aspect` is the only change a new aspect ever needs.
+fn derive_aspects(char_doc: &Value, user_doc: &Value, full: bool) -> Vec<Aspect> {
+    let mut out = Vec::new();
+    if has_category(char_doc, Category::Layout) {
+        out.push(Aspect::Layout);
+    }
+    if has_category(user_doc, Category::Overview) {
+        out.push(Aspect::Overview);
+    }
+    if has_category(user_doc, Category::Autofill) {
+        out.push(Aspect::Autofill);
+    }
+    if has_category(user_doc, Category::Keybinds) {
+        out.push(Aspect::Keybinds);
+    }
+    if full {
+        out.push(Aspect::Everything);
+    }
+    out
+}
+
+pub fn rename(app_data: &Path, old: &str, new: &str) -> Result<(), String> {
+    let from = preset_path(app_data, old).map_err(|e| e.0)?;
+    let to = preset_path(app_data, new).map_err(|e| e.0)?;
+    if !from.is_dir() {
+        return Err(format!("No preset called \u{201c}{old}\u{201d}."));
+    }
+    if to.exists() {
+        return Err(format!("A preset called \u{201c}{new}\u{201d} already exists."));
+    }
+    std::fs::rename(&from, &to).map_err(|e| format!("renaming the preset failed: {e}"))
+}
+
+pub fn delete(app_data: &Path, name: &str) -> Result<(), String> {
+    let dir = preset_path(app_data, name).map_err(|e| e.0)?;
+    if !dir.is_dir() {
+        return Err(format!("No preset called \u{201c}{name}\u{201d}."));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("deleting the preset failed: {e}"))
 }
 
 #[cfg(test)]
@@ -465,5 +591,106 @@ mod tests {
         assert!(!dir.join(MARKER_FILE).exists(), "a pruned overwrite must drop the marker");
         // And the documents really were replaced, not left as the full copy.
         assert!(!has_category(&read_doc(&dir.join(USER_FILE)), Category::Autofill));
+    }
+
+    fn make(data: &Path, name: &str, aspects: &[Aspect]) {
+        create(
+            data,
+            name,
+            aspects,
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&user_doc()) },
+            false,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_derives_each_presets_aspects() {
+        let data = temp_data("list");
+        make(&data, "Just layout", &[Aspect::Layout]);
+        make(&data, "Layout and keys", &[Aspect::Layout, Aspect::Keybinds]);
+        make(&data, "The lot", &[Aspect::Everything]);
+
+        let all = list(&data);
+        let by = |n: &str| all.iter().find(|p| p.name == n).unwrap_or_else(|| panic!("{n} listed"));
+
+        assert_eq!(by("Just layout").aspects, vec![Aspect::Layout]);
+        assert!(!by("Just layout").full);
+        assert_eq!(by("Layout and keys").aspects, vec![Aspect::Layout, Aspect::Keybinds]);
+        // A full preset holds every aspect AND is marked.
+        let lot = by("The lot");
+        assert!(lot.full);
+        assert!(lot.aspects.contains(&Aspect::Everything));
+        assert!(lot.aspects.contains(&Aspect::Overview));
+        assert!(all.iter().all(|p| p.error.is_none()));
+    }
+
+    #[test]
+    fn list_is_sorted_by_name_case_insensitively() {
+        let data = temp_data("sorted");
+        make(&data, "zeta", &[Aspect::Layout]);
+        make(&data, "Alpha", &[Aspect::Layout]);
+        let names: Vec<String> = list(&data).into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Alpha".to_string(), "zeta".to_string()]);
+    }
+
+    #[test]
+    fn a_missing_marker_reads_as_pruned() {
+        let data = temp_data("marker-gone");
+        make(&data, "Full", &[Aspect::Everything]);
+        std::fs::remove_file(preset_path(&data, "Full").unwrap().join(MARKER_FILE)).unwrap();
+        let p = list(&data).into_iter().find(|p| p.name == "Full").unwrap();
+        // Safe direction: fewer aspects offered, never a destructive full copy.
+        assert!(!p.full);
+        assert!(!p.aspects.contains(&Aspect::Everything));
+    }
+
+    #[test]
+    fn an_undecodable_preset_is_listed_with_an_error() {
+        let data = temp_data("broken");
+        make(&data, "Broken", &[Aspect::Layout]);
+        std::fs::write(preset_path(&data, "Broken").unwrap().join(CHAR_FILE), b"not marshal").unwrap();
+        let p = list(&data).into_iter().find(|p| p.name == "Broken").unwrap();
+        assert!(p.error.is_some(), "a broken preset must say so, not vanish");
+        assert!(p.aspects.is_empty());
+    }
+
+    #[test]
+    fn list_ignores_stray_files_and_the_backup_dir() {
+        let data = temp_data("strays");
+        make(&data, "Real", &[Aspect::Layout]);
+        std::fs::write(presets_dir(&data).join("loose.txt"), b"x").unwrap();
+        std::fs::create_dir_all(presets_dir(&data).join("Not a preset")).unwrap();
+        let names: Vec<String> = list(&data).into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Real".to_string()], "only folders with both documents count");
+    }
+
+    #[test]
+    fn list_of_a_missing_directory_is_empty_not_an_error() {
+        let data = temp_data("never-used");
+        assert!(list(&data).is_empty());
+        assert!(!presets_dir(&data).exists(), "listing must not create the directory");
+    }
+
+    #[test]
+    fn rename_moves_the_folder_and_refuses_a_collision() {
+        let data = temp_data("rename");
+        make(&data, "Old", &[Aspect::Layout]);
+        make(&data, "Taken", &[Aspect::Layout]);
+        rename(&data, "Old", "New").unwrap();
+        assert!(preset_path(&data, "New").unwrap().exists());
+        assert!(!preset_path(&data, "Old").unwrap().exists());
+        assert!(rename(&data, "New", "Taken").is_err(), "collision refused");
+        assert!(rename(&data, "New", "../escape").is_err(), "traversal refused");
+    }
+
+    #[test]
+    fn delete_removes_the_folder_and_refuses_traversal() {
+        let data = temp_data("delete");
+        make(&data, "Doomed", &[Aspect::Layout]);
+        delete(&data, "Doomed").unwrap();
+        assert!(!preset_path(&data, "Doomed").unwrap().exists());
+        assert!(delete(&data, "../escape").is_err());
+        assert!(delete(&data, "Doomed").is_err(), "deleting a missing preset is an error");
     }
 }
