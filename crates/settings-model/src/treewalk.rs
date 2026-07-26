@@ -162,3 +162,73 @@ pub(crate) fn timestamped_dict<'a>(
         _ => None,
     }
 }
+
+// Ref/Shared resolution shared by the projection modules. These lived as
+// private copies in overview.rs, autofill.rs and keybinds.rs — three
+// byte-identical sets — until the keybindings work would have made it four.
+
+/// Value of the entry whose RESOLVED key is `Bytes(name)`, itself resolved.
+pub(crate) fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
+    dict.iter()
+        .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
+        .map(|(_, v)| effective(v, sh))
+}
+
+/// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper.
+pub(crate) fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
+    match effective(v, sh) {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// Resolve to a list, unwrapping a `(timestamp, list)` wrapper.
+pub(crate) fn as_list<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
+    match effective(v, sh) {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+pub(crate) fn bytes_str(v: &Value) -> Option<String> {
+    match v {
+        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        Value::Str(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
+    let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
+    dict_inner_mut(v)
+}
+
+pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+pub(crate) fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
+    match v {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
