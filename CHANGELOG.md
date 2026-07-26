@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Keybindings editor.** The account's key bindings are now readable and
+  editable in a new Keybinds view: every command the client knows, grouped and
+  labelled with EVE's own strings, rebindable by pressing the combination.
+  Rebinding a combination already in use takes it from its previous owner, as
+  the game does. A new Keybinds batch category copies a whole binding table
+  between accounts — the only way to give an account bindings without setting
+  them up by hand in-game.
+
 ## [0.17.0] - 2026-07-26
 
 Windows land where you mean them: edges snap, arrow keys nudge.

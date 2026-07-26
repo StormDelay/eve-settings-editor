@@ -19,7 +19,8 @@ use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    collect_shared, effective, is_bytes, unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
+    as_dict, as_list, collect_shared, effective, find_child, is_bytes, unwrap_shared,
+    unwrap_shared_ref, Entries, SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -105,7 +106,7 @@ pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColu
 /// case on an account that has never customised its overview states.
 fn state_ids(overview: &Entries, key: &[u8], sh: &SharedTable) -> Vec<i64> {
     find_child(overview, key, sh)
-        .and_then(|v| as_list_r(v, sh))
+        .and_then(|v| as_list(v, sh))
         .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
         .unwrap_or_default()
 }
@@ -150,9 +151,9 @@ fn tab_dict<'a>(overview: &'a Entries, sh: &SharedTable<'a>) -> Option<&'a Entri
 /// Window groups from `tabsByWindowInstanceID` (a list of lists of tab indices).
 fn window_groups(overview: &Entries, sh: &SharedTable) -> Vec<OverviewWindow> {
     let Some(v) = find_child(overview, b"tabsByWindowInstanceID", sh) else { return vec![] };
-    let Some(outer) = as_list_r(v, sh) else { return vec![] };
+    let Some(outer) = as_list(v, sh) else { return vec![] };
     outer.iter().enumerate().filter_map(|(i, inner)| {
-        let list = as_list_r(inner, sh)?;
+        let list = as_list(inner, sh)?;
         let tab_indices = list.iter().filter_map(|e| as_int(effective(e, sh))).collect();
         Some(OverviewWindow { index: i, tab_indices })
     }).collect()
@@ -229,7 +230,7 @@ fn presets_with_states(overview: &Entries, sh: &SharedTable) -> Vec<Preset> {
             let d = as_dict(v, sh);
             let ids = |name: &[u8]| {
                 d.and_then(|d| find_child(d, name, sh))
-                    .and_then(|g| as_list_r(g, sh))
+                    .and_then(|g| as_list(g, sh))
                     .map(|l| l.iter().filter_map(|e| as_int(effective(e, sh))).collect())
                     .unwrap_or_default()
             };
@@ -359,37 +360,6 @@ fn key_is(k: &Value, name: &str) -> bool {
     }
 }
 
-/// Value of the entry whose resolved key is `Bytes(name)`, itself resolved.
-fn find_child<'a>(dict: &'a Entries, name: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
-    dict.iter()
-        .find(|(k, _)| matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name))
-        .map(|(_, v)| effective(v, sh))
-}
-
-/// Resolve to a dict, unwrapping a `(timestamp, dict)` wrapper.
-fn as_dict<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    match effective(v, sh) {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-/// Resolve to a list, unwrapping a `(timestamp, list)` wrapper.
-fn as_list_r<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<Value>> {
-    match effective(v, sh) {
-        Value::List(l) => Some(l),
-        Value::Tuple(items) => items.iter().find_map(|e| match effective(e, sh) {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
 fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
@@ -400,7 +370,7 @@ fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
 /// Resolved list-of-tokens for a byte-named field within `dict`.
 fn token_list(dict: &Entries, name: &[u8], sh: &SharedTable) -> Option<Vec<String>> {
     let v = find_child(dict, name, sh)?;
-    Some(as_list_r(v, sh)?.iter().filter_map(|t| token_r(t, sh)).collect())
+    Some(as_list(v, sh)?.iter().filter_map(|t| token_r(t, sh)).collect())
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -490,7 +460,7 @@ fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option
         let tabs = tab_dict(overview, &sh)?;
         let (_, tab) = tabs.iter().find(|(k, _)| as_int(effective(k, &sh)) == Some(tab_index))?;
         let fields = as_dict(tab, &sh)?;
-        let items = as_list_r(find_child(fields, name, &sh)?, &sh)?;
+        let items = as_list(find_child(fields, name, &sh)?, &sh)?;
         items.iter().position(|it| is_bytes(effective(it, &sh), column.as_bytes()))
     };
     (item_pos(b"tabColumns"), item_pos(b"tabColumnOrder"))
@@ -1357,7 +1327,7 @@ mod tests {
             )])
         }
         fn count_resolving(fields: &Entries, sh: &SharedTable, list: &[u8], col: &[u8]) -> usize {
-            let items = as_list_r(find_child(fields, list, sh).unwrap(), sh).unwrap();
+            let items = as_list(find_child(fields, list, sh).unwrap(), sh).unwrap();
             items.iter().filter(|it| is_bytes(effective(it, sh), col)).count()
         }
         fn tab0_fields<'a>(user: &'a Value, sh: &SharedTable<'a>) -> &'a Entries {
@@ -1375,7 +1345,7 @@ mod tests {
         let mut sh = SharedTable::new();
         collect_shared(&user, &mut sh);
         let fields = tab0_fields(&user, &sh);
-        let vis = as_list_r(find_child(fields, b"tabColumns", &sh).unwrap(), &sh).unwrap();
+        let vis = as_list(find_child(fields, b"tabColumns", &sh).unwrap(), &sh).unwrap();
         assert_eq!(vis.len(), 1, "the Shared DISTANCE item was removed (list 2 -> 1), not missed");
         assert_eq!(count_resolving(fields, &sh, b"tabColumns", b"DISTANCE"), 0, "no DISTANCE left in tabColumns");
         assert_eq!(count_resolving(fields, &sh, b"tabColumns", b"NAME"), 1, "the NAME Ref item is untouched");
