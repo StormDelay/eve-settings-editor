@@ -33,6 +33,7 @@ for (const scale of [0.5, 0.37, 1, 2]) {
 const win = (id: string, open: boolean, renderable: boolean, stack: WindowRect["stack"] = null): WindowRect => ({
   id,
   label: id,
+  name: null,
   open,
   renderable,
   resolution_matches: true,
@@ -208,6 +209,16 @@ check("open filter keeps the right window", open[0].id === "a");
   check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
 }
 
+// --- the filter searches the real channel name -----------------------------
+{
+  const named = { ...win("chatchannel_private_0ee11e4f970011ea", true, true), name: "Alliance HQ" };
+  check("text matches EVE's own name", windowMatches(named, { ...NO_FILTER, text: "alliance" }));
+  check("text still matches the raw id", windowMatches(named, { ...NO_FILTER, text: "chatchannel" }));
+  check("text still matches the derived detail", windowMatches(named, { ...NO_FILTER, text: "private" }));
+  const unnamed = win("market", true, true);
+  check("an unnamed window still matches its derived label", windowMatches(unnamed, { ...NO_FILTER, text: "market" }));
+}
+
 // --- stackUnits under a filter ---------------------------------------------
 {
   const layout = {
@@ -273,15 +284,11 @@ check("open filter keeps the right window", open[0].id === "a");
   check("stacked: one draw unit for the stack", units.filter((u) => u.stack).length === 1);
   check("stacked: count is tabs (2) + free (1), not units (2)", drawnWindowCount(units) === 3);
 
-  // Filtered vs. unfiltered must agree when no filter is active — the
-  // regression this fix targets: a container matching the filter while no
-  // member does must not be counted, but the unfiltered case must still count
-  // everything stackUnits(layout, null) draws.
-  const noFilterUnits = stackUnits(stacked, null);
-  check(
-    "filtered-with-no-filter agrees with unfiltered",
-    drawnWindowCount(noFilterUnits) === drawnWindowCount(units),
-  );
+  // A stack container that matches the filter while NONE of its members do
+  // draws nothing — counting the raw window list would over-report it.
+  const containerOnly = new Set(["C"]);
+  const filtered = stackUnits(stacked, containerOnly);
+  check("a container-only filter match draws nothing", drawnWindowCount(filtered) === 0);
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
@@ -496,6 +503,24 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const s2 = snapDelta(movingEdges(rawL, "tl"), { x: [95], y: [] }, 6);
   const fin2 = resizeRect(orig, "tl", -3 + s2.dx, s2.dy);
   check("a tl corner resize lands its moving edge on the candidate", fin2.x === 95);
+}
+
+// --- overrides reach the filter --------------------------------------------
+{
+  const market = win("market", true, true);
+  const invite = win("ChatInvitation_x", true, true);
+  const forced = { clutter: new Set(["market"]), visible: new Set<string>() };
+  check("hideClutter drops an overridden-clutter window",
+    !windowMatches(market, { ...NO_FILTER, hideClutter: true }, forced));
+  check("without hideClutter the override changes nothing",
+    windowMatches(market, { ...NO_FILTER }, forced));
+
+  const freed = { clutter: new Set<string>(), visible: new Set(["ChatInvitation_x"]) };
+  check("hideClutter keeps a rescued window",
+    windowMatches(invite, { ...NO_FILTER, hideClutter: true }, freed));
+
+  const ids = visibleIds([market, invite], { ...NO_FILTER, hideClutter: true }, freed);
+  check("visibleIds honours the overrides", ids.has("ChatInvitation_x") && ids.has("market"));
 }
 
 console.log("layout: all checks passed");
