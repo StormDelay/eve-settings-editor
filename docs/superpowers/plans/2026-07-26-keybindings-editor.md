@@ -297,6 +297,28 @@ git commit -m "Project the keybinding table"
 
 ---
 
+### Task 1b: Lift the shared Ref/Shared resolvers into `treewalk`
+
+Inserted after Task 1 by the developer's decision, resolving the Task 1 review's
+Important finding. This plan originally mandated duplicating these resolvers,
+following `autofill.rs`'s documented precedent; the developer chose to converge
+all three modules onto one copy instead.
+
+The full brief lives at `.superpowers/sdd/task-1b-brief.md`. Summary: move
+`find_child`, `as_dict`, `as_list` (called `as_list_r` in `overview.rs`),
+`bytes_str`, `child_dict_mut`, `dict_inner_mut` and `list_inner_mut` into
+`treewalk.rs` as `pub(crate)`, delete the copies from `overview.rs`,
+`autofill.rs` and `keybinds.rs`, and leave `find_child_entry`, `token_r` and
+`entry_str` where they are. Pure refactor, no behaviour change, no new tests —
+the existing suite passing at the same count is the gate.
+
+**This changes Task 2 below:** its Step 3 code no longer defines
+`custom_cmds_mut`'s helpers locally. Import `child_dict_mut` and
+`dict_inner_mut` from `crate::treewalk` and delete those two functions from the
+Task 2 code block.
+
+---
+
 ### Task 2: `keybinds.rs` — `set_keybind` (write path)
 
 **Files:**
