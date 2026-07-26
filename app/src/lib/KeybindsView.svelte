@@ -104,6 +104,11 @@
   {#each grouped as [group, entries] (group)}
     <h3>{group}</h3>
     <table class="binds">
+      <!-- Fixed widths so nothing appearing inside a cell (the theft notice)
+           can reflow the Default and reset columns mid-interaction. -->
+      <colgroup>
+        <col class="c-label" /><col class="c-combo" /><col class="c-default" /><col class="c-reset" />
+      </colgroup>
       <tbody>
         {#each entries as e (e.command)}
           <tr class:malformed={e.malformed}>
@@ -120,12 +125,7 @@
                   {listening === e.command ? "press a key…" : keysToLabel(e.keys)}
                 </button>
               {/if}
-              {#if listening === e.command}
-                <!-- Beside the chip, not at the foot of the list: with ~100 rows
-                     a hint down there is several screens from the row you just
-                     clicked, which is the one moment it is needed. -->
-                <span class="meta">Esc cancels · Backspace unbinds</span>
-              {:else if stolenFrom[e.command]}
+              {#if stolenFrom[e.command]}
                 <span class="meta">taken by {stolenFrom[e.command]}</span>
               {/if}
             </td>
@@ -142,6 +142,12 @@
       </tbody>
     </table>
   {/each}
+  {#if listening}
+    <!-- Pinned rather than inline: inside the row it widened the cell and shoved
+         the Default column sideways on every click, and at the foot of a
+         hundred-row list it was several screens from the chip being captured. -->
+    <p class="capture-bar">press a key… <span class="meta">Esc cancels · Backspace unbinds</span></p>
+  {/if}
 {/if}
 
 <style>
@@ -154,6 +160,15 @@
   .default { opacity: 0.5; }
   tr.malformed { opacity: 0.6; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  .binds { table-layout: fixed; width: 100%; }
+  .c-combo { width: 16rem; }
+  .c-default { width: 9rem; }
+  .c-reset { width: 3rem; }
+  .capture-bar {
+    position: sticky; bottom: 0; margin: 0.5rem 0 0;
+    padding: 0.4rem 0.6rem; background: var(--bg-panel);
+    border-top: 1px solid var(--accent); color: var(--fg);
+  }
   .shared-banner {
     margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
     color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
