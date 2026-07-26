@@ -4,7 +4,8 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
-    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter,
+    snapLines, movingEdges, snapDelta,
+    type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines,
   } from "$lib/layout";
   import { displayName } from "$lib/windowLabels";
   import WindowPanel from "$lib/WindowPanel.svelte";
@@ -117,6 +118,16 @@
       lastToken = refreshToken;
       lastSlot = slot;
       lastUserOpen = userOpen;
+      // A preview belongs to the document that was open when it was made.
+      // EVE window ids are per-character dict keys and common ones (overview,
+      // market, ...) repeat across characters, so a preview left over from
+      // the previous document could otherwise be committed onto a same-named
+      // window belonging to whatever just loaded. fPreview has the same
+      // hazard and worse: it's keyed by furniture `kind`, which collides
+      // across every document by construction (there's only one "shipui").
+      preview = {};
+      fPreview = {};
+      nudging = null;
       load();
     }
   });
@@ -230,13 +241,35 @@
   // --- Canvas drag & resize ------------------------------------------------
 
   type Drag =
-    | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number }
-    | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number }
+    | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number; lines: SnapLines }
+    | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number; lines: SnapLines }
     | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number };
   let drag: Drag | null = null;
 
+  // The lines the current drag has locked onto, in data px; null when this axis
+  // isn't snapped. Drawn as guides, cleared on drop.
+  let guides = $state<{ x: number | null; y: number | null }>({ x: null, y: null });
+
+  // The window id a key-repeat nudge is currently in flight for (Task 3), so a
+  // commit landing mid-nudge doesn't clear the preview under it.
+  let nudging: string | null = null;
+
   const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
+
+  /** Candidate edges for a drag of `unit`: every rect the canvas currently
+   * draws except the dragged unit's own windows, plus the furniture, plus the
+   * screen. Displayed rects (rectOf), so a neighbour still showing a preview
+   * offers the edge the player can see. Collected once per drag — the set stays
+   * fixed while the dragged rect moves through it. */
+  function linesFor(unit: DrawUnit): SnapLines {
+    const mine = new Set(unit.fanTargets.map((w) => w.id));
+    const rects = units
+      .filter((u) => !mine.has(u.anchor.id))
+      .map((u) => rectOf(u.anchor));
+    for (const f of furniture) rects.push({ ...fRectOf(f), w: f.w, h: f.h });
+    return snapLines(rects, layout?.reference_w ?? 0, layout?.reference_h ?? 0);
+  }
 
   // Selecting furniture and dragging it are separate: the neocom can't be
   // dragged (its width is a field, not a rect) but must still be selectable, or
@@ -261,7 +294,7 @@
     // committing), not the committed geom — otherwise a re-drag before the
     // async commit lands would start from stale coordinates and jump.
     const r = rectOf(unit.anchor);
-    drag = { kind: "move", unit, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
+    drag = { kind: "move", unit, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y, lines: linesFor(unit) };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
@@ -274,7 +307,7 @@
     const r = rectOf(unit.anchor);
     drag = {
       kind: "resize", unit, corner, startX: e.clientX, startY: e.clientY,
-      ox: r.x, oy: r.y, ow: r.w, oh: r.h,
+      ox: r.x, oy: r.y, ow: r.w, oh: r.h, lines: linesFor(unit),
     };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -285,10 +318,6 @@
     if (!drag) return;
     const dx = toData(e.clientX - drag.startX, scale);
     const dy = toData(e.clientY - drag.startY, scale);
-    if (drag.kind === "move") {
-      preview = { ...preview, [drag.unit.anchor.id]: { ...rectOf(drag.unit.anchor), x: drag.ox + dx, y: drag.oy + dy } };
-      return;
-    }
     if (drag.kind === "furniture") {
       const f = drag.f;
       fPreview = {
@@ -297,9 +326,27 @@
       };
       return;
     }
+    // Six CANVAS px, so the grab feels identical however far the canvas is
+    // scaled down. Alt held passes the drag straight through — read off the
+    // event, so pressing or releasing it mid-drag takes effect on the next
+    // pointer move (there's no key listener here to catch it sooner; holding
+    // Alt without moving the mouse leaves the last snap applied).
+    const tol = toData(6, scale);
+    const raw = drag.kind === "move"
+      ? { ...rectOf(drag.unit.anchor), x: drag.ox + dx, y: drag.oy + dy }
+      : resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy);
+    const corner = drag.kind === "resize" ? drag.corner : null;
+    const snap = e.altKey
+      ? { dx: 0, dy: 0, gx: null, gy: null }
+      : snapDelta(movingEdges(raw, corner), drag.lines, tol);
+    guides = { x: snap.gx, y: snap.gy };
     preview = {
       ...preview,
-      [drag.unit.anchor.id]: resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx, dy),
+      [drag.unit.anchor.id]: drag.kind === "move"
+        ? { ...raw, x: raw.x + snap.dx, y: raw.y + snap.dy }
+        // The correction goes into the DELTA, so resizeRect's anchor-crossing
+        // guards still run on the final numbers.
+        : resizeRect({ x: drag.ox, y: drag.oy, w: drag.ow, h: drag.oh }, drag.corner, dx + snap.dx, dy + snap.dy),
     };
   }
 
@@ -313,6 +360,7 @@
     if (!drag) return;
     const d = drag;
     drag = null;
+    guides = { x: null, y: null };
 
     if (d.kind === "furniture") {
       const p = fPreview[d.f.kind];
@@ -354,40 +402,123 @@
       return;
     }
 
-    const p = preview[d.unit.anchor.id];
-    if (!p) return;
-    // Fan the new anchor rect out to every renderable window in the unit so a
-    // stack moves/resizes coherently and stale members are repaired. The full
-    // rect (not just x/y) is sent even for a move, so members also snap to the
-    // anchor's w/h — geomMutations diffs per field, so the anchor's own
-    // unchanged w/h emit nothing and plain single-window units are unaffected.
-    const targets = d.unit.fanTargets;
-    const next = { x: p.x, y: p.y, w: p.w, h: p.h };
-    const ms = targets.flatMap((w) => geomMutations(w, next));
-    await commit(ms);
-    // A re-drag on the same window may have started during the async commit and
-    // now owns the preview — don't wipe it out from under the new drag. (The
-    // cast: TS narrowed `drag` to null above and can't see the reassignment a
-    // concurrent startMove may have made across the await.)
-    const active = drag as Drag | null;
-    if (!active || active.kind === "furniture" || active.unit.anchor.id !== d.unit.anchor.id) {
-      clearPreview(d.unit.anchor.id);
-    }
+    await commitUnit(d.unit);
   }
+
+  /** Commit a unit's previewed rect: fan it out to every renderable window in
+   * the unit so a stack moves/resizes coherently and stale members are
+   * repaired, then drop the preview unless something has re-claimed it. The
+   * full rect (not just x/y) is sent even for a move, so members also snap to
+   * the anchor's w/h — geomMutations diffs per field, so an unchanged w/h emits
+   * nothing and plain single-window units are unaffected. */
+  async function commitUnit(unit: DrawUnit) {
+    const p = preview[unit.anchor.id];
+    if (!p) return;
+    const next = { x: p.x, y: p.y, w: p.w, h: p.h };
+    await commit(unit.fanTargets.flatMap((w) => geomMutations(w, next)));
+    // A re-drag or a fresh nudge on the same window may have started during the
+    // async commit and now owns the preview — don't wipe it out from under it.
+    // (The cast: TS narrowed `drag` to null in onPointerUp and can't see a
+    // reassignment a concurrent startMove may have made across the await.)
+    const active = drag as Drag | null;
+    const dragging = active && active.kind !== "furniture" && active.unit.anchor.id === unit.anchor.id;
+    if (!dragging && nudging !== unit.anchor.id) clearPreview(unit.anchor.id);
+  }
+
+  // --- Arrow-key nudge -------------------------------------------------------
+  // Bound on the window rather than a focusable canvas: the selection can just
+  // as well have been made in the window panel, and a focus-scoped handler
+  // would silently do nothing in that case.
+
+  const NUDGE = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
+
+  /** The unit the nudge moves: the one whose anchor or tabs carry the
+   * selection, so nudging a stacked window moves its whole stack — the same
+   * unit a canvas drag would have grabbed. */
+  const selectedUnit = () =>
+    units.find((u) => u.anchor.id === selectedId || u.tabs.some((t) => t.id === selectedId)) ?? null;
+
+  function onKeyDown(e: KeyboardEvent) {
+    // Alt is the snap-disable modifier for drags; a nudge never snaps, so
+    // Alt+Arrow has nothing to disable and is left to do nothing.
+    if (readOnly || drag || e.ctrlKey || e.metaKey || e.altKey) return;
+    const step = NUDGE[e.key as keyof typeof NUDGE];
+    if (!step) return;
+    // Never steal the arrows from a field that uses them — a text box moves
+    // its caret, a number input steps its value. A checkbox or radio does
+    // NOT: the panel's own filter toggles are checkboxes, and treating every
+    // INPUT alike left the nudge dead for as long as one kept focus, with the
+    // arrows scrolling the window list instead.
+    const t = e.target as HTMLElement | null;
+    const kind = (t as HTMLInputElement | null)?.type;
+    if (t && (t.isContentEditable || t.tagName === "SELECT" || t.tagName === "TEXTAREA"
+      || (t.tagName === "INPUT" && kind !== "checkbox" && kind !== "radio"))) return;
+    // A held nudge owns its unit until keyup: re-resolving from the live
+    // selection on every auto-repeat keydown would let a mid-hold selection
+    // change (e.g. a click in the window panel) retarget onto a different
+    // unit, stranding the first unit's accumulated preview uncommitted.
+    const unit = nudging ? (units.find((u) => u.anchor.id === nudging) ?? null) : selectedUnit();
+    if (!unit) return;
+    e.preventDefault(); // or the canvas pane scrolls out from under the nudge
+    const n = e.shiftKey ? 10 : 1;
+    const r = rectOf(unit.anchor);
+    // Preview only — no backend traffic per keypress. Key auto-repeat fires
+    // dozens of keydowns and exactly ONE keyup, so a glide costs one commit.
+    // No snapping: nudging is the tool you reach for when a snap put the window
+    // one pixel off, and snapping it back would make the two fight.
+    nudging = unit.anchor.id;
+    preview = { ...preview, [unit.anchor.id]: { ...r, x: r.x + step[0] * n, y: r.y + step[1] * n } };
+  }
+
+  /** Commit whatever nudge is in flight, if any. Shared by keyup and window
+   * blur: if the webview loses focus mid-hold (Alt+Tab, a taskbar click, an OS
+   * notification), the keyup fires elsewhere and `nudging` would otherwise
+   * stay stuck on the old unit — the next arrow press on a freshly selected
+   * window would then resolve `nudging`'s stale unit instead, committing the
+   * wrong window's stranded glide to the file on the eventual keyup. */
+  async function endNudge() {
+    if (!nudging) return;
+    const id = nudging;
+    nudging = null;
+    const unit = units.find((u) => u.anchor.id === id);
+    if (unit) await commitUnit(unit);
+  }
+
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key in NUDGE) return endNudge();
+  };
 </script>
+
+<!-- blur doesn't bubble, so this only fires for the window itself (an inner
+     input losing focus to another inner element won't trip it) — see endNudge. -->
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
 {#if layout === null}
   <p class="hint">Loading layout…</p>
 {:else}
   <div class="layout-view">
     <div class="canvas-wrap" bind:clientWidth={containerWidth}>
+      <!-- The capture-phase blur is what gives the canvas the keyboard:
+           startMove/startResize/startFurniture all preventDefault their
+           pointerdown, which suppresses the browser's focus transfer, so a
+           click on a rectangle would otherwise leave focus on whatever was
+           last touched — typically a panel input, which then swallows the
+           arrow keys the nudge needs. Capture, so a child's stopPropagation
+           can't skip it. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="canvas"
         bind:this={canvasEl}
         style="width: {toCanvas(layout.reference_w, scale)}px; height: {canvasHeight}px;"
+        onpointerdowncapture={() => (document.activeElement as HTMLElement | null)?.blur()}
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}>
+        {#if guides.x !== null}
+          <div class="guide vertical" style="left: {toCanvas(guides.x, scale)}px;"></div>
+        {/if}
+        {#if guides.y !== null}
+          <div class="guide horizontal" style="top: {toCanvas(guides.y, scale)}px;"></div>
+        {/if}
         {#each furniture as f (f.kind)}
           {@const r = fRectOf(f)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -548,6 +679,24 @@
      not a single one — color still follows .win/.win.selected above. */
   .win.stacked {
     border-width: 2px;
+  }
+  /* Snap feedback: the edge the dragged rect locked onto. Same amber as a
+     selection, above every rect, never in the way of the pointer. */
+  .guide {
+    position: absolute;
+    background: #f59e0b;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .guide.vertical {
+    top: 0;
+    bottom: 0;
+    width: 1px;
+  }
+  .guide.horizontal {
+    left: 0;
+    right: 0;
+    height: 1px;
   }
   .win-label {
     padding: 1px 3px;
