@@ -51,6 +51,11 @@
 
   // The filter is shared: it narrows the window list AND what the canvas draws.
   // Folding families in the panel is separate and list-only.
+  // Deliberately persists across file switches (slot/refreshToken/userOpen
+  // changes below do NOT clear it) — that lets the same subset stay applied
+  // while flipping between characters to compare them. The "showing N of M
+  // · reset" counter is what keeps a carried-over filter visible instead of
+  // silently misleading.
   let filter = $state<WindowFilter>({ ...NO_FILTER });
 
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
@@ -96,10 +101,6 @@
   let lastUserOpen = false;
   $effect(() => {
     if (refreshToken !== lastToken || slot !== lastSlot || userOpen !== lastUserOpen) {
-      // A filter carried over from another character reads as "this file has
-      // three windows". Clear it on a real file switch, but not on a save or
-      // an account pairing, which must not disturb what the user is doing.
-      if (slot !== lastSlot) filter = { ...NO_FILTER };
       lastToken = refreshToken;
       lastSlot = slot;
       lastUserOpen = userOpen;
