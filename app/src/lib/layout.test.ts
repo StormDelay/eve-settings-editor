@@ -284,15 +284,11 @@ check("open filter keeps the right window", open[0].id === "a");
   check("stacked: one draw unit for the stack", units.filter((u) => u.stack).length === 1);
   check("stacked: count is tabs (2) + free (1), not units (2)", drawnWindowCount(units) === 3);
 
-  // Filtered vs. unfiltered must agree when no filter is active — the
-  // regression this fix targets: a container matching the filter while no
-  // member does must not be counted, but the unfiltered case must still count
-  // everything stackUnits(layout, null) draws.
-  const noFilterUnits = stackUnits(stacked, null);
-  check(
-    "filtered-with-no-filter agrees with unfiltered",
-    drawnWindowCount(noFilterUnits) === drawnWindowCount(units),
-  );
+  // A stack container that matches the filter while NONE of its members do
+  // draws nothing — counting the raw window list would over-report it.
+  const containerOnly = new Set(["C"]);
+  const filtered = stackUnits(stacked, containerOnly);
+  check("a container-only filter match draws nothing", drawnWindowCount(filtered) === 0);
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
