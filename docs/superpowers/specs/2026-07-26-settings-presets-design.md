@@ -3,10 +3,10 @@
 Date: 2026-07-26
 Status: designed, ready for writing-plans.
 
-Roadmap: the **settings presets** milestone — third on the roadmap after
-overview depth (slices 1–4, shipped through v0.14.0) and layout depth (slice 3
-shipped v0.15.0, slice 1a/1b shipped v0.16.0/v0.17.0). Designed as **one
-slice**: a preset that can be created but not applied is useless, and one that
+Roadmap: the **settings presets** milestone — next after overview depth (slices
+1–4, shipped through v0.14.0), layout depth (slices 3, 1a and 1b, shipped
+v0.15.0–v0.17.0), the keybindings editor (v0.18.0) and layout names-and-noise
+(v0.19.0). Designed as **one slice**: a preset that can be created but not applied is useless, and one that
 cannot be shared misses a third of the stated need.
 
 Builds on: `batch.rs` (`Category`, `extract_categories`, `apply_to_tree`), the
@@ -65,13 +65,14 @@ The second consequence is the one worth stating loudest:
 > aspect means adding a `Category` and nothing else: no preset format change, no
 > migration, no stored field to keep in sync.
 
-`Category::Keybinds` is the proof case sitting right there. The keybinds editor
-shipped, but keybinds are not a batch category. Adding
-`Keybinds => &[b"cmd", b"customCmds"]` to `Category::key_path` (the path
-`keybinds.rs:51-52` reads) plus an `Aspect` variant would make keybinds a batch
-aspect **and** a preset aspect in the same two lines. It is deliberately
-out of this slice's scope (it changes batch apply's user-facing behaviour, which
-is a separate decision) but it is what "easy expansions" has to mean.
+**Keybinds is the worked example, and it already happened.**
+`Category::Keybinds => &[b"cmd", b"customCmds"]` (`batch.rs:35`) and
+`Aspect::Keybinds` shipped with the keybindings editor in v0.18.0, written
+without any knowledge of this design. Under this model that makes keybinds a
+preset aspect on day one, at a cost of zero lines: the preset code never
+enumerates aspects — it asks `aspect_writes` what a chosen aspect writes, and
+`extract_categories` what a document holds. The aspect after keybinds costs the
+same.
 
 ## 3. Storage
 
@@ -211,6 +212,7 @@ An aspect is present when its **defining** category is:
 | Layout | char has `windows` |
 | Overview | user has `overview` (char's `SortHeadersSizes` is a bonus, not a condition) |
 | Autofill | user has `ui -> editHistory` |
+| Keybinds | user has `cmd -> customCmds` |
 | Everything | `preset.json` says `full` |
 
 A preset whose files fail to decode is listed with `error` set and no aspects,
@@ -227,7 +229,7 @@ list is only rebuilt on user action. If a large library ever drags, cache by
 and `api.open("user", <dir>/user.dat)` — both slots filled in one action. This
 must *not* go through `+page.svelte`'s `openFile`, whose char branch calls
 `reconcileUserSlot` to find the paired account. The reconcile `$effect`
-(`+page.svelte:160`) only fires when `slots.user === null`, so filling both
+(`+page.svelte:162`) only fires when `slots.user === null`, so filling both
 slots keeps the pairing machinery quiet without any change to it.
 
 `+page.svelte` gains `openPreset: string | null`, set by the preset-open path
@@ -336,8 +338,8 @@ preset does.
 - **New from open character…** opens an inline form in the sidebar — a name
   field plus the aspect checkboxes — matching the inline-name-input pattern the
   overview-window slice introduced when it replaced `window.prompt`. Disabled
-  when no character is open. Ticking `Everything` disables the other three,
-  since it subsumes them.
+  when no character is open. Ticking `Everything` disables the others, since it
+  subsumes them.
 - **Batch view** — the source picker gains a Character/Preset toggle and a
   preset dropdown showing what each holds.
 - Native form controls in the new form get explicit dark backgrounds and colors:
@@ -351,9 +353,9 @@ preset does.
 - **Name sanitisation** — each rejection rule, plus the containment check
   refusing `../escape` and an absolute path even if sanitisation were bypassed.
 - **Pruning** — a Layout-only preset's `char.dat` decodes and holds `windows`
-  and nothing else; its `user.dat` is empty; the source's autofill and overview
-  are *absent* (this is the privacy guarantee, so it gets an explicit assertion,
-  not an implication).
+  and nothing else; its `user.dat` is empty; the source's autofill, overview and
+  keybinds are *absent* (this is the privacy guarantee, so it gets an explicit
+  assertion, not an implication).
 - **Everything** — both files decode equal to the source documents, and
   `preset.json` says `full`.
 - **Derived aspects** — a preset built from each aspect combination lists back
@@ -416,8 +418,6 @@ Closing with a live in-game smoke, as with every previous slice.
 - **Tags, search, notes, ordering, favourites.** A folder listing.
 - **Version history beyond the backup chain** every preset save already gets for
   free in its own folder.
-- **`Category::Keybinds`.** Two lines and clearly wanted (§2), but it changes
-  batch apply's behaviour too, which is the user's call to make separately.
 - **Auto-snapshot on save**, or any implicit preset creation.
 - **Cross-machine sync.** Export/import is the sync story.
 
