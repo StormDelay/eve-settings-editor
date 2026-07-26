@@ -33,6 +33,7 @@ for (const scale of [0.5, 0.37, 1, 2]) {
 const win = (id: string, open: boolean, renderable: boolean, stack: WindowRect["stack"] = null): WindowRect => ({
   id,
   label: id,
+  name: null,
   open,
   renderable,
   resolution_matches: true,
