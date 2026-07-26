@@ -136,6 +136,21 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
+- [ ] **Real chat-channel names in the Layout view (and its filter).** A chat
+  window's id is `chatchannel_private_<guid>` / `chatchannel_player_<hash>`, which
+  contains none of the channel's display name — so the list, the canvas and the
+  slice-1a filter can only ever show and match `Chat · private`. Searching the
+  channel's actual name finds nothing, which is what surfaced this. The name *is*
+  in the character file: `ui → chatchannels` is a `List[Tuple(kind, channelKey,
+  label)]` (367/384 files) whose `channelKey` corresponds to the window-id suffix
+  — verified against a real file. Fix by having `window_layout` read that section
+  and return the mapping, so `windowLabels.describe()` can use the real name; the
+  filter then matches it for free, since it already searches the label. Same shape
+  as the `tabgroups` item below — both are "EVE's own display strings live in a
+  section the layout projection doesn't read", so they are worth doing together.
+  Deliberately deferred out of slice 1a, which was scoped frontend-only.
+  _Added 2026-07-26 (slice 1a live smoke)._
+
 - [ ] **Stack labels from the account file's `tabgroups`.** The account file stores
   `tabgroups → <containerId>_names` → EVE's own tab label (e.g.
   `"Character: Information"`), which beats anything derivable from the container
