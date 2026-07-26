@@ -3,7 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
-  snapLines, movingEdges, snapDelta,
+  snapLines, movingEdges, snapDelta, unitAt, moveInOrder,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -521,6 +521,42 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
   const ids = visibleIds([market, invite], { ...NO_FILTER, hideClutter: true }, freed);
   check("visibleIds honours the overrides", ids.has("ChatInvitation_x") && ids.has("market"));
+}
+
+// --- unitAt: topmost drawn unit under a data-px point ------------------------
+{
+  const rect = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
+  const u = (key: string, r: { x: number; y: number; w: number; h: number }) =>
+    ({ key, anchor: { id: key }, stack: null, tabs: [], fanTargets: [], rect: r }) as any;
+  // Two overlapping units; `big` is drawn first, `small` second (on top).
+  const big = u("big", rect(0, 0, 500, 500));
+  const small = u("small", rect(100, 100, 100, 100));
+  const units = [big, small];
+  const rectOf = (x: any) => x.rect;
+
+  check("unitAt returns the later-drawn unit where they overlap",
+    unitAt(units, rectOf, 150, 150)?.key === "small");
+  check("unitAt returns the only unit under a non-overlapping point",
+    unitAt(units, rectOf, 400, 400)?.key === "big");
+  check("unitAt returns null on empty canvas",
+    unitAt(units, rectOf, 900, 900) === null);
+  check("unitAt counts the rect edge as inside",
+    unitAt(units, rectOf, 100, 100)?.key === "small");
+}
+
+// --- moveInOrder: the full ordering reorder_stack takes ----------------------
+{
+  const ids = ["a", "b", "c", "d"];
+  check("moveInOrder moves an id forward",
+    moveInOrder(ids, "a", 2).join(",") === "b,c,a,d");
+  check("moveInOrder moves an id backward",
+    moveInOrder(ids, "d", 1).join(",") === "a,d,b,c");
+  check("moveInOrder to the same index is unchanged",
+    moveInOrder(ids, "b", 1).join(",") === "a,b,c,d");
+  check("moveInOrder clamps an index past the end",
+    moveInOrder(ids, "a", 99).join(",") === "b,c,d,a");
+  check("moveInOrder leaves the input array alone",
+    ids.join(",") === "a,b,c,d");
 }
 
 console.log("layout: all checks passed");
