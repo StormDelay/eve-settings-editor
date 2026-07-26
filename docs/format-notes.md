@@ -628,6 +628,23 @@ harmless — not yet verified).
   352 of 384 character files in both the 2026-07-22 and 2026-07-12 corpus
   snapshots — a stable key, not one being phased in or out. These are the
   spec's WindowLayout flag fields.
+- **`openWindows` is a restore list, not a visibility flag** (measured
+  2026-07-26 against a screenshot of that character's running client). It
+  accumulates: EVE records which windows it would restore and never reliably
+  clears an entry. One live character file held **381 windows, 134 flagged open
+  and 83 canvas draw units, while about 9 windows were actually on screen** — the
+  open set including one-shot modals such as `setQuantityPopup`,
+  `enterShipPassword`, `ship_name_dialog`, `kickCharacterFromChat` and
+  `DisconnectNotice`. **No other stored signal separates visible from merely
+  open:** `minimizedWindows` was true for 1 window and `collapsedWindows` for 0;
+  only 14 of the 134 were saved at a stale resolution; and there were 82 distinct
+  rects among them, so there is no "never positioned" default-position cluster to
+  key on. The closest correlate was *having an entry* in `compactWindows` (10
+  windows, 8 of them visible), but that records "the user toggled compact mode on
+  this window", not visibility — and it misses `directionalScannerWindow`, which
+  was on screen. Consequence for any editor: a layout canvas can only show what
+  EVE would restore, and separating out the transient windows needs a curated
+  list, which is inherently incomplete.
 - Overview column *widths* observed under root → `b"ui"` →
   `b"SortHeadersSizes"` / `b"SortHeadersSettings2"` keyed by tuple
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
