@@ -13,6 +13,45 @@ Workflow:
 
 ## Open
 
+- [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
+  near-duplicate string readers that arrived from opposite sides of a merge:
+  `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
+  `&Value` and handles `Bytes`/`Str`; `text` (from the names-and-noise slice)
+  resolves through `Shared`/`Ref` via `effective` first and also handles
+  `StrUcs2`. `text` is the strictly more capable of the two, so the fold is
+  probably "delete `bytes_str`, pass a `SharedTable` at its call sites" — but
+  check each call site first, since a caller that deliberately does NOT want
+  `Ref` resolution would change behaviour. Kept both at merge time rather than
+  refactoring two live APIs inside a conflict resolution. _Added 2026-07-26._
+
+- [ ] **Run the names-and-noise live in-game smoke — deliberately deferred past
+  the merge.** The slice merged on a green CI and a clean whole-branch review, but
+  nothing in it has been proven against a running client. Outstanding checks, in
+  the order the reviews ranked them:
+  1. **The chat join is the one thing no test can settle.** `settings-field-reference.md`
+     documents `ui → chatchannels` as `List[Tuple(kind, channelKey, label)]` but never
+     states that a channel's window id is `chatchannel_<channelKey>` — that link was
+     inferred. If real ids carry a kind segment the stored key does not
+     (`chatchannel_private_<guid>` against a key of just `<guid>`), every chat window
+     silently keeps its derived name and the whole strand no-ops with no error
+     anywhere. Check a **named standing channel** (Local, an alliance channel) *and*
+     a **private conversation** — they may key differently.
+  2. A stack the **editor** minted should still read `Window stack · N`: per
+     `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
+  3. The frame row's new label renders between the FRAME marker and the open
+     checkbox, and its `span.detail` is a bare flex child with no `nowrap` — judge
+     whether a long label like "Character: Information" should sit after the name
+     instead.
+  4. Preferences round trip: `preferences.json` appears only after the first
+     override, survives a restart, and hand-corrupting it yields
+     `preferences.json.bad`. The copy-vs-rename fallback has **no CI coverage at
+     all** — CI is Linux-only and the test that exercises it is `#[cfg(windows)]`.
+  5. Two rapid override toggles on one window: the file must end up matching the UI.
+  6. `overrideCount()` counts overrides across every character, so the counter can
+     read "· 3 overridden" on a file none of them apply to, and `clear` would wipe
+     another character's. Decide from real use whether to scope it to the open
+     layout. _Added 2026-07-26._
+
 - [ ] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
   ships empty, so the Keybinds view's Default column and per-row reset are
   disabled. Populating it: on a throwaway account open the in-game keybinding
@@ -34,6 +73,18 @@ Workflow:
   demand, EVE writes its settings on **logout**, so log the character out
   before saving or the client overwrites it on exit.
   _Added 2026-07-26._
+
+- [ ] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
+  `HUD_NOMINAL`'s sizes, the centre-relative ship offset and the top-left point
+  convention in `app/src/lib/layout.ts` are all guesses, flagged as such in the code
+  and the changelog. Scope item 5 of the names-and-noise spec (§8) planned to settle
+  them during that slice's smoke; the slice merged first, so it is still open. Move
+  each element in-game, quit the client so it writes, reload in the editor, and
+  compare against what the canvas draws. If a convention is wrong, correct it
+  **together with its inverse** — `shipOffsetFromX` for the ship offset,
+  `hudPointFromRect` for the fighter/badge point — and update the `layout.test.ts`
+  round-trip cases that pin them. If they hold, delete the hedging from the
+  comments. _Added 2026-07-26._
 
 - [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
   Two non-blocking minors from the layout slice 1b branch, ruled deferred at
@@ -78,7 +129,13 @@ Workflow:
   reading `unavailable` nor for a neocom width of exactly 0, and the `hudEntry`
   test helper can't build a `set.how === "insert"` entry, so the real absent-key
   wire shape is never literally exercised (behaviourally equivalent).
-  _Added 2026-07-25._
+  **(3), (4), (5) and (6) are now RESOLVED — closed by the layout-names-and-noise
+  debt sweep:** `section()` (folded into `treewalk`, along with `hex()`) now
+  pushes `Step::SharedInner` for a `Shared`-wrapped root; `locate()`'s scalar text
+  is carried on `Located::Writable` and used by `probe` instead of being
+  discarded; `mint` now has one `NoSection` guard via `section_dict_mut`. Items
+  (1), (2), (7), (8) and (9) remain open. _Added 2026-07-25; partially done
+  2026-07-26 (layout names-and-noise)._
 
 - [ ] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
@@ -225,32 +282,6 @@ Workflow:
   first whether EVE simply re-creates them, in which case it is not worth doing.
   _Added 2026-07-26._
 
-- [ ] **Let the user edit the Layout clutter list.** `windowLabels.ts`'s
-  `CLUTTER_IDS` / `CLUTTER_FAMILIES` / `CLUTTER_CHAT_DETAILS` are hard-coded, and
-  they can never be complete — see the finding below. Give the user control:
-  add/remove a window from the clutter set from the window list's right-click
-  context menu ("Treat as clutter" / "Stop treating as clutter"), persisted as
-  editor settings (NOT written into the EVE files — this is our view state), with
-  the built-in tables as the default and a way to see and reset the overrides.
-  That turns an unwinnable curation problem into a one-click fix per window.
-  _Added 2026-07-26._
-
-  **Why the built-in list can never be complete (measured, keep this):** EVE's
-  `windows → openWindows` flag **accumulates** — it records which windows EVE
-  would restore, not which are on screen, and it is never reliably cleared. On a
-  real live character file: **381 windows, 134 flagged open, 83 canvas draw units,
-  versus about 9 windows actually visible in the client**. The open set includes
-  one-shot modals (`setQuantityPopup`, `enterShipPassword`, `ship_name_dialog`,
-  `kickCharacterFromChat`, `DisconnectNotice`, `skill_requirement_dialog`).
-  Nothing else in the file separates them: `minimizedWindows` true for 1,
-  `collapsedWindows` for 0, only 14 of 134 saved at a stale resolution, and 82
-  distinct rects among the 134 (so no "never positioned" default-position
-  cluster). The closest correlate found was *having an entry* in
-  `compactWindows` (10 windows, 8 of them matching the visible set), but that
-  means "the user toggled compact mode here", not visibility — and it misses
-  `directionalScannerWindow`, which was plainly on screen. Worth recording in
-  `format-notes.md` too: `openWindows` is a restore list, not a visibility flag.
-
 - [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
   Today the only way to abandon edits is to open a different file and accept the
   discard prompt, then come back — or to quit. Add a button next to the
@@ -265,41 +296,6 @@ Workflow:
   editors write to both, so per-badge could leave a half-reverted pair — probably
   discard both and say so on the button). Must not touch the backup chain: this
   is a re-read, not a restore. _Added 2026-07-26._
-
-- [ ] **Real chat-channel names in the Layout view (and its filter).** A chat
-  window's id is `chatchannel_private_<guid>` / `chatchannel_player_<hash>`, which
-  contains none of the channel's display name — so the list, the canvas and the
-  slice-1a filter can only ever show and match `Chat · private`. Searching the
-  channel's actual name finds nothing, which is what surfaced this. The name *is*
-  in the character file: `ui → chatchannels` is a `List[Tuple(kind, channelKey,
-  label)]` (367/384 files) whose `channelKey` corresponds to the window-id suffix
-  — verified against a real file. Fix by having `window_layout` read that section
-  and return the mapping, so `windowLabels.describe()` can use the real name; the
-  filter then matches it for free, since it already searches the label. Same shape
-  as the `tabgroups` item below — both are "EVE's own display strings live in a
-  section the layout projection doesn't read", so they are worth doing together.
-  Deliberately deferred out of slice 1a, which was scoped frontend-only.
-  _Added 2026-07-26 (slice 1a live smoke)._
-
-- [ ] **Stack labels from the account file's `tabgroups`.** The account file stores
-  `tabgroups → <containerId>_names` → EVE's own tab label (e.g.
-  `"Character: Information"`), which beats anything derivable from the container
-  id — layout slice 1a labels a stack `Window stack · 76` from `describe()`
-  instead. Taking the real string needs `window_layout` to accept the user root,
-  which ripples through `ops.rs` and every call site. Supersedes half of the older
-  "friendlier stack-frame labels" item. _Added 2026-07-26 (slice 1a design)._
-
-- [ ] **Layout slice 1a follow-ups (final whole-branch review, both ship-as-debt).**
-  (1) `layout.test.ts`'s third `drawnWindowCount` case compares
-  `stackUnits(x, null)` with `stackUnits(x)` — the same call, since `null` is the
-  default — so it is tautological and never exercises the regression it names
-  (a stack container matching the filter while none of its members do). The
-  production wiring in `LayoutView.svelte` was verified correct by direct source
-  read; add a `Set`-based filtered case next time the file is touched. (2) A
-  stack's ↑/↓ reorder button stays enabled on the first *visible* member when a
-  hidden member precedes it at true index 0, so it swaps with a row the filter is
-  hiding — correct per the true-index contract that keeps reordering from
-  scrambling under a filter, but an odd edge case. _Added 2026-07-26._
 
 - [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
@@ -331,7 +327,11 @@ Workflow:
   appears (borderline premature for two); (5) cosmetic — a windowless
   `remove_overview_window` returns `LastWindow` ("must keep at least one window")
   rather than a "no mapping" message (harmless, the UI never surfaces it).
-  _Added 2026-07-20._
+  **(2) and (3) are now RESOLVED — closed by the layout-names-and-noise debt
+  sweep:** `remove_overview_window`'s `UnknownWindow` guard now has a test, and
+  the cascade offset is `overview_tabs.rs`'s named `OVERVIEW_WINDOW_OFFSET: i64 =
+  40`. Items (1), (4) and (5) remain open. _Added 2026-07-20; partially done
+  2026-07-26 (layout names-and-noise)._
 
 - [ ] **Overview tab-management follow-ups (deferred from the milestone's final
   review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
@@ -371,16 +371,6 @@ Workflow:
   selected on an account that HAS windows lands the new tab in window 0 (via the
   `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
   _Added 2026-07-19._
-
-- [ ] **Window-stacks follow-up: friendlier stack-frame labels.**
-  `Stack.container_label` is always == `container_id` (`windows.rs`) — give a
-  stack frame a friendlier label when a source name exists. Cosmetic. (The other
-  five minors from the milestone's final review — `StackError` serde wiring,
-  stack-move fanning w/h, `runStack` reselection, the panel select
-  pre-filter/reset, and the test / `.stacked`-CSS debt — were all already
-  resolved by the 0.8.0 polish commits; re-verified 2026-07-19. The one remaining
-  "unreachable defensive branch" in `stackUnits` is intentional defense and has a
-  test covering it — leave it.) _Added 2026-07-19._
 
 - [ ] **Profile the reshare (deduplication) pass.** Every structural editor
   (overview / autofill / batch / window-stack membership) runs
@@ -510,6 +500,40 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
   widths), so there's no spurious backup/rewrite and the preview's write count is
   honest. (The ~1.5× file-inflation half was already fixed by the 0.7.0 reshare
   pass.) _Added 2026-07-18; done 2026-07-19._
+- [x] **Real chat-channel names in the Layout view (and its filter).** `window_layout`
+  now reads the character file's `ui → chatchannels` and attaches EVE's own label
+  to the matching chat window, so the list, the canvas and the filter show and
+  match the real channel name instead of `Chat · private`. _Added 2026-07-26
+  (slice 1a live smoke); done 2026-07-26 (layout names-and-noise)._
+- [x] **Stack labels from the account file's `tabgroups`.** `window_layout` now
+  takes the open account document and reads `tabgroups → <containerId>_names`,
+  so `Stack.container_label` carries EVE's own string (e.g. "Character:
+  Information") instead of a copy of the container id. _Added 2026-07-26 (slice
+  1a design); done 2026-07-26 (layout names-and-noise)._
+- [x] **Window-stacks follow-up: friendlier stack-frame labels.**
+  `Stack.container_label` now carries EVE's own `tabgroups` string when the
+  account file has one — closed by the two items above. The last call site not
+  honouring it (`WindowPanel.svelte`'s `.stack-head` fallback, still reading
+  `describe(stack.container_id).label` unconditionally) now falls back to it
+  too. _Added 2026-07-19; done 2026-07-26 (layout names-and-noise)._
+- [x] **Layout slice 1a follow-ups (final whole-branch review, both ship-as-debt).**
+  (1) The tautological `drawnWindowCount` test in `layout.test.ts` (comparing
+  `stackUnits(x, null)` against `stackUnits(x)`, the same call) is replaced with a
+  `Set`-based filtered case asserting a stack container matching the filter while
+  no member does draws nothing. (2) The stack ↑/↓ reorder buttons now disable
+  when the neighbour they'd swap with is hidden by the filter (`memberVisible`),
+  instead of staying enabled and swapping with a row the filter is hiding. _Added
+  2026-07-26; done 2026-07-26 (layout names-and-noise)._
+- [x] **Let the user edit the Layout clutter list.** A window's right-click menu
+  now offers "Treat as clutter" / "Stop treating as clutter", persisted in a new
+  editor-owned `preferences.json` (`app_config_dir()`, never written to an EVE
+  file) that `isClutter` consults ahead of the built-in tables; the window list's
+  counter line grows `· N overridden · clear` whenever an override is set. Turns
+  the unwinnable curation problem the built-in tables can never fully solve (EVE's
+  `openWindows` accumulates rather than reflecting real visibility — the
+  measurement this item used to carry now lives in `windowLabels.ts`'s own
+  comment above `isClutter`) into a one-click fix per window. _Added 2026-07-26;
+  done 2026-07-26 (layout names-and-noise)._
 
 ### 0.6.0
 

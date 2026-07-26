@@ -304,7 +304,7 @@ fn gather_resolutions(char_paths: &HashMap<u64, PathBuf>, ids: &[u64]) -> HashMa
         let Some(path) = char_paths.get(&id) else { continue };
         let Ok(bytes) = fs::read(path) else { continue };
         let Ok(value) = blue_marshal::decode(&bytes) else { continue };
-        let wl = project_window_layout(&value);
+        let wl = project_window_layout(&value, None);
         out.insert(id, (wl.reference_w, wl.reference_h));
     }
     out
@@ -579,9 +579,17 @@ pub fn list_file_backups(state: &AppState, slot: Slot) -> Result<Vec<settings_mo
 }
 
 pub fn window_layout(state: &AppState, slot: Slot) -> Result<WindowLayout, ErrDto> {
+    // Lock user before the requested slot, matching hud_layout and
+    // overview_columns — one consistent order across this file rules out
+    // lock-order inversion between concurrent commands. When the CALLER asked
+    // for the user slot there is no second document to take: locking `user`
+    // twice would deadlock (std Mutex is not reentrant), and an account file
+    // has no windows to project anyway.
+    let uguard = matches!(slot, Slot::Char).then(|| state.user.lock().unwrap());
     let guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
-    Ok(project_window_layout(&doc.value))
+    let user = uguard.as_ref().and_then(|g| g.as_ref()).map(|d| &d.value);
+    Ok(project_window_layout(&doc.value, user))
 }
 
 /// Project the HUD anchors: the character document is required, the account

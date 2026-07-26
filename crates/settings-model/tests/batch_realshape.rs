@@ -85,7 +85,7 @@ fn layout_copy_between_chars_encodes_and_matches_source() {
     let bytes = encode(&target)
         .expect("post-copy target encodes (cross-boundary Ref resolved by inline-first)");
 
-    let wl = window_layout(&decode(&bytes).unwrap());
+    let wl = window_layout(&decode(&bytes).unwrap(), None);
     let ids: Vec<&str> = wl.windows.iter().map(|w| w.id.as_str()).collect();
     assert_eq!(ids, vec!["overview"], "target now carries the source's window");
 }
