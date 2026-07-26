@@ -136,6 +136,23 @@ Workflow:
   the model (reach via Open file…), but no "nothing here" hint fires in the
   all-hidden case. _Added 2026-07-20._
 
+- [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
+  numeric-string window id *only* to serve as a window-stack container (see
+  `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
+  stack is a dead frame whose members are all gone. A real live character file had
+  **8** of them (`43`, `51`, `63`, `82`, `156`, `181`, `219`, `221`), all flagged
+  open, each painting a phantom "Window stack" rectangle. Slice 1a *hides* them
+  when `Hide clutter` is on — this task is to actually **remove** them: a cleanup
+  action that deletes the id from `windowSizesAndPositions_1` and from every
+  window-id-keyed flag dict (`openWindows`, `minimizedWindows`,
+  `isLightBackgroundWindows`, `isOverlayedWindows`, `lockedWindows`,
+  `collapsedWindows`, `compactWindows`, `pinnedWindows`, `stacksWindows`,
+  `preferredIdxInStack3`). Structural, so it belongs in `windows.rs`/`stacks.rs`
+  with the usual inline-first-then-reshare discipline, and it needs a confirm step
+  plus a live smoke — deleting window state is not something to get wrong. Check
+  first whether EVE simply re-creates them, in which case it is not worth doing.
+  _Added 2026-07-26._
+
 - [ ] **Let the user edit the Layout clutter list.** `windowLabels.ts`'s
   `CLUTTER_IDS` / `CLUTTER_FAMILIES` / `CLUTTER_CHAT_DETAILS` are hard-coded, and
   they can never be complete — see the finding below. Give the user control:
