@@ -190,8 +190,13 @@ stack…* dropdown has had the same gap since V1, and one write in the shared
 function covers both call sites. The joining member takes the **container's**
 rect (per the format notes, the container's rect is the stack's true on-screen
 position). If the container has no geometry entry, the membership write still
-goes through and the geometry is skipped — membership is the user's intent, and
-a stack whose container has no rect is already not drawn.
+goes through and the geometry is skipped — membership is the user's intent.
+This is NOT because such a stack is invisible: `windows.rs` falls back to the
+frontmost open member as the stack's anchor when the container has no
+geometry, so the stack is still drawn and can still be dropped onto. Skipping
+the geometry adoption here just leaves the joining member at its old rect
+until a later move fans the anchor's rect over it — benign, and best-effort by
+design.
 
 This is the only Rust in the slice.
 
