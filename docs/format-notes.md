@@ -689,8 +689,12 @@ Character file (`core_char_<id>.dat`):
   layout surface, which matters for the write path (`NewValue::Float`).
 - root → `b"ui"` → `b"fightersDetachedPosition"`: Int 2-tuple, e.g. `(326, 54)`.
   319/384.
-- root → `b"ui"` → `b"notification_badge_offset"`: Int 2-tuple, e.g.
-  `(2519, 131)`. 313/384.
+- root → `b"notifications"` → `b"notification_badge_offset"`: Int 2-tuple, e.g.
+  `(2519, 131)`. 313/384. **Note the section**: this is the one HUD anchor that
+  does *not* live under `ui`, and `ui → notification_badge_offset` exists in no
+  corpus file. These notes and `hud.rs` both said `ui` while the HUD slice was in
+  draft — caught before v0.15.0 was published, and now guarded by
+  `tests/hud_corpus.rs`, which no hand-built fixture could have caught.
 
 Account file (`core_user_<id>.dat`) — these are account-wide, so one edit
 changes every character on the account:
