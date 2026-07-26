@@ -80,7 +80,8 @@
     v === "tree" ||
     (v === "layout" && layoutAvailable) ||
     (v === "overview" && (openCharId !== null || slots.user?.status === "opened")) ||
-    (v === "autofill" && (openCharId !== null || slots.user?.status === "opened"));
+    (v === "autofill" && (openCharId !== null || slots.user?.status === "opened")) ||
+    (v === "keybinds" && (openCharId !== null || slots.user?.status === "opened"));
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
