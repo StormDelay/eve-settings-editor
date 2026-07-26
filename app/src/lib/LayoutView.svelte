@@ -444,10 +444,15 @@
     if (readOnly || drag || e.ctrlKey || e.metaKey || e.altKey) return;
     const step = NUDGE[e.key as keyof typeof NUDGE];
     if (!step) return;
-    // Never steal the arrows from a text field: the window filter and the
-    // panel's own x/y/w/h number inputs both want them.
+    // Never steal the arrows from a field that uses them — a text box moves
+    // its caret, a number input steps its value. A checkbox or radio does
+    // NOT: the panel's own filter toggles are checkboxes, and treating every
+    // INPUT alike left the nudge dead for as long as one kept focus, with the
+    // arrows scrolling the window list instead.
     const t = e.target as HTMLElement | null;
-    if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return;
+    const kind = (t as HTMLInputElement | null)?.type;
+    if (t && (t.isContentEditable || t.tagName === "SELECT" || t.tagName === "TEXTAREA"
+      || (t.tagName === "INPUT" && kind !== "checkbox" && kind !== "radio"))) return;
     // A held nudge owns its unit until keyup: re-resolving from the live
     // selection on every auto-repeat keydown would let a mid-hold selection
     // change (e.g. a click in the window panel) retarget onto a different
@@ -493,11 +498,19 @@
 {:else}
   <div class="layout-view">
     <div class="canvas-wrap" bind:clientWidth={containerWidth}>
+      <!-- The capture-phase blur is what gives the canvas the keyboard:
+           startMove/startResize/startFurniture all preventDefault their
+           pointerdown, which suppresses the browser's focus transfer, so a
+           click on a rectangle would otherwise leave focus on whatever was
+           last touched — typically a panel input, which then swallows the
+           arrow keys the nudge needs. Capture, so a child's stopPropagation
+           can't skip it. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="canvas"
         bind:this={canvasEl}
         style="width: {toCanvas(layout.reference_w, scale)}px; height: {canvasHeight}px;"
+        onpointerdowncapture={() => (document.activeElement as HTMLElement | null)?.blur()}
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}>
         {#if guides.x !== null}
