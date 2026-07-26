@@ -1,0 +1,4 @@
+# Synthetic corpus fixtures are marshal streams. Git auto-detects them as
+# binary today, but core.autocrlf is on in this repo and a silently mangled
+# fixture would fail the byte-identity gate for a reason nothing points at.
+*.dat binary
