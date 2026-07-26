@@ -326,6 +326,86 @@ pub fn delete(app_data: &Path, name: &str) -> Result<(), String> {
     std::fs::remove_dir_all(&dir).map_err(|e| format!("deleting the preset failed: {e}"))
 }
 
+/// The shared form: one marshal blob wrapping both documents. It exists only at
+/// the export/import boundary — the working form is always the folder, so there
+/// is no pack/unpack lifecycle and nothing to lose if the app dies mid-edit.
+/// The codec is the one already round-trip tested against the whole corpus, so
+/// this costs no new dependency and no new serializer.
+fn bytes_field<'a>(root: &'a [(Value, Value)], key: &[u8]) -> Option<&'a Vec<u8>> {
+    root.iter().find_map(|(k, v)| match (k, v) {
+        (Value::Bytes(kb), Value::Bytes(vb)) if kb.as_slice() == key => Some(vb),
+        _ => None,
+    })
+}
+
+pub fn export_to(app_data: &Path, name: &str, out: &Path) -> Result<(), String> {
+    let dir = preset_path(app_data, name).map_err(|e| e.0)?;
+    if !dir.is_dir() {
+        return Err(format!("No preset called \u{201c}{name}\u{201d}."));
+    }
+    let char_bytes = std::fs::read(dir.join(CHAR_FILE)).map_err(|e| e.to_string())?;
+    let user_bytes = std::fs::read(dir.join(USER_FILE)).map_err(|e| e.to_string())?;
+    let bundle = Value::Dict(vec![
+        (Value::Bytes(b"preset".to_vec()), Value::Bytes(name.as_bytes().to_vec())),
+        (Value::Bytes(b"char".to_vec()), Value::Bytes(char_bytes)),
+        (Value::Bytes(b"user".to_vec()), Value::Bytes(user_bytes)),
+        (Value::Bytes(b"full".to_vec()), Value::Bool(is_full(&dir))),
+    ]);
+    let encoded = encode(&bundle).map_err(|e| format!("building the preset file failed: {e}"))?;
+    std::fs::write(out, encoded).map_err(|e| format!("writing the preset file failed: {e}"))
+}
+
+/// Read a shared preset file into the library. Returns the name it landed
+/// under, which may be suffixed if the original was taken.
+pub fn import_from(app_data: &Path, file: &Path) -> Result<String, String> {
+    let raw = std::fs::read(file).map_err(|e| e.to_string())?;
+    let decoded = blue_marshal::decode(&raw)
+        .map_err(|_| "That file is not a preset file.".to_string())?;
+    let Value::Dict(root) = &decoded else {
+        return Err("That file is not a preset file.".into());
+    };
+    let name_bytes = bytes_field(root, b"preset")
+        .ok_or_else(|| "That file is not a preset file.".to_string())?;
+    let char_bytes = bytes_field(root, b"char")
+        .ok_or_else(|| "That preset file is missing its character side.".to_string())?;
+    let user_bytes = bytes_field(root, b"user")
+        .ok_or_else(|| "That preset file is missing its account side.".to_string())?;
+    let full = root.iter().any(|(k, v)| {
+        matches!((k, v), (Value::Bytes(kb), Value::Bool(true)) if kb.as_slice() == b"full")
+    });
+
+    // The name comes from an untrusted file, so it goes through the same gate a
+    // typed one does.
+    let wanted = String::from_utf8(name_bytes.clone())
+        .map_err(|_| "That preset file has an unreadable name.".to_string())?;
+    let base = sanitize_name(&wanted).map_err(|e| e.0)?;
+
+    // Both documents must decode BEFORE anything is written, so a bad file
+    // cannot leave an unopenable preset behind.
+    blue_marshal::decode(char_bytes)
+        .map_err(|e| format!("the character side of that preset is corrupt: {e}"))?;
+    blue_marshal::decode(user_bytes)
+        .map_err(|e| format!("the account side of that preset is corrupt: {e}"))?;
+
+    let mut name = base.clone();
+    let mut n = 2;
+    while preset_path(app_data, &name).map_err(|e| e.0)?.exists() {
+        name = format!("{base} ({n})");
+        n += 1;
+        if n > 100 {
+            return Err("Too many presets with that name.".into());
+        }
+    }
+    let dir = preset_path(app_data, &name).map_err(|e| e.0)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("creating the preset failed: {e}"))?;
+    std::fs::write(dir.join(CHAR_FILE), char_bytes).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(USER_FILE), user_bytes).map_err(|e| e.to_string())?;
+    if full {
+        std::fs::write(dir.join(MARKER_FILE), br#"{"full":true}"#).map_err(|e| e.to_string())?;
+    }
+    Ok(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,5 +800,92 @@ mod tests {
         assert!(!preset_path(&data, "Doomed").unwrap().exists());
         assert!(delete(&data, "../escape").is_err());
         assert!(delete(&data, "Doomed").is_err(), "deleting a missing preset is an error");
+    }
+
+    #[test]
+    fn export_then_import_round_trips_byte_for_byte() {
+        let data = temp_data("roundtrip");
+        make(&data, "Original", &[Aspect::Layout, Aspect::Keybinds]);
+        let src = preset_path(&data, "Original").unwrap();
+        let bundle = data.join("shared.evepreset");
+        export_to(&data, "Original", &bundle).unwrap();
+
+        // Import into a DIFFERENT library so the name is free.
+        let other = temp_data("roundtrip-target");
+        let landed = import_from(&other, &bundle).unwrap();
+        assert_eq!(landed, "Original");
+        let dst = preset_path(&other, "Original").unwrap();
+        assert_eq!(std::fs::read(src.join(CHAR_FILE)).unwrap(), std::fs::read(dst.join(CHAR_FILE)).unwrap());
+        assert_eq!(std::fs::read(src.join(USER_FILE)).unwrap(), std::fs::read(dst.join(USER_FILE)).unwrap());
+        let p = list(&other).into_iter().find(|p| p.name == "Original").unwrap();
+        assert_eq!(p.aspects, vec![Aspect::Layout, Aspect::Keybinds]);
+    }
+
+    #[test]
+    fn export_carries_the_full_marker() {
+        let data = temp_data("export-full");
+        make(&data, "Full", &[Aspect::Everything]);
+        let bundle = data.join("full.evepreset");
+        export_to(&data, "Full", &bundle).unwrap();
+        let other = temp_data("export-full-target");
+        import_from(&other, &bundle).unwrap();
+        assert!(is_full(&preset_path(&other, "Full").unwrap()), "full survives the round trip");
+    }
+
+    #[test]
+    fn import_suffixes_a_name_already_taken() {
+        let data = temp_data("dupe");
+        make(&data, "Same", &[Aspect::Layout]);
+        let bundle = data.join("same.evepreset");
+        export_to(&data, "Same", &bundle).unwrap();
+        let landed = import_from(&data, &bundle).unwrap();
+        assert_eq!(landed, "Same (2)");
+        assert!(preset_path(&data, "Same (2)").unwrap().is_dir());
+    }
+
+    #[test]
+    fn import_rejects_a_file_that_is_not_a_preset() {
+        let data = temp_data("not-a-preset");
+        // Valid marshal, but none of the preset keys.
+        let other = blue_marshal::encode(&Value::Dict(vec![(b("hello"), Value::Int(1))])).unwrap();
+        let p = data.join("other.evepreset");
+        std::fs::write(&p, other).unwrap();
+        let err = import_from(&data, &p).unwrap_err();
+        assert!(err.contains("not a preset"), "got: {err}");
+
+        // Not even marshal.
+        let junk = data.join("junk.evepreset");
+        std::fs::write(&junk, b"hello").unwrap();
+        assert!(import_from(&data, &junk).is_err());
+    }
+
+    #[test]
+    fn import_writes_nothing_when_an_embedded_document_is_corrupt() {
+        let data = temp_data("corrupt-embed");
+        let bundle_value = Value::Dict(vec![
+            (b("preset"), b("Bad")),
+            (b("char"), Value::Bytes(b"not marshal".to_vec())),
+            (b("user"), Value::Bytes(blue_marshal::encode(&Value::Dict(vec![])).unwrap())),
+            (b("full"), Value::Bool(false)),
+        ]);
+        let p = data.join("bad.evepreset");
+        std::fs::write(&p, blue_marshal::encode(&bundle_value).unwrap()).unwrap();
+        assert!(import_from(&data, &p).is_err());
+        assert!(!preset_path(&data, "Bad").unwrap().exists(), "nothing written on failure");
+    }
+
+    #[test]
+    fn import_rejects_an_embedded_name_that_is_not_a_legal_preset_name() {
+        let data = temp_data("evil-name");
+        let doc = blue_marshal::encode(&Value::Dict(vec![])).unwrap();
+        let bundle_value = Value::Dict(vec![
+            (b("preset"), b("../escape")),
+            (b("char"), Value::Bytes(doc.clone())),
+            (b("user"), Value::Bytes(doc)),
+            (b("full"), Value::Bool(false)),
+        ]);
+        let p = data.join("evil.evepreset");
+        std::fs::write(&p, blue_marshal::encode(&bundle_value).unwrap()).unwrap();
+        assert!(import_from(&data, &p).is_err(), "an untrusted name goes through sanitize_name");
     }
 }
