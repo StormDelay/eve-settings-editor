@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Internal
+- **Component tests.** The frontend had 4248 lines of Svelte covered by nothing:
+  the pure-module suite could only reach logic that had already been extracted.
+  `vitest` + `jsdom` + `@testing-library/svelte` now mount components, fire
+  events and assert both on the DOM and on what the component sends over IPC.
+  The two suites split by extension — `*.test.ts` stays on `node --test` with no
+  framework, `*.spec.ts` is vitest — and `npm test` runs both. Conventions and
+  the two traps that cost the most time are written down in
+  `src/lib/test/README.md`.
+- **First component coverage**: the HUD panel (the rounding and
+  refuse-to-write rules that decide what text reaches the backend's parser) and
+  the Batch view (which files a copy actually overwrites — "Everything" being
+  exclusive, unpaired characters excluded from account-scoped aspects, apply
+  sending the effective targets rather than the raw ticks, and a stale preview
+  response not clobbering a newer one).
+- **IPC contract test.** `invoke` is stringly-typed on both sides, so a renamed
+  command or argument compiled, type-checked and then failed at runtime. All 53
+  commands are now pinned: every one `api.ts` calls exists in Rust, every
+  `#[tauri::command]` is registered in `generate_handler!`, no Rust command is
+  unreachable, and the argument names agree.
+
 ## [0.15.0] - 2026-07-26
 
 The ship HUD, fighter UI and neocom on the layout canvas.
