@@ -238,7 +238,9 @@ export interface WindowFilter {
   text: string;
   /** Drop windows EVE has not flagged open (roughly 77% of a real file). */
   openOnly: boolean;
-  /** Drop the chat/mail/contact families that dominate a real file. */
+  /** Drop CLOSED chat/mail/contact windows — the canvas only ever draws open
+   * windows, so an open one is a real, currently-visible rect, not clutter.
+   * The clutter is the ~160 closed rows these families leave in the list. */
   hideNoise: boolean;
 }
 
@@ -252,7 +254,7 @@ export function filterIsActive(f: WindowFilter): boolean {
 export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
   if (f.openOnly && !w.open) return false;
   const n = describe(w.id);
-  if (f.hideNoise && NOISE_FAMILIES.has(n.family)) return false;
+  if (f.hideNoise && !w.open && NOISE_FAMILIES.has(n.family)) return false;
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
   // Same contract search.ts documents for the tree: label, detail and the raw
