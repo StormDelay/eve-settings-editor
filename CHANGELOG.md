@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-26
+
+Windows land where you mean them: edges snap, arrow keys nudge.
+
+### Added
+- **Windows snap to each other and to the screen.** Dragging a window — or one
+  of its corners — locks its edges onto the edges nearby: another window, the
+  neocom or ship HUD, or the screen itself. Two windows end up flush instead of
+  a pixel apart, which was hard to get by hand because the canvas is drawn well
+  under 1:1, where a single pixel of tremor is more than one pixel in-game. A
+  thin amber line shows which edge was caught. Hold **Alt** to place freely.
+  Only windows the canvas is actually showing attract a drag, so hiding clutter
+  with the filter also stops it pulling on you.
+- **Arrow keys nudge the selected window** by one pixel, **Shift+arrow** by ten.
+  Hold an arrow and the window glides, saving once when you let go. Nudging a
+  window that lives in a stack moves the whole stack, exactly as dragging it
+  does. The arrows still belong to the filter box and to the panel's own
+  coordinate fields whenever one of those has focus.
+
+There is deliberately no grid to snap to: EVE has none, and a fixed step cannot
+put two windows flush unless their sizes happen to be multiples of it — which
+real EVE window sizes are not.
+
 ## [0.16.0] - 2026-07-26
 
 A usable Layout editor: named windows, folded families, and one filter for the
