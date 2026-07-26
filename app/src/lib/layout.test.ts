@@ -622,11 +622,23 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     dropAction(tabDrag, stack, false, null).op === "none");
   check("a tab dropped on its own index does nothing",
     dropAction(tabDrag, stack, false, 0).op === "none");
+  // hoverTabIndex past the end of the target's visible tabs (stack has 3
+  // members, index 99 doesn't exist) — a stale or bogus measurement must not
+  // fall through to some other member.
+  check("an out-of-range hover index onto the own strip does nothing",
+    dropAction(tabDrag, stack, false, 99).op === "none");
   {
     const a = dropAction(tabDrag, other2, false, null);
     check("a tab dropped on another stack moves between stacks", a.op === "unstackInto");
     check("into that container",
       a.op === "unstackInto" && a.member === "m1" && a.container === "D");
+  }
+  {
+    // A tab dropped on another stack has no competing "move" meaning (see
+    // dropAction's doc comment), so Shift must be ignored here, unlike the
+    // free-window case below where it selects unstackCreate over unstack.
+    const a = dropAction(tabDrag, other2, true, null);
+    check("Shift onto another stack is still unstackInto, not unstackCreate", a.op === "unstackInto");
   }
   {
     const a = dropAction(tabDrag, other, true, null);

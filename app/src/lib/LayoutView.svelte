@@ -131,7 +131,6 @@
       nudging = null;
       dropTarget = null;
       draggingTab = null;
-      hoverTab = null;
       load();
     }
   });
@@ -268,9 +267,6 @@
   // `drag` variable itself is deliberately not reactive and must not be read
   // from markup).
   let draggingTab = $state<string | null>(null);
-  // Which of the hovered unit's VISIBLE tabs the pointer is over, or null.
-  // Handler-only, so a plain let.
-  let hoverTab: number | null = null;
 
   // The window id a key-repeat nudge is currently in flight for (Task 3), so a
   // commit landing mid-nudge doesn't clear the preview under it.
@@ -302,6 +298,18 @@
     const p = pointerData(e);
     const u = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
     return u && u.key !== dragged.key ? u : null;
+  }
+
+  /** The unit under the pointer for a tab drag. The dragged unit wins whenever
+   * the point is inside it: it is selected, so the canvas paints it above every
+   * other rect (.win.selected's z-index), which unitAt's array-order ranking
+   * can't see. Without this, a stack a free window overlaps resolves to that
+   * free window instead of the stack itself, turning a reorder into an
+   * unstack. */
+  function tabTargetAt(p: { x: number; y: number }, unit: DrawUnit): DrawUnit | null {
+    const r = rectOf(unit.anchor);
+    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return unit;
+    return unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
   }
 
   /** Candidate edges for a drag of `unit`: every rect the canvas currently
@@ -396,12 +404,11 @@
       }
       if (draggingTab === null) return;
       const p = pointerData(e);
-      const over = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
+      const over = tabTargetAt(p, drag.unit);
       const own = over?.key === drag.unit.key;
       // Highlight only a drop that goes somewhere else; hovering the tab's own
       // stack is a reorder, which the strip itself shows.
       dropTarget = own ? null : (over?.key ?? null);
-      hoverTab = own ? tabIndexAt(e.clientX, e.clientY) : null;
       return;
     }
     // Shift over another unit marks it as a stack target. Read off the event
@@ -490,13 +497,16 @@
     if (d.kind === "tab") {
       const wasDrag = draggingTab !== null;
       draggingTab = null;
-      const index = hoverTab;
-      hoverTab = null;
       dropTarget = null;
       if (!wasDrag) return; // a press that never travelled is just a select
       const p = pointerData(e);
       const r = rectOf(d.unit.anchor);
-      const target = unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
+      const target = tabTargetAt(p, d.unit);
+      // Only measured when the drop resolves to the tab's own strip (the
+      // reorder case) — see tabTargetAt for why that's the pointer-inside-own-
+      // rect case, matching onPointerMove's `own` derivation.
+      const own = target?.key === d.unit.key;
+      const index = own ? tabIndexAt(e.clientX, e.clientY) : null;
       await applyDrop(
         dropAction(
           { unit: d.unit, tabId: d.tabId, rect: { x: p.x - d.gx, y: p.y - d.gy, w: r.w, h: r.h } },
@@ -509,7 +519,16 @@
       return;
     }
 
-    const target = d.kind === "move" && e.shiftKey ? targetAt(e, d.unit) : null;
+    // Gated on `preview` having an entry for this unit, not just Shift+move:
+    // selection alone (no drag) can raise an already-selected window's
+    // z-index above a neighbour it overlaps, and targetAt excludes the
+    // dragged unit — so a Shift-click with zero travel would otherwise
+    // resolve to that neighbour and silently stack onto it. preview is only
+    // ever set from onPointerMove, so its presence means the pointer actually
+    // moved. Also skips a whole-stack drag (dropAction ignores the target for
+    // one anyway, per spec §2).
+    const target = d.kind === "move" && e.shiftKey && !d.unit.stack && preview[d.unit.anchor.id]
+      ? targetAt(e, d.unit) : null;
     dropTarget = null;
     await applyDrop(
       dropAction({ unit: d.unit, tabId: null, rect: rectOf(d.unit.anchor) }, target, e.shiftKey, null),
@@ -569,6 +588,12 @@
       case "unstackCreate":
         if (await runStack(api.stackUnstack(a.member))) await runStack(api.stackCreate(a.target, a.member));
         return;
+      default: {
+        // Exhaustiveness guard: a DropAction variant added without a case here
+        // fails the build instead of silently no-opping the drop.
+        const _exhaustive: never = a;
+        return _exhaustive;
+      }
     }
   }
 
