@@ -13,6 +13,46 @@ Workflow:
 
 ## Open
 
+- [ ] **Run the names-and-noise live in-game smoke — deliberately deferred past
+  the merge.** The slice merged on a green CI and a clean whole-branch review, but
+  nothing in it has been proven against a running client. Outstanding checks, in
+  the order the reviews ranked them:
+  1. **The chat join is the one thing no test can settle.** `settings-field-reference.md`
+     documents `ui → chatchannels` as `List[Tuple(kind, channelKey, label)]` but never
+     states that a channel's window id is `chatchannel_<channelKey>` — that link was
+     inferred. If real ids carry a kind segment the stored key does not
+     (`chatchannel_private_<guid>` against a key of just `<guid>`), every chat window
+     silently keeps its derived name and the whole strand no-ops with no error
+     anywhere. Check a **named standing channel** (Local, an alliance channel) *and*
+     a **private conversation** — they may key differently.
+  2. A stack the **editor** minted should still read `Window stack · N`: per
+     `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
+  3. The frame row's new label renders between the FRAME marker and the open
+     checkbox, and its `span.detail` is a bare flex child with no `nowrap` — judge
+     whether a long label like "Character: Information" should sit after the name
+     instead.
+  4. Preferences round trip: `preferences.json` appears only after the first
+     override, survives a restart, and hand-corrupting it yields
+     `preferences.json.bad`. The copy-vs-rename fallback has **no CI coverage at
+     all** — CI is Linux-only and the test that exercises it is `#[cfg(windows)]`.
+  5. Two rapid override toggles on one window: the file must end up matching the UI.
+  6. `overrideCount()` counts overrides across every character, so the counter can
+     read "· 3 overridden" on a file none of them apply to, and `clear` would wipe
+     another character's. Decide from real use whether to scope it to the open
+     layout. _Added 2026-07-26._
+
+- [ ] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
+  `HUD_NOMINAL`'s sizes, the centre-relative ship offset and the top-left point
+  convention in `app/src/lib/layout.ts` are all guesses, flagged as such in the code
+  and the changelog. Scope item 5 of the names-and-noise spec (§8) planned to settle
+  them during that slice's smoke; the slice merged first, so it is still open. Move
+  each element in-game, quit the client so it writes, reload in the editor, and
+  compare against what the canvas draws. If a convention is wrong, correct it
+  **together with its inverse** — `shipOffsetFromX` for the ship offset,
+  `hudPointFromRect` for the fighter/badge point — and update the `layout.test.ts`
+  round-trip cases that pin them. If they hold, delete the hedging from the
+  comments. _Added 2026-07-26._
+
 - [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
   Two non-blocking minors from the layout slice 1b branch, ruled deferred at
   review time: (1) a keyup for a *different* arrow than the one being held ends
