@@ -7,67 +7,54 @@
 //!
 //! Skips silently when the corpus is not checked out.
 
-use std::path::{Path, PathBuf};
+mod common;
 
 use settings_model::project_hud;
 
-/// Enough sightings per field to mean "the section is right", not "one odd file".
-const ENOUGH: usize = 20;
+/// Enough sightings per field to mean "the section is right", not "one odd
+/// file". The synthetic corpus is curated — one deliberate fixture carrying an
+/// anchor is already proof the section name matches — while the real corpus is
+/// a pile of files where a single hit could be a fluke.
+const ENOUGH_REAL: usize = 20;
+const ENOUGH_SYNTHETIC: usize = 1;
 
 const CHAR_FIELDS: [&str; 3] = ["ship_offset", "fighter_x", "badge_x"];
 
-fn char_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            char_files(&p, out);
-        } else if p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("core_char_")) {
-            out.push(p);
-        }
-    }
-}
-
 #[test]
 fn every_character_hud_anchor_reads_from_a_real_file() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus");
-    if !root.is_dir() {
-        eprintln!("corpus missing at {root:?} — skipping (run tools/sync-corpus.ps1)");
-        return;
-    }
-    let mut files = Vec::new();
-    char_files(&root, &mut files);
-    if files.is_empty() {
-        eprintln!("corpus not present, skipping");
-        return;
-    }
-
-    let mut seen = [0usize; CHAR_FIELDS.len()];
+    let mut synthetic = [0usize; CHAR_FIELDS.len()];
+    let mut real = [0usize; CHAR_FIELDS.len()];
     let mut scanned = 0usize;
-    for path in &files {
-        // Stop as soon as every field is well attested — the corpus holds
-        // thousands of files and decoding them all takes minutes.
-        if seen.iter().all(|n| *n >= ENOUGH) {
+
+    for f in common::char_files() {
+        // Stop once every field is well attested in whichever roots are
+        // present — the real corpus holds hundreds of distinct files.
+        let done_real = !common::real_corpus_present() || real.iter().all(|n| *n >= ENOUGH_REAL);
+        if synthetic.iter().all(|n| *n >= ENOUGH_SYNTHETIC) && done_real {
             break;
         }
-        let Ok(bytes) = std::fs::read(path) else { continue };
-        let Ok(doc) = blue_marshal::decode(&bytes) else { continue };
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
         scanned += 1;
         let hud = project_hud(&doc, None);
         for (i, name) in CHAR_FIELDS.iter().enumerate() {
             let e = hud.entries.iter().find(|e| &e.name == name).expect("field projected");
             if e.value.is_some() {
-                seen[i] += 1;
+                if f.synthetic { synthetic[i] += 1 } else { real[i] += 1 }
             }
         }
     }
 
     for (i, name) in CHAR_FIELDS.iter().enumerate() {
         assert!(
-            seen[i] >= ENOUGH,
-            "{name} projected a value in only {}/{scanned} scanned character files \
-             — its `section`/`key` almost certainly does not match real data",
-            seen[i]
+            synthetic[i] >= ENOUGH_SYNTHETIC,
+            "{name} projected no value in any synthetic character fixture              — its `section`/`key` does not match the shape the generator writes"
         );
+        if common::real_corpus_present() {
+            assert!(
+                real[i] >= ENOUGH_REAL,
+                "{name} projected a value in only {}/{scanned} scanned real character files                  — its `section`/`key` almost certainly does not match real data",
+                real[i]
+            );
+        }
     }
 }
