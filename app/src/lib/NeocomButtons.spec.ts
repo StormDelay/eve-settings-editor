@@ -1,7 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, waitFor } from "@testing-library/svelte";
 import NeocomButtons from "./NeocomButtons.svelte";
 import type { NeocomBar, NeocomButton } from "./api";
+import { confirm } from "@tauri-apps/plugin-dialog";
+
+// Reset is gated on the Tauri dialog's confirm, not the bare browser one (see
+// NeocomButtons.svelte's resetBar) — mock it so the confirmed/cancelled
+// branches are both reachable from a test.
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn() }));
 
 const btn = (index: number, id: string, children = 0): NeocomButton =>
   ({ index, id, btn_type: 1, icon_path: `${id}.png`, children });
@@ -52,5 +58,22 @@ describe("NeocomButtons", () => {
     expect((screen.getByLabelText("Move chat down") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Remove chat") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Reset to original") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("confirming the reset dialog calls onReset", async () => {
+    vi.mocked(confirm).mockResolvedValueOnce(true);
+    const p = props(bar([btn(0, "chat")], [btn(0, "wallet")]));
+    render(NeocomButtons, p);
+    screen.getByText("Reset to original").click();
+    await waitFor(() => expect(p.onReset).toHaveBeenCalled());
+  });
+
+  test("cancelling the reset dialog does not call onReset", async () => {
+    vi.mocked(confirm).mockResolvedValueOnce(false);
+    const p = props(bar([btn(0, "chat")], [btn(0, "wallet")]));
+    render(NeocomButtons, p);
+    screen.getByText("Reset to original").click();
+    await waitFor(() => expect(vi.mocked(confirm)).toHaveBeenCalled());
+    expect(p.onReset).not.toHaveBeenCalled();
   });
 });
