@@ -39,30 +39,28 @@ Workflow:
   `Value::Bytes` only, so a `Shared`/`Ref`-wrapped container field is rejected
   rather than resolved — fails closed, and the `treewalk` helpers that would
   resolve it are `pub(crate)` to `settings-model`, unreachable from the app
-  crate; (3) `export_carries_the_full_marker` asserts the `full` marker
-  round-trips but not that the exported documents are byte-identical to the
-  source; (4) the import dedup suffix (`" (N)"`) is untested right at the
+  crate; (3) the import dedup suffix (`" (N)"`) is untested right at the
   100-character name limit — `preset_path` re-validates on the way in, so it
-  errors rather than panics, just untested. Batch-apply rework (`ops.rs`): (5)
+  errors rather than panics, just untested. Batch-apply rework (`ops.rs`): (4)
   letting a preset act as a batch source made `setup_apply` call
   `setup_preview` AND `resolve_source` again, so a preview now walks
   `discover()` 3 times (was 1) and an apply 5 (was 2) — fix is to have
   `setup_preview` hand its `SourceSides` to `setup_apply`, deliberately left
-  out of the regression-fix commit to keep it reviewable; (6)
+  out of the regression-fix commit to keep it reviewable; (5)
   `SourceSides.char_path` is `Option<PathBuf>` but populated in both branches,
-  leaving `read_side`'s `None` arm and one `if let Some` dead; (7) a
+  leaving `read_side`'s `None` arm and one `if let Some` dead; (6) a
   character-source `Everything` copy still full-copies raw bytes with no
   decode check — pre-existing, and validating would be the behaviour drift
-  this slice deliberately avoided; (8)
+  this slice deliberately avoided; (7)
   `everything_from_a_pruned_preset_is_refused_by_setup_apply` only asserts
   `err.code == "source"`, a code several guards share — asserting the message
-  contains "only part" would make it airtight; (9) `read_side`'s unreachable
+  contains "only part" would make it airtight; (8) `read_side`'s unreachable
   `None` arm returns a developer-ese message ("no file for this side") that
   would reach a user toast if it ever became reachable.
-  Batch view (`BatchView.svelte`): (10) the test pinning that a preset's `dir`
+  Batch view (`BatchView.svelte`): (9) the test pinning that a preset's `dir`
   reaches `setup_apply` byte-for-byte uses a fixture with no leading or
   trailing whitespace, so a stray `.trim()` specifically would slip past it
-  (a case change or a field swap would not); (11) `folder` can flip from
+  (a case change or a field swap would not); (10) `folder` can flip from
   `null` to a real value when `api.discover()` resolves, firing one extra
   reset of the aspect/target selection during a window where nothing is
   selectable yet — inert, but it means the reset effect now has a trigger no
