@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-27
+
+Stacks you build by dragging, and a neocom you can put in order.
+
+### Added
+- **Build window stacks on the canvas.** Hold Shift and drag one window onto
+  another to tab them together, or onto an existing stack to join it. Drag a
+  stack's tabs to reorder them, drag a tab onto a different stack to move the
+  window between them, or drag it out onto empty canvas to free it — and it
+  lands where you dropped it, rather than hiding underneath the stack it came
+  from. All of this already existed behind dropdowns and arrow buttons in the
+  window list; it now happens where you are actually looking. Dragging a stack
+  by its body still moves the whole stack.
+- **Reorder the neocom.** The bar down the left edge of the client is muscle
+  memory, and setting it up meant dragging buttons one at a time on every
+  character. Select it on the canvas and its buttons appear in the panel:
+  reorder them, remove one, add back anything missing, or reset to the set your
+  client started with. A **Window layout** batch copy now carries the bar with
+  it, so a neocom arranged once can be given to every other character at once.
+
+### Fixed
+- **A window joining a stack takes the stack's position.** The client discards a
+  joining window's own rectangle and gives it the stack's; the editor did that
+  when creating a stack but not when adding to one, so a window added through
+  the panel's *Add to stack…* kept a stale position until something moved the
+  stack. Both paths now match the client.
+
+The neocom's button data turned out to be fully readable from settings files
+already on disk, so the capture session this was expected to need never
+happened — what the client stores, and what each field means, is recorded in
+`docs/format-notes.md`.
+
 ## [0.20.0] - 2026-07-27
 
 Settings you can save, name, edit and hand to someone else.
