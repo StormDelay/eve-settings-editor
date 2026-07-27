@@ -160,9 +160,10 @@ mod tests {
         // Real idiom: an identical remembered string in two widget lists is
         // deduped into one Shared, Ref'd from the other list. Replacing the list
         // that holds the Shared DEFINITION would dangle the Ref (RefBeforeStore on
-        // encode) — inline_all before the edit prevents it. This is exactly the
-        // case the raw apply_mutation refuses (SharedSubtree), which is why this
-        // milestone uses a dedicated inline-first write.
+        // encode) — inline_all before the edit prevents it. The raw
+        // `apply_mutation` removal path now does the same thing (see
+        // `mutate::remove_inlined`); this milestone got its own inline-first
+        // write first, back when that path still refused outright.
         use blue_marshal::{decode, encode};
         // Shared payload must be Bytes: the encoder's storable_with_flag only
         // allows Bytes/Long/List/Dict/Tuple/etc under a Shared flag, never Str

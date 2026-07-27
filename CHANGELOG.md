@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Delete any node in the raw tree, including one holding a shared object.**
+  The tree view used to grey out Delete on any entry whose subtree defined a
+  shared object, because removing it would strand the slot other entries point
+  at — which meant whole keys like `tabsettings_new` could not be deleted at
+  all on a real file, since sharing is everywhere in one. The removal now
+  dissolves the sharing first and rebuilds it afterwards, the same
+  inline-then-edit approach the neocom, autofill and overview editors already
+  used; only removals that need it pay for it, and everything else removes in
+  place as before.
+
 ## [0.21.0] - 2026-07-27
 
 Stacks you build by dragging, and a neocom you can put in order.
