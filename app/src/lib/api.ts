@@ -177,6 +177,20 @@ export interface WindowLayout {
   stacks: Stack[];
 }
 
+export interface NeocomButton {
+  index: number;
+  id: string;
+  btn_type: number;
+  icon_path: string;
+  /** 0 for a plain button; a folder's child count otherwise. */
+  children: number;
+}
+export interface NeocomBar {
+  buttons: NeocomButton[];
+  /** The client's own baseline. Not the addable set — see neocom.ts. */
+  original: NeocomButton[];
+}
+
 export interface LayoutPrefs {
   clutter: string[];
   visible: string[];
@@ -399,6 +413,12 @@ export const api = {
   stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
+  neocomBar: () => invoke<NeocomBar>("neocom_bar"),
+  neocomReorder: (order: number[]) => invoke<NeocomBar>("neocom_reorder", { order }),
+  neocomRemove: (index: number) => invoke<NeocomBar>("neocom_remove", { index }),
+  neocomAdd: (id: string, btnType: number, iconPath: string) =>
+    invoke<NeocomBar>("neocom_add", { id, btnType, iconPath }),
+  neocomReset: () => invoke<NeocomBar>("neocom_reset"),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),

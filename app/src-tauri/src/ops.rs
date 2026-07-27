@@ -22,6 +22,7 @@ use settings_model::{
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
+    NeocomBar, NeocomError,
 };
 
 use crate::accounts;
@@ -1097,6 +1098,48 @@ pub fn stack_reorder(state: &AppState, container: &str, members: Vec<String>) ->
 pub fn stack_create(state: &AppState, member1: &str, member2: &str) -> Result<WindowLayout, ErrDto> {
     // create_stack returns the id; discard it here (the re-projection carries it).
     edit_char_stacks(state, |v| create_stack(v, member1, member2).map(|_| ()))
+}
+
+/// Project the CHAR slot's neocom bar.
+pub fn neocom_bar(state: &AppState) -> Result<NeocomBar, ErrDto> {
+    let guard = state.char.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+    settings_model::project_neocom(&doc.value).map_err(neocom_err)
+}
+
+fn neocom_err(e: NeocomError) -> ErrDto {
+    let v = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("neocom"), e.to_string())
+}
+
+/// Edit the CHAR slot's neocom bar, reshare, then re-project it.
+fn edit_char_neocom<F>(state: &AppState, edit: F) -> Result<NeocomBar, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), NeocomError>,
+{
+    {
+        let mut guard = state.char.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(neocom_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    neocom_bar(state)
+}
+
+pub fn neocom_reorder(state: &AppState, order: Vec<usize>) -> Result<NeocomBar, ErrDto> {
+    edit_char_neocom(state, |v| settings_model::neocom_reorder(v, &order))
+}
+pub fn neocom_remove(state: &AppState, index: usize) -> Result<NeocomBar, ErrDto> {
+    edit_char_neocom(state, |v| settings_model::neocom_remove(v, index))
+}
+pub fn neocom_add(state: &AppState, id: &str, btn_type: i64, icon_path: &str) -> Result<NeocomBar, ErrDto> {
+    edit_char_neocom(state, |v| settings_model::neocom_add(v, id, btn_type, icon_path))
+}
+pub fn neocom_reset(state: &AppState) -> Result<NeocomBar, ErrDto> {
+    edit_char_neocom(state, settings_model::neocom_reset)
 }
 
 #[cfg(test)]
