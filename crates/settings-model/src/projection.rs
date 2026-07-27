@@ -5,7 +5,6 @@
 use blue_marshal::{string_table::STRING_TABLE, Value};
 use serde::Serialize;
 
-use crate::mutate::subtree_contains_shared;
 use crate::path::{NodePath, Step};
 
 #[derive(Debug, Serialize)]
@@ -53,27 +52,27 @@ fn build(
         build(v, label, p, removable, in_shared)
     };
     match v {
+        // Entries of a container are removable regardless of what they contain:
+        // a subtree holding a `Shared` store used to be refused, but
+        // `remove_entry` now inlines and reshares around it, so the flag no
+        // longer has to mirror that guard.
         Value::Tuple(items) => {
             for (i, item) in items.iter().enumerate() {
-                let removable = !subtree_contains_shared(item);
-                children.push(child(item, Some(format!("[{i}]")), Step::Tuple(i), removable));
+                children.push(child(item, Some(format!("[{i}]")), Step::Tuple(i), true));
             }
         }
         Value::List(items) => {
             for (i, item) in items.iter().enumerate() {
-                let removable = !subtree_contains_shared(item);
-                children.push(child(item, Some(format!("[{i}]")), Step::List(i), removable));
+                children.push(child(item, Some(format!("[{i}]")), Step::List(i), true));
             }
         }
         Value::Dict(entries) => {
             for (i, (key, value)) in entries.iter().enumerate() {
-                let removable =
-                    !subtree_contains_shared(key) && !subtree_contains_shared(value);
                 children.push(child(
                     value,
                     Some(compact_display(key, 2)),
                     Step::DictValue(i),
-                    removable,
+                    true,
                 ));
             }
         }
@@ -236,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_subtree_is_flagged_and_not_removable() {
+    fn shared_subtree_is_flagged_and_still_removable() {
         let v = Value::Dict(vec![(
             Value::Bytes(b"k".to_vec()),
             Value::Shared { slot: 1, value: Box::new(Value::List(vec![Value::Int(1)])) },
@@ -244,7 +243,10 @@ mod tests {
         let n = project(&v);
         let entry = &n.children[0];
         assert_eq!(entry.kind, "shared");
-        assert!(!entry.removable, "entries containing Shared cannot be removed");
+        // `in_shared` still marks it — edits there alias by design, and the UI
+        // says so — but removal is no longer refused: `remove_entry` inlines
+        // and reshares around it.
+        assert!(entry.removable, "a Shared entry removes like any other");
         let inner = &entry.children[0];
         assert!(inner.in_shared);
         assert_eq!(inner.path, vec![Step::DictValue(0), Step::SharedInner]);
