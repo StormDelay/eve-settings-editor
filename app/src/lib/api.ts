@@ -310,6 +310,13 @@ export interface PresetInfo {
   error: string | null;
 }
 
+/** The refreshed library plus the name the import actually landed under, which
+ * may be suffixed if the file's own name was already taken. */
+export interface PresetImport {
+  name: string;
+  presets: PresetInfo[];
+}
+
 export type BatchSource =
   | { kind: "character"; path: string }
   | { kind: "preset"; dir: string; anchor_dir: string };
@@ -414,7 +421,7 @@ export const api = {
   settingsPresetExport: (name: string, path: string) =>
     invoke<void>("settings_preset_export", { name, path }),
   settingsPresetImport: (path: string) =>
-    invoke<PresetInfo[]>("settings_preset_import", { path }),
+    invoke<PresetImport>("settings_preset_import", { path }),
   stackUnstack: (member: string) => invoke<WindowLayout>("stack_unstack", { member }),
   stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
