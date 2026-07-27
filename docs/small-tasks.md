@@ -51,10 +51,21 @@ Workflow:
   leaving `read_side`'s `None` arm and one `if let Some` dead; (6) a
   character-source `Everything` copy still full-copies raw bytes with no
   decode check — pre-existing, and validating would be the behaviour drift
-  this slice deliberately avoided; (7)
-  `everything_from_a_pruned_preset_is_refused_by_setup_apply` only asserts
-  `err.code == "source"`, a code several guards share — asserting the message
-  contains "only part" would make it airtight; (8) `read_side`'s unreachable
+  this slice deliberately avoided; (7) **both `Everything`-refusal tests carry a
+  vacuous "target untouched" assertion.** `everything_from_a_pruned_preset_is_refused_by_setup_apply`
+  and its empty-side sibling both assert the target file's bytes are unchanged,
+  but neither writes an `accounts.json`, so `Aspect::Everything` (which writes
+  account-side) makes `plan_setup` exclude the target as unpaired and no write is
+  ever planned — the assertion would pass with the guard removed, and only the
+  `unwrap_err()` actually catches a regression. The guard itself IS proven
+  load-bearing (neutralising it makes `setup_apply` return `Ok`), so this is a
+  false impression of coverage rather than a hole. Fix is four lines lifted from
+  `character_source_account_file_comes_from_its_own_profile_not_another_ones`:
+  pair char 702 to an account in an `AccountsStore`, write its `core_user_*.dat`,
+  and write `accounts.json` — which also makes the test exercise the account
+  side, the side an empty full preset actually wipes. The same pass should assert
+  the error MESSAGE, not just `err.code == "source"`, which several guards share;
+  (8) `read_side`'s unreachable
   `None` arm returns a developer-ese message ("no file for this side") that
   would reach a user toast if it ever became reachable.
   Batch view (`BatchView.svelte`): (9) the test pinning that a preset's `dir`
