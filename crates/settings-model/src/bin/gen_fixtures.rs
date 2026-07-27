@@ -381,6 +381,44 @@ fn char_modern() -> Value {
                 (b("pfRouteType"), w(b("safe"))),
                 (b("autopilot_waypoints"), w(list(vec![i(30000142)]))),
                 (b("chatchannels"), w(list(vec![tup(vec![b("local"), s("local_30000142"), s("Local")])]))),
+                // The neocom button bar: two `utillib.KeyVal` instances, corpus
+                // key order (btnType, children, iconPath, id) — one plain button
+                // and one folder with its single Inventory child (format-notes.md
+                // "Neocom buttons").
+                (
+                    b("neocomButtonRawData"),
+                    w(list(vec![
+                        Value::Instance {
+                            class: Box::new(b("utillib.KeyVal")),
+                            state: Box::new(dict(vec![
+                                (b("btnType"), i(10)),
+                                (b("children"), Value::None),
+                                (b("iconPath"), b("res:/ui/Texture/WindowIcons/chatchannel.png")),
+                                (b("id"), b("chat")),
+                            ])),
+                        },
+                        Value::Instance {
+                            class: Box::new(b("utillib.KeyVal")),
+                            state: Box::new(dict(vec![
+                                (b("btnType"), i(4)),
+                                (
+                                    b("children"),
+                                    list(vec![Value::Instance {
+                                        class: Box::new(b("utillib.KeyVal")),
+                                        state: Box::new(dict(vec![
+                                            (b("btnType"), i(4)),
+                                            (b("children"), Value::None),
+                                            (b("iconPath"), b("res:/UI/Texture/WindowIcons/station.png")),
+                                            (b("id"), b("InventoryStation")),
+                                        ])),
+                                    }]),
+                                ),
+                                (b("iconPath"), b("res:/UI/Texture/WindowIcons/items.png")),
+                                (b("id"), b("inventory")),
+                            ])),
+                        },
+                    ])),
+                ),
             ]),
         ),
         (
