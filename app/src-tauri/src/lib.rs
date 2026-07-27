@@ -3,6 +3,7 @@ mod groups;
 mod names;
 mod ops;
 mod prefs;
+mod presets;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;
@@ -317,7 +318,7 @@ fn set_hud_value(
 #[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
-    source_char_path: String,
+    source: ops::BatchSource,
     target_char_paths: Vec<String>,
     aspects: Vec<ops::Aspect>,
     allow_other_folders: bool,
@@ -325,7 +326,7 @@ fn setup_preview(
     ops::setup_preview(
         &settings_model::default_roots(),
         &app_dir(&app),
-        &source_char_path,
+        &source,
         &target_char_paths,
         &aspects,
         allow_other_folders,
@@ -335,7 +336,7 @@ fn setup_preview(
 #[tauri::command]
 fn setup_apply(
     app: tauri::AppHandle,
-    source_char_path: String,
+    source: ops::BatchSource,
     target_char_paths: Vec<String>,
     aspects: Vec<ops::Aspect>,
     allow_other_folders: bool,
@@ -343,11 +344,75 @@ fn setup_apply(
     ops::setup_apply(
         &settings_model::default_roots(),
         &app_dir(&app),
-        &source_char_path,
+        &source,
         &target_char_paths,
         &aspects,
         allow_other_folders,
     )
+}
+
+// The overview view already owns `preset_create`/`preset_rename`/`preset_delete`
+// for EVE's own overview filter presets — these are the settings-preset
+// library (Task 8+), hence the longer `settings_preset_*` names.
+#[tauri::command]
+fn settings_preset_list(app: tauri::AppHandle) -> Vec<presets::PresetInfo> {
+    presets::list(&app_dir(&app))
+}
+
+#[tauri::command]
+fn settings_preset_create(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    name: String,
+    aspects: Vec<ops::Aspect>,
+    overwrite: bool,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    ops::preset_save(&state, &app_dir(&app), &name, &aspects, overwrite)?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_rename(
+    app: tauri::AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    presets::rename(&app_dir(&app), &old_name, &new_name)
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_delete(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    presets::delete(&app_dir(&app), &name)
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_export(app: tauri::AppHandle, name: String, path: String) -> Result<(), ErrDto> {
+    presets::export_to(&app_dir(&app), &name, std::path::Path::new(&path))
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })
+}
+
+/// An import, plus the refreshed library. The name is carried back because
+/// `import_from` may have suffixed it to avoid a collision — without it the
+/// caller cannot say which row is the one that just arrived, nor that it was
+/// renamed.
+#[derive(serde::Serialize)]
+struct ImportResult {
+    name: String,
+    presets: Vec<presets::PresetInfo>,
+}
+
+#[tauri::command]
+fn settings_preset_import(app: tauri::AppHandle, path: String) -> Result<ImportResult, ErrDto> {
+    let name = presets::import_from(&app_dir(&app), std::path::Path::new(&path))
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(ImportResult { name, presets: presets::list(&app_dir(&app)) })
 }
 
 #[tauri::command]
@@ -384,6 +449,8 @@ pub fn run() {
             autofill_lists, set_autofill_list, clear_all_autofill,
             keybinds, set_keybind,
             setup_preview, setup_apply,
+            settings_preset_list, settings_preset_create, settings_preset_rename,
+            settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create,
             hud_layout, set_hud_value,
             preferences, set_preferences
