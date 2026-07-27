@@ -2,8 +2,8 @@
   import { api, errMessage, type OverviewColumns } from "./api";
   import { message } from "@tauri-apps/plugin-dialog";
 
-  let { data, tabIndex, charId, onChanged, onUserDirty, onCharDirty }:
-    { data: OverviewColumns | null; tabIndex: number | null; charId: number | null;
+  let { data, tabIndex, charOpen, onChanged, onUserDirty, onCharDirty }:
+    { data: OverviewColumns | null; tabIndex: number | null; charOpen: boolean;
       onChanged: (next: OverviewColumns) => void; onUserDirty: () => void; onCharDirty: () => void } = $props();
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
@@ -14,7 +14,7 @@
   }
   async function setWidth(column: string, raw: string) {
     const width = Number(raw);
-    if (charId === null || raw.trim() === "" || Number.isNaN(width)) return;
+    if (!charOpen || raw.trim() === "" || Number.isNaN(width)) return;
     try { onChanged(await api.setOverviewWidth(tabIndex!, column, width)); onCharDirty(); }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
@@ -49,7 +49,7 @@
           <input type="checkbox" checked={col.visible} onchange={(e) => toggle(col.name, (e.target as HTMLInputElement).checked)} />
           {col.label}
         </label>
-        <input class="w" type="number" min="0" disabled={charId === null}
+        <input class="w" type="number" min="0" disabled={!charOpen}
                value={col.width ?? ""} placeholder="—"
                onchange={(e) => setWidth(col.name, (e.target as HTMLInputElement).value)} />
       </li>
