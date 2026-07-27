@@ -398,14 +398,21 @@ fn settings_preset_export(app: tauri::AppHandle, name: String, path: String) -> 
         .map_err(|m| ErrDto { code: "preset".into(), message: m })
 }
 
+/// An import, plus the refreshed library. The name is carried back because
+/// `import_from` may have suffixed it to avoid a collision — without it the
+/// caller cannot say which row is the one that just arrived, nor that it was
+/// renamed.
+#[derive(serde::Serialize)]
+struct ImportResult {
+    name: String,
+    presets: Vec<presets::PresetInfo>,
+}
+
 #[tauri::command]
-fn settings_preset_import(
-    app: tauri::AppHandle,
-    path: String,
-) -> Result<Vec<presets::PresetInfo>, ErrDto> {
-    presets::import_from(&app_dir(&app), std::path::Path::new(&path))
+fn settings_preset_import(app: tauri::AppHandle, path: String) -> Result<ImportResult, ErrDto> {
+    let name = presets::import_from(&app_dir(&app), std::path::Path::new(&path))
         .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
-    Ok(presets::list(&app_dir(&app)))
+    Ok(ImportResult { name, presets: presets::list(&app_dir(&app)) })
 }
 
 #[tauri::command]
