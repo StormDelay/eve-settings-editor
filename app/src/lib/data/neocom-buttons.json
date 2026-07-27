@@ -1,6 +1,4 @@
 [
-  { "id": "InventoryStation", "btnType": 4, "iconPath": "res:/UI/Texture/WindowIcons/items.png" },
-  { "id": "InventoryStructure", "btnType": 4, "iconPath": "res:/UI/Texture/WindowIcons/items.png" },
   { "id": "ProjectDiscovery", "btnType": 1, "iconPath": "res:/ui/texture/WindowIcons/projectdiscovery.png" },
   { "id": "accessgroups", "btnType": 1, "iconPath": "res:/UI/Texture/WindowIcons/accessGroups.png" },
   { "id": "agency", "btnType": 1, "iconPath": "res:/UI/Texture/WindowIcons/theAgency.png" },
