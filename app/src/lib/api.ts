@@ -298,6 +298,29 @@ export interface SetupPlan {
   source_error: string | null;
 }
 
+export interface PresetInfo {
+  name: string;
+  dir: string;
+  char_path: string;
+  user_path: string;
+  modified_unix: number | null;
+  aspects: Aspect[];
+  full: boolean;
+  /** Set when a document failed to decode; the row is shown but not openable. */
+  error: string | null;
+}
+
+/** The refreshed library plus the name the import actually landed under, which
+ * may be suffixed if the file's own name was already taken. */
+export interface PresetImport {
+  name: string;
+  presets: PresetInfo[];
+}
+
+export type BatchSource =
+  | { kind: "character"; path: string }
+  | { kind: "preset"; dir: string; anchor_dir: string };
+
 export type Slot = "char" | "user";
 
 export const api = {
@@ -381,20 +404,24 @@ export const api = {
   keybinds: () => invoke<Keybinds>("keybinds"),
   setKeybind: (command: string, keys: number[] | null) =>
     invoke<SetKeybindResult>("set_keybind", { command, keys }),
-  setupPreview: (
-    sourceCharPath: string,
-    targetCharPaths: string[],
-    aspects: Aspect[],
-    allowOtherFolders: boolean,
-  ) =>
-    invoke<SetupPlan>("setup_preview", { sourceCharPath, targetCharPaths, aspects, allowOtherFolders }),
-  setupApply: (
-    sourceCharPath: string,
-    targetCharPaths: string[],
-    aspects: Aspect[],
-    allowOtherFolders: boolean,
-  ) =>
-    invoke<BatchTargetResult[]>("setup_apply", { sourceCharPath, targetCharPaths, aspects, allowOtherFolders }),
+  setupPreview: (source: BatchSource, targetCharPaths: string[], aspects: Aspect[], allowOtherFolders: boolean) =>
+    invoke<SetupPlan>("setup_preview", { source, targetCharPaths, aspects, allowOtherFolders }),
+  setupApply: (source: BatchSource, targetCharPaths: string[], aspects: Aspect[], allowOtherFolders: boolean) =>
+    invoke<BatchTargetResult[]>("setup_apply", { source, targetCharPaths, aspects, allowOtherFolders }),
+  // The overview view already owns `presetCreate`/`presetRename`/`presetDelete`
+  // for EVE's own overview filter presets — these are the settings-preset
+  // library, hence the longer names.
+  settingsPresetList: () => invoke<PresetInfo[]>("settings_preset_list"),
+  settingsPresetCreate: (name: string, aspects: Aspect[], overwrite: boolean) =>
+    invoke<PresetInfo[]>("settings_preset_create", { name, aspects, overwrite }),
+  settingsPresetRename: (oldName: string, newName: string) =>
+    invoke<PresetInfo[]>("settings_preset_rename", { oldName, newName }),
+  settingsPresetDelete: (name: string) =>
+    invoke<PresetInfo[]>("settings_preset_delete", { name }),
+  settingsPresetExport: (name: string, path: string) =>
+    invoke<void>("settings_preset_export", { name, path }),
+  settingsPresetImport: (path: string) =>
+    invoke<PresetImport>("settings_preset_import", { path }),
   stackUnstack: (member: string) => invoke<WindowLayout>("stack_unstack", { member }),
   stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
