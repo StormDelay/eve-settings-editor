@@ -13,6 +13,28 @@ Workflow:
 
 ## Open
 
+- [ ] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
+  Non-blocking minors from the layout-depth milestone's final slice (the neocom
+  button editor): (1) `reorder` reassembles the bar via `clone()` rather than a
+  true move — bars are ≤24 tiny entries, so this buys nothing measurable; (2)
+  the `Tuple`-payload normalize branch in `neocom.rs`'s `bar_list_mut` is
+  unreachable defensive code that silently rewrites shape instead of erroring —
+  the next person in that function should delete it and let the `_ =>
+  Err(NoBar)` arm handle it; (3) no `ops.rs`-level tests for the new wiring
+  (no-document / read-only / happy path), unlike the sibling `stack_*` and
+  `hud_layout` cases — the thing genuinely untested there is the Tauri
+  camelCase↔snake_case argument binding, which only the live smoke exercises;
+  (4) `NeocomButtons.spec.ts`'s read-only test samples 3 of 5 interactive
+  controls; (5) the corpus gate (`neocom_corpus.rs`) never inspects
+  `bar.original` (which feeds the addable set on every real character) and
+  never asserts the projected button count equals the raw list length; (6) a
+  failed add clears the dropdown selection before the command runs, so an
+  error loses the user's choice; (7) the panel shows raw ids (`job_board`,
+  `map_beta`, `airCareerProgram`) rather than friendly labels — the same debt
+  as the open `container_label` item, worth solving once for both; (8)
+  icon-path casing varies across catalog entries, faithfully reflecting the
+  client's own data. _Added 2026-07-27._
+
 - [ ] **Run the settings-presets live in-game smoke.** Nothing in the feature
   has been verified against a running EVE client. From the spec's §12: (1)
   create a Layout-only preset from a real character, apply it to a *different*
