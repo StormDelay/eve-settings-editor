@@ -132,7 +132,15 @@ pub(crate) fn tabs_mut(ov: &mut Entries) -> &mut Entries {
         }
     }
     if !ov.iter().any(|(k, _)| is_b(k, b"tabsettings_new")) {
-        ov.push((Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(Vec::new())));
+        // `(timestamp, payload)` — the file-wide wrapper convention, and a zero
+        // Long is what every other create-from-absent path mints (see
+        // `hud.rs`). Creating a bare Dict here produced a shape no client has
+        // ever written, on exactly the accounts least able to cope with it: a
+        // brand-new install, or one whose tab key was deleted.
+        ov.push((
+            Value::Bytes(b"tabsettings_new".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
     dict_inner_mut(v).expect("tabsettings_new is a dict or (ts,dict)")
@@ -141,7 +149,10 @@ pub(crate) fn tabs_mut(ov: &mut Entries) -> &mut Entries {
 /// Mutable window-groups list under `tabsByWindowInstanceID`. Created empty if absent.
 fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
     if !ov.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
-        ov.push((Value::Bytes(b"tabsByWindowInstanceID".to_vec()), Value::List(Vec::new())));
+        ov.push((
+            Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::List(Vec::new())]),
+        ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
     list_inner_mut(v).expect("tabsByWindowInstanceID is a list or (ts,list)")
