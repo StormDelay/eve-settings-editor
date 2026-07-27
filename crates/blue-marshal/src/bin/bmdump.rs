@@ -5,16 +5,21 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
-        [cmd, path] if cmd == "dump" => dump(Path::new(path)),
+        [cmd, path] if cmd == "dump" => dump(Path::new(path), false),
+        [cmd, path] if cmd == "dump-inline" => dump(Path::new(path), true),
         [cmd, path] if cmd == "scan" => scan(Path::new(path)),
         _ => {
-            eprintln!("usage: bmdump dump <file.dat> | bmdump scan <dir>");
+            eprintln!("usage: bmdump dump|dump-inline <file.dat> | bmdump scan <dir>");
             ExitCode::from(2)
         }
     }
 }
 
-fn dump(path: &Path) -> ExitCode {
+/// `inline` resolves every Shared/Ref before printing. Two dumps of the same
+/// settings taken at different times differ in their slot numbering even where
+/// no value changed, which buries a real change under hundreds of renumbered
+/// lines — inlining makes a diff of two dumps show only what actually moved.
+fn dump(path: &Path, inline: bool) -> ExitCode {
     let data = match fs::read(path) {
         Ok(d) => d,
         Err(e) => {
@@ -24,6 +29,7 @@ fn dump(path: &Path) -> ExitCode {
     };
     match blue_marshal::decode(&data) {
         Ok(v) => {
+            let v = if inline { blue_marshal::inline(&v) } else { v };
             println!("{}", blue_marshal::dump_text(&v));
             ExitCode::SUCCESS
         }
