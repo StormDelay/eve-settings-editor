@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-27
+
+Settings you can save, name, edit and hand to someone else.
+
 ### Added
 - **Settings presets.** Save a character's settings as a named preset that
   belongs to no character — a snapshot that outlives its source, a "Mining" /
