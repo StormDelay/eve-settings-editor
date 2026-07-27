@@ -4,8 +4,9 @@ Everything the editor has shipped or is about to ship that has **never been
 proven against a running EVE client**, arranged to cost as few client launches
 and as few manual steps as possible.
 
-Eight slices merged without their live smoke. This is the plan to clear all of
-them at once rather than one relog at a time.
+Nine slices merged without their live smoke, up to and including 0.20.0's
+settings presets. This is the plan to clear all of them at once rather than one
+relog at a time.
 
 ---
 
@@ -50,12 +51,26 @@ tree, and both are otherwise a trial-account hunt.
 
 | Slot | Purpose |
 |---|---|
-| **Account A**, chars **A1 A2 A3** | the main tour: char-scoped variants, batch source/target, the 3-window overview shape `[[0,1,2,3,4,7],[5],[6]]` (812 of 825 corpus accounts) |
-| **Account B**, chars **B1 B2** | account-scoped variants: the second overview state, the destructive keybinding reset, the empty-`customCmds` target |
+| **A1** | the main subject: neocom, layout, HUD, chat, overview, keybinds |
+| **A2** | batch-copy target |
+| **A3** | **untouched control** — see §7 |
+| **B1** | account-scoped variants: the second overview state, the destructive keybinding reset, the empty-`customCmds` target |
+| **B2** | settings-preset target |
+| **B3** | fresh-install target for the `Everything` preset — its settings files are moved aside before Session A so EVE creates virgin ones |
 
-A2 and A3 exist to test the collateral/shared-account paths and batch copy; a
-character on a *second* account is what makes account-scoped edits observable
-independently. Run both clients at the same time.
+Two accounts, because a character on a *second* account is what makes
+account-scoped edits (`core_user_*`: keybinds, all of overview, autofill)
+observable independently — a second account means a second client, so run them
+side by side. Six characters, because each one is a free variant slot (§1) and
+they are what keeps the plan to two launches.
+
+**Account A must carry the three-window overview shape**
+`[[0,1,2,3,4,7],[5],[6]]` — what 812 of 825 mapped corpus accounts have. The
+pack tests are worth little on a hand-made two-window account, which is the
+shape they were previously going to be run against.
+
+If account B only has two characters, the fresh-install case (item P3) is the
+one thing that slips to Session C; everything else fits in two.
 
 **Before anything:** `tools\capture-diff.ps1 -Label baseline` (§3) and a copy of
 the whole settings folder somewhere outside it. Every check below is reversible
@@ -160,6 +175,33 @@ saved is the baseline for "did the client rewrite this on its own".
   untested paths in one file: the zero-tab fallback, and tabs whose
   `overview`/`bracket` names the account has no preset for.
 
+**Settings presets (0.20.0) — all offline, all on B2:**
+- Save a **Layout-only** preset from A1, then apply it to **B2** through the
+  batch view's new Preset source. The preview must write B2's *character* file
+  and nothing else; the diff after saving is the check, since B2 shares account
+  B's user file with B1 and cannot show account-level non-interference in-game.
+- Open that preset, move one window in it, save, and **re-apply** to B2. This is
+  the claim that a preset is genuinely editable rather than a frozen capture,
+  and the second apply is what proves the edit reached a real file.
+- Save an **Autofill-only** preset and open it: Overview, Layout, Keybinds and
+  the tree must show honest empty states rather than erroring. A pruned preset
+  is a document with whole sections missing, a shape no EVE-written file has
+  ever had, so this is genuinely new ground for every projection. Then build an
+  overview preset inside it **from nothing** — the slice-2b minting path with no
+  `overview` container to start from — and apply it to B2. That minted container
+  is what the client has to accept.
+- **Export** a preset to `.evepreset`, **import** it back under a new name, and
+  apply the copy to B2 as well. The byte-identical round trip is already unit
+  tested; what is not is that the reimported copy behaves the same in-game.
+- Delete a preset's `preset.json` and confirm the preset still lists, offered as
+  its **pruned aspects only** — never as `Everything`. The safe direction is
+  "fewer aspects offered"; the unsafe one overwrites a whole character file with
+  a three-key document.
+- Confirm the per-column **width field is editable with a preset open**
+  (design §5.1: it was gated on `charId`, which a preset does not have).
+- **Move B3's settings files aside.** EVE recreates them at its first login in
+  Session A, which is what gives Session B a genuine brand-new-install target.
+
 ### Phase 2 — one launch, two clients
 
 Order matters: **observe before you disturb**, and put the destructive actions
@@ -237,7 +279,24 @@ file is written on the way out).
    bindings exist; `app/src/lib/data/command-defaults.json` ships empty because
    of it, which is why the Keybinds view's Default column and per-row reset are
    dead.
-4. Quit the client.
+4. Log out to character select.
+
+**Client 2 — character B2, the preset target:**
+
+1. The windows land where the **Layout-only** preset had them, including the one
+   moved by editing the preset itself and re-applying.
+2. The overview preset **minted from nothing** inside the Autofill-only preset
+   is present and usable — this is the client accepting a container the editor
+   built with no `overview` section to start from.
+3. The **reimported** `.evepreset` copy behaves identically to the original.
+4. Log out.
+
+**Client 2 — character B3:** log in once and straight back out. Its settings
+files were moved aside in Phase 1, so this is EVE creating virgin ones — the
+brand-new-install target Session B pours the `Everything` preset onto. Nothing
+to observe here beyond the client starting normally.
+
+Quit the client.
 
 ### Phase 3 — offline
 
@@ -255,6 +314,9 @@ Read out, in this order:
 5. The factory keybinding table out of B's `core_user_*.dat` → generate
    `command-defaults.json`.
 6. `git diff --no-index mine.yaml eve-export.yaml`.
+7. B2's diff: the Layout-only apply touched B2's **character file only**.
+8. B3's virgin files — confirm they exist and are what a fresh install looks
+   like, then stage the `Everything` preset onto them for Session B.
 
 ---
 
@@ -270,6 +332,13 @@ one launch:
   Session B is not optional.
 - The `command-defaults.json` you generated: the Default column populates and
   per-row reset restores the real factory binding.
+- **The fresh-install case (P3), on B3.** Pour an `Everything` preset — taken
+  from a fully configured character — onto the virgin files EVE created in
+  Session A, then log in. The client should come up configured: layout,
+  overview, keybinds, the lot. This is the strongest single test in the plan,
+  because `Everything` is a complete copy of both files rather than a splice,
+  so it is the whole save chain, the reshare pass and every structural edit
+  landing on a client that has no prior state to fall back on.
 - **Orphaned stack frames:** delete them from A1's file offline, log in, log out,
   and see whether EVE re-creates them. If it does, the "offer to delete orphaned
   frames" task is dead and can be closed rather than built.
@@ -346,10 +415,22 @@ was dropped. "Source" is where the outstanding item is currently recorded.
 | 33 | The six appearance checkboxes | 0.13.0 | A / A1 | partly run |
 | 34 | Preset exceptions (Show / Hide / Always show) | 0.13.0 | A / A1 | partly run |
 | 35 | Per-environment window mapping (dock/undock diff) | n/a (scoping) | A / A1 | ledger |
+| P1 | Layout-only preset applies to another character | 0.20.0 | A / B2 | preset spec §12.1 |
+| P2 | A preset is editable: edit, re-apply, edit landed | 0.20.0 | A / B2 | preset spec §12.2 |
+| P3 | `Everything` preset onto a brand-new install | 0.20.0 | **B / B3** | preset spec §12.3 |
+| P4 | Pruned preset: honest empty states in every editor | 0.20.0 | offline | preset spec §12.4 |
+| P5 | Overview preset minted from nothing inside a preset | 0.20.0 | A / B2 | preset spec §12.4 |
+| P6 | Export → import → the copy behaves identically | 0.20.0 | A / B2 | preset spec §12.5 |
+| P7 | Column width editable with a preset open | 0.20.0 | offline | preset spec §12.6, §5.1 |
+| P8 | Missing `preset.json` offers pruned aspects, never `Everything` | 0.20.0 | offline | preset spec §3.1 |
 | 36 | **The client accepts every file the editor wrote** | all | every session | §7 |
 
-Items 6 and 7 need no client at all — do them offline while the client is
-launching.
+Items 6, 7, P4, P7 and P8 need no client at all — do them offline while the
+client is launching.
+
+P3 is the only item that requires Session B rather than A, because a
+brand-new-install target has to be created by EVE (Session A) before a preset
+can be poured onto it (Session B).
 
 ---
 
@@ -362,5 +443,6 @@ launching.
 | Factory keybindings | `app/src/lib/data/command-defaults.json` |
 | Pack format answers | `overview_pack.rs` (`applyOnlyToShips`, the `USER_SETTINGS` identity map that exists only to be `debug_assert`ed), `docs/format-notes.md` |
 | One-member stack, orphan frames | either close the two ledger tasks or implement them |
+| Preset findings | `app/src-tauri/src/presets.rs` and the batch planner; the design spec's §12 checklist gets ticked off in place |
 | Everything confirmed | `CHANGELOG.md` — 0.14.0's "treat this release's overview features as unstable" and 0.15.0's unconfirmed-conventions note both come out |
 | Everything done | `docs/small-tasks.md` — six open items close |
