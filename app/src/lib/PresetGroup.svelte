@@ -4,10 +4,11 @@
   import { allPresets, loadPresets, setPresets, summarise } from "./presetLibrary.svelte";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
 
-  let { onOpenPreset, charOpen, userOpen }: {
+  let { onOpenPreset, charOpen, userOpen, openPresetName }: {
     onOpenPreset: (p: PresetInfo) => void;
     charOpen: boolean;
     userOpen: boolean;
+    openPresetName: string | null;
   } = $props();
 
   loadPresets();
@@ -66,13 +67,9 @@
       const result = await api.settingsPresetImport(path);
       setPresets(result.presets);
       // The backend only reports the name it landed on, not the one the file
-      // asked for — a trailing " (N)" is the tell that it had to dedupe.
-      if (/ \(\d+\)$/.test(result.name)) {
-        await message(`Imported as “${result.name}” — that name was already taken.`, {
-          title: "Imported",
-          kind: "info",
-        });
-      }
+      // asked for, so this can only state the fact, never guess whether it
+      // was deduped.
+      await message(`Imported as “${result.name}”.`, { title: "Imported", kind: "info" });
     } catch (e) {
       await message(errMessage(e), { title: "Import failed", kind: "error" });
     } finally {
@@ -119,13 +116,23 @@
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
   function openMenu(e: MouseEvent, p: PresetInfo) {
     e.preventDefault();
+    // Renaming or deleting the OPEN preset would move/remove the directory the
+    // backend's open document still points at by path — the next Save would
+    // target a path that no longer exists. Export is unaffected, so it stays
+    // live; Rename/Delete stay in the menu (ContextMenu has no disabled-item
+    // concept) but explain themselves instead of acting.
+    const isOpen = openPresetName !== null && p.name.toLowerCase() === openPresetName.toLowerCase();
+    const explainOpen = () =>
+      void message(`“${p.name}” is currently open — close it first to rename or delete it.`, {
+        title: "Preset is open",
+      });
     menu = {
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: "Rename…", run: () => { renaming = p.name; renameTo = p.name; } },
+        { label: "Rename…", run: isOpen ? explainOpen : () => { renaming = p.name; renameTo = p.name; } },
         { label: "Export…", run: () => void exportPreset(p) },
-        { label: "Delete…", run: () => void remove(p) },
+        { label: "Delete…", run: isOpen ? explainOpen : () => void remove(p) },
       ],
     };
   }
