@@ -58,7 +58,15 @@ Workflow:
   `err.code == "source"`, a code several guards share — asserting the message
   contains "only part" would make it airtight; (9) `read_side`'s unreachable
   `None` arm returns a developer-ese message ("no file for this side") that
-  would reach a user toast if it ever became reachable. _Added 2026-07-27._
+  would reach a user toast if it ever became reachable.
+  Batch view (`BatchView.svelte`): (10) the test pinning that a preset's `dir`
+  reaches `setup_apply` byte-for-byte uses a fixture with no leading or
+  trailing whitespace, so a stray `.trim()` specifically would slip past it
+  (a case change or a field swap would not); (11) `folder` can flip from
+  `null` to a real value when `api.discover()` resolves, firing one extra
+  reset of the aspect/target selection during a window where nothing is
+  selectable yet — inert, but it means the reset effect now has a trigger no
+  user action caused. _Added 2026-07-27._
 
 - [ ] **"Presets" now means two things in the UI.** The sidebar's new Presets
   group (saved settings bundles) and the Overview view's presets (EVE's own
