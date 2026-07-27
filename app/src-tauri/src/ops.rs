@@ -566,8 +566,12 @@ pub fn preset_save(
     aspects: &[Aspect],
     overwrite: bool,
 ) -> Result<(), ErrDto> {
-    let char_guard = state.char.lock().unwrap();
+    // Lock user before char, matching `hud_layout`, `overview_columns` and
+    // `window_layout` — every spot in this file that holds both slots at once
+    // takes them in that order, which is what rules out an AB-BA deadlock
+    // between two commands running concurrently.
     let user_guard = state.user.lock().unwrap();
+    let char_guard = state.char.lock().unwrap();
     crate::presets::create(
         app_data,
         name,
