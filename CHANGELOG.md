@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Settings presets.** Save a character's settings as a named preset that
+  belongs to no character — a snapshot that outlives its source, a "Mining" /
+  "PvP" pair you swap on one character, a setup you hand another player, or a
+  known-good baseline poured into a brand-new install. Choose what it holds
+  when you save it: window layout, overview, autofill, keybindings, or a
+  complete copy of both settings files — and it holds only that, so a layout
+  preset you share carries no trace of your autofill history.
+- **Presets are editable, not just snapshots.** A preset opens in the sidebar
+  like a character, and every editor works on it — Layout, Overview, Autofill,
+  Keybinds and the raw tree — through the same save chain and the same
+  backups. Overwriting a preset writes into its existing folder rather than
+  replacing it, so its backup history survives a re-save. Renaming or deleting
+  a preset that's currently open is refused, with the reason spelled out in
+  the menu, since pulling the folder out from under an open preset would
+  strand whatever you hadn't saved yet.
+- **Share a preset as one file.** Export writes a single `.evepreset` file;
+  Import reads one back in. Exporting a complete-copy preset warns first,
+  because it carries everything the editor doesn't otherwise model — station
+  names, searches, typed text — not just the four named aspects.
+- **Batch apply can start from a preset.** The batch source picker now offers
+  "A character" or "A preset" — everything downstream is unchanged, including
+  the collateral-character warning and the per-target backups.
+
+### Fixed
+- **The overview column width field is editable whenever a character document
+  is open**, rather than only when that file's name happened to contain a
+  numeric character id.
+
 ## [0.19.0] - 2026-07-26
 
 Windows called what EVE calls them, and clutter you get to define.

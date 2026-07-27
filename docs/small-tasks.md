@@ -13,6 +13,60 @@ Workflow:
 
 ## Open
 
+- [ ] **Run the settings-presets live in-game smoke.** Nothing in the feature
+  has been verified against a running EVE client. From the spec's §12: (1)
+  create a Layout-only preset from a real character, apply it to a *different*
+  character, launch EVE, and confirm the windows land where the preset had
+  them and the target's overview and autofill are untouched; (2) open that
+  preset, move a window, save, re-apply, and confirm the edit landed — proving
+  the preset is genuinely editable, not just a capture; (3) create an
+  `Everything` preset from a fully configured client and apply it to a
+  character whose settings files EVE has only just created (the fresh-install
+  case), and confirm the client comes up configured; (4) open a preset holding
+  only Autofill and confirm the Overview and Layout editors show honest empty
+  states rather than erroring, then add an overview preset to it from scratch
+  and confirm EVE accepts the result (the slice-2b minting-from-nothing path);
+  (5) export a preset, re-import it under a new name, and confirm the two
+  behave identically; (6) confirm the per-column width field is editable with
+  a preset open. _Added 2026-07-27._
+
+- [ ] **Settings-presets follow-ups (deferred to the final whole-branch
+  review, all ship-as-debt).** Preset library (`presets.rs`): (1)
+  `import_from` isn't atomic across its two file writes, so a mid-write I/O
+  failure can leave a half-populated folder — inert today, since `list()`
+  requires both documents before a folder counts as a preset (the same
+  accepted risk `create()` already carries); (2) `bytes_field` matches a bare
+  `Value::Bytes` only, so a `Shared`/`Ref`-wrapped container field is rejected
+  rather than resolved — fails closed, and the `treewalk` helpers that would
+  resolve it are `pub(crate)` to `settings-model`, unreachable from the app
+  crate; (3) `export_carries_the_full_marker` asserts the `full` marker
+  round-trips but not that the exported documents are byte-identical to the
+  source; (4) the import dedup suffix (`" (N)"`) is untested right at the
+  100-character name limit — `preset_path` re-validates on the way in, so it
+  errors rather than panics, just untested. Batch-apply rework (`ops.rs`): (5)
+  letting a preset act as a batch source made `setup_apply` call
+  `setup_preview` AND `resolve_source` again, so a preview now walks
+  `discover()` 3 times (was 1) and an apply 5 (was 2) — fix is to have
+  `setup_preview` hand its `SourceSides` to `setup_apply`, deliberately left
+  out of the regression-fix commit to keep it reviewable; (6)
+  `SourceSides.char_path` is `Option<PathBuf>` but populated in both branches,
+  leaving `read_side`'s `None` arm and one `if let Some` dead; (7) a
+  character-source `Everything` copy still full-copies raw bytes with no
+  decode check — pre-existing, and validating would be the behaviour drift
+  this slice deliberately avoided; (8)
+  `everything_from_a_pruned_preset_is_refused_by_setup_apply` only asserts
+  `err.code == "source"`, a code several guards share — asserting the message
+  contains "only part" would make it airtight; (9) `read_side`'s unreachable
+  `None` arm returns a developer-ese message ("no file for this side") that
+  would reach a user toast if it ever became reachable. _Added 2026-07-27._
+
+- [ ] **"Presets" now means two things in the UI.** The sidebar's new Presets
+  group (saved settings bundles) and the Overview view's presets (EVE's own
+  overview filter presets, which is CCP's own term and cannot be renamed) now
+  share a word. Context disambiguates today; if it confuses anyone, rename the
+  sidebar group to "Templates" — a label-only change, since every command and
+  type is already prefixed `settings_preset_*`. _Added 2026-07-27._
+
 - [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
   near-duplicate string readers that arrived from opposite sides of a merge:
   `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
