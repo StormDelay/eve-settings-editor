@@ -27,7 +27,10 @@ pub enum Category {
 
 impl Category {
     /// Key path from the document root to this category's subtree VALUE.
-    fn key_path(self) -> &'static [&'static [u8]] {
+    /// Public so a caller building a document that holds only some categories
+    /// can create exactly the intermediate parent dicts they need — see the
+    /// app crate's `presets::prune`.
+    pub fn key_path(self) -> &'static [&'static [u8]] {
         match self {
             Category::Layout => &[b"windows"],
             Category::Autofill => &[b"ui", b"editHistory"],

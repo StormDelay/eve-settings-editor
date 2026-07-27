@@ -7,8 +7,8 @@
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
 
-  let { userOpen, userId, charId, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
-    { userOpen: boolean; userId: number | null; charId: number | null; characters: number[]; refreshToken: number;
+  let { userOpen, userId, charId, charOpen, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
+    { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
       onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
 
@@ -348,7 +348,7 @@
   </div>
   {#if data.tabs.length > 0}
     <div hidden={sub !== "Columns"}>
-      <OverviewColumnsTab {data} {tabIndex} {charId} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
+      <OverviewColumnsTab {data} {tabIndex} {charOpen} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
     </div>
     <div hidden={sub !== "Filters"}>
       <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
