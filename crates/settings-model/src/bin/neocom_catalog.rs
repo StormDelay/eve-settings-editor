@@ -31,6 +31,10 @@ fn bytes(v: &Value) -> Option<String> {
 /// id -> (btnType, iconPath) -> count
 type Tally = BTreeMap<String, BTreeMap<(i64, String), usize>>;
 
+// Only visits BAR entries (see main()'s callers), not their `children`: the
+// two inventory docking-context variants (InventoryStation/InventoryStructure)
+// are only ever seen as children in the corpus (spec §2), so recursing into
+// children would offer the UI a top-level shape the corpus never has.
 fn visit(v: &Value, out: &mut Tally) {
     let Value::Instance { state, .. } = v else { return };
     let (Some(id), Some(bt), Some(icon)) = (
@@ -40,9 +44,6 @@ fn visit(v: &Value, out: &mut Tally) {
     ) else { return };
     if id.is_empty() { return }
     *out.entry(id).or_default().entry((bt, icon)).or_default() += 1;
-    if let Some(Value::List(kids) | Value::Tuple(kids)) = child(state, b"children") {
-        for k in kids { visit(k, out); }
-    }
 }
 
 fn main() {
