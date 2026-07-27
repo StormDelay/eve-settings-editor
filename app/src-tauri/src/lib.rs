@@ -318,7 +318,7 @@ fn set_hud_value(
 #[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
-    source_char_path: String,
+    source: ops::BatchSource,
     target_char_paths: Vec<String>,
     aspects: Vec<ops::Aspect>,
     allow_other_folders: bool,
@@ -326,7 +326,7 @@ fn setup_preview(
     ops::setup_preview(
         &settings_model::default_roots(),
         &app_dir(&app),
-        &source_char_path,
+        &source,
         &target_char_paths,
         &aspects,
         allow_other_folders,
@@ -336,7 +336,7 @@ fn setup_preview(
 #[tauri::command]
 fn setup_apply(
     app: tauri::AppHandle,
-    source_char_path: String,
+    source: ops::BatchSource,
     target_char_paths: Vec<String>,
     aspects: Vec<ops::Aspect>,
     allow_other_folders: bool,
@@ -344,7 +344,7 @@ fn setup_apply(
     ops::setup_apply(
         &settings_model::default_roots(),
         &app_dir(&app),
-        &source_char_path,
+        &source,
         &target_char_paths,
         &aspects,
         allow_other_folders,

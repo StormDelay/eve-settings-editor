@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use blue_marshal::Value;
 use serde::Serialize;
 use settings_model::{
     apply, default_roots, discover, project, project_overview, save,
@@ -258,30 +259,32 @@ pub fn plan_setup(
     plan
 }
 
-/// Discover, folder-scope to the source's profile (unless `allow_other_folders`),
-/// and split into char/user id->path maps. Returns the source char's id too.
-fn scoped_files(
-    roots: &[PathBuf],
-    source_char_path: &str,
-    allow_other_folders: bool,
-) -> Option<(u64, HashMap<u64, PathBuf>, HashMap<u64, PathBuf>)> {
-    let profiles = discover(roots);
+/// The source character's id and the profile directory it lives in.
+fn locate_source(roots: &[PathBuf], source_char_path: &str) -> Option<(u64, PathBuf)> {
     let src = Path::new(source_char_path);
-    let mut src_id = None;
-    let mut src_dir = None;
-    for p in &profiles {
+    for p in discover(roots) {
         for f in &p.files {
             if f.path == src {
-                src_id = f.id;
-                src_dir = Some(p.dir.clone());
+                return f.id.map(|id| (id, p.dir.clone()));
             }
         }
     }
-    let src_id = src_id?;
+    None
+}
+
+/// Discover, folder-scope to `anchor_dir` (unless `allow_other_folders`), and
+/// split into char/user id->path maps. The anchor is passed in rather than
+/// derived from a source path, because a preset source has no profile of its
+/// own — the batch view supplies the profile the targets are chosen from.
+fn scoped_files(
+    roots: &[PathBuf],
+    anchor_dir: Option<&Path>,
+    allow_other_folders: bool,
+) -> (HashMap<u64, PathBuf>, HashMap<u64, PathBuf>) {
     let mut char_paths = HashMap::new();
     let mut user_paths = HashMap::new();
-    for p in &profiles {
-        if !allow_other_folders && Some(&p.dir) != src_dir.as_ref() {
+    for p in discover(roots) {
+        if !allow_other_folders && Some(p.dir.as_path()) != anchor_dir {
             continue;
         }
         for f in &p.files {
@@ -293,7 +296,27 @@ fn scoped_files(
             }
         }
     }
-    Some((src_id, char_paths, user_paths))
+    (char_paths, user_paths)
+}
+
+/// Where a batch copy's settings come from.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchSource {
+    Character { path: String },
+    /// A preset folder, plus the profile directory whose characters the target
+    /// list is drawn from (a preset belongs to no profile).
+    Preset { dir: String, anchor_dir: String },
+}
+
+/// The two documents a source contributes, as (char side, account side).
+/// For a preset these are its own files; for a character, its file and its
+/// paired account file.
+struct SourceSides {
+    char_path: Option<PathBuf>,
+    user_path: Option<PathBuf>,
+    char_id: Option<u64>,
+    anchor: Option<PathBuf>,
 }
 
 /// Each char's stored screen resolution (reference_w, reference_h), for the
@@ -334,43 +357,104 @@ fn source_side_empty(path: &Path, cats: &[Category]) -> bool {
     }
 }
 
+/// Resolve a source into the pieces the planner and the applier both need.
+fn resolve_source(
+    roots: &[PathBuf],
+    dir: &Path,
+    source: &BatchSource,
+    aspects: &[Aspect],
+) -> Result<SourceSides, String> {
+    match source {
+        BatchSource::Character { path } => {
+            let Some((id, profile_dir)) = locate_source(roots, path) else {
+                return Err("Source file not found.".into());
+            };
+            let store = accounts::load_store(dir);
+            let user_path = account_of(&store, id).and_then(|uid| {
+                let (_, users) = scoped_files(roots, Some(&profile_dir), true);
+                users.get(&uid).cloned()
+            });
+            Ok(SourceSides {
+                char_path: Some(PathBuf::from(path)),
+                user_path,
+                char_id: Some(id),
+                anchor: Some(profile_dir),
+            })
+        }
+        BatchSource::Preset { dir: pdir, anchor_dir } => {
+            let pdir = PathBuf::from(pdir);
+            let (c, u) = (pdir.join(crate::presets::CHAR_FILE), pdir.join(crate::presets::USER_FILE));
+            if !c.is_file() || !u.is_file() {
+                return Err("That preset could not be read.".into());
+            }
+            if aspects.contains(&Aspect::Everything) && !crate::presets::is_full(&pdir) {
+                return Err(
+                    "This preset holds only part of a character's settings, so it cannot replace a whole file. Pick the aspects it holds instead."
+                        .into(),
+                );
+            }
+            Ok(SourceSides {
+                char_path: Some(c),
+                user_path: Some(u),
+                char_id: None,
+                anchor: if anchor_dir.is_empty() { None } else { Some(PathBuf::from(anchor_dir)) },
+            })
+        }
+    }
+}
+
 pub fn setup_preview(
     roots: &[PathBuf],
     dir: &Path,
-    source_char_path: &str,
+    source: &BatchSource,
     target_char_paths: &[String],
     aspects: &[Aspect],
     allow_other_folders: bool,
 ) -> SetupPlan {
-    let Some((src_id, char_paths, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders)
-    else {
-        return SetupPlan { source_error: Some("Source file not found.".into()), ..Default::default() };
+    let sides = match resolve_source(roots, dir, source, aspects) {
+        Ok(s) => s,
+        Err(e) => return SetupPlan { source_error: Some(e), ..Default::default() },
     };
+    let (char_paths, user_paths) =
+        scoped_files(roots, sides.anchor.as_deref(), allow_other_folders);
     let targets = target_ids(&char_paths, target_char_paths);
     let store = accounts::load_store(dir);
-    let resolutions = if aspect_writes(aspects).copies_char_geometry() {
+    let w = aspect_writes(aspects);
+    // A preset source issues no resolution warning: plan_setup needs a source
+    // resolution to compare against, and there is no source character. The
+    // preset's char.dat does carry `reference_w/h`, so wiring the warning up is
+    // a later, additive change — see the spec's §6.
+    let resolutions = if w.copies_char_geometry() {
         let mut ids = targets.clone();
-        ids.push(src_id);
+        if let Some(id) = sides.char_id {
+            ids.push(id);
+        }
         gather_resolutions(&char_paths, &ids)
     } else {
         HashMap::new()
     };
-    let mut plan = plan_setup(&char_paths, &user_paths, &store, &resolutions, Some(src_id), &targets, aspects);
+    let mut plan = plan_setup(
+        &char_paths,
+        &user_paths,
+        &store,
+        &resolutions,
+        sides.char_id,
+        &targets,
+        aspects,
+    );
 
     // Drop no-op splice writes: a splice aspect whose categories are all absent
-    // from the source would just back up and rewrite every target for nothing and
-    // inflate the write count (e.g. an Overview copy from a char that never resized
-    // its overview columns has no SortHeadersSizes to splice). Full copies always write.
-    let w = aspect_writes(aspects);
-    if !w.char_full_copy
-        && !plan.char_writes.is_empty()
-        && source_side_empty(Path::new(source_char_path), &w.char_categories)
-    {
-        plan.char_writes.clear();
+    // from the source would back up and rewrite every target for nothing.
+    if !w.char_full_copy && !plan.char_writes.is_empty() {
+        if let Some(p) = sides.char_path.as_deref() {
+            if source_side_empty(p, &w.char_categories) {
+                plan.char_writes.clear();
+            }
+        }
     }
     if !w.account_full_copy && !plan.account_writes.is_empty() {
-        if let Some(upath) = account_of(&store, src_id).and_then(|uid| user_paths.get(&uid)) {
-            if source_side_empty(upath, &w.account_categories) {
+        if let Some(p) = sides.user_path.as_deref() {
+            if source_side_empty(p, &w.account_categories) {
                 plan.account_writes.clear();
             }
         }
@@ -381,44 +465,36 @@ pub fn setup_preview(
 pub fn setup_apply(
     roots: &[PathBuf],
     dir: &Path,
-    source_char_path: &str,
+    source: &BatchSource,
     target_char_paths: &[String],
     aspects: &[Aspect],
     allow_other_folders: bool,
 ) -> Result<Vec<TargetResult>, ErrDto> {
-    let plan = setup_preview(roots, dir, source_char_path, target_char_paths, aspects, allow_other_folders);
+    let plan = setup_preview(roots, dir, source, target_char_paths, aspects, allow_other_folders);
     if let Some(e) = plan.source_error {
         return Err(ErrDto::new("source", e));
     }
+    let sides = resolve_source(roots, dir, source, aspects).map_err(|e| ErrDto::new("source", e))?;
     let w = aspect_writes(aspects);
 
-    // Read/decode the source's two files once, extracting each side's subtrees.
-    let src_char_bytes = fs::read(source_char_path).map_err(|e| ErrDto::new("io", e.to_string()))?;
-    let char_extracted = if !w.char_categories.is_empty() {
-        let v = blue_marshal::decode(&src_char_bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
-        extract_categories(&v, &w.char_categories)
-    } else {
-        vec![]
+    let read_side = |p: Option<&Path>| -> Result<Vec<u8>, ErrDto> {
+        match p {
+            Some(p) => fs::read(p).map_err(|e| ErrDto::new("io", e.to_string())),
+            None => Ok(Vec::new()),
+        }
     };
-    // The account (user) file behind the source char, if any account write is needed.
-    let (user_bytes, account_extracted) = if w.writes_account() {
-        let Some((src_id, _cp, user_paths)) = scoped_files(roots, source_char_path, allow_other_folders) else {
-            return Err(ErrDto::new("source", "Source file not found."));
-        };
-        let store = accounts::load_store(dir);
-        let uid = account_of(&store, src_id).ok_or_else(|| ErrDto::new("source", "Source character has no paired account."))?;
-        let upath = user_paths.get(&uid).ok_or_else(|| ErrDto::new("source", "Source account file not found."))?;
-        let bytes = fs::read(upath).map_err(|e| ErrDto::new("io", e.to_string()))?;
-        let extracted = if !w.account_categories.is_empty() {
-            let v = blue_marshal::decode(&bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
-            extract_categories(&v, &w.account_categories)
-        } else {
-            vec![]
-        };
-        (bytes, extracted)
-    } else {
-        (vec![], vec![])
+    let extract_side = |bytes: &[u8], cats: &[Category]| -> Result<Vec<(Category, Value)>, ErrDto> {
+        if cats.is_empty() || bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let v = blue_marshal::decode(bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
+        Ok(extract_categories(&v, cats))
     };
+
+    let src_char_bytes = read_side(sides.char_path.as_deref())?;
+    let char_extracted = extract_side(&src_char_bytes, &w.char_categories)?;
+    let user_bytes = if w.writes_account() { read_side(sides.user_path.as_deref())? } else { Vec::new() };
+    let account_extracted = extract_side(&user_bytes, &w.account_categories)?;
 
     let mut results = Vec::new();
     for cw in &plan.char_writes {
@@ -1834,7 +1910,8 @@ mod tests {
         let roots = vec![base.join("root")];
         let src = prof.join("core_char_100.dat").to_string_lossy().into_owned();
         let tgt = vec![prof.join("core_char_200.dat").to_string_lossy().into_owned()];
-        let results = setup_apply(&roots, &app_dir, &src, &tgt, &[Aspect::Overview], false).unwrap();
+        let source = BatchSource::Character { path: src };
+        let results = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Overview], false).unwrap();
 
         // One char write (widths -> char 200, ok) and one account write (overview
         // -> read-only user 600, fails) — the failure did not halt the char write.
@@ -1842,6 +1919,45 @@ mod tests {
         let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
         assert!(char_ok, "char widths write succeeded");
         assert!(acct_fail, "read-only account write failed but was reported, not panicked");
+    }
+
+    #[test]
+    fn everything_from_a_pruned_preset_is_refused() {
+        // A full copy built on a three-key document would wipe the target's
+        // whole file. The UI hides the option; the backend refuses it too.
+        let data = std::env::temp_dir().join(format!("eve-preset-apply-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let doc = blue_marshal::Value::Dict(vec![]);
+        crate::presets::create(
+            &data,
+            "Partial",
+            &[Aspect::Layout],
+            crate::presets::CreateInput { char_doc: Some(&doc), user_doc: Some(&doc) },
+            false,
+        )
+        .unwrap();
+        let dir = crate::presets::preset_path(&data, "Partial").unwrap();
+        let source = BatchSource::Preset {
+            dir: dir.to_string_lossy().into_owned(),
+            anchor_dir: String::new(),
+        };
+        let plan = setup_preview(&[], &data, &source, &[], &[Aspect::Everything], false);
+        assert!(
+            plan.source_error.as_deref().unwrap_or("").contains("only part"),
+            "got: {:?}",
+            plan.source_error
+        );
+    }
+
+    #[test]
+    fn a_missing_preset_directory_is_a_source_error() {
+        let source = BatchSource::Preset {
+            dir: "/no/such/preset".into(),
+            anchor_dir: String::new(),
+        };
+        let plan = setup_preview(&[], Path::new("/tmp"), &source, &[], &[Aspect::Layout], false);
+        assert!(plan.source_error.is_some());
     }
 
     /// root -> { b"windows": {}, b"ui": {} } — sections present, no HUD keys.
