@@ -16,6 +16,7 @@
     onOpenPreset,
     charOpen,
     userOpen,
+    openPresetName,
   }: {
     onOpen: (path: string) => void;
     onShowAccounts: () => void;
@@ -24,6 +25,7 @@
     onOpenPreset: (p: PresetInfo) => void;
     charOpen: boolean;
     userOpen: boolean;
+    openPresetName: string | null;
   } = $props();
 
   // Naming and ordering come from filesort, shared with the batch-apply target
@@ -126,7 +128,7 @@
   {#if profiles.length === 0}
     <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
   {/if}
-  <PresetGroup {onOpenPreset} {charOpen} {userOpen} />
+  <PresetGroup {onOpenPreset} {charOpen} {userOpen} {openPresetName} />
   {#each rows as { p, label, primary } (p.dir)}
     {@const chars = p.files
       .filter((f) => f.kind === "char" && (!hideNonStandard || isStandardName(f.file_name)))
