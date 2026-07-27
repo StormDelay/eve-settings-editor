@@ -388,24 +388,44 @@ fn resolve_source(
         }
         BatchSource::Preset { dir: pdir, anchor_dir } => {
             let pdir = PathBuf::from(pdir);
-            if !pdir.starts_with(crate::presets::presets_dir(dir)) {
+            // A direct child of the presets dir, not merely lexically prefixed
+            // by it — `starts_with` is a component-wise prefix test, so
+            // `<presets dir>/../../anything` would pass it. `presets::preset_path`
+            // (the write/rename/delete side) enforces the real "exactly one
+            // component" property; this read-only path now matches it instead
+            // of only claiming to.
+            if pdir.parent() != Some(crate::presets::presets_dir(dir).as_path()) {
                 return Err("That preset could not be read.".into());
             }
             let (c, u) = (pdir.join(crate::presets::CHAR_FILE), pdir.join(crate::presets::USER_FILE));
             if !c.is_file() || !u.is_file() {
                 return Err("That preset could not be read.".into());
             }
-            if let Err(e) = crate::presets::load(&c) {
-                return Err(format!("The preset's character-side file could not be read: {e}"));
-            }
-            if let Err(e) = crate::presets::load(&u) {
-                return Err(format!("The preset's account-side file could not be read: {e}"));
-            }
-            if aspects.contains(&Aspect::Everything) && !crate::presets::is_full(&pdir) {
-                return Err(
-                    "This preset holds only part of a character's settings, so it cannot replace a whole file. Pick the aspects it holds instead."
-                        .into(),
-                );
+            let char_doc = crate::presets::load(&c)
+                .map_err(|e| format!("The preset's character-side file could not be read: {e}"))?;
+            let user_doc = crate::presets::load(&u)
+                .map_err(|e| format!("The preset's account-side file could not be read: {e}"))?;
+            if aspects.contains(&Aspect::Everything) {
+                if !crate::presets::is_full(&pdir) {
+                    return Err(
+                        "This preset holds only part of a character's settings, so it cannot replace a whole file. Pick the aspects it holds instead."
+                            .into(),
+                    );
+                }
+                // `full` is set from the request at save time and never
+                // re-checked against what actually got written — a Layout-only
+                // preset's user.dat (or an Autofill/Overview-only preset's
+                // char.dat) is an empty root dict by construction. `presets::create`
+                // now refuses to mint a full preset like that, but an older
+                // preset or a hand-edited imported one can still reach here.
+                // A full copy of an empty document is not a complete copy —
+                // it is a wipe of the target's whole file.
+                if crate::presets::is_empty_root(&char_doc) || crate::presets::is_empty_root(&user_doc) {
+                    return Err(
+                        "This preset is marked as a complete copy, but one of its files is empty, so applying Everything would erase the target instead of replacing it. Pick the aspects it actually holds instead."
+                            .into(),
+                    );
+                }
             }
             Ok(SourceSides {
                 char_path: Some(c),
@@ -2095,6 +2115,71 @@ mod tests {
 
         let after = std::fs::read(prof.join("core_char_701.dat")).unwrap();
         assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
+    }
+
+    #[test]
+    fn a_full_marked_preset_with_an_empty_side_is_refused_by_setup_apply_and_leaves_target_untouched() {
+        // The data-safety bug: `full` is set from the save-time request and
+        // never cross-checked against what actually got written. A Layout-only
+        // preset's user.dat is Value::Dict([]) by construction (see
+        // an_autofill_preset_builds_its_parent_dict's mirror case in
+        // presets.rs), so a hand-built (or pre-fix, or hand-edited-import)
+        // preset can claim `full: true` while one side is empty. Applying
+        // Everything against it must be refused, and the target must be
+        // byte-for-byte untouched -- that second assertion is load-bearing:
+        // `full_copy_to` backs the target up before writing, so a bug here
+        // would still report "ok" and silently wipe the file, recoverable only
+        // via the backup the user was never told to look for.
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let base = std::env::temp_dir().join(format!("app-preset-empty-full-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+
+        let original_bytes =
+            encode(&Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("UNTOUCHED"))]))])).unwrap();
+        std::fs::write(prof.join("core_char_702.dat"), &original_bytes).unwrap();
+
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        // Hand-build the preset folder directly (bypassing `presets::create`,
+        // which now refuses this shape itself) so this test pins the
+        // independent ops.rs-side guard rather than only the belt-and-braces one.
+        let pdir = crate::presets::presets_dir(&app_dir).join("BadFull");
+        std::fs::create_dir_all(&pdir).unwrap();
+        let char_doc = Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))]))]);
+        std::fs::write(pdir.join(crate::presets::CHAR_FILE), encode(&char_doc).unwrap()).unwrap();
+        std::fs::write(pdir.join(crate::presets::USER_FILE), encode(&Value::Dict(vec![])).unwrap()).unwrap();
+        std::fs::write(pdir.join(crate::presets::MARKER_FILE), br#"{"full":true}"#).unwrap();
+
+        let roots = vec![base.join("root")];
+        let source = BatchSource::Preset {
+            dir: pdir.to_string_lossy().into_owned(),
+            anchor_dir: prof.to_string_lossy().into_owned(),
+        };
+        let tgt = vec![prof.join("core_char_702.dat").to_string_lossy().into_owned()];
+        let err = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Everything], false).unwrap_err();
+        assert_eq!(err.code, "source");
+        assert!(err.message.contains("empty"), "must be the empty-document guard's message, got: {}", err.message);
+        assert!(!err.message.contains("only part"), "must not be mistaken for the pruned-preset guard");
+
+        let after = std::fs::read(prof.join("core_char_702.dat")).unwrap();
+        assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
+    }
+
+    #[test]
+    fn a_preset_source_outside_the_presets_dir_via_traversal_is_refused() {
+        // The containment guard is component-wise (`pdir.parent() ==
+        // presets_dir`), not the old lexical `starts_with`, which
+        // `<presets dir>/../../anything` passed despite escaping the directory.
+        let data = std::env::temp_dir().join(format!("app-preset-traversal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let escape = crate::presets::presets_dir(&data).join("..").join("escape");
+        let source = BatchSource::Preset { dir: escape.to_string_lossy().into_owned(), anchor_dir: String::new() };
+        let plan = setup_preview(&[], &data, &source, &[], &[Aspect::Layout], false);
+        assert!(plan.source_error.is_some(), "a preset path outside the presets dir must be refused");
     }
 
     #[test]

@@ -2,6 +2,14 @@
 //! account-side settings document. Nothing here invents a file format — a
 //! preset's two files are ordinary settings documents, which is exactly what
 //! lets the editors open one as if it were a character.
+//!
+//! Invariant `rename` and `delete` do not enforce themselves: callers must not
+//! rename or delete a preset whose documents are currently open in the editor.
+//! The open document holds its path as a plain string, not a live handle, so
+//! moving or removing the folder out from under it leaves a later Save
+//! targeting a path that no longer exists. Today the frontend's context menu
+//! is the only caller and already guards this (`PresetGroup.svelte`'s
+//! `isOpen`); a future caller must do the same.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -92,6 +100,14 @@ pub fn has_category(doc: &Value, cat: Category) -> bool {
     !extract_categories(doc, &[cat]).is_empty()
 }
 
+/// Whether `doc` is an empty root dict — the shape a pruned side (e.g. a
+/// Layout-only preset's `user.dat`) naturally has, and the shape `resolve_source`
+/// must never let a full copy write over a target: an empty document copied
+/// whole is not a "complete copy", it is a wipe.
+pub fn is_empty_root(doc: &Value) -> bool {
+    matches!(doc, Value::Dict(d) if d.is_empty())
+}
+
 /// The intermediate parent dicts these categories need, so `apply_to_tree`'s
 /// insert branch has somewhere to put `ui -> editHistory` and
 /// `cmd -> customCmds`. Read out of `Category::key_path` itself, so a category
@@ -153,6 +169,20 @@ pub fn create(
     }
 
     let full = w.char_full_copy || w.account_full_copy;
+    // A "full" preset built on an empty side is not a complete copy of
+    // anything — it is a document that, applied with Everything, would wipe
+    // the target's whole file. Refuse it here so the bad preset is never
+    // created; `resolve_source` in ops.rs carries the same guard for presets
+    // that predate this check or arrive via import.
+    if full {
+        let empty = |d: Option<&Value>| d.map(is_empty_root).unwrap_or(true);
+        if empty(docs.char_doc) || empty(docs.user_doc) {
+            return Err(
+                "A complete copy needs both a character file and its account file with real content \u{2014} pick the individual aspects instead."
+                    .into(),
+            );
+        }
+    }
     let side = |doc: Option<&Value>, cats: &[Category]| match (full, doc) {
         (true, Some(d)) => d.clone(),
         (false, Some(d)) => prune(d, cats),
@@ -652,6 +682,27 @@ mod tests {
         let err = create(&data, "Same", &[Aspect::Layout], input(), false).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
         create(&data, "Same", &[Aspect::Layout], input(), true).expect("overwrite is allowed");
+    }
+
+    #[test]
+    fn everything_is_refused_when_a_side_is_an_empty_root_dict() {
+        // A Layout-only preset's user.dat is always Value::Dict([]) by
+        // construction (see an_autofill_preset_builds_its_parent_dict for the
+        // mirror case) — if that were ever fed back in as "the account side"
+        // for an Everything save, applying it would wipe every target's
+        // account file. Refused before anything is written.
+        let data = temp_data("empty-full");
+        let empty = Value::Dict(vec![]);
+        let err = create(
+            &data,
+            "Empty everything",
+            &[Aspect::Everything],
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&empty) },
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("complete copy") && err.contains("real content"), "got: {err}");
+        assert!(!preset_path(&data, "Empty everything").unwrap().exists(), "nothing written");
     }
 
     #[test]
