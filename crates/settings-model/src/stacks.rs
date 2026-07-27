@@ -86,6 +86,8 @@ pub fn add_to_stack(v: &mut Value, member: &str, container: &str) -> Result<(), 
     inline_all(v);
     let win = windows_mut(v)?;
     let (mb, cb) = (member.as_bytes(), container.as_bytes());
+    adopt_container_rect(win, mb, cb);
+
     let sw = child_inner(win, b"stacksWindows");
     sw.retain(|(k, _)| !is_b(k, mb)); // re-stack cleanly if already present
     sw.push((Value::Bytes(mb.to_vec()), Value::Bytes(cb.to_vec())));
@@ -188,6 +190,23 @@ fn set_entry(d: &mut Vec<(Value, Value)>, key: &[u8], val: Value) {
     } else {
         d.push((Value::Bytes(key.to_vec()), val));
     }
+}
+
+/// Copy the container's rect onto a joining member, as the client does — see
+/// docs/format-notes.md ("Window stacks"): a stack's container and every member
+/// share one identical rect, and a member's prior free-floating rect is
+/// discarded. Best-effort: a file with no geometry dict, or a container with no
+/// rect of its own, keeps its membership write and skips this. The presence
+/// check matters — `child_inner` would otherwise CREATE the geometry dict.
+fn adopt_container_rect(win: &mut Vec<(Value, Value)>, member: &[u8], container: &[u8]) {
+    if !win.iter().any(|(k, _)| is_b(k, b"windowSizesAndPositions_1")) {
+        return;
+    }
+    let geoms = child_inner(win, b"windowSizesAndPositions_1");
+    let Some(rect) = geoms.iter().find(|(k, _)| is_b(k, container)).map(|(_, r)| r.clone()) else {
+        return;
+    };
+    set_entry(geoms, member, rect);
 }
 
 #[cfg(test)]
@@ -376,5 +395,30 @@ mod tests {
         assert_eq!(boolval(&v, b"isOverlayedWindows", cb), Some(false));
         assert_eq!(boolval(&v, b"minimizedWindows", cb), Some(false));
         assert_eq!(boolval(&v, b"isLightBackgroundWindows", cb), Some(false));
+    }
+
+    #[test]
+    fn add_moves_the_joining_member_onto_the_container_rect() {
+        let mut v = free_windows_root();
+        // "40" is an existing window with a rect at x = 0; treat it as the
+        // stack container m2 joins. The client discards a joining member's own
+        // rect (format-notes.md, experiment 6).
+        add_to_stack(&mut v, "m2", "40").unwrap();
+        assert_eq!(geom_of(&v, b"m2")[0], 0, "m2 takes the container's rect");
+        assert_eq!(geom_of(&v, b"40")[0], 0, "the container's own rect is untouched");
+        assert_eq!(geom_of(&v, b"m1")[0], 10, "an unrelated window is untouched");
+    }
+
+    #[test]
+    fn add_without_geometry_still_writes_membership() {
+        // root() has no windowSizesAndPositions_1 dict at all: the membership
+        // write must still land, and the geometry dict must NOT be fabricated.
+        let mut v = root();
+        add_to_stack(&mut v, "m3", "C").unwrap();
+        assert!(keys(sw(&v)).contains(&"m3".to_string()));
+        assert!(
+            !win(&v).iter().any(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windowSizesAndPositions_1")),
+            "the geometry dict must not be fabricated by a membership write",
+        );
     }
 }

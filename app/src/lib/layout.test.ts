@@ -3,7 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
-  snapLines, movingEdges, snapDelta,
+  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -521,6 +521,144 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
   const ids = visibleIds([market, invite], { ...NO_FILTER, hideClutter: true }, freed);
   check("visibleIds honours the overrides", ids.has("ChatInvitation_x") && ids.has("market"));
+}
+
+// --- unitAt: topmost drawn unit under a data-px point ------------------------
+{
+  const rect = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
+  const u = (key: string, r: { x: number; y: number; w: number; h: number }) =>
+    ({ key, anchor: { id: key }, stack: null, tabs: [], fanTargets: [], rect: r }) as any;
+  // Two overlapping units; `big` is drawn first, `small` second (on top).
+  const big = u("big", rect(0, 0, 500, 500));
+  const small = u("small", rect(100, 100, 100, 100));
+  const units = [big, small];
+  const rectOf = (x: any) => x.rect;
+
+  check("unitAt returns the later-drawn unit where they overlap",
+    unitAt(units, rectOf, 150, 150)?.key === "small");
+  check("unitAt returns the only unit under a non-overlapping point",
+    unitAt(units, rectOf, 400, 400)?.key === "big");
+  check("unitAt returns null on empty canvas",
+    unitAt(units, rectOf, 900, 900) === null);
+  check("unitAt counts the rect edge as inside",
+    unitAt(units, rectOf, 100, 100)?.key === "small");
+}
+
+// --- moveInOrder: the full ordering reorder_stack takes ----------------------
+{
+  const ids = ["a", "b", "c", "d"];
+  check("moveInOrder moves an id forward",
+    moveInOrder(ids, "a", 2).join(",") === "b,c,a,d");
+  check("moveInOrder moves an id backward",
+    moveInOrder(ids, "d", 1).join(",") === "a,d,b,c");
+  check("moveInOrder to the same index is unchanged",
+    moveInOrder(ids, "b", 1).join(",") === "a,b,c,d");
+  check("moveInOrder clamps an index past the end",
+    moveInOrder(ids, "a", 99).join(",") === "b,c,d,a");
+  check("moveInOrder leaves the input array alone",
+    ids.join(",") === "a,b,c,d");
+}
+
+// --- dropAction: the whole canvas gesture matrix -----------------------------
+{
+  const rect = { x: 10, y: 20, w: 300, h: 200 };
+  // Minimal DrawUnit shapes: dropAction only reads key / anchor.id / stack /
+  // tabs[].id, so the fixtures carry exactly those.
+  const freeUnit = (id: string) =>
+    ({ key: id, anchor: { id }, stack: null, tabs: [{ id }], fanTargets: [] }) as any;
+  const stackUnit = (container: string, members: string[]) =>
+    ({
+      key: container,
+      anchor: { id: container },
+      stack: { container_id: container, container_label: container, anchor_id: container, members },
+      tabs: members.map((id) => ({ id })),
+      fanTargets: [],
+    }) as any;
+
+  const dragged = freeUnit("w1");
+  const other = freeUnit("w2");
+  const stack = stackUnit("C", ["m1", "m2", "m3"]);
+  const other2 = stackUnit("D", ["n1"]);
+  const windowDrag = { unit: dragged, tabId: null, rect };
+
+  // --- window drags ---
+  check("a plain window drag is a move",
+    dropAction(windowDrag, other, false, null).op === "move");
+  check("a Shift drag over empty canvas is a move",
+    dropAction(windowDrag, null, true, null).op === "move");
+  check("a Shift drag onto itself is a move",
+    dropAction(windowDrag, dragged, true, null).op === "move");
+  {
+    const a = dropAction(windowDrag, other, true, null);
+    check("Shift onto a free window creates a stack", a.op === "create");
+    // create_stack(m1, m2) lands the stack at m1's rect: the target stays put.
+    check("the target is member 1, the dragged window member 2",
+      a.op === "create" && a.first === "w2" && a.second === "w1");
+  }
+  {
+    const a = dropAction(windowDrag, stack, true, null);
+    check("Shift onto a stack joins it", a.op === "add");
+    check("the dragged window joins that container",
+      a.op === "add" && a.member === "w1" && a.container === "C");
+  }
+  check("Shift while dragging a whole stack is still a move",
+    dropAction({ unit: stack, tabId: null, rect }, other, true, null).op === "move");
+
+  // --- tab drags ---
+  const tabDrag = { unit: stack, tabId: "m1", rect };
+  {
+    const a = dropAction(tabDrag, null, false, null);
+    check("a tab dropped on empty canvas unstacks", a.op === "unstack");
+    check("it lands at the drop rect",
+      a.op === "unstack" && a.member === "m1" && a.rect.x === 10 && a.rect.w === 300);
+  }
+  {
+    const a = dropAction(tabDrag, stack, false, 2);
+    check("a tab dropped on its own strip reorders", a.op === "reorder");
+    check("the order is the full member list, moved",
+      a.op === "reorder" && a.container === "C" && a.order.join(",") === "m2,m3,m1");
+  }
+  check("a tab dropped on its own rect body does nothing",
+    dropAction(tabDrag, stack, false, null).op === "none");
+  check("a tab dropped on its own index does nothing",
+    dropAction(tabDrag, stack, false, 0).op === "none");
+  // hoverTabIndex past the end of the target's visible tabs (stack has 3
+  // members, index 99 doesn't exist) — a stale or bogus measurement must not
+  // fall through to some other member.
+  check("an out-of-range hover index onto the own strip does nothing",
+    dropAction(tabDrag, stack, false, 99).op === "none");
+  {
+    const a = dropAction(tabDrag, other2, false, null);
+    check("a tab dropped on another stack moves between stacks", a.op === "unstackInto");
+    check("into that container",
+      a.op === "unstackInto" && a.member === "m1" && a.container === "D");
+  }
+  {
+    // A tab dropped on another stack has no competing "move" meaning (see
+    // dropAction's doc comment), so Shift must be ignored here, unlike the
+    // free-window case below where it selects unstackCreate over unstack.
+    const a = dropAction(tabDrag, other2, true, null);
+    check("Shift onto another stack is still unstackInto, not unstackCreate", a.op === "unstackInto");
+  }
+  {
+    const a = dropAction(tabDrag, other, true, null);
+    check("Shift + a tab onto a free window creates a stack there", a.op === "unstackCreate");
+    check("with the free window as member 1",
+      a.op === "unstackCreate" && a.member === "m1" && a.target === "w2");
+  }
+  check("without Shift, a tab onto a free window just lands there",
+    dropAction(tabDrag, other, false, null).op === "unstack");
+
+  // The reorder order must come from stack.members, NOT the visible tabs: a
+  // filter can hide a member, and reorder_stack rewrites the whole dict from
+  // the list it is given — dropping a hidden member would lose its index.
+  {
+    const filtered = stackUnit("C", ["m1", "m2", "m3"]);
+    filtered.tabs = [{ id: "m1" }, { id: "m3" }]; // m2 hidden by the filter
+    const a = dropAction({ unit: filtered, tabId: "m1", rect }, filtered, false, 1);
+    check("a reorder under a filter keeps the hidden member",
+      a.op === "reorder" && a.order.join(",") === "m2,m3,m1");
+  }
 }
 
 console.log("layout: all checks passed");
