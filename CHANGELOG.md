@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Importing an overview pack no longer strips the timestamp off your column
+  settings.** Every setting in an EVE settings file is stored as a
+  `(timestamp, value)` pair — 4,187 of 4,187 across five untouched account
+  files. Importing a pack wrote the two column lists without theirs, on the
+  strength of a code comment claiming real files stored them bare. They do not,
+  and never did, in any snapshot going back to the oldest in the corpus. An
+  import now writes them correctly and repairs a file an earlier version wrote,
+  and the same wrapper is used when creating an overview's tab table from
+  scratch — which is what a brand-new install gets.
 - **Delete any node in the raw tree, including one holding a shared object.**
   The tree view used to grey out Delete on any entry whose subtree defined a
   shared object, because removing it would strand the slot other entries point
