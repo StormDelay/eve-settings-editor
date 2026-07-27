@@ -14,8 +14,8 @@ use serde::Serialize;
 
 use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, section, SharedTable};
 
-pub const BAR_KEY: &[u8] = b"neocomButtonRawData";
-pub const ORIGINAL_KEY: &[u8] = b"neocomButtonRawDataOriginal";
+const BAR_KEY: &[u8] = b"neocomButtonRawData";
+const ORIGINAL_KEY: &[u8] = b"neocomButtonRawDataOriginal";
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -171,11 +171,11 @@ fn bar_list_mut(v: &mut Value) -> Result<&mut Vec<Value>, NeocomError> {
 pub fn reorder(v: &mut Value, order: &[usize]) -> Result<(), NeocomError> {
     // Validate BEFORE inlining, so a rejected reorder leaves the document
     // byte-for-byte as it was (the tests assert exactly this).
+    let n = project_neocom(v)?.buttons.len();
+    if order.len() != n {
+        return Err(NeocomError::BadOrder);
+    }
     {
-        let n = project_neocom(v)?.buttons.len();
-        if order.len() != n {
-            return Err(NeocomError::BadOrder);
-        }
         let mut seen = vec![false; n];
         for &i in order {
             let slot = seen.get_mut(i).ok_or(NeocomError::BadOrder)?;
@@ -187,6 +187,15 @@ pub fn reorder(v: &mut Value, order: &[usize]) -> Result<(), NeocomError> {
     }
     inline_all(v);
     let list = bar_list_mut(v)?;
+    // `read_list` filter_maps away any non-Instance entry, so the projected
+    // count and the raw list length can desync — a single junk entry would
+    // otherwise let `order` (validated against the projected count) index the
+    // raw list wrong, silently truncating or misplacing a button. Refuse
+    // instead: unreachable on today's corpus (43,430/43,430 real buttons are
+    // Instances), but the failure mode without this is silent, not loud.
+    if list.len() != n {
+        return Err(NeocomError::BadOrder);
+    }
     // Move whole instances: take them out, then put them back in the new order.
     let taken: Vec<Value> = std::mem::take(list);
     *list = order.iter().map(|&i| taken[i].clone()).collect();
@@ -194,11 +203,18 @@ pub fn reorder(v: &mut Value, order: &[usize]) -> Result<(), NeocomError> {
 }
 
 pub fn remove(v: &mut Value, index: usize) -> Result<(), NeocomError> {
-    if index >= project_neocom(v)?.buttons.len() {
+    let n = project_neocom(v)?.buttons.len();
+    if index >= n {
         return Err(NeocomError::BadIndex);
     }
     inline_all(v);
     let list = bar_list_mut(v)?;
+    // Same desync guard as `reorder`: a non-Instance entry in the raw list
+    // would make `n` (the projected count `index` was validated against) not
+    // match the raw list this indexes into.
+    if list.len() != n {
+        return Err(NeocomError::BadIndex);
+    }
     list.remove(index);
     Ok(())
 }
@@ -429,6 +445,33 @@ mod tests {
         let mut v = doc();
         assert!(matches!(remove(&mut v, 3), Err(NeocomError::BadIndex)));
         assert_eq!(ids(&v), vec!["chat", "inventory", "shipTree"]);
+    }
+
+    /// A raw bar list with a non-Instance entry mixed in: `read_list`'s
+    /// `filter_map` drops it from the projection, so the projected count (2)
+    /// no longer matches the raw list length (3).
+    fn doc_with_a_junk_entry() -> Value {
+        Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("neocomButtonRawData"), Value::Tuple(vec![ts(), Value::List(vec![
+                button(b("chat"), 10, "icon.png", Value::None),
+                b("not-a-button"), // not an Instance: filtered out of the projection
+                button(b("wallet"), 1, "wallet.png", Value::None),
+            ])])),
+        ]))])
+    }
+
+    #[test]
+    fn reorder_refuses_rather_than_scramble_when_the_raw_list_has_a_non_instance_entry() {
+        let mut v = doc_with_a_junk_entry();
+        assert!(matches!(reorder(&mut v, &[1, 0]), Err(NeocomError::BadOrder)));
+        assert_eq!(ids(&v), vec!["chat", "wallet"], "a refused reorder changed nothing");
+    }
+
+    #[test]
+    fn remove_refuses_rather_than_drop_the_wrong_button_when_the_raw_list_has_a_non_instance_entry() {
+        let mut v = doc_with_a_junk_entry();
+        assert!(matches!(remove(&mut v, 0), Err(NeocomError::BadIndex)));
+        assert_eq!(ids(&v), vec!["chat", "wallet"], "a refused remove changed nothing");
     }
 
     #[test]
