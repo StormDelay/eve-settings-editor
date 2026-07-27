@@ -1,8 +1,12 @@
 <script lang="ts">
-  import type { Hud, HudEntry, HudKind } from "$lib/api";
+  import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
   import type { FurnitureRect } from "$lib/layout";
+  import NeocomButtons from "$lib/NeocomButtons.svelte";
 
-  let { hud, readOnly, onSet, sharedNames = [], selectedKind = null, onSelectKind }: {
+  let {
+    hud, readOnly, onSet, sharedNames = [], selectedKind = null, onSelectKind,
+    neocom = null, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
+  }: {
     hud: Hud;
     readOnly: boolean;
     onSet: (name: string, text: string) => void;
@@ -13,6 +17,14 @@
     /** Selecting a group here highlights the matching rectangle on the canvas,
      * the mirror of clicking that rectangle. */
     onSelectKind: (kind: FurnitureRect["kind"]) => void;
+    /** The neocom bar, when a character file is open. Rendered inside the
+     * Neocom group so the bar the user clicks on the canvas and the buttons
+     * they edit are the same object. */
+    neocom?: NeocomBar | null;
+    onNeocomReorder: (order: number[]) => void;
+    onNeocomRemove: (index: number) => void;
+    onNeocomAdd: (id: string, btnType: number, iconPath: string) => void;
+    onNeocomReset: () => void;
   } = $props();
 
   // Display order and labels. `kind` ties a group to the canvas element it
@@ -102,6 +114,15 @@
           </label>
         {/if}
       {/each}
+      {#if g.kind === "neocom" && neocom}
+        <NeocomButtons
+          bar={neocom}
+          {readOnly}
+          onReorder={onNeocomReorder}
+          onRemove={onNeocomRemove}
+          onAdd={onNeocomAdd}
+          onReset={onNeocomReset} />
+      {/if}
     </div>
   {/each}
 </div>
