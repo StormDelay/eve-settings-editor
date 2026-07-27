@@ -50,7 +50,10 @@ buttons** settled every question:
   `InventoryStation` and `InventoryStructure`. The "folder groups" the milestone
   spec worried about are the Inventory docking-context variants, not user-built
   folders.
-- **25 distinct ids** across the corpus.
+- **24 distinct ids** across the corpus. (The original probe reported 25: it
+  rendered an unresolved `Tuple(bytes, None)` id — see the malformed shape
+  below — as its own placeholder string rather than resolving it to the real
+  id it wraps, and counted that placeholder as a 25th distinct id.)
 - **One malformed shape:** 11 buttons carry an `id` that is a `Tuple(bytes,
   None)` rather than plain bytes. Rare, real, and it has to be tolerated.
 - **`neocomButtonRawDataOriginal`** is the same instance shape in a `Tuple` of
@@ -138,7 +141,7 @@ the existing error-dialog path.
 
 ## 5. The catalog
 
-A generator harvests the 25 known ids with their canonical `btnType` and
+A generator harvests the 24 known ids with their canonical `btnType` and
 `iconPath` into `app/src/lib/data/neocom-buttons.json`, alongside the bundled
 `default-presets.json` and `command-defaults.json`. It is a **Rust bin**
 (`crates/settings-model/src/bin/neocom_catalog.rs`), not a `tools/*.py` script
