@@ -114,7 +114,10 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
     let mut account_categories = vec![];
     for a in aspects {
         match a {
-            Aspect::Layout => char_categories.push(Category::Layout),
+            Aspect::Layout => {
+                char_categories.push(Category::Layout);
+                char_categories.push(Category::NeocomButtons);
+            }
             Aspect::Overview => {
                 char_categories.push(Category::OverviewWidths);
                 account_categories.push(Category::Overview);
@@ -1653,10 +1656,20 @@ mod tests {
     #[test]
     fn layout_is_char_only_no_account_write() {
         let w = aspect_writes(&[Aspect::Layout]);
-        assert_eq!(w.char_categories, vec![Category::Layout]);
+        assert!(w.char_categories.contains(&Category::Layout));
         assert!(w.account_categories.is_empty());
         assert!(!w.writes_account());
         assert!(w.copies_char_geometry());
+    }
+
+    #[test]
+    fn the_layout_aspect_carries_the_neocom_buttons() {
+        let w = aspect_writes(&[Aspect::Layout]);
+        assert!(w.char_categories.contains(&Category::Layout));
+        assert!(w.char_categories.contains(&Category::NeocomButtons),
+                "a layout copy must bring the neocom bar with it");
+        assert!(w.account_categories.is_empty(), "the neocom bar is character-side");
+        assert!(w.copies_char_geometry(), "the resolution warning still applies");
     }
 
     #[test]
