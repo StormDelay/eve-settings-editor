@@ -691,7 +691,33 @@ unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
 
-### HUD anchors (corpus-derived; the placement conventions are NOT yet confirmed in-game)
+### HUD anchors
+
+**Placement conventions confirmed in-game 2026-07-27** (A1, 2560×1440, UI scale
+1.0), by the two-point capture in the live verification plan §4: write a known
+value, observe where the client draws it, drag it somewhere else, read the value
+back. One reading cannot separate an origin from a sign; two can.
+
+- **`shipuialignleftoffset` is centre-relative, and negative is leftward.**
+  Written `0.0`, the ship HUD rendered *dead centre* horizontally — which also
+  rules out a left-edge origin, since that would have put `0` against the
+  neocom. Dragged left, the client wrote back **`-642.0`**. Because `0` centres
+  it, the offset moves the HUD's own **centre**, not its left edge: on a 2560
+  screen, `-642.0` puts the HUD centre at 638. A1's pre-existing `-189.0` reads
+  as "189px left of centre".
+- **`fightersDetachedPosition` is NOT a screen-corner tuple.** Written `(0, 0)`,
+  the fighter UI rendered roughly 165px *below* the screen top, not in the
+  corner. Dragged hard into the top-left corner, the client wrote back
+  **`(0, -234)`** — x unchanged, so `x = 0` is already the leftmost achievable
+  position, while y went negative going up. So y's origin sits ~234px below the
+  screen top and negative is upward. The exact origin and scale still need one
+  more capture: drag it to a *measurable middle* position and read the value,
+  rather than into a corner where it clamps.
+- **`notification_badge_offset` was not captured** — it was never dragged, so it
+  is still the client's own `(2519, 131)`. On a 2560-wide screen that is 41px
+  from the right edge, which is consistent with a plain top-left-origin absolute
+  screen coordinate, but that is an inference from one untouched value, not a
+  capture. Still open.
 
 Where EVE stores the screen furniture the layout canvas draws — the ship HUD
 (capacitor plus module racks), the detached fighter UI, the neocom and the
@@ -998,9 +1024,9 @@ question the capture would have.
   (account-side — see "HUD anchors" above): the *bar* is per character, its
   *width* is per account.
 - **Class:** always `utillib.KeyVal` — 43,430/43,430, no other class observed.
-- **Keyset:** exactly `btnType, children, iconPath, id` on every instance,
-  43,430/43,430, with no variation at all. Authoring one is a fixed four-key
-  dict.
+- **Keyset:** on the *live bar*, exactly `btnType, children, iconPath, id` on
+  every instance, 43,430/43,430, with no variation at all. Authoring one is a
+  fixed four-key dict. **This does not hold for `Original` — see below.**
 - **`btnType`** takes four values, and each is an attribute of *what the
   button is*, not a user setting: `10` occurs exactly once per file and always
   on `chat`; `21` only on `airCareerProgram`; `4` on the inventory family
@@ -1019,8 +1045,25 @@ question the capture would have.
   None)` rather than plain `Bytes`. Rare, real, and it has to be tolerated on
   read and preserved on write — rewriting it would be a guess about what the
   client meant.
-- **`neocomButtonRawDataOriginal`** is the same instance shape, wrapped in a
-  `Tuple` of 8–14 entries rather than a `List`.
+- **`neocomButtonRawDataOriginal`** is wrapped in a `Tuple` of 8–14 entries
+  rather than a `List`, and — contrary to what this note used to say — is *not*
+  the same instance shape. **Its buttons carry no `iconPath` key at all:**
+  1226 of 1226 `Original` buttons across the 102 files that have one, against
+  0 of 1126 live-bar buttons in the same files. `Original` is a three-key dict,
+  the live bar a four-key one. The 43,430/43,430 keyset figure above was
+  measured on live bars and never held for `Original`.
+
+  This matters because the two shapes meet in the editor. `read_button` maps an
+  absent `iconPath` to `""` (`neocom.rs:102`), and `addableButtons` lets an
+  `Original` entry overwrite the catalog's (`neocom.ts:39`, deliberately — it
+  came from the character's own client), so adding a button offered from
+  `Original` writes a four-key instance whose `iconPath` is the empty string.
+  **An absent key and an empty string are not the same thing**, and the empty
+  string is a shape no client has been observed to write. Whether EVE treats it
+  as a literal path (blank icon) or as falsy (falls back by id) is a live
+  question — see the live verification plan §4, Phase 2, step 2.
+  `reset()` is unaffected: it copies `Original`'s raw values verbatim
+  (`neocom.rs:260`), writing genuine three-key buttons.
 
 **`Original` is a stale snapshot, not a catalog.** Only **495** of the
 ~4,061 files carrying the key have a live bar that is a subset of their own
