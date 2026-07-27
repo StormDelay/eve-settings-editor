@@ -12,7 +12,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, is_bytes, section, Entries, SharedTable};
+use crate::treewalk::{collect_shared, effective, is_bytes, section, SharedTable};
 
 pub const BAR_KEY: &[u8] = b"neocomButtonRawData";
 pub const ORIGINAL_KEY: &[u8] = b"neocomButtonRawDataOriginal";
@@ -119,26 +119,13 @@ fn read_list(v: &Value, sh: &SharedTable) -> Vec<NeocomButton> {
     }
 }
 
-/// The `ui` section entries. Tries `section` first (it resolves a Shared/Ref
-/// section KEY, the shape real account files use); `section` only unwraps a
-/// `Shared` section VALUE though, not a bare `Ref` to one, so fall back to a
-/// fully `effective`-resolved lookup for that indirection too.
-fn ui_entries<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    if let Some((entries, _)) = section(v, b"ui", sh) {
-        return Some(entries);
-    }
-    let Value::Dict(entries) = effective(v, sh) else { return None };
-    let (_, val) = entries.iter().find(|(k, _)| is_bytes(effective(k, sh), b"ui"))?;
-    match effective(val, sh) {
-        Value::Dict(d) => Some(d),
-        _ => None,
-    }
-}
-
 pub fn project_neocom(v: &Value) -> Result<NeocomBar, NeocomError> {
     let mut sh = SharedTable::new();
     collect_shared(v, &mut sh);
-    let entries = ui_entries(v, &sh).ok_or(NeocomError::NoUi)?;
+    // `section` returns (&Entries, NodePath) and resolves a Shared/Ref section
+    // key — in account files the root `ui` key is itself a Ref, which a bare
+    // is_bytes match misses. The path half is for writers; the reader drops it.
+    let (entries, _) = section(v, b"ui", &sh).ok_or(NeocomError::NoUi)?;
     let find = |name: &[u8]| {
         entries.iter().find(|(k, _)| is_bytes(effective(k, &sh), name)).map(|(_, v)| v)
     };
@@ -239,18 +226,54 @@ mod tests {
     }
 
     #[test]
-    fn projects_through_shared_and_ref() {
-        // Real files intern repeated key names and icon paths. Wrap the whole
-        // ui value in a Shared and reach it by Ref, the way `section` must cope
-        // with (the account-file `ui` key is itself a Ref — see hud.rs).
-        let inner = doc();
-        let Value::Dict(top) = &inner else { panic!() };
-        let ui = top[0].1.clone();
-        let shared = Value::Dict(vec![
-            (b("other"), Value::Shared { slot: 1, value: Box::new(ui) }),
-            (b("ui"), Value::Ref(1)),
-        ]);
-        let bar = project_neocom(&shared).unwrap();
-        assert_eq!(bar.buttons.len(), 3);
+    fn projects_buttons_whose_keys_and_icons_are_interned() {
+        // Real files intern the repeated state key names, and reuse an
+        // identical icon path across buttons, as `Shared` definitions reached
+        // by `Ref` from later buttons (corpus dump: shared[30]:b"iconPath" on
+        // the first button, ref[30] on every one after it — the `ui` dict
+        // itself is per-character and large, so it is NOT shared as a whole;
+        // see hud.rs and treewalk's section_resolves_a_ref_wrapped_section_key
+        // for the idiom this actually is). A projection that matches bare
+        // `Value::Bytes` instead of resolving through `effective` reads
+        // nothing from a file shaped like this.
+        fn shared_key(slot: u32, name: &str) -> Value {
+            Value::Shared { slot, value: Box::new(b(name)) }
+        }
+        fn interned_button(id: &str, btn_type: i64, icon: Value) -> Value {
+            Value::Instance {
+                class: Box::new(b("utillib.KeyVal")),
+                state: Box::new(Value::Dict(vec![
+                    (shared_key(1, "btnType"), Value::Int(btn_type)),
+                    (shared_key(2, "children"), Value::None),
+                    (shared_key(3, "iconPath"), icon),
+                    (shared_key(4, "id"), b(id)),
+                ])),
+            }
+        }
+        fn refd_button(id: &str, btn_type: i64, icon: Value) -> Value {
+            Value::Instance {
+                class: Box::new(b("utillib.KeyVal")),
+                state: Box::new(Value::Dict(vec![
+                    (Value::Ref(1), Value::Int(btn_type)),
+                    (Value::Ref(2), Value::None),
+                    (Value::Ref(3), icon),
+                    (Value::Ref(4), b(id)),
+                ])),
+            }
+        }
+        let shared_icon = Value::Shared { slot: 5, value: Box::new(b("res:/ui/Texture/WindowIcons/folder.png")) };
+        let doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("neocomButtonRawData"), Value::Tuple(vec![ts(), Value::List(vec![
+                interned_button("chat", 10, shared_icon),
+                refd_button("inventory", 4, Value::Ref(5)),
+            ])])),
+        ]))]);
+        let bar = project_neocom(&doc).unwrap();
+        assert_eq!(bar.buttons.len(), 2);
+        assert_eq!(bar.buttons[0].icon_path, "res:/ui/Texture/WindowIcons/folder.png");
+        assert_eq!(bar.buttons[1].id, "inventory");
+        assert_eq!(bar.buttons[1].btn_type, 4);
+        assert_eq!(bar.buttons[1].icon_path, "res:/ui/Texture/WindowIcons/folder.png",
+                   "the second button's icon is a Ref to the first's Shared definition");
     }
 }
