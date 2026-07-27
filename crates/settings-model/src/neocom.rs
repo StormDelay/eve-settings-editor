@@ -12,7 +12,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, is_bytes, section, SharedTable};
+use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, section, SharedTable};
 
 pub const BAR_KEY: &[u8] = b"neocomButtonRawData";
 pub const ORIGINAL_KEY: &[u8] = b"neocomButtonRawDataOriginal";
@@ -134,6 +134,115 @@ pub fn project_neocom(v: &Value) -> Result<NeocomBar, NeocomError> {
         buttons: read_list(bar, &sh),
         original: find(ORIGINAL_KEY).map(|o| read_list(o, &sh)).unwrap_or_default(),
     })
+}
+
+/// The live bar's `List` payload, mutable. The document is already inlined, so
+/// no `Shared` wrapper survives to resolve.
+fn bar_list_mut(v: &mut Value) -> Result<&mut Vec<Value>, NeocomError> {
+    let Value::Dict(top) = v else { return Err(NeocomError::NoUi) };
+    let (_, ui) = top.iter_mut().find(|(k, _)| is_bytes(k, b"ui")).ok_or(NeocomError::NoUi)?;
+    let Value::Dict(entries) = ui else { return Err(NeocomError::NoUi) };
+    let (_, raw) = entries.iter_mut().find(|(k, _)| is_bytes(k, BAR_KEY)).ok_or(NeocomError::NoBar)?;
+    // (timestamp, payload) on every real file; tolerate a bare payload too.
+    // (The length check is split out of the match so the arm below is an
+    // unguarded reborrow — a guarded arm here does not borrow-check when
+    // paired with a move-catch-all on a `&mut` scrutinee.)
+    let is_pair = matches!(raw, Value::Tuple(t) if t.len() == 2);
+    let payload = if is_pair {
+        let Value::Tuple(t) = raw else { unreachable!() };
+        &mut t[1]
+    } else {
+        raw
+    };
+    match payload {
+        Value::List(l) => Ok(l),
+        // A Tuple-stored bar is not a shape the corpus has, but the reset path
+        // below guarantees a List, so normalize rather than fail.
+        Value::Tuple(t) => {
+            let items = std::mem::take(t);
+            *payload = Value::List(items);
+            let Value::List(l) = payload else { unreachable!() };
+            Ok(l)
+        }
+        _ => Err(NeocomError::NoBar),
+    }
+}
+
+pub fn reorder(v: &mut Value, order: &[usize]) -> Result<(), NeocomError> {
+    // Validate BEFORE inlining, so a rejected reorder leaves the document
+    // byte-for-byte as it was (the tests assert exactly this).
+    {
+        let n = project_neocom(v)?.buttons.len();
+        if order.len() != n {
+            return Err(NeocomError::BadOrder);
+        }
+        let mut seen = vec![false; n];
+        for &i in order {
+            let slot = seen.get_mut(i).ok_or(NeocomError::BadOrder)?;
+            if *slot {
+                return Err(NeocomError::BadOrder); // a repeat
+            }
+            *slot = true;
+        }
+    }
+    inline_all(v);
+    let list = bar_list_mut(v)?;
+    // Move whole instances: take them out, then put them back in the new order.
+    let taken: Vec<Value> = std::mem::take(list);
+    *list = order.iter().map(|&i| taken[i].clone()).collect();
+    Ok(())
+}
+
+pub fn remove(v: &mut Value, index: usize) -> Result<(), NeocomError> {
+    if index >= project_neocom(v)?.buttons.len() {
+        return Err(NeocomError::BadIndex);
+    }
+    inline_all(v);
+    let list = bar_list_mut(v)?;
+    list.remove(index);
+    Ok(())
+}
+
+pub fn add(v: &mut Value, id: &str, btn_type: i64, icon_path: &str) -> Result<(), NeocomError> {
+    inline_all(v);
+    let list = bar_list_mut(v)?;
+    // The exact corpus shape: utillib.KeyVal, four keys, this order (spec §2).
+    list.push(Value::Instance {
+        class: Box::new(Value::Bytes(b"utillib.KeyVal".to_vec())),
+        state: Box::new(Value::Dict(vec![
+            (Value::Bytes(b"btnType".to_vec()), Value::Int(btn_type)),
+            (Value::Bytes(b"children".to_vec()), Value::None),
+            (Value::Bytes(b"iconPath".to_vec()), Value::Bytes(icon_path.as_bytes().to_vec())),
+            (Value::Bytes(b"id".to_vec()), Value::Bytes(id.as_bytes().to_vec())),
+        ])),
+    });
+    Ok(())
+}
+
+pub fn reset(v: &mut Value) -> Result<(), NeocomError> {
+    if project_neocom(v)?.original.is_empty() {
+        return Err(NeocomError::NoOriginal);
+    }
+    inline_all(v);
+    // Read the (now inlined) Original, then write it over the live bar. Original
+    // itself is never modified — it is the character's own client baseline.
+    let original: Vec<Value> = {
+        let Value::Dict(top) = &*v else { return Err(NeocomError::NoUi) };
+        let (_, ui) = top.iter().find(|(k, _)| is_bytes(k, b"ui")).ok_or(NeocomError::NoUi)?;
+        let Value::Dict(entries) = ui else { return Err(NeocomError::NoUi) };
+        let (_, orig) = entries.iter().find(|(k, _)| is_bytes(k, ORIGINAL_KEY)).ok_or(NeocomError::NoOriginal)?;
+        let payload = match orig {
+            Value::Tuple(t) if t.len() == 2 => &t[1],
+            other => other,
+        };
+        match payload {
+            Value::List(l) | Value::Tuple(l) => l.clone(),
+            _ => return Err(NeocomError::NoOriginal),
+        }
+    };
+    let list = bar_list_mut(v)?;
+    *list = original; // a List, whatever Original was stored as
+    Ok(())
 }
 
 #[cfg(test)]
@@ -275,5 +384,118 @@ mod tests {
         assert_eq!(bar.buttons[1].btn_type, 4);
         assert_eq!(bar.buttons[1].icon_path, "res:/ui/Texture/WindowIcons/folder.png",
                    "the second button's icon is a Ref to the first's Shared definition");
+    }
+
+    fn ids(v: &Value) -> Vec<String> {
+        project_neocom(v).unwrap().buttons.into_iter().map(|b| b.id).collect()
+    }
+
+    #[test]
+    fn reorder_rewrites_the_bar_in_the_given_order() {
+        let mut v = doc();
+        reorder(&mut v, &[2, 0, 1]).unwrap();
+        assert_eq!(ids(&v), vec!["shipTree", "chat", "inventory"]);
+    }
+
+    #[test]
+    fn reorder_moves_whole_instances_so_children_survive() {
+        let mut v = doc();
+        reorder(&mut v, &[1, 0, 2]).unwrap();
+        let bar = project_neocom(&v).unwrap();
+        assert_eq!(bar.buttons[0].id, "inventory");
+        assert_eq!(bar.buttons[0].children, 1, "the folder kept its child");
+        assert_eq!(bar.buttons[2].id, "shipTree", "the Tuple-shaped id survived the move");
+    }
+
+    #[test]
+    fn reorder_rejects_anything_that_is_not_a_permutation() {
+        for bad in [vec![0, 1], vec![0, 1, 3], vec![0, 0, 1], vec![0, 1, 2, 2]] {
+            let mut v = doc();
+            assert!(matches!(reorder(&mut v, &bad), Err(NeocomError::BadOrder)), "accepted {bad:?}");
+            assert_eq!(ids(&v), vec!["chat", "inventory", "shipTree"], "a rejected reorder changed the bar");
+        }
+    }
+
+    #[test]
+    fn remove_drops_that_button_and_reindexes() {
+        let mut v = doc();
+        remove(&mut v, 1).unwrap();
+        assert_eq!(ids(&v), vec!["chat", "shipTree"]);
+        assert_eq!(project_neocom(&v).unwrap().buttons[1].index, 1);
+    }
+
+    #[test]
+    fn remove_rejects_an_index_that_does_not_exist() {
+        let mut v = doc();
+        assert!(matches!(remove(&mut v, 3), Err(NeocomError::BadIndex)));
+        assert_eq!(ids(&v), vec!["chat", "inventory", "shipTree"]);
+    }
+
+    #[test]
+    fn add_appends_a_keyval_with_the_four_keys_in_order() {
+        let mut v = doc();
+        add(&mut v, "wallet", 1, "res:/ui/Texture/WindowIcons/wallet.png").unwrap();
+        assert_eq!(ids(&v), vec!["chat", "inventory", "shipTree", "wallet"]);
+
+        // The authored instance must match the corpus shape exactly: class
+        // utillib.KeyVal, and the four keys in the corpus's own order.
+        let bar = project_neocom(&v).unwrap();
+        assert_eq!(bar.buttons[3].btn_type, 1);
+        assert_eq!(bar.buttons[3].icon_path, "res:/ui/Texture/WindowIcons/wallet.png");
+        assert_eq!(bar.buttons[3].children, 0);
+
+        let Value::Dict(top) = &v else { panic!() };
+        let (_, ui) = top.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"ui")).unwrap();
+        let Value::Dict(uid) = ui else { panic!() };
+        let (_, raw) = uid.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"neocomButtonRawData")).unwrap();
+        let Value::Tuple(t) = raw else { panic!() };
+        let Value::List(l) = &t[1] else { panic!() };
+        let Value::Instance { class, state } = &l[3] else { panic!("added entry is not an instance") };
+        assert_eq!(**class, b("utillib.KeyVal"));
+        let Value::Dict(st) = &**state else { panic!() };
+        let keys: Vec<String> = st.iter().map(|(k, _)| match k {
+            Value::Bytes(x) => String::from_utf8_lossy(x).into_owned(),
+            _ => String::new(),
+        }).collect();
+        assert_eq!(keys, vec!["btnType", "children", "iconPath", "id"]);
+        assert_eq!(st[1].1, Value::None, "children is authored as None");
+    }
+
+    #[test]
+    fn reset_replaces_the_bar_with_the_original_as_a_list() {
+        let mut v = doc();
+        reset(&mut v).unwrap();
+        assert_eq!(ids(&v), vec!["chat", "wallet"]);
+
+        // Original is STORED in a Tuple; the live bar must be a List.
+        let Value::Dict(top) = &v else { panic!() };
+        let (_, ui) = top.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"ui")).unwrap();
+        let Value::Dict(uid) = ui else { panic!() };
+        let (_, raw) = uid.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"neocomButtonRawData")).unwrap();
+        let Value::Tuple(t) = raw else { panic!() };
+        assert!(matches!(&t[1], Value::List(_)), "the live bar must stay a List");
+    }
+
+    #[test]
+    fn reset_without_an_original_errors_and_changes_nothing() {
+        let mut v = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("neocomButtonRawData"), Value::Tuple(vec![ts(), Value::List(vec![
+                button(b("chat"), 10, "icon.png", Value::None),
+            ])])),
+        ]))]);
+        assert!(matches!(reset(&mut v), Err(NeocomError::NoOriginal)));
+        assert_eq!(ids(&v), vec!["chat"]);
+    }
+
+    #[test]
+    fn every_command_leaves_a_tree_that_still_encodes() {
+        // The commands inline first (dropping Shared/Ref); the result must
+        // still round-trip, the way stacks.rs proves for its own edits.
+        let mut v = doc();
+        reorder(&mut v, &[2, 1, 0]).unwrap();
+        remove(&mut v, 0).unwrap();
+        add(&mut v, "wallet", 1, "wallet.png").unwrap();
+        let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
     }
 }
