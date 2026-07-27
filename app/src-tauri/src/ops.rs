@@ -1665,9 +1665,7 @@ mod tests {
     #[test]
     fn the_layout_aspect_carries_the_neocom_buttons() {
         let w = aspect_writes(&[Aspect::Layout]);
-        assert!(w.char_categories.contains(&Category::Layout));
-        assert!(w.char_categories.contains(&Category::NeocomButtons),
-                "a layout copy must bring the neocom bar with it");
+        assert_eq!(w.char_categories, vec![Category::Layout, Category::NeocomButtons]);
         assert!(w.account_categories.is_empty(), "the neocom bar is character-side");
         assert!(w.copies_char_geometry(), "the resolution warning still applies");
     }
