@@ -475,6 +475,7 @@
             userOpen={slots.user?.status === "opened"}
             userId={openUserId}
             charId={openCharId}
+            charOpen={slots.char?.status === "opened"}
             characters={openAccountCharacters}
             refreshToken={savedAt}
             sharedLabel={sharedLabel}
