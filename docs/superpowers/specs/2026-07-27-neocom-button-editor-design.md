@@ -36,7 +36,7 @@ buttons** settled every question:
 
 - **Location:** character file, `ui → neocomButtonRawData`, wrapped as
   `(timestamp, List[Instance])`. Note the asymmetry with `neocomWidth`, which is
-  account-side: the *bar* is per account, its *buttons* are per character.
+  account-side: the *bar* is per character, its *width* is per account.
 - **Class:** `utillib.KeyVal`, 43,430 out of 43,430. No other class appears.
 - **Keyset:** exactly `btnType, children, iconPath, id` — again 43,430 out of
   43,430, with no variation at all. Authoring one is a fixed four-key dict.
