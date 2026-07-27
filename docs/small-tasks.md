@@ -13,6 +13,198 @@ Workflow:
 
 ## Open
 
+- [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
+  screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
+  file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
+  ever holds overrides — there is nothing to capture, and the design spec's
+  reset-to-default-logout plan is dead. Screenshot EVE's keybinding screen a
+  screenful at a time and transcribe `command -> [virtual-key codes]`.
+  **Keep the UI exactly as it is meanwhile**: `defaultFor` returns null per
+  command (`keybinds.ts`), so the Default cell and the per-row reset light up
+  for precisely the commands present and every other row is untouched — partial
+  data is the expected state, not a broken one. Use the in-game *labels* to map
+  rows back to command ids, and note the two traps found the same day:
+  `CmdPickPortrait0..3` are labelled "Pick Portrait 1..4" (ids 0-based, labels
+  1-based) and `ToggleCurrentSystemLocationWnd` is labelled "Local Locations".
+  Cross-check any ambiguous row by binding it in-game and reading which id moves
+  in `customCmds`. _Added 2026-07-27._
+
+- [ ] **Every chat window is labelled just "Chat".** `windowLabels.ts:97` maps
+  the whole `chatchannel` family to one flat label, so a character with dozens of
+  them (A1 has 74 in one stack) shows dozens of identical rows. The friendly name
+  is already in the file: `ui → chatchannels` is a list of
+  `(key, id, displayName)` tuples — `(b"corp", "corp_98835672", "Corp")`,
+  `("private_40fcd4de…", "private_40fcd4de…", "Private Chat (2)")` — and the
+  window id is `chatchannel_` + the first element, confirmed in-game 2026-07-27
+  for both a named standing channel and a private conversation. Join on that and
+  show the third element. _Added 2026-07-27._
+
+- [ ] **The neocom renders differently docked vs in space.** Observed in-game
+  2026-07-27 on A1: the bar order matched what the editor wrote while docked in
+  a player structure, but showed a different set/order in space. The editor
+  models `neocomButtonRawData` as one ordered list and the panel presents it as
+  the bar, so if the client filters or reorders it per environment, the panel is
+  showing "the docked bar" without saying so. Establish which environment the
+  stored list corresponds to (docked, on this evidence), whether the difference
+  is a filter or a reorder, and whether anything in the file drives it — the
+  per-environment window mapping (live plan item 35, the dock/undock diff) is
+  the obvious place to look, since window geometry is already known to be
+  environment-scoped. Until then item 1's "the bar order matches the editor's"
+  is only meaningful docked. _Added 2026-07-27._
+
+- [ ] **Creating an `Everything` preset says nothing about what it captures.**
+  The privacy confirmation lives on *export* (`PresetGroup.svelte:96`: "carries
+  everything the editor does not model, including your autofill history —
+  station names, searches and typed text"), which is the right place to guard
+  sharing. But the capture happens at create time, and that is where the user
+  chooses `Everything` — with no indication that it snapshots typed history into
+  a folder they may later export, or hand over when someone asks for "your
+  layout preset". A one-line note next to the `Everything` option at create
+  time, not a blocking prompt: the export gate stays where it is. _Added
+  2026-07-27._
+
+- [ ] **Nothing can create an `overview` container from nothing.** A document
+  with no `overview` key — a pruned preset, or a genuinely fresh account — is a
+  dead end: `overview_tabs::overview_mut` requires the key and returns
+  `NoOverview`, and it is the only way in for both the tab editor and
+  `overview_pack::apply_pack` (pinned by
+  `applying_a_pack_to_a_file_with_no_overview_container_errors`). The only push
+  of `b"overview"` anywhere is `overview_tabs.rs:221`, a field *inside a tab
+  body*, not the container. `OverviewView.svelte:237` matches: zero tabs renders
+  a bare hint, with every control in the `{:else}`, so there is no affordance
+  because there is nothing behind one. This makes preset design spec §12.4's
+  "mint an overview preset from nothing" (live plan item P5) not implementable
+  as written — neither building nor importing works. Needs a decision on the
+  minimum container EVE accepts before it is code: `overview-states.json` has
+  the default state lists and orders, so the shape is derivable, but it is a
+  design call, not a bug fix. _Added 2026-07-27._
+
+- [ ] **The open character file is missing from the batch target list when the
+  source is a preset.** `BatchView.svelte:38` seeds `sourcePath` from `openPath`
+  so the open file is the default source, and line 99 excludes the source from
+  the candidates (`.filter((c) => c.path !== sourcePath)`) — right for a
+  character → character copy. But switching `sourceKind` to `"preset"` never
+  clears `sourcePath`, so the exclusion outlives the reason for it and the open
+  character cannot be picked as a target. Gate the filter on the source actually
+  in use rather than the stale path, e.g.
+  `.filter((c) => !(source?.kind === "character" && c.path === source.path))`.
+  Note the interaction with the open-document staleness item below: whatever
+  lands there should decide deliberately whether the open file is a legal target
+  at all, rather than excluding it here by accident. _Added 2026-07-27._
+
+- [ ] **The Layout aspect carries 2 of the 9 HUD fields, not 0 and not 9.**
+  `Category::Layout => &[b"windows"]` copies that whole section, and the nine
+  HUD fields are spread across three: `windows` holds
+  `shipuialignleftoffset` and `neocomWidth`, `ui` holds
+  `fightersDetachedPosition` / `shipuialigntop` / `detachFighterUI` /
+  `displayFighterUI`, and `notifications` holds `notification_badge_offset`
+  (`hud.rs:72–101`). So a Layout copy or a Layout preset moves the ship-HUD
+  offset and neocom width but leaves the fighter UI and badge behind — the
+  target comes out half-applied, which is more confusing than carrying none.
+  Confirmed on the live files: after an A1 → A2 Layout copy, `shipuialign
+  leftoffset` matched at `0.0` while `fightersDetachedPosition` stayed at A2's
+  own `(326, 54)` against A1's `(0, 0)`. Presets share the same key sets
+  (`presets.rs:113` reads `Category::key_path`), so both surfaces are affected.
+  Decide whether Layout should mean "the window layout" or "everything you see
+  on screen", then either pull the other seven in or split a HUD aspect out —
+  and say which in the aspect's UI label either way. _Added 2026-07-27._
+
+- [ ] **The overview filter list is slow.** `OverviewFiltersTab.svelte` renders
+  every one of the **1,605** groups in `overview-groups.json` as a live checkbox
+  (`{#each visibleCategories}` → `{#each cat.groups}`, line 207–220). Three
+  separate costs, worth measuring before picking one:
+  (1) typing in the group filter re-runs `filterCatalog` over all 1,605 entries
+  per keystroke **and** `open={!!groupFilter.trim()}` force-expands all 15
+  `<details>` at once, so the whole list materialises in the DOM on the first
+  character typed;
+  (2) every checkbox toggle is a backend round trip (`presetSetGroups` /
+  `presetFork`) whose result replaces `data`, invalidating every `$derived` and
+  re-rendering all 1,605 rows for a one-bit change;
+  (3) `presetGroupSet` is rebuilt from scratch on each of those.
+  Likely cheapest real win: keep categories collapsed and render each one's rows
+  only when open (native `<details>` already gives the toggle), and debounce the
+  filter. Virtualising the list is the bigger hammer if that is not enough.
+  Reported while staging the live verification. _Added 2026-07-27._
+
+- [ ] **Test fixtures encode bare container payloads, a shape EVE never writes.**
+  Every container key in a real file is `(timestamp, payload)` — 4,187 of 4,187
+  across five untouched accounts — but several fixtures build bare ones:
+  `overview_pack.rs`'s `user_doc()` seeds a bare `overviewColumnOrder`, and the
+  `overview_tabs.rs` fixtures build a bare `tabsettings_new` (14 tests destructure
+  it as `Value::Dict` directly). This is exactly how the column-wrapper bug
+  survived: a test named `apply_pack_stores_columns_as_a_bare_list` asserted the
+  wrong thing and passed, because the fixture shared the code's wrong assumption.
+  Move the fixtures to the wrapped shape and have the helpers unwrap. Then add
+  the `rewrap` repair to `overview_tabs::tabs_mut`/`groups_mut` that was written
+  and backed out during the live session because it failed those 14 fixtures —
+  `overview_pack::put` already does it. _Added 2026-07-27._
+
+- [ ] **`tabsettings2` exists and the editor has never read it.** There are
+  three tab-table keys in the wild, not two: `overview.rs::tab_dict` tries
+  `tabsettings_new` then `tabsettings`, and `tabsettings2` is invisible to it.
+  It is not rare — a scan of 43 corpus accounts carrying any tab key found it in
+  **21** of them (19 with all three keys, 1 with `tabsettings`+`tabsettings2`,
+  1 with `tabsettings2`+`tabsettings_new`). Structurally it is the same tab dict
+  (index → `bracket`/`color`/`overview`/`showAll`/`tabColumns`/`name`). On most
+  accounts its timestamp is the oldest of the three, so it reads as another
+  migration leftover like `tabsettings` — **but on one corpus account it carries
+  the newest timestamp of all three**, so "always stale" cannot be assumed.
+  Decide what it is (in-game: does a client with only `tabsettings2` read it?),
+  then either read it in the fallback chain or say in `format-notes.md` why it
+  is ignored. Until then the editor can show a tab list that the client does not
+  use. Found while manufacturing the zero-tab state. _Added 2026-07-27._
+
+- [ ] **A batch apply onto the open file warns too late.** With unsaved edits to
+  a file, running a batch apply that targets that same file gives no warning at
+  apply time — it writes to disk behind the open in-memory document. Re-selecting
+  the file warns about unsaved changes but does not reload it, so the stale
+  in-memory copy stays; only the save-time on-disk-changed check catches the
+  divergence. No data is lost (that last check is a real backstop), but the user
+  finds out two steps after the fact. The batch planner should refuse, or at
+  least warn, when a target is the currently-open dirty document. Found while
+  staging the live verification. _Added 2026-07-27._
+
+- [ ] **Colortag-surface colours are invisible to the editor.** The model reads
+  background colours only — `overview_states.rs::background_color_id` filters on
+  `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
+  surface`), so `appearance.colors` never holds a flag colour, and
+  `OverviewAppearanceTab.svelte:151` gates the swatch on `{#if isBg}` to match.
+  The Colortag sub-tab therefore offers a checkbox and a reorder grip but no
+  colour control at all. Real packs do set flag colours — `zs_full_v10.06.09`
+  sets `flag_48: black`, which is exactly the entry that produced the unknown-
+  colour warning — so importing a pack writes colours the user can then neither
+  see, review, nor undo. Needs the surface carried through the projection and
+  the swatch ungated. _Added 2026-07-27._
+
+- [ ] **The state colour swatch is a free colour picker, not EVE's palette.**
+  `OverviewAppearanceTab.svelte:154` is a bare `<input type="color">`, so any of
+  16.7M colours can be chosen, but EVE's palette is eight named colours and
+  `overview_pack.rs::color_name` matches floats **exactly** (correctly — a
+  near-miss would silently rewrite the user's colours). A colour picked off the
+  palette is therefore dropped from a pack export with no warning. Offer the
+  palette as swatches, with free-form as a labelled escape hatch that says the
+  colour will not survive an export. Blocked on the palette being complete —
+  `PALETTE` has 5 of the 8 names (missing `black`, `green`, `purple`), see the
+  live verification plan item 26b. _Added 2026-07-27._
+
+- [ ] **The keybinds "taken by" note overflows its row.** `KeybindsView.svelte:129`
+  renders `<span class="meta">taken by {stolenFrom[e.command]}</span>` inline
+  beside the binding button. With a long command name ("Activate High Power Slot
+  4") the note wraps onto a second line that escapes the row box and overlaps the
+  row beneath it. Either constrain the row's height and ellipsise the note (with
+  the full name on `title`), or let the row grow. Seen while staging the keybind
+  steal path for the live verification. _Added 2026-07-27._
+
+- [ ] **No way to reach a window that sits underneath another in the layout
+  view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
+  so anything fully covered is unreachable — you have to drag the top window away
+  and put it back. Worth investigating: alt/right-click to cycle the stack under
+  the cursor, a "select from list" affordance keyed off `WindowPanel`'s existing
+  window list, or hit-testing that skips the current selection so repeated clicks
+  descend. Note the real files carry hundreds of window entries with heavy
+  overlap (`format-notes.md`: one character had 381 windows, ~9 actually on
+  screen), so this is a common case, not an edge one. _Added 2026-07-27._
+
 - [ ] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the layout-depth milestone's final slice (the neocom
   button editor): (1) `reorder` reassembles the bar via `clone()` rather than a
