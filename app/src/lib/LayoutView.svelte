@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
-  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud } from "$lib/api";
+  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
@@ -46,6 +46,7 @@
 
   let layout = $state<WindowLayout | null>(null);
   let hud = $state<Hud | null>(null);
+  let neocom = $state<NeocomBar | null>(null);
   let containerWidth = $state(0);
   let canvasEl: HTMLDivElement | undefined = $state();
   // Live drag/resize preview by window id (data px); absent when not dragging.
@@ -104,6 +105,9 @@
     // Furniture is a bonus view: an account file open on its own, or a document
     // with no HUD keys, must not take the canvas down with it.
     hud = await api.hud().catch(() => null);
+    // Same tolerance as the HUD: an account file opened on its own, or a document
+    // with no neocom key, must not take the canvas down with it.
+    neocom = await api.neocomBar().catch(() => null);
   }
 
   // Reload when the parent signals a save/restore, when the slot switches, or
@@ -240,6 +244,17 @@
       onDirty(e?.scope === "account" ? "user" : "char");
     } catch (e) {
       await message(errMessage(e), { title: "HUD edit failed", kind: "error" });
+    }
+  }
+
+  /** Run a neocom command and take its refreshed projection. The bar lives in
+   * the character document, so the char slot is what goes dirty. */
+  async function runNeocom(p: Promise<NeocomBar>) {
+    try {
+      neocom = await p;
+      onDirty("char");
+    } catch (e) {
+      await message(errMessage(e), { title: "Neocom edit failed", kind: "error" });
     }
   }
 
@@ -776,7 +791,12 @@
           onSet={setHud}
           {sharedNames}
           selectedKind={selectedFurniture}
-          onSelectKind={selectFurniture} />
+          onSelectKind={selectFurniture}
+          {neocom}
+          onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
+          onNeocomRemove={(i) => runNeocom(api.neocomRemove(i))}
+          onNeocomAdd={(id, t, icon) => runNeocom(api.neocomAdd(id, t, icon))}
+          onNeocomReset={() => runNeocom(api.neocomReset())} />
       {/if}
       <WindowPanel
         windows={layout.windows}
