@@ -4,9 +4,8 @@ Everything the editor has shipped or is about to ship that has **never been
 proven against a running EVE client**, arranged to cost as few client launches
 and as few manual steps as possible.
 
-Nine slices merged without their live smoke, up to and including 0.20.0's
-settings presets. This is the plan to clear all of them at once rather than one
-relog at a time.
+Nine slices merged without their live smoke, spanning 0.13.0 through 0.21.0.
+This is the plan to clear all of them at once rather than one relog at a time.
 
 ---
 
@@ -380,8 +379,8 @@ was dropped. "Source" is where the outstanding item is currently recorded.
 
 | # | What | Ships in | Where | Source |
 |---|---|---|---|---|
-| 1 | Neocom reorder / remove / add / reset accepted in-game | unreleased branch | A / A1 | spec §8 |
-| 2 | Neocom rides a Layout batch copy | unreleased branch | A / A2 | spec §8 |
+| 1 | Neocom reorder / remove / add / reset accepted in-game | 0.21.0 | A / A1 | spec §8 |
+| 2 | Neocom rides a Layout batch copy | 0.21.0 | A / A2 | spec §8 |
 | 3 | Chat window id ↔ `chatchannels` key (named channel *and* private convo) | 0.19.0 | A / A1 | ledger |
 | 4 | An editor-minted stack still reads `Window stack · N` | 0.19.0 | A / A1 | ledger |
 | 5 | Stack frame label layout with a long name | 0.19.0 | A / A1 | ledger |
@@ -389,8 +388,8 @@ was dropped. "Source" is where the outstanding item is currently recorded.
 | 7 | `overrideCount()` scope across characters | 0.19.0 | offline | ledger |
 | 8 | Edge snapping lands windows flush | 0.17.0 | A / A1 | — |
 | 9 | Arrow-key nudge lands on the exact coordinate | 0.17.0 | A / A1 | — |
-| 10 | Shift-drag creates a real stack; tab drag-out frees a window | unreleased (master) | A / A1 | — |
-| 11 | What a one-member stack does | unreleased (master) | A / A1 | ledger |
+| 10 | Shift-drag creates a real stack; tab drag-out frees a window | 0.21.0 | A / A1 | — |
+| 11 | What a one-member stack does | 0.21.0 | A / A1 | ledger |
 | 12 | Whether EVE re-creates deleted orphan frames | n/a (scoping) | B | ledger |
 | 13 | Keybind rebind honoured, not reverted | 0.18.0 | A / A1 | ledger |
 | 14 | Keybind table copied onto an empty `customCmds` | 0.18.0 | A / B1 | ledger |
