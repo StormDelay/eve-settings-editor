@@ -13,7 +13,10 @@ const btn = (id: string, btn_type = 1, icon_path = `${id}.png`): NeocomButton =>
 
 {
   const onBar = [btn("chat", 10), btn("wallet")];
-  const original = [btn("chat", 10), btn("mail"), btn("wallet")];
+  // "implants" is in Original but never in the catalog fixture below — the id
+  // that actually proves Original contributes what the catalog can't. "mail"
+  // is in BOTH fixtures on purpose: it's the conflict case, checked below.
+  const original = [btn("chat", 10), btn("mail"), btn("wallet"), btn("implants")];
   const catalog = [
     { id: "chat", btnType: 10, iconPath: "chat.png" },
     { id: "fleet", btnType: 1, iconPath: "fleet.png" },
@@ -25,7 +28,7 @@ const btn = (id: string, btn_type = 1, icon_path = `${id}.png`): NeocomButton =>
 
   check("what is already on the bar is not addable", !ids.includes("chat") && !ids.includes("wallet"));
   check("the catalog contributes buttons Original never had", ids.includes("fleet"));
-  check("Original contributes buttons the catalog never had", ids.includes("mail"));
+  check("Original contributes buttons the catalog never had", ids.includes("implants"));
   check("the result is sorted by id", ids.join(",") === [...ids].sort().join(","));
   check("no id appears twice", new Set(ids).size === ids.length);
 

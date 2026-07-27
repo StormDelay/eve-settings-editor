@@ -2,6 +2,7 @@
   import type { NeocomBar } from "$lib/api";
   import { addableButtons, type CatalogButton } from "$lib/neocom";
   import CATALOG from "$lib/data/neocom-buttons.json";
+  import { confirm } from "@tauri-apps/plugin-dialog";
 
   let { bar, readOnly, onReorder, onRemove, onAdd, onReset }: {
     bar: NeocomBar;
@@ -33,6 +34,17 @@
     if (!pick) return;
     addChoice = "";
     onAdd(pick.id, pick.btnType, pick.iconPath);
+  }
+
+  // The Tauri dialog, not the bare browser confirm() — titled and iconed like
+  // every other destructive prompt in this app (OverviewView's deleteTab,
+  // AutofillView's clearAll, ...), not the unstyled default.
+  async function resetBar() {
+    const ok = await confirm(
+      "Reset the neocom to the client's original buttons?",
+      { title: "Reset neocom", kind: "warning" },
+    );
+    if (ok) onReset();
   }
 </script>
 
@@ -66,7 +78,7 @@
     class="reset"
     disabled={readOnly || !canReset}
     title={canReset ? "Replace the bar with the client's own original" : "This character has no original bar recorded"}
-    onclick={() => { if (confirm("Reset the neocom to the client's original buttons?")) onReset(); }}>
+    onclick={resetBar}>
     Reset to original
   </button>
 </div>
