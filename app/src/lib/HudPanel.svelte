@@ -5,7 +5,7 @@
 
   let {
     hud, readOnly, onSet, sharedNames = [], selectedKind = null, onSelectKind,
-    neocom = null, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
+    neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
   }: {
     hud: Hud;
     readOnly: boolean;
@@ -21,6 +21,10 @@
      * Neocom group so the bar the user clicks on the canvas and the buttons
      * they edit are the same object. */
     neocom?: NeocomBar | null;
+    /** True while a neocom command is in flight — disables the whole list so
+     * a second click can't reuse a now-stale index before the re-projection
+     * lands. */
+    neocomBusy?: boolean;
     onNeocomReorder: (order: number[]) => void;
     onNeocomRemove: (index: number) => void;
     onNeocomAdd: (id: string, btnType: number, iconPath: string) => void;
@@ -118,6 +122,7 @@
         <NeocomButtons
           bar={neocom}
           {readOnly}
+          busy={neocomBusy}
           onReorder={onNeocomReorder}
           onRemove={onNeocomRemove}
           onAdd={onNeocomAdd}

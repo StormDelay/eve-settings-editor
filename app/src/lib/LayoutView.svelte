@@ -248,13 +248,22 @@
   }
 
   /** Run a neocom command and take its refreshed projection. The bar lives in
-   * the character document, so the char slot is what goes dirty. */
+   * the character document, so the char slot is what goes dirty.
+   *
+   * Commands key by index, not id (see neocom.rs), so two fast clicks on the
+   * same row before the first re-projection lands would send the same index
+   * twice — the second hitting whatever slid into that slot. `neocomBusy`
+   * disables the whole panel for the round trip to rule that out. */
+  let neocomBusy = $state(false);
   async function runNeocom(p: Promise<NeocomBar>) {
+    neocomBusy = true;
     try {
       neocom = await p;
       onDirty("char");
     } catch (e) {
       await message(errMessage(e), { title: "Neocom edit failed", kind: "error" });
+    } finally {
+      neocomBusy = false;
     }
   }
 
@@ -793,6 +802,7 @@
           selectedKind={selectedFurniture}
           onSelectKind={selectFurniture}
           {neocom}
+          {neocomBusy}
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
           onNeocomRemove={(i) => runNeocom(api.neocomRemove(i))}
           onNeocomAdd={(id, t, icon) => runNeocom(api.neocomAdd(id, t, icon))}

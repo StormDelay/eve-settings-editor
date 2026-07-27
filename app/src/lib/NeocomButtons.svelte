@@ -4,9 +4,13 @@
   import CATALOG from "$lib/data/neocom-buttons.json";
   import { confirm } from "@tauri-apps/plugin-dialog";
 
-  let { bar, readOnly, onReorder, onRemove, onAdd, onReset }: {
+  let { bar, readOnly, busy = false, onReorder, onRemove, onAdd, onReset }: {
     bar: NeocomBar;
     readOnly: boolean;
+    /** True while a neocom command is in flight. Commands key by index, so a
+     * second click before the re-projection lands could reuse a now-stale
+     * index — disable the whole list for the round trip rather than risk it. */
+    busy?: boolean;
     /** A full permutation of the current indices — the backend rejects anything else. */
     onReorder: (order: number[]) => void;
     onRemove: (index: number) => void;
@@ -14,6 +18,7 @@
     onReset: () => void;
   } = $props();
 
+  const disabled = $derived(readOnly || busy);
   const addable = $derived(addableButtons(bar.buttons, bar.original, CATALOG as CatalogButton[]));
   // Reset needs a baseline to reset TO; a character whose client never wrote
   // one gets a disabled button rather than a backend error.
@@ -54,9 +59,9 @@
     <div class="row">
       <span class="id" title={b.icon_path}>{b.id}</span>
       {#if b.children > 0}<span class="badge">{b.children}</span>{/if}
-      <button class="mv" disabled={readOnly || b.index === 0} onclick={() => move(b.index, -1)} aria-label="Move {b.id} up">↑</button>
-      <button class="mv" disabled={readOnly || b.index === bar.buttons.length - 1} onclick={() => move(b.index, 1)} aria-label="Move {b.id} down">↓</button>
-      <button class="rm" disabled={readOnly} onclick={() => onRemove(b.index)} aria-label="Remove {b.id}">✕</button>
+      <button class="mv" disabled={disabled || b.index === 0} onclick={() => move(b.index, -1)} aria-label="Move {b.id} up">↑</button>
+      <button class="mv" disabled={disabled || b.index === bar.buttons.length - 1} onclick={() => move(b.index, 1)} aria-label="Move {b.id} down">↓</button>
+      <button class="rm" disabled={disabled} onclick={() => onRemove(b.index)} aria-label="Remove {b.id}">✕</button>
     </div>
   {/each}
 
@@ -64,19 +69,19 @@
     <div class="row">
       <!-- Native select: give it explicit dark colours, or it renders light in
            this WebView2 app (standing project note). -->
-      <select bind:value={addChoice} disabled={readOnly} aria-label="Add a neocom button">
+      <select bind:value={addChoice} disabled={disabled} aria-label="Add a neocom button">
         <option value="">Add…</option>
         {#each addable as a (a.id)}
           <option value={a.id}>{a.id}</option>
         {/each}
       </select>
-      <button disabled={readOnly || addChoice === ""} onclick={doAdd}>Add</button>
+      <button disabled={disabled || addChoice === ""} onclick={doAdd}>Add</button>
     </div>
   {/if}
 
   <button
     class="reset"
-    disabled={readOnly || !canReset}
+    disabled={disabled || !canReset}
     title={canReset ? "Replace the bar with the client's own original" : "This character has no original bar recorded"}
     onclick={resetBar}>
     Reset to original
