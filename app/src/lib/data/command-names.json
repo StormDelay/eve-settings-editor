@@ -257,19 +257,19 @@
   },
   "CmdPickPortrait0": {
     "group": "Misc",
-    "label": "Pick Portrait 0"
+    "label": "Pick Portrait 1"
   },
   "CmdPickPortrait1": {
     "group": "Misc",
-    "label": "Pick Portrait 1"
+    "label": "Pick Portrait 2"
   },
   "CmdPickPortrait2": {
     "group": "Misc",
-    "label": "Pick Portrait 2"
+    "label": "Pick Portrait 3"
   },
   "CmdPickPortrait3": {
     "group": "Misc",
-    "label": "Pick Portrait 3"
+    "label": "Pick Portrait 4"
   },
   "CmdReconnectToDrones": {
     "group": "Drones & Fighters",
@@ -397,7 +397,7 @@
   },
   "ToggleCurrentSystemLocationWnd": {
     "group": "Windows",
-    "label": "Toggle Current System Location Window"
+    "label": "Local Locations"
   },
   "ToggleProbeScanner": {
     "group": "Windows",
