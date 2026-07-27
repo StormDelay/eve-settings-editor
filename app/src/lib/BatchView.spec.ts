@@ -251,3 +251,59 @@ test("no write is ever sent on mount", async () => {
   await mount();
   calls.never("setup_apply");
 });
+
+test("a preset source offers only what it holds and sends dir verbatim", async () => {
+  // settings_preset_list is unstubbed by default (see `mount`'s comment): the
+  // preset value is a lazily-evaluated derived that no other test ever reads.
+  // This test is the one place it matters, so it stubs it itself.
+  calls.stub("settings_preset_list", [
+    {
+      name: "Layout only",
+      dir: `${DIR}/presets/Layout only`,
+      char_path: `${DIR}/presets/Layout only/core_char.dat`,
+      user_path: `${DIR}/presets/Layout only/core_user.dat`,
+      modified_unix: 0,
+      aspects: ["layout"],
+      full: false,
+      error: null,
+    },
+    {
+      name: "Broken",
+      dir: `${DIR}/presets/Broken`,
+      char_path: `${DIR}/presets/Broken/core_char.dat`,
+      user_path: `${DIR}/presets/Broken/core_user.dat`,
+      modified_unix: 0,
+      aspects: [],
+      full: false,
+      error: "decode failed",
+    },
+  ]);
+  await mount();
+
+  await fireEvent.click(screen.getByRole("radio", { name: /a preset/i }));
+
+  // The broken preset never becomes an option at all.
+  const presetSelect = document.querySelector("#srcpreset") as HTMLSelectElement;
+  expect([...presetSelect.options].some((o) => o.textContent?.includes("Broken"))).toBe(false);
+
+  await fireEvent.change(presetSelect, { target: { value: `${DIR}/presets/Layout only` } });
+
+  // This preset holds only Layout, so Overview must not be offered.
+  expect(() => aspect("Overview (columns, tabs, presets)")).toThrow();
+
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+
+  const apply = screen.getByRole("button", { name: /apply/i });
+  await waitFor(() => expect(apply.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(apply);
+
+  await waitFor(() => expect(calls.of("setup_apply").length).toBe(1));
+  const sent = calls.only("setup_apply").args!;
+  // Sent byte-for-byte as returned: the backend checks this path case-sensitively.
+  expect(sent.source).toEqual({
+    kind: "preset",
+    dir: `${DIR}/presets/Layout only`,
+    anchor_dir: DIR,
+  });
+});
