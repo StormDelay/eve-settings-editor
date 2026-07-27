@@ -51,7 +51,14 @@ function hud(...overrides: HudEntry[]): Hud {
 function mount(h: Hud, props: Partial<Parameters<typeof render>[1]> = {}) {
   const onSet = vi.fn();
   const onSelectKind = vi.fn();
-  render(HudPanel, { hud: h, readOnly: false, onSet, onSelectKind, ...(props as object) });
+  render(HudPanel, {
+    hud: h, readOnly: false, onSet, onSelectKind,
+    // The neocom bar itself is optional (no character file, no bar), but its
+    // four callbacks are required props — stub them so mounting a HUD-only
+    // fixture doesn't need to know about neocom at all.
+    onNeocomReorder: vi.fn(), onNeocomRemove: vi.fn(), onNeocomAdd: vi.fn(), onNeocomReset: vi.fn(),
+    ...(props as object),
+  });
   return { onSet, onSelectKind };
 }
 

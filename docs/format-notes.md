@@ -983,3 +983,55 @@ the char file only timestamp-bumps); an overview filter-preset edit
 typing into an autocompleting field. (M3b dropped the passive name-match
 suggestion tier — parsing every user file froze the UI — so manual pairing +
 this capture are the association paths that shipped.)
+
+### Neocom buttons (corpus survey, not an in-game capture)
+
+The layout-depth milestone spec anticipated this slice (the neocom button
+editor) would need its own in-game capture experiment, because `btnType` and
+`children` semantics were unmapped. It did not: a survey of the real corpus (a
+since-deleted `crates/settings-model/src/bin` probe) over **4,215 character
+files — 4,061 of them carrying the key, 43,430 buttons total** — settled every
+question the capture would have.
+
+- **Location:** character file, root → `b"ui"` → `b"neocomButtonRawData"`,
+  wrapped `(timestamp, List[Instance])`. Note the asymmetry with `neocomWidth`
+  (account-side — see "HUD anchors" above): the *bar* is per character, its
+  *width* is per account.
+- **Class:** always `utillib.KeyVal` — 43,430/43,430, no other class observed.
+- **Keyset:** exactly `btnType, children, iconPath, id` on every instance,
+  43,430/43,430, with no variation at all. Authoring one is a fixed four-key
+  dict.
+- **`btnType`** takes four values, and each is an attribute of *what the
+  button is*, not a user setting: `10` occurs exactly once per file and always
+  on `chat`; `21` only on `airCareerProgram`; `4` on the inventory family
+  (`inventory`, `InventoryStation`, `InventoryStructure`); `1` on everything
+  else (34,593 of them).
+- **`children`** is `None` (40,339), an empty `List` (2,585), or a
+  one-element `List` (506) — never more than one child, and the only ids ever
+  seen as children are `InventoryStation` and `InventoryStructure`. These are
+  the Inventory docking-context variants the milestone spec worried were
+  user-built folders; they are not.
+- **24 distinct ids** across the corpus. An earlier probe reported 25: it
+  rendered an unresolved `Tuple(bytes, None)` id (the anomaly below) as its
+  own placeholder string instead of resolving it to the id it wraps, and
+  counted that placeholder as a 25th distinct id. 24 is the correct count.
+- **One malformed shape:** 11 buttons carry an `id` that is `Tuple(bytes,
+  None)` rather than plain `Bytes`. Rare, real, and it has to be tolerated on
+  read and preserved on write — rewriting it would be a guess about what the
+  client meant.
+- **`neocomButtonRawDataOriginal`** is the same instance shape, wrapped in a
+  `Tuple` of 8–14 entries rather than a `List`.
+
+**`Original` is a stale snapshot, not a catalog.** Only **495** of the
+~4,061 files carrying the key have a live bar that is a subset of their own
+`Original`. Nine ids routinely appear on the live bar and *not* in `Original`
+— `fleet` (3,509 files), `accessgroups` (3,465), `corporation` and
+`structurebrowser` (3,454 each), `log` and `notepad` (3,443 each), plus
+`contracts`, `job_board` and `shipTree` — and `Original`'s timestamp is older
+than the live bar's: the client wrote it once and later patches added buttons
+without revisiting it. Meanwhile **3,454 files have buttons removed relative
+to `Original`** (up to 9 of them), so removal is something players really do.
+`Original` is therefore usable as *a* source of addable buttons and as the
+reset baseline, but it is not the answer to "what buttons exist" — the
+editor's bundled catalog supplies the rest, unioned with `Original` in the
+frontend.

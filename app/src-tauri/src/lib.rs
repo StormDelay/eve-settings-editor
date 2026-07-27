@@ -303,6 +303,27 @@ fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: Str
 }
 
 #[tauri::command]
+fn neocom_bar(state: tauri::State<'_, AppState>) -> Result<settings_model::NeocomBar, ErrDto> {
+    ops::neocom_bar(&state)
+}
+#[tauri::command]
+fn neocom_reorder(state: tauri::State<'_, AppState>, order: Vec<usize>) -> Result<settings_model::NeocomBar, ErrDto> {
+    ops::neocom_reorder(&state, order)
+}
+#[tauri::command]
+fn neocom_remove(state: tauri::State<'_, AppState>, index: usize) -> Result<settings_model::NeocomBar, ErrDto> {
+    ops::neocom_remove(&state, index)
+}
+#[tauri::command]
+fn neocom_add(state: tauri::State<'_, AppState>, id: String, btn_type: i64, icon_path: String) -> Result<settings_model::NeocomBar, ErrDto> {
+    ops::neocom_add(&state, &id, btn_type, &icon_path)
+}
+#[tauri::command]
+fn neocom_reset(state: tauri::State<'_, AppState>) -> Result<settings_model::NeocomBar, ErrDto> {
+    ops::neocom_reset(&state)
+}
+
+#[tauri::command]
 fn hud_layout(state: tauri::State<'_, AppState>) -> Result<settings_model::Hud, ErrDto> {
     ops::hud_layout(&state)
 }
@@ -452,6 +473,7 @@ pub fn run() {
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create,
+            neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset,
             hud_layout, set_hud_value,
             preferences, set_preferences
         ])
