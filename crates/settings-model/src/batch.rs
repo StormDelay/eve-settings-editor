@@ -22,6 +22,7 @@ pub enum Category {
     Overview,
     OverviewWidths,
     Keybinds,
+    NeocomButtons,
 }
 
 impl Category {
@@ -36,6 +37,10 @@ impl Category {
             Category::Overview => &[b"overview"],
             Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
             Category::Keybinds => &[b"cmd", b"customCmds"],
+            // Character-side: the neocom BAR is per account (neocomWidth), its
+            // BUTTONS are per character. Original is deliberately not a category
+            // — it is the target's own client baseline.
+            Category::NeocomButtons => &[b"ui", b"neocomButtonRawData"],
         }
     }
 }
@@ -426,5 +431,39 @@ mod tests {
         let k = crate::keybinds::project_keybinds(Some(v));
         let e = k.entries.iter().find(|e| e.command == "CmdApproachItem")?;
         e.keys.clone()
+    }
+
+    #[test]
+    fn neocom_buttons_extract_and_apply_across_files() {
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("neocomButtonRawData"), Value::Tuple(vec![ts(), Value::List(vec![b("SOURCE-BAR")])])),
+            (b("neocomButtonRawDataOriginal"), Value::Tuple(vec![ts(), Value::Tuple(vec![b("SOURCE-ORIGINAL")])])),
+        ]))]);
+        let mut target = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("neocomButtonRawData"), Value::Tuple(vec![ts(), Value::List(vec![b("TARGET-BAR")])])),
+            (b("neocomButtonRawDataOriginal"), Value::Tuple(vec![ts(), Value::Tuple(vec![b("TARGET-ORIGINAL")])])),
+        ]))]);
+
+        let extracted = extract_categories(&source, &[Category::NeocomButtons]);
+        apply_to_tree(&mut target, &extracted);
+
+        // `Value::Bytes` derives a plain-number `Debug` (no ASCII rendering), so a
+        // debug-string-contains check can never see "SOURCE-BAR" — navigate the
+        // tree and compare values directly instead, as the Overview tests above do.
+        let Value::Dict(root) = &target else { panic!() };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).unwrap();
+        let Value::Dict(ui) = ui else { panic!() };
+
+        let (_, bar) = ui.iter().find(|(k, _)| is_bytes(k, b"neocomButtonRawData")).unwrap();
+        let Value::Tuple(bar_items) = bar else { panic!() };
+        assert_eq!(bar_items[1], Value::List(vec![b("SOURCE-BAR")]),
+            "the source bar did not replace the target's");
+
+        // The baseline is the TARGET's own client record: copying the source's
+        // would corrupt what "reset to original" means on that character.
+        let (_, original) = ui.iter().find(|(k, _)| is_bytes(k, b"neocomButtonRawDataOriginal")).unwrap();
+        let Value::Tuple(orig_items) = original else { panic!() };
+        assert_eq!(orig_items[1], Value::Tuple(vec![b("TARGET-ORIGINAL")]),
+            "the target's Original was overwritten or the source's Original leaked across");
     }
 }
