@@ -351,6 +351,63 @@ fn setup_apply(
     )
 }
 
+// The overview view already owns `preset_create`/`preset_rename`/`preset_delete`
+// for EVE's own overview filter presets — these are the settings-preset
+// library (Task 8+), hence the longer `settings_preset_*` names.
+#[tauri::command]
+fn settings_preset_list(app: tauri::AppHandle) -> Vec<presets::PresetInfo> {
+    presets::list(&app_dir(&app))
+}
+
+#[tauri::command]
+fn settings_preset_create(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    name: String,
+    aspects: Vec<ops::Aspect>,
+    overwrite: bool,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    ops::preset_save(&state, &app_dir(&app), &name, &aspects, overwrite)?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_rename(
+    app: tauri::AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    presets::rename(&app_dir(&app), &old_name, &new_name)
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_delete(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    presets::delete(&app_dir(&app), &name)
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
+#[tauri::command]
+fn settings_preset_export(app: tauri::AppHandle, name: String, path: String) -> Result<(), ErrDto> {
+    presets::export_to(&app_dir(&app), &name, std::path::Path::new(&path))
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })
+}
+
+#[tauri::command]
+fn settings_preset_import(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Vec<presets::PresetInfo>, ErrDto> {
+    presets::import_from(&app_dir(&app), std::path::Path::new(&path))
+        .map_err(|m| ErrDto { code: "preset".into(), message: m })?;
+    Ok(presets::list(&app_dir(&app)))
+}
+
 #[tauri::command]
 fn preferences(app: tauri::AppHandle) -> Result<prefs::Preferences, ErrDto> {
     let path = prefs::path(&app).map_err(|m| ErrDto { code: "no_config_dir".into(), message: m })?;
@@ -385,6 +442,8 @@ pub fn run() {
             autofill_lists, set_autofill_list, clear_all_autofill,
             keybinds, set_keybind,
             setup_preview, setup_apply,
+            settings_preset_list, settings_preset_create, settings_preset_rename,
+            settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create,
             hud_layout, set_hud_value,
             preferences, set_preferences

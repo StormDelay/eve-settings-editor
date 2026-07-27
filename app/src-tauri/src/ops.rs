@@ -558,6 +558,30 @@ fn err_result(path: &str, error: String) -> TargetResult {
     TargetResult { path: path.to_string(), ok: false, backup_path: None, error: Some(error) }
 }
 
+/// Create a preset from the OPEN documents, so unsaved edits are captured.
+pub fn preset_save(
+    state: &AppState,
+    app_data: &Path,
+    name: &str,
+    aspects: &[Aspect],
+    overwrite: bool,
+) -> Result<(), ErrDto> {
+    let char_guard = state.char.lock().unwrap();
+    let user_guard = state.user.lock().unwrap();
+    crate::presets::create(
+        app_data,
+        name,
+        aspects,
+        crate::presets::CreateInput {
+            char_doc: char_guard.as_ref().map(|d| &d.value),
+            user_doc: user_guard.as_ref().map(|d| &d.value),
+        },
+        overwrite,
+    )
+    .map(|_| ())
+    .map_err(|m| ErrDto::new("preset", m))
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum OpenOutcome {
