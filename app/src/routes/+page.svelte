@@ -341,6 +341,7 @@
     const charPath = pairedFilePath(profiles, anchor, charId, "char");
     if (!charPath) return;
     try {
+      openPreset = null;
       slots.char = await api.open("char", charPath);
       dirtySlots.char = false;
       await resolveNames([charId]);
@@ -454,7 +455,8 @@
       onCollapse={() => (sidebarOpen = false)}
       onOpenPreset={openPresetPair}
       charOpen={slots.char?.status === "opened"}
-      userOpen={slots.user?.status === "opened"} />
+      userOpen={slots.user?.status === "opened"}
+      openPresetName={openPreset} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
       title="Show file list" aria-label="Show file list">»</button>
