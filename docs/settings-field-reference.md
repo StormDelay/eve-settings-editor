@@ -270,7 +270,8 @@ character's joined channels; `chat_OldChannelsMigrated` (367) `Bool`.
 
 **Neocom.** `neocomButtonRawData` (370) `List[Instance]`,
 `neocomButtonRawDataOriginal` (367) `Tuple[Instance]` — the neocom button set.
-Instances are `utillib.KeyVal`-style; not decoded further here.
+Format recorded in `format-notes.md` §"Neocom buttons"; already modelled
+(reorder/remove/add/reset).
 
 **Per-item / session state — do not model.** `listgroups` (348, 561 keys),
 `viewedWrecks` (367), `neoblinkByID` (290), `ScrollColumnHeader_State` (234),
