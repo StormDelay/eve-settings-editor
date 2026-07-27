@@ -48,6 +48,17 @@
   async function create() {
     const name = newName.trim();
     if (!name || picked.size === 0) return;
+    // `presets::create` writes the files directly, bypassing the save chain,
+    // so replacing the OPEN preset leaves its loaded_mtime stale and
+    // dirtySlots never cleared -- the next Save would then raise a conflict
+    // error blaming "the EVE client", which cannot be true here. Refuse up
+    // front instead, same as Rename/Delete already do for the open preset.
+    if (openPresetName !== null && name.toLowerCase() === openPresetName.toLowerCase()) {
+      await message(`“${name}” is currently open — close it first, then save over it.`, {
+        title: "Preset is open",
+      });
+      return;
+    }
     // Case-insensitive: the filesystem (NTFS) doesn't distinguish "Mining" from
     // "MINING", so the confirm has to trigger on the same cases the backend
     // would otherwise refuse outright.
