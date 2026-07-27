@@ -358,11 +358,16 @@ fn source_side_empty(path: &Path, cats: &[Category]) -> bool {
 }
 
 /// Resolve a source into the pieces the planner and the applier both need.
+/// `allow_other_folders` must be the caller's real flag — it is threaded into
+/// the inner `scoped_files` lookup for a character source's account file, so
+/// that lookup stays anchored to the source's own profile folder exactly like
+/// the outer one both callers already run.
 fn resolve_source(
     roots: &[PathBuf],
     dir: &Path,
     source: &BatchSource,
     aspects: &[Aspect],
+    allow_other_folders: bool,
 ) -> Result<SourceSides, String> {
     match source {
         BatchSource::Character { path } => {
@@ -371,7 +376,7 @@ fn resolve_source(
             };
             let store = accounts::load_store(dir);
             let user_path = account_of(&store, id).and_then(|uid| {
-                let (_, users) = scoped_files(roots, Some(&profile_dir), true);
+                let (_, users) = scoped_files(roots, Some(&profile_dir), allow_other_folders);
                 users.get(&uid).cloned()
             });
             Ok(SourceSides {
@@ -383,9 +388,18 @@ fn resolve_source(
         }
         BatchSource::Preset { dir: pdir, anchor_dir } => {
             let pdir = PathBuf::from(pdir);
+            if !pdir.starts_with(crate::presets::presets_dir(dir)) {
+                return Err("That preset could not be read.".into());
+            }
             let (c, u) = (pdir.join(crate::presets::CHAR_FILE), pdir.join(crate::presets::USER_FILE));
             if !c.is_file() || !u.is_file() {
                 return Err("That preset could not be read.".into());
+            }
+            if let Err(e) = crate::presets::load(&c) {
+                return Err(format!("The preset's character-side file could not be read: {e}"));
+            }
+            if let Err(e) = crate::presets::load(&u) {
+                return Err(format!("The preset's account-side file could not be read: {e}"));
             }
             if aspects.contains(&Aspect::Everything) && !crate::presets::is_full(&pdir) {
                 return Err(
@@ -411,7 +425,7 @@ pub fn setup_preview(
     aspects: &[Aspect],
     allow_other_folders: bool,
 ) -> SetupPlan {
-    let sides = match resolve_source(roots, dir, source, aspects) {
+    let sides = match resolve_source(roots, dir, source, aspects, allow_other_folders) {
         Ok(s) => s,
         Err(e) => return SetupPlan { source_error: Some(e), ..Default::default() },
     };
@@ -423,8 +437,10 @@ pub fn setup_preview(
     // A preset source issues no resolution warning: plan_setup needs a source
     // resolution to compare against, and there is no source character. The
     // preset's char.dat does carry `reference_w/h`, so wiring the warning up is
-    // a later, additive change — see the spec's §6.
-    let resolutions = if w.copies_char_geometry() {
+    // a later, additive change — see the spec's §6. Skip the decode work
+    // entirely for a preset source (char_id is None): src_res can never be
+    // Some, so no mismatch could ever be reported.
+    let resolutions = if w.copies_char_geometry() && sides.char_id.is_some() {
         let mut ids = targets.clone();
         if let Some(id) = sides.char_id {
             ids.push(id);
@@ -474,17 +490,24 @@ pub fn setup_apply(
     if let Some(e) = plan.source_error {
         return Err(ErrDto::new("source", e));
     }
-    let sides = resolve_source(roots, dir, source, aspects).map_err(|e| ErrDto::new("source", e))?;
+    let sides = resolve_source(roots, dir, source, aspects, allow_other_folders)
+        .map_err(|e| ErrDto::new("source", e))?;
     let w = aspect_writes(aspects);
 
     let read_side = |p: Option<&Path>| -> Result<Vec<u8>, ErrDto> {
         match p {
             Some(p) => fs::read(p).map_err(|e| ErrDto::new("io", e.to_string())),
-            None => Ok(Vec::new()),
+            None => Err(ErrDto::new("source", "no file for this side")),
         }
     };
+    // `cats.is_empty()` alone covers the deliberate empty-Vec case (a
+    // splice aspect the source lacks, already dropped by `setup_preview`'s
+    // no-op suppression, or Everything's always-empty category lists). A
+    // zero-length `bytes` is never legitimate for a non-empty `cats` list —
+    // it must decode, or this returns a decode error instead of silently
+    // treating "empty file" as "empty projection".
     let extract_side = |bytes: &[u8], cats: &[Category]| -> Result<Vec<(Category, Value)>, ErrDto> {
-        if cats.is_empty() || bytes.is_empty() {
+        if cats.is_empty() {
             return Ok(Vec::new());
         }
         let v = blue_marshal::decode(bytes).map_err(|e| ErrDto::new("decode", e.to_string()))?;
@@ -1958,6 +1981,158 @@ mod tests {
         };
         let plan = setup_preview(&[], Path::new("/tmp"), &source, &[], &[Aspect::Layout], false);
         assert!(plan.source_error.is_some());
+    }
+
+    #[test]
+    fn preset_apply_writes_the_presets_settings_to_the_target() {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let base = std::env::temp_dir().join(format!("app-preset-apply-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+
+        // Target character file: distinct "windows" content, to prove it gets
+        // overwritten rather than merely leaving the call reporting Ok.
+        let target_doc = Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("ORIGINAL"))]))]);
+        std::fs::write(prof.join("core_char_700.dat"), encode(&target_doc).unwrap()).unwrap();
+
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        // A Layout-only preset holding distinctive windows content.
+        let preset_char_doc = Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))]))]);
+        crate::presets::create(
+            &app_dir,
+            "LayoutOnly",
+            &[Aspect::Layout],
+            crate::presets::CreateInput { char_doc: Some(&preset_char_doc), user_doc: None },
+            false,
+        )
+        .unwrap();
+        let pdir = crate::presets::preset_path(&app_dir, "LayoutOnly").unwrap();
+
+        let roots = vec![base.join("root")];
+        let source = BatchSource::Preset {
+            dir: pdir.to_string_lossy().into_owned(),
+            anchor_dir: prof.to_string_lossy().into_owned(),
+        };
+        let tgt = vec![prof.join("core_char_700.dat").to_string_lossy().into_owned()];
+        let results = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Layout], false).unwrap();
+        assert!(results.iter().all(|r| r.ok), "results: {results:?}");
+
+        let bytes = std::fs::read(prof.join("core_char_700.dat")).unwrap();
+        let val = blue_marshal::decode(&bytes).unwrap();
+        let extracted = extract_categories(&val, &[Category::Layout]);
+        assert_eq!(
+            extracted,
+            vec![(Category::Layout, Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))]))],
+            "target must carry the preset's windows content, not merely report ok"
+        );
+    }
+
+    #[test]
+    fn everything_from_a_pruned_preset_is_refused_by_setup_apply_and_leaves_target_untouched() {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let base = std::env::temp_dir().join(format!("app-preset-everything-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+
+        let original_bytes =
+            encode(&Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("UNTOUCHED"))]))])).unwrap();
+        std::fs::write(prof.join("core_char_701.dat"), &original_bytes).unwrap();
+
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        let doc = Value::Dict(vec![]);
+        crate::presets::create(
+            &app_dir,
+            "Pruned",
+            &[Aspect::Layout],
+            crate::presets::CreateInput { char_doc: Some(&doc), user_doc: Some(&doc) },
+            false,
+        )
+        .unwrap();
+        let pdir = crate::presets::preset_path(&app_dir, "Pruned").unwrap();
+
+        let roots = vec![base.join("root")];
+        let source = BatchSource::Preset {
+            dir: pdir.to_string_lossy().into_owned(),
+            anchor_dir: prof.to_string_lossy().into_owned(),
+        };
+        let tgt = vec![prof.join("core_char_701.dat").to_string_lossy().into_owned()];
+        let err = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Everything], false).unwrap_err();
+        assert_eq!(err.code, "source");
+
+        let after = std::fs::read(prof.join("core_char_701.dat")).unwrap();
+        assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
+    }
+
+    #[test]
+    fn character_source_account_file_comes_from_its_own_profile_not_another_ones() {
+        // Pins the FIX-1 regression: `resolve_source`'s inner `scoped_files`
+        // call for a character source's account file must honour the caller's
+        // real `allow_other_folders`, not a hardcoded `true`. Two profile
+        // folders under one root both carry an account file for the SAME
+        // account id (profiles are copies of each other in real installs) —
+        // with `allow_other_folders = false` the source's own profile's copy
+        // must win, never the other profile's.
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let base = std::env::temp_dir().join(format!("app-source-profile-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let install = base.join("root").join("c_eve_sharedcache_tq_tranquility");
+        let default_prof = install.join("settings_Default");
+        let zulu_prof = install.join("settings_Zulu");
+        std::fs::create_dir_all(&default_prof).unwrap();
+        std::fs::create_dir_all(&zulu_prof).unwrap();
+
+        fn overview_doc(marker: &str) -> Value {
+            Value::Dict(vec![(
+                Value::Bytes(b"overview".to_vec()),
+                Value::Dict(vec![(Value::Bytes(b"marker".to_vec()), Value::Bytes(marker.as_bytes().to_vec()))]),
+            )])
+        }
+        let minimal = || Value::Dict(vec![]);
+
+        // Source char 800 on account 900 lives in Default. Default's own
+        // account-900 file carries "FROM_DEFAULT"; Zulu also has an
+        // account-900 file (a stale copy of the same account) carrying
+        // different content — that copy must never be the one read.
+        std::fs::write(default_prof.join("core_char_800.dat"), encode(&minimal()).unwrap()).unwrap();
+        std::fs::write(default_prof.join("core_user_900.dat"), encode(&overview_doc("FROM_DEFAULT")).unwrap()).unwrap();
+        std::fs::write(zulu_prof.join("core_user_900.dat"), encode(&overview_doc("FROM_ZULU")).unwrap()).unwrap();
+
+        // Target char 801 on account 950, also in Default (so it stays
+        // visible with allow_other_folders = false).
+        std::fs::write(default_prof.join("core_char_801.dat"), encode(&minimal()).unwrap()).unwrap();
+        std::fs::write(default_prof.join("core_user_950.dat"), encode(&minimal()).unwrap()).unwrap();
+
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(900, accounts::Account { alias: None, characters: vec![800] });
+        store.accounts.insert(950, accounts::Account { alias: None, characters: vec![801] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+        let roots = vec![base.join("root")];
+        let src = default_prof.join("core_char_800.dat").to_string_lossy().into_owned();
+        let tgt = vec![default_prof.join("core_char_801.dat").to_string_lossy().into_owned()];
+        let source = BatchSource::Character { path: src };
+        let results = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Overview], false).unwrap();
+        assert!(
+            results.iter().any(|r| r.path.contains("core_user_950") && r.ok),
+            "results: {results:?}"
+        );
+
+        let bytes = std::fs::read(default_prof.join("core_user_950.dat")).unwrap();
+        let val = blue_marshal::decode(&bytes).unwrap();
+        let extracted = extract_categories(&val, &[Category::Overview]);
+        assert_eq!(
+            extracted,
+            vec![(Category::Overview, Value::Dict(vec![(bb("marker"), bb("FROM_DEFAULT"))]))],
+            "must carry the source's OWN profile's account settings, not another profile's"
+        );
     }
 
     /// root -> { b"windows": {}, b"ui": {} } — sections present, no HUD keys.
