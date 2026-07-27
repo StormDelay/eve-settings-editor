@@ -130,9 +130,15 @@
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: "Rename…", run: isOpen ? explainOpen : () => { renaming = p.name; renameTo = p.name; } },
+        // The label carries the reason, so the restriction is visible before
+        // the click rather than only after it — ContextMenu has no disabled
+        // state, and a menu that silently loses rows depending on which preset
+        // you right-click just reads as broken.
+        { label: isOpen ? "Rename… (close first)" : "Rename…",
+          run: isOpen ? explainOpen : () => { renaming = p.name; renameTo = p.name; } },
         { label: "Export…", run: () => void exportPreset(p) },
-        { label: "Delete…", run: isOpen ? explainOpen : () => void remove(p) },
+        { label: isOpen ? "Delete… (close first)" : "Delete…",
+          run: isOpen ? explainOpen : () => void remove(p) },
       ],
     };
   }
