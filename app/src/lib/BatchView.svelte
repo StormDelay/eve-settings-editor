@@ -1,13 +1,15 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, errMessage, type Profile, type Aspect, type SetupPlan, type BatchTargetResult } from "./api";
+  import { api, errMessage, type Profile, type Aspect, type SetupPlan, type BatchTargetResult, type BatchSource, type PresetInfo } from "./api";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
   import { primaryProfileDir, profileLabels } from "./profiles";
   import { accountsStore, loadRoster } from "./accounts.svelte";
+  import { allPresets, loadPresets, summarise } from "./presetLibrary.svelte";
 
   let { openPath }: { openPath: string | null } = $props();
 
   loadRoster();
+  loadPresets();
 
   // Character (char) files only — the source and every target is a character.
   let profiles = $state<Profile[]>([]);
@@ -36,12 +38,32 @@
   let sourcePath = $state<string | null>(
     untrack(() => (openPath && openPath.includes("core_char_") ? openPath : null)),
   );
-  const source = $derived(chars.find((c) => c.path === sourcePath) ?? null);
 
   function pickFolder(dir: string) {
     folderPick = dir;
     sourcePath = null;
   }
+
+  // The batch source is either a character (as before) or a saved preset. A
+  // preset belongs to no profile folder, so it borrows the Profile dropdown's
+  // `folder` as its anchor — the folder whose characters populate the target list.
+  let sourceKind = $state<"character" | "preset">("character");
+  let presetDir = $state<string | null>(null);
+  const preset = $derived<PresetInfo | null>(allPresets().find((p) => p.dir === presetDir) ?? null);
+
+  // What the chosen source can offer. A preset offers only what it holds, so
+  // Autofill cannot be ticked on a preset that has none.
+  const offered = $derived<Aspect[]>(
+    sourceKind === "preset"
+      ? (preset?.aspects ?? [])
+      : ["layout", "overview", "autofill", "keybinds", "everything"],
+  );
+
+  const batchSource = $derived<BatchSource | null>(
+    sourceKind === "character"
+      ? (sourcePath ? { kind: "character", path: sourcePath } : null)
+      : (presetDir ? { kind: "preset", dir: presetDir, anchor_dir: folder ?? "" } : null),
+  );
 
   // Aspects. "Everything" is exclusive.
   const ASPECTS: { key: Aspect; label: string; account: boolean }[] = [
@@ -140,9 +162,12 @@
   };
   const folderLabelOf = (dir: string) => profileLabels(profiles).get(dir) ?? dir;
 
-  // Reset op + targets when the source changes.
+  // Reset op + targets when the source changes — including a switch between
+  // "character" and "preset", not just a different pick within one kind.
   $effect(() => {
     sourcePath;
+    presetDir;
+    sourceKind;
     selected = new Set();
     selectedTargets = new Set();
   });
@@ -152,13 +177,13 @@
   let plan = $state<SetupPlan | null>(null);
   let previewSeq = 0;
   $effect(() => {
-    const sp = sourcePath;
+    const src = batchSource;
     const asp = [...selected];
     const tgts = effectiveTargets;
     const allow = allowOtherFolders;
-    if (!sp || asp.length === 0 || tgts.length === 0) { plan = null; return; }
+    if (!src || asp.length === 0 || tgts.length === 0) { plan = null; return; }
     const seq = ++previewSeq;
-    api.setupPreview(sp, tgts, asp as Aspect[], allow)
+    api.setupPreview(src, tgts, asp as Aspect[], allow)
       .then((p) => { if (seq === previewSeq) plan = p; })
       .catch(() => { if (seq === previewSeq) plan = null; });
   });
@@ -167,15 +192,16 @@
   let error = $state<string | null>(null);
   let results = $state<BatchTargetResult[] | null>(null);
   const canApply = $derived(
-    !!sourcePath && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
+    !!batchSource && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
     !!plan && !plan.source_error && (plan.char_writes.length + plan.account_writes.length > 0),
   );
 
   async function apply() {
-    if (!sourcePath) return;
+    const src = batchSource;
+    if (!src) return;
     busy = true; error = null; results = null;
     try {
-      results = await api.setupApply(sourcePath, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
+      results = await api.setupApply(src, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
     } catch (e) {
       error = errMessage(e);
     } finally {
@@ -193,19 +219,40 @@
       {#each folders as f}<option value={f.dir}>{f.label}</option>{/each}
     </select>
 
-    <label for="src">Source character</label>
-    <select id="src" bind:value={sourcePath}>
-      <option value={null} disabled>Choose a character…</option>
-      {#each sourceOptions as c}
-        <option value={c.path}>{nameOfChar(c.id, c.file_name)} — {c.file_name}</option>
-      {/each}
-    </select>
+    <div class="head">Source</div>
+    <label class="inline">
+      <input type="radio" bind:group={sourceKind} value="character" /> A character
+    </label>
+    <label class="inline">
+      <input type="radio" bind:group={sourceKind} value="preset" /> A preset
+    </label>
+
+    {#if sourceKind === "character"}
+      <label for="src">Source character</label>
+      <select id="src" bind:value={sourcePath}>
+        <option value={null} disabled>Choose a character…</option>
+        {#each sourceOptions as c}
+          <option value={c.path}>{nameOfChar(c.id, c.file_name)} — {c.file_name}</option>
+        {/each}
+      </select>
+    {:else}
+      <label for="srcpreset">Source preset</label>
+      <select id="srcpreset" bind:value={presetDir}>
+        <option value={null} disabled>Choose a preset…</option>
+        {#each allPresets().filter((p) => p.error === null) as p}
+          <option value={p.dir}>{p.name} — {summarise(p)}</option>
+        {/each}
+      </select>
+      {#if allPresets().length === 0}
+        <p class="muted">No presets yet — save one from the sidebar first.</p>
+      {/if}
+    {/if}
   </section>
 
-  {#if source}
+  {#if batchSource}
     <section>
       <div class="head">What to copy</div>
-      {#each ASPECTS as a}
+      {#each ASPECTS.filter((a) => offered.includes(a.key)) as a}
         <label class:disabled={everything && a.key !== "everything"}>
           <input type="checkbox" checked={selected.has(a.key)}
             disabled={everything && a.key !== "everything"}
@@ -285,7 +332,7 @@
   .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
   .linkbtn:hover { text-decoration: underline; }
   select, option { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit; }
-  input[type="checkbox"] { accent-color: var(--accent); }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   .muted { color: var(--fg-dim); }
   .preview p { margin: 0.15rem 0; }
   .warn { color: #d0a000; }

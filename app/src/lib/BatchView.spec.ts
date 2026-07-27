@@ -163,7 +163,7 @@ describe("what actually gets written", () => {
     await waitFor(() => expect(calls.of("setup_apply").length).toBe(1));
     const sent = calls.only("setup_apply").args!;
     expect(sent.targetCharPaths).toEqual([`${DIR}/core_char_90000002.dat`]);
-    expect(sent.sourceCharPath).toBe(`${DIR}/core_char_90000001.dat`);
+    expect(sent.source).toEqual({ kind: "character", path: `${DIR}/core_char_90000001.dat` });
     expect(sent.aspects).toEqual(["overview"]);
   });
 
