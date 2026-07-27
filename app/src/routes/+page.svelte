@@ -10,7 +10,7 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
-  import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile } from "$lib/api";
+  import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { names, resolveNames } from "$lib/names.svelte";
   import { aliasFor, accountsStore } from "$lib/accounts.svelte";
@@ -37,6 +37,8 @@
     user: null,
   });
   const dirtySlots = $state<{ char: boolean; user: boolean }>({ char: false, user: false });
+  // Set while a preset (rather than a character) is open in the two slots.
+  let openPreset = $state<string | null>(null);
   // Which file the raw Tree view shows; a Tree-local switch flips it to the
   // account file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
@@ -111,6 +113,7 @@
   // Best single label for the open file — character name, else user alias, else
   // the bare filename. Feeds the OS window title and the backups panel.
   const openDisplay = $derived.by(() => {
+    if (openPreset !== null) return `${openPreset} (preset)`;
     if (current?.status !== "opened") return null;
     return openCharName ?? openUserAlias ?? current.file_name;
   });
@@ -206,6 +209,7 @@
     const slot = slotForName(name);
     if (!(await confirmDiscardIfDirty())) return;
     try {
+      openPreset = null;
       const outcome = await api.open(slot, path);
       slots[slot] = outcome;
       // A file opened via the dialog isn't in the sidebar scan, so its name was
@@ -237,6 +241,38 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
+      if (!viewAvailable(priorView)) view = "tree";
+    } catch (e) {
+      await message(errMessage(e), { title: "Open failed", kind: "error" });
+    }
+  }
+
+  // Open a preset: BOTH slots at once, so the pairing machinery never runs.
+  // Deliberately not routed through openFile, whose char branch would call
+  // reconcileUserSlot and replace the preset's account side with a character's.
+  async function openPresetPair(p: PresetInfo) {
+    if (!(await confirmDiscardIfDirty())) return;
+    try {
+      const [charOutcome, userOutcome] = await Promise.all([
+        api.open("char", p.char_path),
+        api.open("user", p.user_path),
+      ]);
+      slots.char = charOutcome;
+      slots.user = userOutcome;
+      dirtySlots.char = false;
+      dirtySlots.user = false;
+      openPreset = p.name;
+      treeFile = "char";
+      savedAt += 1;
+      const priorView = view;
+      mainView = "file";
+      selectedWindowId = null;
+      reveal = null;
+      try {
+        layoutAvailable = (await api.windowLayout("char")).windows.length > 0;
+      } catch {
+        layoutAvailable = false;
+      }
       if (!viewAvailable(priorView)) view = "tree";
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
@@ -415,7 +451,10 @@
       onOpen={openFile}
       onShowAccounts={() => (mainView = "accounts")}
       onShowBatch={() => (mainView = "batch")}
-      onCollapse={() => (sidebarOpen = false)} />
+      onCollapse={() => (sidebarOpen = false)}
+      onOpenPreset={openPresetPair}
+      charOpen={slots.char?.status === "opened"}
+      userOpen={slots.user?.status === "opened"} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
       title="Show file list" aria-label="Show file list">»</button>
@@ -438,8 +477,12 @@
         {:else}
           <span class="badge editable">editable</span>
         {/if}
-        {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
-        {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
+        {#if openPreset !== null}
+          {#if dirtySlots.char || dirtySlots.user}<span class="badge dirty">preset: unsaved</span>{/if}
+        {:else}
+          {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
+          {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
+        {/if}
         {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
           <span class="viewtabs">
             <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
