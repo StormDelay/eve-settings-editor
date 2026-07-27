@@ -168,6 +168,7 @@
     sourcePath;
     presetDir;
     sourceKind;
+    folder;
     selected = new Set();
     selectedTargets = new Set();
   });
@@ -211,7 +212,7 @@
 </script>
 
 <div class="batch">
-  <h2>Copy a character's setup</h2>
+  <h2>Copy a setup to other characters</h2>
 
   <section>
     <label for="folder">Profile</label>
@@ -221,10 +222,10 @@
 
     <div class="head">Source</div>
     <label class="inline">
-      <input type="radio" bind:group={sourceKind} value="character" /> A character
+      <input type="radio" name="sourceKind" bind:group={sourceKind} value="character" /> A character
     </label>
     <label class="inline">
-      <input type="radio" bind:group={sourceKind} value="preset" /> A preset
+      <input type="radio" name="sourceKind" bind:group={sourceKind} value="preset" /> A preset
     </label>
 
     {#if sourceKind === "character"}
