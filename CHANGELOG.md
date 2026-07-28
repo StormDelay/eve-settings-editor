@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-28
+
+Everything the live-verification sessions turned up. The two changes that write
+to a settings file — deleting empty stack frames and turning per-window overview
+tabs back on — were run against a real EVE client before release: the client kept
+both edits verbatim across a login and logout, re-created none of the deleted
+frames, and left every live window stack intact.
+
 ### Changed
 - **The "Window layout" copy option now says what it leaves behind.** It carries
   window positions, the neocom and the ship HUD offset — but not the fighter
