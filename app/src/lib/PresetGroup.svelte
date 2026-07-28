@@ -13,16 +13,8 @@
 
   loadPresets();
 
-  // `note` is the caveat on hover. This list keeps one-word labels, so the one
-  // aspect whose name promises more than it carries says so there instead — see
-  // BatchView's spelled-out version of the same warning.
-  const ASPECTS: { key: Aspect; label: string; needsUser: boolean; note?: string }[] = [
-    {
-      key: "layout",
-      label: "Window layout",
-      needsUser: false,
-      note: "Window positions, the neocom and the ship HUD offset — not the fighter panel or the notification badge, which EVE stores elsewhere.",
-    },
+  const ASPECTS: { key: Aspect; label: string; needsUser: boolean }[] = [
+    { key: "layout", label: "Window layout", needsUser: true },
     { key: "overview", label: "Overview", needsUser: true },
     { key: "autofill", label: "Autofill", needsUser: true },
     { key: "keybinds", label: "Keybindings", needsUser: true },
@@ -176,7 +168,7 @@
     <form class="new" onsubmit={(e) => { e.preventDefault(); void create(); }}>
       <input placeholder="Preset name" bind:value={newName} />
       {#each ASPECTS as a}
-        <label title={a.note}
+        <label
           class:disabled={(everything && a.key !== "everything") || (a.needsUser && !userOpen)}>
           <input type="checkbox" checked={picked.has(a.key)}
             disabled={(everything && a.key !== "everything") || (a.needsUser && !userOpen)}
