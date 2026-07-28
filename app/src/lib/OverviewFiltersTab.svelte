@@ -36,6 +36,17 @@
   });
 
   let groupFilter = $state("");
+  // Which categories are expanded. A `<details>` hides its children but Svelte
+  // still builds every one and tracks it reactively, so 649 checkboxes stayed
+  // live at all times — and each backend round trip behind a tick re-evaluated
+  // all of them. Rows are rendered only while their category is open.
+  //
+  // Unset means "follow the filter": a query expands its matches, which is what
+  // makes filtering useful. Once the user toggles a category by hand that choice
+  // sticks, so a deliberately-collapsed Entity (400 rows) stays collapsed even
+  // while a broad query matches it.
+  let openCats = $state<Record<number, boolean>>({});
+  const isOpen = (id: number) => openCats[id] ?? !!groupFilter.trim();
   // A default profile that isn't (yet) stored on the account resolves its
   // contents from the bundled snapshot instead — that's what lets a clean
   // account edit a built-in's groups before any fork exists.
@@ -205,17 +216,22 @@
         {/if}
 
         {#each visibleCategories as cat (cat.id)}
-          <details class="group-cat" open={!!groupFilter.trim()}>
+          <details
+            class="group-cat"
+            open={isOpen(cat.id)}
+            ontoggle={(e) => (openCats[cat.id] = (e.currentTarget as HTMLDetailsElement).open)}>
             <summary>{cat.name}</summary>
-            <div class="group-grid">
-              {#each cat.groups as g (g.id)}
-                <label class="group-item">
-                  <input type="checkbox" checked={presetGroupSet.has(g.id)}
-                         onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
-                  {g.name}
-                </label>
-              {/each}
-            </div>
+            {#if isOpen(cat.id)}
+              <div class="group-grid">
+                {#each cat.groups as g (g.id)}
+                  <label class="group-item">
+                    <input type="checkbox" checked={presetGroupSet.has(g.id)}
+                           onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
+                    {g.name}
+                  </label>
+                {/each}
+              </div>
+            {/if}
           </details>
         {/each}
 
