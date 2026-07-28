@@ -132,23 +132,6 @@ Workflow:
   on screen", then either pull the other seven in or split a HUD aspect out —
   and say which in the aspect's UI label either way. _Added 2026-07-27._
 
-- [ ] **The overview filter list is slow.** `OverviewFiltersTab.svelte` renders
-  every one of the **1,605** groups in `overview-groups.json` as a live checkbox
-  (`{#each visibleCategories}` → `{#each cat.groups}`, line 207–220). Three
-  separate costs, worth measuring before picking one:
-  (1) typing in the group filter re-runs `filterCatalog` over all 1,605 entries
-  per keystroke **and** `open={!!groupFilter.trim()}` force-expands all 15
-  `<details>` at once, so the whole list materialises in the DOM on the first
-  character typed;
-  (2) every checkbox toggle is a backend round trip (`presetSetGroups` /
-  `presetFork`) whose result replaces `data`, invalidating every `$derived` and
-  re-rendering all 1,605 rows for a one-bit change;
-  (3) `presetGroupSet` is rebuilt from scratch on each of those.
-  Likely cheapest real win: keep categories collapsed and render each one's rows
-  only when open (native `<details>` already gives the toggle), and debounce the
-  filter. Virtualising the list is the bigger hammer if that is not enough.
-  Reported while staging the live verification. _Added 2026-07-27._
-
 - [ ] **Test fixtures encode bare container payloads, a shape EVE never writes.**
   Every container key in a real file is `(timestamp, payload)` — 4,187 of 4,187
   across five untouched accounts — but several fixtures build bare ones:
@@ -768,6 +751,19 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The overview filter list is slow.** Categories now render their checkbox
+  rows only while open, and the filter box is debounced 150ms. The entry's count
+  was wrong in a way that mattered: the tab rendered **649** rows across 15
+  categories, not 1,605 — `all_group_ids` (1,605) is the ESI sync list, not the
+  rendered tree. 400 of the 649 sit in `Entity` alone, which is why "render only
+  what is open" was the right lever: a collapsed tab now costs zero rows, and
+  only someone who deliberately opens `Entity` pays for 400. Of the three costs
+  listed, (1) was misattributed — `filterCatalog` over 649 strings is
+  microseconds; the cost on that keystroke was the force-expand — and (3)
+  (`presetGroupSet` rebuilds) was never worth touching. (2), the round trip per
+  tick, is unavoidable but now re-evaluates only rendered rows. Virtualisation
+  stayed unneeded. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Offer to delete orphaned stack frames from the file.** `delete_orphan_frames`
   in `stacks.rs` removes every numeric-string id that is neither a stack member
