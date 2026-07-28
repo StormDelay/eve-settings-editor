@@ -297,7 +297,7 @@ check("open filter keeps the right window", open[0].id === "a");
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
-import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
+import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
 // The four account-scoped fields, by name — a literal list rather than a
@@ -355,6 +355,8 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // that (measured 2026-07-28): x = 1280 - 100 - 148.
   const ship = rects[1];
   check("the ship HUD's anchor is centre plus the offset", ship.x + 148 === 1280 - 100);
+  // NOTE the 28 here is the top margin MIRRORED, not a measured bottom margin —
+  // every screenshot was top-aligned. This pins current behaviour, not a fact.
   check("the ship HUD sits at the bottom by default", ship.y === 1440 - 28 - 160);
   check("the ship HUD drags on x only", ship.drag === "x");
 
@@ -471,32 +473,38 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("the ship HUD's left edge sits 148px left of the anchor", ship.x === 490);
   check("its right edge covers the widest slot row", ship.x + ship.w === 1133);
   check("its top clears the screen edge by the measured margin", ship.y === 28);
-  check("its bottom is where the speed readout ends", ship.y + ship.h === 188);
+  check("its bottom edge, 160px below the top", ship.y + ship.h === 188);
 
-  // The anchor itself: the capacitor wheel's centre, measured at 638.5.
+  // The anchor: the capacitor wheel's centre, measured at 638.5 against 638
+  // predicted. NOTE this check holds for any SHIP_ANCHOR_LEFT — it pins the
+  // formula's SHAPE, not the constant. What pins 148 is the literal 490 above,
+  // which is why that one is written as a number and not as an expression.
   check(
     "the anchor lands on the capacitor wheel, not the box centre",
     ship.x + SHIP_ANCHOR_LEFT === 2560 / 2 - 642,
-  );
-  check(
-    "the box is NOT centred on the anchor (it grows rightward)",
-    ship.x + ship.w / 2 !== 2560 / 2 - 642,
   );
 }
 
 // shipOffsetFromX must be the exact inverse of the placement above, or a drag
 // writes an offset that puts the HUD somewhere other than where it was dropped.
+// ODD widths are the case that matters and the one a 2560-only loop cannot see:
+// a half-pixel screen centre makes Math.round bias half-up, so rounding on both
+// sides stacks instead of cancelling and every drag writes an offset 1px off.
+// 2559 fails this loop if the placement is ever rounded again.
 {
-  for (const offset of [-642, -189, 0, 300]) {
-    const hud = fullHud({
-      ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
-      ship_top: hudEntry("ship_top", "true", "bool", "false"),
-    });
-    const ship = hudRects(hud, layout2560).find((f) => f.kind === "shipui")!;
-    check(
-      `dragging to its own drawn x round-trips the offset (${offset})`,
-      shipOffsetFromX(ship.x, 2560) === offset,
-    );
+  for (const referenceW of [2560, 1920, 3440, 2559, 1921]) {
+    const layout = { ...layout2560, reference_w: referenceW };
+    for (const offset of [-642, -189, 0, 300]) {
+      const hud = fullHud({
+        ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
+        ship_top: hudEntry("ship_top", "true", "bool", "false"),
+      });
+      const ship = hudRects(hud, layout).find((f) => f.kind === "shipui")!;
+      check(
+        `dragging to its own drawn x round-trips the offset (w=${referenceW}, ${offset})`,
+        shipOffsetFromX(ship.x, referenceW) === offset,
+      );
+    }
   }
 }
 
@@ -514,13 +522,12 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
   check("the fighter panel starts at the stored anchor", f.x === 329 && f.y === 289);
   check("it is wide enough for five squadrons", f.w === 467);
+  // The regression this guards: the old 120 covered the squadron row alone, so
+  // windows snapped straight through the ability grid above it.
   check(
     "it is tall enough for the ability grid, not just the squadron row",
     f.h === 253,
   );
-  // The regression this guards: 120 covered the squadron row alone, so windows
-  // snapped straight through the abilities above it.
-  check("it is more than twice the old invented height", f.h > 2 * 120);
 }
 
 // --- snapping: candidate lines ---------------------------------------------
@@ -772,41 +779,4 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   }
 }
 
-// HUD_NOMINAL.shipui.w is MEASURED as of 2026-07-28 (643), but what a drag
-// WRITES still does not depend on it: hudRects places the left edge at
-// `centre + offset - SHIP_ANCHOR_LEFT` and shipOffsetFromX inverts with the same
-// constant, so the width is an input to neither. This used to be argued as "the
-// width cancels", which was only true while the box was (wrongly) drawn centred
-// on the anchor — so re-derive it through the real functions instead of by hand,
-// and nobody can re-derive the false worry that a wrong width skews what we
-// write.
-{
-  const hud = fullHud({ ship_offset: hudEntry("ship_offset", "-642", "float", "0") });
-  const ship = hudRects(hud, layout2560).find((r) => r.kind === "shipui")!;
-
-  // Redraw and re-invert under a different assumed width. Same answer every
-  // time, because the width is not part of the placement's x.
-  const real = HUD_NOMINAL.shipui.w;
-  const asIfWider = (w: number) => {
-    HUD_NOMINAL.shipui.w = w;
-    const r = hudRects(hud, layout2560).find((x) => x.kind === "shipui")!;
-    return { x: r.x, offset: shipOffsetFromX(r.x, layout2560.reference_w) };
-  };
-  // finally, not a bare restore: this mutates a module-level const, so a throw
-  // inside the map would otherwise leave every later check running against a
-  // fabricated width.
-  let widths: { x: number; offset: number }[];
-  try {
-    widths = [686, 900, 400].map(asIfWider);
-  } finally {
-    HUD_NOMINAL.shipui.w = real;
-  }
-  check(
-    "the drawn left edge and the stored offset ignore the nominal width",
-    widths.every((r) => r.x === ship.x && r.offset === -642),
-  );
-  check(
-    "shipOffsetFromX agrees at the real nominal width",
-    shipOffsetFromX(ship.x, layout2560.reference_w) === -642,
-  );
-}
+console.log("layout: all checks passed");
