@@ -13,8 +13,8 @@ use serde::Serialize;
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
 use crate::treewalk::{
-    child_dict, collect_shared, effective, hex, is_bytes, section, text, timestamped_dict, Entries,
-    SharedTable,
+    as_list, child_dict, collect_shared, effective, hex, is_bytes, section, text, timestamped_dict,
+    Entries, SharedTable,
 };
 
 /// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
@@ -389,7 +389,11 @@ fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<Stri
     let Some((_, v)) = ui.iter().find(|(k, _)| is_bytes(effective(k, sh), b"chatchannels")) else {
         return out;
     };
-    let Value::List(items) = effective(v, sh) else { return out };
+    // `as_list`, not a bare `Value::List` match: the section is `(timestamp,
+    // list)` in 281 of 281 corpus files that carry it, so matching only the bare
+    // shape returned an empty map for every real file and no chat window ever
+    // got a name. The bare form is still accepted — `as_list` takes both.
+    let Some(items) = as_list(v, sh) else { return out };
     for it in items {
         let Value::Tuple(parts) = effective(it, sh) else { continue };
         if parts.len() < 3 { continue }
@@ -983,6 +987,32 @@ mod tests {
                     Value::Str("corp_98835672".into()),
                     Value::Str("Corp".into()),
                 ])]),
+            )])),
+        ]);
+        let layout = window_layout(&doc, None);
+        let w = layout.windows.iter().find(|w| w.id == "chatchannel_corp").expect("the chat window");
+        assert_eq!(w.name.as_deref(), Some("Corp"));
+    }
+
+    #[test]
+    fn chatchannels_is_read_through_its_timestamp_wrapper() {
+        // EVERY real file wraps it: `chatchannels` is `(timestamp, list)` in
+        // 281 of 281 corpus files carrying the section, never a bare list. A
+        // bare-list-only read returns an empty map on every one of them, so the
+        // names never resolved at all — independent of which tuple element the
+        // join keys on, and invisible to a fixture that seeds a bare list.
+        let doc = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::Tuple(vec![
+                    Value::Long(vec![0u8; 8]),
+                    Value::List(vec![Value::Tuple(vec![
+                        bytes("corp"),
+                        Value::Str("corp_98835672".into()),
+                        Value::Str("Corp".into()),
+                    ])]),
+                ]),
             )])),
         ]);
         let layout = window_layout(&doc, None);
