@@ -8,6 +8,7 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::treewalk::inline_all;
+use crate::windows::{decode_id, BOOL_FLAGS};
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -101,13 +102,19 @@ pub fn delete_orphan_frames(v: &mut Value) -> Vec<String> {
     inline_all(v);
     let Ok(win) = windows_mut(v) else { return Vec::new() };
 
-    // Live ids: every member (key) and every container (value) in stacksWindows.
+    // Ids are decoded with the SAME function the projection enumerates windows
+    // with (`windows::decode_id`), not by matching `Value::Bytes` here. Real
+    // files store window-id keys as Bytes, Str or StrUcs2 interchangeably — a
+    // majority of `stacksWindows` keys in the corpus are Str — and matching only
+    // one variant would let a live container read as an orphan and be deleted.
+    // Sharing the decoder is what keeps this predicate and the projection's
+    // (which the UI's count comes from) from drifting apart.
     let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Some((_, sw)) = win.iter().find(|(k, _)| is_b(k, b"stacksWindows")) {
         if let Some(entries) = dict_of(sw) {
             for (k, val) in entries {
-                if let Value::Bytes(b) = k { live.insert(String::from_utf8_lossy(b).into_owned()); }
-                if let Value::Bytes(b) = val { live.insert(String::from_utf8_lossy(b).into_owned()); }
+                live.insert(decode_id(k));   // a member
+                live.insert(decode_id(val)); // its container
             }
         }
     }
@@ -118,8 +125,7 @@ pub fn delete_orphan_frames(v: &mut Value) -> Vec<String> {
     if let Some((_, g)) = win.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")) {
         if let Some(entries) = dict_of(g) {
             for (k, _) in entries {
-                let Value::Bytes(bytes) = k else { continue };
-                let id = String::from_utf8_lossy(bytes).into_owned();
+                let id = decode_id(k);
                 if !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()) && !live.contains(&id) {
                     orphans.push(id);
                 }
@@ -130,17 +136,19 @@ pub fn delete_orphan_frames(v: &mut Value) -> Vec<String> {
         return orphans;
     }
 
-    // Purge from geometry, the eight flag dicts, and both stack dicts. The
-    // presence check matters: child_inner CREATES a missing child, and a file
-    // that never had `lockedWindows` must not grow one from a delete.
-    let mut names: Vec<&[u8]> = vec![b"windowSizesAndPositions_1", b"stacksWindows", b"preferredIdxInStack3"];
-    names.extend(crate::windows::BOOL_FLAGS.iter().map(|n| n.as_bytes()));
+    // Purge from geometry, the eight flag dicts, and preferredIdxInStack3.
+    // `stacksWindows` is deliberately absent: `live` holds every key AND value
+    // of it, so an orphan can never appear there — purging it could only ever be
+    // a no-op. The presence check matters: child_inner CREATES a missing child,
+    // and a file that never had `lockedWindows` must not grow one from a delete.
+    let mut names: Vec<&[u8]> = vec![b"windowSizesAndPositions_1", b"preferredIdxInStack3"];
+    names.extend(BOOL_FLAGS.iter().map(|n| n.as_bytes()));
     for name in names {
         if !win.iter().any(|(k, _)| is_b(k, name)) {
             continue;
         }
         let d = child_inner(win, name);
-        d.retain(|(k, _)| !matches!(k, Value::Bytes(b) if orphans.iter().any(|o| o.as_bytes() == b.as_slice())));
+        d.retain(|(k, _)| !orphans.contains(&decode_id(k)));
     }
     orphans
 }
@@ -586,12 +594,55 @@ mod tests {
 
     #[test]
     fn delete_orphans_leaves_a_tree_that_still_encodes() {
-        // Same guarantee unstack_that_drops_a_shared_def_still_encodes gives:
-        // without inline-first, dropping a Shared def leaves a dangling Ref.
         let mut v = orphans_root();
         delete_orphan_frames(&mut v);
         let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
         assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    #[test]
+    fn delete_orphans_works_on_a_reshared_tree() {
+        // THE test for `inline_all`, and the reason it is not redundant.
+        //
+        // `reshare` dedupes every `Bytes` of length >= 2 — which is every window
+        // id — into `Shared`/`Ref`. A `Value::Bytes` match then sees none of
+        // them, so without the inline-first call this function finds zero
+        // orphans and silently deletes nothing, forever, on every real file:
+        // `edit_char_stacks` reshares the document after each edit, so even a
+        // file that arrived unshared is shared before the next delete.
+        //
+        // The plain `orphans_root()` fixture carries no sharing at all, so it
+        // cannot catch that; every other test here would stay green while the
+        // feature did nothing. Deleting `inline_all` must fail a test.
+        let plain = {
+            let mut v = orphans_root();
+            (delete_orphan_frames(&mut v), v)
+        };
+        let mut shared = blue_marshal::reshare(&orphans_root());
+        assert_ne!(shared, orphans_root(), "the fixture must actually gain sharing");
+
+        let deleted = delete_orphan_frames(&mut shared);
+        assert_eq!(deleted, vec!["43".to_string(), "51".to_string()]);
+        assert_eq!(deleted, plain.0, "sharing must not change which frames are orphans");
+        assert_eq!(shared, plain.1, "nor the tree the delete leaves behind");
+    }
+
+    #[test]
+    fn a_live_container_named_with_a_str_key_is_not_an_orphan() {
+        // Window-id keys are Bytes, Str or StrUcs2 interchangeably in real files
+        // (a majority of corpus `stacksWindows` keys are Str). Matching only
+        // Bytes made a live container read as an orphan, and deleting it strips
+        // the rect and flags out from under members still pointing at it.
+        let mut v = Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("70"), Value::Int(0)), (b("99"), Value::Int(0)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                // Member key and container value, both as Str rather than Bytes.
+                (Value::Str("70".into()), Value::Str("99".into())),
+            ])])),
+        ]))]);
+        assert_eq!(delete_orphan_frames(&mut v), Vec::<String>::new());
     }
 
     #[test]
