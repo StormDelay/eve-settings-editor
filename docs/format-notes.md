@@ -691,6 +691,64 @@ unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
 
+### Our pack export vs EVE's own
+
+Compared 2026-07-28 (live plan items 28, 29, 31), by exporting an account's
+overview through the editor, feeding that file to EVE's own Overview Settings
+importer, and exporting again from the client.
+
+- **EVE accepts our export.** The client imported it and the presets came back
+  by name. That is item 27.
+- **Tab order survives exactly** — all eight tabs, same order, both files
+  (item 31).
+- **`applyOnlyToShips` is in neither file.** It appears in no published pack
+  either, which confirms `overview_pack.rs`'s note that it is a pack name with
+  no key on current clients (item 29). Nothing to map it to.
+- **Neither export is a superset of the other**, so do not expect a byte match:
+  - *Formatting.* We write block style with quoted scalars (`-` on its own
+    line, `- 'ICON'`); EVE writes compact and bare (`- - background_13`,
+    `- ICON`). Identical content runs 1.5–2× the lines in ours, which is the
+    whole explanation for our `presets` section being 10,544 lines against
+    EVE's 5,645 — not lost data.
+  - *EVE materialises what the file leaves implicit.* Its export listed four
+    `flag_*` entries under `stateBlinks` that **are not in the account file at
+    all** (which holds two `background_*` and no flag entries). Ours emits only
+    what is stored.
+  - *EVE drops `userSettings` entirely* — it emitted `userSettings: []` where
+    ours carries the five booleans the file really holds
+    (`applyToStructures`, `applyToOtherObjects`, `useSmallColorTags`,
+    `useSmallText`, `overviewBroadcastsToTop`).
+
+  Note this cuts against the flag-surface rule below: EVE **keeps** `flag_*`
+  blinks but **discards** `flag_*` colours. Same key shape, different treatment.
+
+**EVE's own importer DELETES `tabsByWindowInstanceID`.** Account A carried the
+key through every offline staging (`baseline` … `staged-7`) and it was gone in
+the very next capture, taken after the session where a pack was fed to the
+client's own Overview Settings → Import. The account has held `tabsettings_new`
+with no window mapping ever since, and its overview still works in-game.
+
+Two consequences worth holding on to:
+
+- It explains why the pack format has no representation for the per-window tab
+  mapping — the client discards its own. Neither our export nor EVE's carries
+  the key (0 occurrences in both).
+- **The "windowless account" is not an exotic state.** `overview.rs::
+  window_groups` returns an empty vec for it and `add_overview_window` refuses
+  with `NoWindowMapping`, which reads like an edge case for corrupt files. It is
+  not: the client puts an account there itself, on an ordinary in-game pack
+  import. Any user who imports a pack through EVE and then opens our Overview
+  editor is in it.
+
+**Caveat on the comparison.** The two files are not a clean round-trip pair: a
+community pack was imported through the editor between our export and the
+client's, so a difference cannot be attributed to EVE's normalisation with
+certainty. The three points above are safe because each is a categorical
+difference (style, presence of a whole section, values absent from the file
+entirely) rather than a value that could have drifted. A strict round trip —
+export, import through EVE, export again, nothing in between — is still worth
+one session if the exact normalisation ever matters.
+
 ### A minted zero timestamp is safe
 
 Creating a container key from nothing means inventing its `(timestamp, payload)`
@@ -778,18 +836,24 @@ no `shipuialignleftoffset` at all. Minting one as `(Long(0), value)` — the
 zero-timestamp mint already proven by the overview-presets container — is what
 `hud.rs::set_hud_value` does.
 
-**Still unconfirmed (no in-game capture has been run for this slice).** The
-files store anchors but never sizes, and never state what an anchor is relative
-to. The editor currently assumes, and `app/src/lib/layout.ts` isolates, all of:
+**Both anchor conventions are now confirmed in-game** (2026-07-27/28) — see
+§"HUD anchors" above for the captures. Both guesses turned out right:
 
-- `shipuialignleftoffset` is **centre-relative**, positive to the right. Basis:
-  small negative values on clients of two different widths (1920 and 2560).
-- the two point tuples are **top-left corners** in absolute client pixels.
-  Counter-evidence worth resolving: one character reads `(1280, 660)` on a
-  2560×1440 client, where x is *exactly* half the screen width — which is what
-  a centre-anchored panel would look like.
-- nominal on-screen sizes, invented: ship HUD 686×250, fighter UI 400×120,
-  badge 32×32.
+- `shipuialignleftoffset` is **centre-relative**, positive to the right, and
+  anchors the HUD's own centre. The original basis (small negative values on
+  clients of two different widths) was sound.
+- the two point tuples are **top-left corners** in absolute client pixels. The
+  counter-evidence that worried this note — one character reading `(1280, 660)`
+  on a 2560×1440 client, x being exactly half the screen width — was a
+  coincidence, not a centre anchor.
+
+**Still invented: the nominal on-screen sizes** (ship HUD 686×250, fighter UI
+400×120, badge 32×32). Two live sessions could not measure them: the ship HUD
+has no hard edge to align against, and the fighter panel's extent changes with
+whether its ability grid is drawn. They are undersized — the racks and the
+ability grid are most of each element — which matters for edge snapping rather
+than for anything written to a file (the width cancels out of a drag). See the
+footprint task in `docs/small-tasks.md`.
 
 Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and

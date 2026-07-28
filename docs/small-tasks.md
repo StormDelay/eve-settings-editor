@@ -13,6 +13,20 @@ Workflow:
 
 ## Open
 
+- [ ] **A windowless account is a normal state, and the editor treats it as an
+  error.** Confirmed 2026-07-28: **EVE's own overview importer deletes
+  `tabsByWindowInstanceID`.** Account A carried the key through every offline
+  staging and lost it in the capture straight after a pack was imported through
+  the client's own Overview Settings; the account has had `tabsettings_new` with
+  no window mapping ever since, and its overview works in-game regardless. So
+  any user who imports a pack the normal way and then opens our Overview editor
+  is in this state. Today `overview.rs::window_groups` returns an empty vec and
+  `add_overview_window` refuses with `NoWindowMapping`, which is written as
+  though the file were damaged. Decide what the editor should do — most likely
+  rebuild a single-window mapping from the tabs that exist, since that is
+  evidently what the client does — and reword the refusal so it does not read as
+  corruption. _Added 2026-07-28._
+
 - [ ] **The HUD furniture must cover its real in-game footprint — module racks
   and fighter abilities included.** Both elements are drawn as bare boxes at
   invented `HUD_NOMINAL` sizes, and the sizes are what everything else is placed
@@ -279,7 +293,7 @@ Workflow:
   icon-path casing varies across catalog entries, faithfully reflecting the
   client's own data. _Added 2026-07-27._
 
-- [ ] **Run the settings-presets live in-game smoke.** Nothing in the feature
+- [x] **Run the settings-presets live in-game smoke.** Nothing in the feature
   has been verified against a running EVE client. From the spec's §12: (1)
   create a Layout-only preset from a real character, apply it to a *different*
   character, launch EVE, and confirm the windows land where the preset had
@@ -294,7 +308,7 @@ Workflow:
   and confirm EVE accepts the result (the slice-2b minting-from-nothing path);
   (5) export a preset, re-import it under a new name, and confirm the two
   behave identically; (6) confirm the per-column width field is editable with
-  a preset open. _Added 2026-07-27._
+  a preset open. _Added 2026-07-27._ _Done 2026-07-28 (live plan P1, P2, P4, P6, P7, P8 in Session A; P3 in Session B — an Everything preset poured onto EVE's own virgin files came up fully configured). P5 could not be run: nothing can mint an overview container from nothing, tracked separately above._
 
 - [ ] **Settings-presets follow-ups (deferred to the final whole-branch
   review, all ship-as-debt).** Preset library (`presets.rs`): (1)
@@ -365,14 +379,11 @@ Workflow:
   the merge.** The slice merged on a green CI and a clean whole-branch review, but
   nothing in it has been proven against a running client. Outstanding checks, in
   the order the reviews ranked them:
-  1. **The chat join is the one thing no test can settle.** `settings-field-reference.md`
-     documents `ui → chatchannels` as `List[Tuple(kind, channelKey, label)]` but never
-     states that a channel's window id is `chatchannel_<channelKey>` — that link was
-     inferred. If real ids carry a kind segment the stored key does not
-     (`chatchannel_private_<guid>` against a key of just `<guid>`), every chat window
-     silently keeps its derived name and the whole strand no-ops with no error
-     anywhere. Check a **named standing channel** (Local, an alliance channel) *and*
-     a **private conversation** — they may key differently.
+  1. ~~**The chat join is the one thing no test can settle.**~~ **DONE
+     2026-07-28** — the id is `chatchannel_` + the tuple's FIRST element, the same
+     shape for a named channel and a private conversation; written up in
+     `settings-field-reference.md`. Items 2-6 below are still open, and 4-6 need
+     no client at all.
   2. A stack the **editor** minted should still read `Window stack · N`: per
      `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
   3. The frame row's new label renders between the FRAME marker and the open
@@ -389,7 +400,7 @@ Workflow:
      another character's. Decide from real use whether to scope it to the open
      layout. _Added 2026-07-26._
 
-- [ ] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
+- [x] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
   ships empty, so the Keybinds view's Default column and per-row reset are
   disabled. Populating it: on a throwaway account open the in-game keybinding
   screen, choose Reset to default, log out, and read the table out of the
@@ -409,9 +420,9 @@ Workflow:
   was only coincidentally right. Note the write order: the editor saves on
   demand, EVE writes its settings on **logout**, so log the character out
   before saving or the client overwrites it on exit.
-  _Added 2026-07-26._
+  _Added 2026-07-26._ _Closed 2026-07-28: the method does not work and cannot be made to. "Reset to default" writes `customCmds: {}` — an EMPTY dict — because `customCmds` only ever holds overrides. There is nothing to read out of the resulting file. Superseded by the transcription task above. The three keybinding gates it also carried were run in Session A and passed._
 
-- [ ] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
+- [x] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
   `HUD_NOMINAL`'s sizes, the centre-relative ship offset and the top-left point
   convention in `app/src/lib/layout.ts` are all guesses, flagged as such in the code
   and the changelog. Scope item 5 of the names-and-noise spec (§8) planned to settle
@@ -421,7 +432,7 @@ Workflow:
   **together with its inverse** — `shipOffsetFromX` for the ship offset,
   `hudPointFromRect` for the fighter/badge point — and update the `layout.test.ts`
   round-trip cases that pin them. If they hold, delete the hedging from the
-  comments. _Added 2026-07-26._
+  comments. _Added 2026-07-26._ _Done 2026-07-27/28. Both conventions were RIGHT: the ship offset is centre-relative anchoring the HUD's own centre, and the point tuples are top-left corners in absolute screen px. The nominal SIZES are still invented — see the footprint task above._
 
 - [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
   Two non-blocking minors from the layout slice 1b branch, ruled deferred at
@@ -474,7 +485,7 @@ Workflow:
   (1), (2), (7), (8) and (9) remain open. _Added 2026-07-25; partially done
   2026-07-26 (layout names-and-noise)._
 
-- [ ] **Run the overview-pack live in-game smoke — deliberately skipped before
+- [x] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
   its live smoke; the user chose to come back to it. Nothing in the branch has been
   proven against a running client, so the checklist below is still entirely
@@ -495,7 +506,7 @@ Workflow:
   what tells you whether EVE round-trips what we wrote or quietly normalises it;
   and import a **tab-layout-only** pack (no `presets` section) to see what EVE does
   with tabs whose `overview`/`bracket` names the account has no preset for.
-  _Added 2026-07-26._
+  _Added 2026-07-26._ _Done 2026-07-27. Community pack imports and renders; EVE's own importer accepts our export; `applyOnlyToShips` has no key on current clients; EVE emits UNSUFFIXED state-list names. Two bugs found and fixed. Remaining pack questions are tracked as their own tasks above._
 
 - [ ] **Tab order inside a window is not expressible in a pack, so export → re-import
   resets it.** A window's tab order comes from the per-window list in
@@ -508,6 +519,7 @@ Workflow:
   could preserve the existing relative order of indices the window already had.
   Decide whether that asymmetry is worth the code. _Added 2026-07-26 (overview
   pack whole-branch review)._
+  **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
 - [ ] **Overview-pack follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the import/export packs branch: (1) `PackError::NotAPack`
