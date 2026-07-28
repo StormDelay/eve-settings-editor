@@ -13,6 +13,117 @@ Workflow:
 
 ## Open
 
+- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
+  columns.** The furniture boxes now cover the right area (2026-07-28) but are
+  still blank rectangles, and a blank rectangle does not tell a player what they
+  are positioning against — recognising the thing is half of why the footprint
+  mattered. The ship-HUD and fighter geometry needed for it is already measured
+  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
+  from the box origin with a ~158px ring, module slot rows starting at x 245 on
+  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
+  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
+  All offsets are from each element's own top-left, so they can be expressed as
+  percentages of the drawn box and rescale with the canvas for free. Overview
+  columns would need their own measuring pass — nothing is captured for them yet.
+  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
+  Split out of the HUD-footprint task, which shipped the sizing half.
+  _Added 2026-07-28._
+
+- [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
+  screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
+  file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
+  ever holds overrides — there is nothing to capture, and the design spec's
+  reset-to-default-logout plan is dead. Screenshot EVE's keybinding screen a
+  screenful at a time and transcribe `command -> [virtual-key codes]`.
+  **Keep the UI exactly as it is meanwhile**: `defaultFor` returns null per
+  command (`keybinds.ts`), so the Default cell and the per-row reset light up
+  for precisely the commands present and every other row is untouched — partial
+  data is the expected state, not a broken one. Use the in-game *labels* to map
+  rows back to command ids, and note the two traps found the same day:
+  `CmdPickPortrait0..3` are labelled "Pick Portrait 1..4" (ids 0-based, labels
+  1-based) and `ToggleCurrentSystemLocationWnd` is labelled "Local Locations".
+  Cross-check any ambiguous row by binding it in-game and reading which id moves
+  in `customCmds`. _Added 2026-07-27._
+
+- [ ] **Creating an `Everything` preset says nothing about what it captures.**
+  The privacy confirmation lives on *export* (`PresetGroup.svelte:96`: "carries
+  everything the editor does not model, including your autofill history —
+  station names, searches and typed text"), which is the right place to guard
+  sharing. But the capture happens at create time, and that is where the user
+  chooses `Everything` — with no indication that it snapshots typed history into
+  a folder they may later export, or hand over when someone asks for "your
+  layout preset". A one-line note next to the `Everything` option at create
+  time, not a blocking prompt: the export gate stays where it is. _Added
+  2026-07-27._
+
+- [ ] **Nothing can create an `overview` container from nothing.** A document
+  with no `overview` key — a pruned preset, or a genuinely fresh account — is a
+  dead end: `overview_tabs::overview_mut` requires the key and returns
+  `NoOverview`, and it is the only way in for both the tab editor and
+  `overview_pack::apply_pack` (pinned by
+  `applying_a_pack_to_a_file_with_no_overview_container_errors`). The only push
+  of `b"overview"` anywhere is `overview_tabs.rs:221`, a field *inside a tab
+  body*, not the container. `OverviewView.svelte:237` matches: zero tabs renders
+  a bare hint, with every control in the `{:else}`, so there is no affordance
+  because there is nothing behind one. This makes preset design spec §12.4's
+  "mint an overview preset from nothing" (live plan item P5) not implementable
+  as written — neither building nor importing works. Needs a decision on the
+  minimum container EVE accepts before it is code: `overview-states.json` has
+  the default state lists and orders, so the shape is derivable, but it is a
+  design call, not a bug fix. _Added 2026-07-27._
+
+- [ ] **Decide what the Layout aspect should mean, then make it carry that.**
+  `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
+  fields span three (`hud.rs:72–101`): `windows` has `shipuialignleftoffset` and
+  `neocomWidth`, `ui` has `fightersDetachedPosition` / `shipuialigntop` /
+  `detachFighterUI` / `displayFighterUI`, and `notifications` has
+  `notification_badge_offset`. So a Layout copy or preset moves the ship-HUD
+  offset and neocom width and leaves the fighter UI and badge behind — half
+  applied, which is more confusing than carrying none. Confirmed on live files:
+  after an A1 → A2 Layout copy, `shipuialignleftoffset` matched at `0.0` while
+  `fightersDetachedPosition` stayed at A2's own `(326, 54)` against A1's `(0, 0)`.
+  Presets share the key sets (`presets.rs:113`), so both surfaces are affected.
+
+  Either pull the other seven in, or split a HUD aspect out. Both change what a
+  batch apply writes to other characters' files, so this wants its own branch and
+  a live smoke — it is the only remaining live-session finding that is a
+  behaviour change rather than a correction. **The misleading half is already
+  fixed**: the aspect's label now names the ship HUD it carries and the fighter
+  panel and badge it does not (2026-07-28). _Added 2026-07-27._
+
+- [ ] **Colortag-surface colours are invisible to the editor.** The model reads
+  background colours only — `overview_states.rs::background_color_id` filters on
+  `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
+  surface`), so `appearance.colors` never holds a flag colour, and
+  `OverviewAppearanceTab.svelte:151` gates the swatch on `{#if isBg}` to match.
+  The Colortag sub-tab therefore offers a checkbox and a reorder grip but no
+  colour control at all. Real packs do set flag colours — `zs_full_v10.06.09`
+  sets `flag_48: black`, which is exactly the entry that produced the unknown-
+  colour warning — so importing a pack writes colours the user can then neither
+  see, review, nor undo. Needs the surface carried through the projection and
+  the swatch ungated. _Added 2026-07-27._
+
+- [ ] **The state colour swatch is a free colour picker, not EVE's palette.**
+  `OverviewAppearanceTab.svelte:154` is a bare `<input type="color">`, so any of
+  16.7M colours can be chosen, but EVE's palette is eight named colours and
+  `overview_pack.rs::color_name` matches floats **exactly** (correctly — a
+  near-miss would silently rewrite the user's colours). A colour picked off the
+  palette is therefore dropped from a pack export with no warning. Offer the
+  palette as swatches, with free-form as a labelled escape hatch that says the
+  colour will not survive an export. Blocked on the palette being complete —
+  `PALETTE` has 5 of the 8 names (missing `black`, `green`, `purple`), see the
+  live verification plan item 26b. _Added 2026-07-27._
+
+- [ ] **No way to reach a window that sits underneath another in the layout
+  view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
+  so anything fully covered is unreachable — you have to drag the top window away
+  and put it back. Worth investigating: alt/right-click to cycle the stack under
+  the cursor, a "select from list" affordance keyed off `WindowPanel`'s existing
+  window list, or hit-testing that skips the current selection so repeated clicks
+  descend. Note the real files carry hundreds of window entries with heavy
+  overlap (`format-notes.md`: one character had 381 windows, ~9 actually on
+  screen), so this is a common case, not an edge one. _Added 2026-07-27._
+
 - [ ] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the layout-depth milestone's final slice (the neocom
   button editor): (1) `reorder` reassembles the bar via `clone()` rather than a
@@ -35,7 +146,7 @@ Workflow:
   icon-path casing varies across catalog entries, faithfully reflecting the
   client's own data. _Added 2026-07-27._
 
-- [ ] **Run the settings-presets live in-game smoke.** Nothing in the feature
+- [x] **Run the settings-presets live in-game smoke.** Nothing in the feature
   has been verified against a running EVE client. From the spec's §12: (1)
   create a Layout-only preset from a real character, apply it to a *different*
   character, launch EVE, and confirm the windows land where the preset had
@@ -50,7 +161,7 @@ Workflow:
   and confirm EVE accepts the result (the slice-2b minting-from-nothing path);
   (5) export a preset, re-import it under a new name, and confirm the two
   behave identically; (6) confirm the per-column width field is editable with
-  a preset open. _Added 2026-07-27._
+  a preset open. _Added 2026-07-27._ _Done 2026-07-28 (live plan P1, P2, P4, P6, P7, P8 in Session A; P3 in Session B — an Everything preset poured onto EVE's own virgin files came up fully configured). P5 could not be run: nothing can mint an overview container from nothing, tracked separately above._
 
 - [ ] **Settings-presets follow-ups (deferred to the final whole-branch
   review, all ship-as-debt).** Preset library (`presets.rs`): (1)
@@ -121,14 +232,11 @@ Workflow:
   the merge.** The slice merged on a green CI and a clean whole-branch review, but
   nothing in it has been proven against a running client. Outstanding checks, in
   the order the reviews ranked them:
-  1. **The chat join is the one thing no test can settle.** `settings-field-reference.md`
-     documents `ui → chatchannels` as `List[Tuple(kind, channelKey, label)]` but never
-     states that a channel's window id is `chatchannel_<channelKey>` — that link was
-     inferred. If real ids carry a kind segment the stored key does not
-     (`chatchannel_private_<guid>` against a key of just `<guid>`), every chat window
-     silently keeps its derived name and the whole strand no-ops with no error
-     anywhere. Check a **named standing channel** (Local, an alliance channel) *and*
-     a **private conversation** — they may key differently.
+  1. ~~**The chat join is the one thing no test can settle.**~~ **DONE
+     2026-07-28** — the id is `chatchannel_` + the tuple's FIRST element, the same
+     shape for a named channel and a private conversation; written up in
+     `settings-field-reference.md`. Items 2-5 below are still open, and 4-5 need
+     no client at all.
   2. A stack the **editor** minted should still read `Window stack · N`: per
      `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
   3. The frame row's new label renders between the FRAME marker and the open
@@ -140,12 +248,36 @@ Workflow:
      `preferences.json.bad`. The copy-vs-rename fallback has **no CI coverage at
      all** — CI is Linux-only and the test that exercises it is `#[cfg(windows)]`.
   5. Two rapid override toggles on one window: the file must end up matching the UI.
-  6. `overrideCount()` counts overrides across every character, so the counter can
-     read "· 3 overridden" on a file none of them apply to, and `clear` would wipe
-     another character's. Decide from real use whether to scope it to the open
-     layout. _Added 2026-07-26._
+  6. ~~`overrideCount()` counts overrides across every character~~ — **done
+     2026-07-28**: the counter and its `clear` are scoped to the windows the open
+     document has, so the line beside "showing N of M windows" describes that
+     layout rather than every character's. The stored list stays application-wide
+     by design; only what is reported and cleared is narrowed.
 
-- [ ] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
+     **The guarantee is narrower than "another character's overrides are safe",**
+     and the first wording of this entry overclaimed it. Window ids are
+     per-character dict keys and the common ones (`overview`, `market`) repeat
+     across characters, so clearing from A still drops B's override on a window
+     they share. What it cannot do is remove an override for a window *this
+     document does not have*. Real isolation would mean keying the stored list by
+     character — a different and larger change, and arguably the wrong one, since
+     marking a window as clutter is a statement about the window.
+
+     Scoped to the document's windows rather than the drawn ones for stability:
+     a counter that moved while you typed in the filter box would be worse than
+     one that is slightly broad. (An earlier version of this note also argued a
+     drawn-set count "could never include a clutter override" — that only holds
+     while Hide clutter is on, so the stability argument carries the decision by
+     itself.)
+
+     **Known cost:** an override naming a window that no longer exists anywhere
+     is now never counted and never cleared, so the list is append-only in
+     practice. Harmless — `isClutter` only consults ids that are present — but
+     there is no longer a UI path to prune one. Worth a "forget overrides for
+     windows nothing has" action if `preferences.json` ever grows enough to
+     notice.
+
+- [x] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
   ships empty, so the Keybinds view's Default column and per-row reset are
   disabled. Populating it: on a throwaway account open the in-game keybinding
   screen, choose Reset to default, log out, and read the table out of the
@@ -165,9 +297,9 @@ Workflow:
   was only coincidentally right. Note the write order: the editor saves on
   demand, EVE writes its settings on **logout**, so log the character out
   before saving or the client overwrites it on exit.
-  _Added 2026-07-26._
+  _Added 2026-07-26._ _Closed 2026-07-28: the method does not work and cannot be made to. "Reset to default" writes `customCmds: {}` — an EMPTY dict — because `customCmds` only ever holds overrides. There is nothing to read out of the resulting file. Superseded by the transcription task above. The three keybinding gates it also carried were run in Session A and passed._
 
-- [ ] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
+- [x] **Confirm the HUD placement conventions v0.15.0 shipped as assumptions.**
   `HUD_NOMINAL`'s sizes, the centre-relative ship offset and the top-left point
   convention in `app/src/lib/layout.ts` are all guesses, flagged as such in the code
   and the changelog. Scope item 5 of the names-and-noise spec (§8) planned to settle
@@ -177,7 +309,7 @@ Workflow:
   **together with its inverse** — `shipOffsetFromX` for the ship offset,
   `hudPointFromRect` for the fighter/badge point — and update the `layout.test.ts`
   round-trip cases that pin them. If they hold, delete the hedging from the
-  comments. _Added 2026-07-26._
+  comments. _Added 2026-07-26._ _Done 2026-07-27/28. Both conventions were RIGHT: the ship offset is centre-relative anchoring the HUD's own centre, and the point tuples are top-left corners in absolute screen px. The nominal SIZES are still invented — see the footprint task above._
 
 - [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
   Two non-blocking minors from the layout slice 1b branch, ruled deferred at
@@ -230,7 +362,7 @@ Workflow:
   (1), (2), (7), (8) and (9) remain open. _Added 2026-07-25; partially done
   2026-07-26 (layout names-and-noise)._
 
-- [ ] **Run the overview-pack live in-game smoke — deliberately skipped before
+- [x] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
   its live smoke; the user chose to come back to it. Nothing in the branch has been
   proven against a running client, so the checklist below is still entirely
@@ -251,7 +383,7 @@ Workflow:
   what tells you whether EVE round-trips what we wrote or quietly normalises it;
   and import a **tab-layout-only** pack (no `presets` section) to see what EVE does
   with tabs whose `overview`/`bracket` names the account has no preset for.
-  _Added 2026-07-26._
+  _Added 2026-07-26._ _Done 2026-07-27. Community pack imports and renders; EVE's own importer accepts our export; `applyOnlyToShips` has no key on current clients; EVE emits UNSUFFIXED state-list names. Two bugs found and fixed. Remaining pack questions are tracked as their own tasks above._
 
 - [ ] **Tab order inside a window is not expressible in a pack, so export → re-import
   resets it.** A window's tab order comes from the per-window list in
@@ -264,6 +396,7 @@ Workflow:
   could preserve the existing relative order of indices the window already had.
   Decide whether that asymmetry is worth the code. _Added 2026-07-26 (overview
   pack whole-branch review)._
+  **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
 - [ ] **Overview-pack follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the import/export packs branch: (1) `PackError::NotAPack`
@@ -368,23 +501,6 @@ Workflow:
   member — then either auto-dissolve on the drag-out or leave this closed.
   _Added 2026-07-26 (layout stack polish)._
 
-- [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
-  numeric-string window id *only* to serve as a window-stack container (see
-  `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
-  stack is a dead frame whose members are all gone. A real live character file had
-  **8** of them (`43`, `51`, `63`, `82`, `156`, `181`, `219`, `221`), all flagged
-  open, each painting a phantom "Window stack" rectangle. Slice 1a *hides* them
-  when `Hide clutter` is on — this task is to actually **remove** them: a cleanup
-  action that deletes the id from `windowSizesAndPositions_1` and from every
-  window-id-keyed flag dict (`openWindows`, `minimizedWindows`,
-  `isLightBackgroundWindows`, `isOverlayedWindows`, `lockedWindows`,
-  `collapsedWindows`, `compactWindows`, `pinnedWindows`, `stacksWindows`,
-  `preferredIdxInStack3`). Structural, so it belongs in `windows.rs`/`stacks.rs`
-  with the usual inline-first-then-reshare discipline, and it needs a confirm step
-  plus a live smoke — deleting window state is not something to get wrong. Check
-  first whether EVE simply re-creates them, in which case it is not worth doing.
-  _Added 2026-07-26._
-
 - [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
   Today the only way to abandon edits is to open a different file and accept the
   discard prompt, then come back — or to quit. Add a button next to the
@@ -464,12 +580,12 @@ Workflow:
   when the account has no `tabsByWindowInstanceID` now adds it to `tabsettings_new`
   and leaves the window mapping to EVE's default (the tab shows, verified in-game);
   placing it in a SPECIFIC overview window needs the char-side window↔tab mapping,
-  deferred to the Phase B overview-window capture. (b) **Align
-  `reorder_tabs_in_window` / `move_tab` to the no-fabricate read pattern** —
-  `create_tab` and `delete_tab` now avoid materializing an empty
-  `tabsByWindowInstanceID` when it's absent (an empty/partial mapping can hide the
-  whole overview), but reorder/move still go through `groups_mut`, which fabricates
-  it. They're UI-unreachable on a windowless account today, but worth aligning. (c)
+  deferred to the Phase B overview-window capture.
+  (b) ~~Align `reorder_tabs_in_window` / `move_tab` to the no-fabricate read
+  pattern~~ — **done 2026-07-28**: both now refuse with `NoWindowMapping` before
+  reaching `groups_mut`, so a refused edit no longer leaves an empty mapping
+  behind.
+  (c)
   **Orphan-tab create placement:** creating a tab while an "Other" (orphan) tab is
   selected on an account that HAS windows lands the new tab in window 0 (via the
   `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
@@ -582,6 +698,217 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The keybinds "taken by" note overflows its row.** Ellipsised rather than
+  wrapped, with the full command name on the `title`. The combo column is a fixed
+  16rem in a `table-layout: fixed` table, so a growing row was the other option —
+  a keybinding table is scanned vertically, where uneven rows cost more than a
+  truncated note. Precisely: the note is an `inline-block` capped at the cell, so
+  it can never spill over the row beneath, but because the binding button holds
+  `min-width: 7rem` on the same line a long note can still drop to a second line
+  *inside* the cell rather than truncating on the first. Bounded at two lines,
+  not one — tightening further means a fixed `max-width` or making the cell a
+  flexbox, and the overlap this was raised for is gone either way.
+
+  Note `.meta` is shared by three spans in that file, including a searchbar
+  instruction with no `title` fallback; the constraint is scoped to `.combo .meta`
+  so the others keep wrapping. _Added 2026-07-27; done 2026-07-28._
+
+- [x] **Test fixtures encode bare container payloads, a shape EVE never writes.**
+  Half of this was already done and the entry did not know it: `overview_pack`'s
+  repair shipped, and its `user_doc()` fixture's bare `overviewColumnOrder` is now
+  *deliberate* — it is the input for `apply_pack_rewraps_a_bare_payload`, and
+  `apply_pack_wraps_every_list_section` records the same history the entry
+  describes. Wrapping that fixture would have deleted the only coverage of the
+  repair, so it was left alone.
+
+  The `overview_tabs` side is what remained. Its fixtures now build
+  `tabsettings_new` in the `(timestamp, dict)` shape every real file uses, which
+  unblocked the `rewrap` repair that was written during the live session and
+  backed out because those fixtures failed it. `tabs_mut` and `groups_mut` now
+  restore a missing wrapper the way `overview_pack::put` does — and leave an
+  existing timestamp alone, which has its own test, because resetting a real one
+  to zero would be a different kind of damage. _Added 2026-07-27; done
+  2026-07-28._
+
+- [x] **Every chat window is labelled just "Chat".** The entry read as a feature
+  request; it was **two** bugs in a feature that already shipped. The join it
+  asked for existed end to end — `windows.rs::chat_channel_names` reads
+  `ui → chatchannels`, `window_layout` assigns `WindowRect.name`, and
+  `windowLabels.ts::nameOf` already prefers it. `PARAM.chatchannel = "Chat"` is
+  the *fallback*, correct as one.
+
+  (1) The join keyed on the tuple's SECOND element while the window id is built
+  from the FIRST — for `player_*` rows those are the same string, so it looked
+  right and missed every standing channel. (2) More seriously, it matched a bare
+  `Value::List` while the section is `(timestamp, list)` in **281 of 281** corpus
+  files carrying it, so it returned an empty map on every real file. Fixing the
+  index alone changed nothing; both were needed. Now reads via
+  `treewalk::as_list`, which already existed for exactly this.
+
+  Measured across the corpus: **0 of 11,480 chat windows named before, 1,113
+  after** — Corp, Alliance, Local, Fleet, Militia and named private groups.
+  (`fleet`, `faction`, `incursion` and `system` rows were never sampled while
+  diagnosing this and all key correctly on element 0; every one of the 1,114 rows
+  across 281 files matched a window, with no duplicate keys to shadow each
+  other.) The ~70 stale windows per character are closed conversations the file
+  holds no name for; they keep the derived `Chat · <detail>` label, which is
+  right — thinning that list is what `Hide clutter` is for.
+
+  Neither bug was visible to the tests: the chat fixtures seeded a bare list AND
+  led with an `Int` key, so one of them could only pass while the code read the
+  wrong element. A fixture that shares the code's assumptions cannot falsify
+  them — the third instance of that shape in one day, after the column-wrapper
+  bug and the `inline_all` guard. So this closes with the thing the other two
+  didn't get: **`tests/chat_names_corpus.rs`**, a real-data gate in the style of
+  the nine already here. It runs on the committed synthetic corpus as well as the
+  real one, and `gen_fixtures.rs` has carried the correct wrapped element-0 shape
+  since that corpus was created — so the gate would have failed from day one on a
+  checkout with no `testdata/` at all. Verified to fail: reverting either defect
+  drops it to 0 named. _Added 2026-07-27; done 2026-07-28._
+
+- [x] **The neocom renders differently docked vs in space.** Settled in Session C
+  by photographing the same character docked and in space and diffing the two
+  bars pixel-for-pixel. **It is an addition, not a filter and not a reorder, and
+  nothing reflows.** In space two extra icons (drones and the scanner, by their
+  glyphs) appear in slots that sit *empty* while docked; every other icon is at
+  an identical y in both shots. Apart from those two bands, the clock digits and
+  the screen edge, the strips are byte-identical — 63 differing rows out of 1440.
+
+  So the editor's model is right and the panel is not "showing the docked bar":
+  `neocomButtonRawData` holds one fixed ordered list (12 instances on this
+  character), positions are fixed, and the client shows or hides
+  environment-specific buttons in place on top of it. Nothing in the file drives
+  it and nothing needs to. The earlier "different set/order in space" reading was
+  the additions appearing, not the stored list being reordered — so item 1's "the
+  bar order matches the editor's" is meaningful in **both** environments.
+  _Added 2026-07-27; done 2026-07-28._
+
+- [x] **Confirm the ship HUD's anchor at a second offset.** Done in Session C,
+  and it settled more than it set out to. The client wrote `-1052` after the drag
+  (410px left of the `-642` the first measurements used), and at that offset the
+  capacitor wheel's centre measures **228.0** against `2560/2 + (-1052) = 228`
+  — exact, on a wheel span of 50px matching the reference's 51. The anchor model
+  now holds at two offsets 410px apart.
+
+  **The inferred number is now measured.** The left-hand ship-control button
+  column moved by exactly the offset delta: its runs go `(490, 512)` → `(80,
+  102)`, i.e. −410 and −410. It travels with the HUD, so the 148px left extension
+  is a measurement rather than an assumption, and `HUD_NOMINAL` has no guessed
+  numbers left except the badge.
+
+  **And the bottom margin was wrong.** The bottom-aligned shot (the flag flipped
+  in the same session) shows the element's rack block is 127px tall either way,
+  sitting 4px into the element, at y 32 top-aligned and y 1272 bottom-aligned —
+  so bottom-aligned the element runs 1268..1428 and the gap below is **12px, not
+  the 28 the code mirrored from the top margin**. The element is not vertically
+  symmetric. Corrected with its own `SHIP_BOTTOM_MARGIN`; the old guess drew the
+  box 16px high, which is the snap-line bug this whole task exists to fix, just
+  on the other edge. _Added 2026-07-28; done 2026-07-28._
+
+- [x] **The HUD furniture must cover its real in-game footprint — module racks
+  and fighter abilities included.** Measured off three native screenshots
+  2026-07-28 and corrected. The ship HUD was wrong in a way the entry did not
+  anticipate: not merely mis-sized but mis-*anchored*. The stored offset centres
+  the capacitor wheel (measured 638.5 against 638 predicted), and the element
+  extends 148px left of it and 495px right — so the old box, centred on the
+  anchor, sat 195px too far left and missed 152px of module rack. Now 643×160
+  from `anchor-148`, with `shipOffsetFromX` corrected as its exact inverse and a
+  round-trip test pinning the pair. The fighter panel keeps its (already correct)
+  anchor and grows from 400×120 to 467×253 — the old height covered the squadron
+  row alone, so windows snapped straight through the ability grid above it. Both
+  boxes now COVER their contents; actually drawing the racks and the ability grid
+  inside them was left out — the internal geometry (slot pitch, grid pitch, ring
+  diameter) is recorded in `docs/format-notes.md` § "HUD anchors" for whenever a
+  drawing layer wants it. One assumption remains unverified: that the
+  left-hand ship-control button column moves with the HUD rather than being
+  screen-anchored — both shots share one offset, so they cannot separate the two.
+  _Added 2026-07-28; done 2026-07-28._
+
+- [x] **A windowless account is a normal state, and the editor treats it as an
+  error.** Reworded throughout, and given a way out that does not lie. The
+  entry's suggested fix — rebuild a single-window mapping "since that is
+  evidently what the client does" — was not taken, because it over-reads the
+  evidence: Session B proved the client *deletes* the mapping and keeps working,
+  not that it rebuilds one. An absent mapping means EVE distributes tabs across
+  its char-side windows, which this crate cannot read, so fabricating one pins
+  every tab into a single window and silently flattens a multi-window overview.
+  Instead `create_window_mapping` writes a COMPLETE mapping (every tab, ascending
+  index) and is reachable only from an explicit "Set up per-window tabs" action
+  behind a confirm that says what it replaces. `NoWindowMapping` now describes a
+  configuration rather than a fault, and `reorder_tabs_in_window` / `move_tab` no
+  longer fabricate an empty mapping on a refused edit — which was item (b) of the
+  windowless/no-fabricate follow-ups entry, closed with this. _Added 2026-07-28;
+  done 2026-07-28._
+
+- [x] **`tabsettings2` exists and the editor has never read it.** Resolved by a
+  corpus scan rather than an in-game test, and the read order stands unchanged.
+  Scanned all **174 distinct account files** (2,897 copies deduped by content);
+  130 carry at least one tab key, 72 carry `tabsettings2`. Two facts settle it:
+  `tabsettings2` is **never the only tab key** (0 of 130), so the editor never
+  shows an empty tab list where it holds one; and on **every** file carrying
+  `tabsettings_new` — the key the current client actually rewrites —
+  `tabsettings2` is older, with no exceptions. The entry's worry that "one corpus
+  account carries the newest timestamp of all three" does not survive: the 11
+  files where `tabsettings2` is newest carry **no `tabsettings_new` at all**. They
+  are pre-Photon backups (`settings_Default - before photon mandatory`, one
+  `- old`), where `tabsettings2` was written ~0.08s after `tabsettings` in the
+  same save. So "stale relative to the authoritative key" holds everywhere it
+  matters. The reasoning is recorded in `settings-field-reference.md` §5.2 with
+  one honest caveat: on such a pre-Photon backup the editor reads `tabsettings`
+  while that era's client may have read `tabsettings2` (their contents differ —
+  `tabsettings2` is roughly twice the size with different presets and columns).
+  Untestable and unreachable in practice: no current client reads those files.
+  _Added 2026-07-27; done 2026-07-28._
+
+- [x] **The overview filter list is slow.** Categories now render their checkbox
+  rows only while open, and the filter box is debounced 150ms. The entry's count
+  was wrong in a way that mattered: the tab rendered **649** rows across 15
+  categories, not 1,605 — `all_group_ids` (1,605) is the ESI sync list, not the
+  rendered tree. 400 of the 649 sit in `Entity` alone, which is why "render only
+  what is open" was the right lever: a collapsed tab now costs zero rows, and
+  only someone who deliberately opens `Entity` pays for 400. Of the three costs
+  listed, (1) was misattributed — `filterCatalog` over 649 strings is
+  microseconds; the cost on that keystroke was the force-expand — and (3)
+  (`presetGroupSet` rebuilds) was never worth touching. (2), the round trip per
+  tick, is unavoidable but now re-evaluates only rendered rows. Virtualisation
+  stayed unneeded. _Added 2026-07-27; done 2026-07-28._
+
+- [x] **Offer to delete orphaned stack frames from the file.** `delete_orphan_frames`
+  in `stacks.rs` removes every numeric-string id that is neither a stack member
+  nor a container, from `windowSizesAndPositions_1`, all eight `BOOL_FLAGS`
+  dicts, `stacksWindows` and `preferredIdxInStack3` — one action rather than the
+  5-6 hand-deletions each frame needs. The window panel offers it whenever the
+  open file carries any, behind a confirm that names the count. Safe because the
+  client was verified not to re-create them (2026-07-28: two frames deleted from
+  a real file survived a full login/logout). The backend re-derives the orphan
+  set rather than trusting an id list over IPC. _Added 2026-07-26 and 2026-07-28
+  (two entries, one task); done 2026-07-28._
+
+- [x] **Nothing marks which settings folder EVE actually uses.** The diagnosis in
+  this entry was wrong: the marker existed (`primaryProfileDir` pinned a profile
+  on top and opened it) and it was pointing at the wrong folder. Ranking on the
+  newest mtime *across any file* — which is what this entry asked for — is the
+  bug, because the editor's own saves move it: staging four edits into
+  ` - USE THIS ONE` through this editor is what promoted a weeks-stale backup to
+  the top. `primaryProfileDir` now ranks on the anonymous `core_char__.dat` /
+  `core_user__.dat` / `core_public__.yaml` files, which only EVE writes (11
+  editor-only captures touched none; all 4 post-client captures touched three),
+  falling back to any file when no profile carries one. The sidebar says "in use
+  by EVE" and marks every other folder "not in use — EVE has not written here" in
+  warning colour. _Added 2026-07-28; done 2026-07-28._
+- [x] **The open character file is missing from the batch target list when the
+  source is a preset.** `candidates` now excludes the source only when the source
+  is a character (`batchSource?.kind === "character"`) rather than filtering on
+  the `sourcePath` seeded from `openPath`, so switching to a preset source no
+  longer outlives its reason. Decided deliberately, per this entry's note: the
+  open file *is* a legal target — the item below warns about it instead of hiding
+  it. _Added 2026-07-27; done 2026-07-28._
+- [x] **A batch apply onto the open file warns too late.** The plan summary warns
+  whenever an effective target is the open document, regardless of dirty state —
+  the on-screen copy goes stale either way, and that needs no dirty-tracking
+  plumbing. The save-time on-disk check stays as the backstop; this just moves the
+  news to the point of decision. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Add a search/filter to the window list in the Layout editor.** Shipped by
   layout slice 1a as a filter box plus `Open only` and `Hide chat & session

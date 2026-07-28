@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
-  import { windowMatches, NO_FILTER, type WindowFilter } from "$lib/layout";
+  import { windowMatches, isOrphanFrame, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
 
   let {
@@ -18,6 +18,7 @@
     onReorder,
     onAddToStack,
     onCreateStack,
+    onDeleteOrphans,
     overrides,
     onClutterOverride,
     filter = $bindable({ ...NO_FILTER }),
@@ -36,6 +37,7 @@
     onReorder: (container: string, members: string[]) => void;
     onAddToStack: (member: string, container: string) => void;
     onCreateStack: (m1: string, m2: string) => void;
+    onDeleteOrphans: () => void;
     /** The user's per-window clutter overrides — owned by prefs.svelte, passed
      * down so this stays a presentational component like every other prop
      * it takes. */
@@ -55,6 +57,10 @@
     filterInput?.focus();
     filterInput?.select();
   };
+
+  // Counted from the same predicate the filter uses, so the offer can never
+  // name a number the `Hide clutter` toggle disagrees with.
+  const orphanCount = $derived(windows.filter(isOrphanFrame).length);
 
   // Right-click opens a menu. This replaces the M2-era direct tree jump — the
   // TODO that shipped with the layout canvas.
@@ -323,6 +329,15 @@
       Hide clutter
     </label>
   </div>
+  {#if orphanCount > 0 && !readOnly}
+    <div class="orphans">
+      <span>
+        {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
+        rectangle with nothing in it.
+      </span>
+      <button type="button" onclick={onDeleteOrphans}>Delete them</button>
+    </div>
+  {/if}
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
     {@const matched = matchingMembers(stack)}
@@ -448,6 +463,18 @@
     background: var(--bg-panel);
     color: var(--fg);
   }
+  .orphans {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.35rem 0.4rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.85em;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--fg-dim);
+  }
+  .orphans button { flex: none; }
   .filters {
     display: grid;
     gap: 0.25rem;

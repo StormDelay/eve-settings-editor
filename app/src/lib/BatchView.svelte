@@ -67,7 +67,7 @@
 
   // Aspects. "Everything" is exclusive.
   const ASPECTS: { key: Aspect; label: string; account: boolean }[] = [
-    { key: "layout", label: "Window layout (positions, neocom buttons)", account: false },
+    { key: "layout", label: "Window layout (positions, neocom, ship HUD — not the fighter panel or badge)", account: false },
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
     { key: "keybinds", label: "Keybindings", account: true },
@@ -96,7 +96,11 @@
   let allowOtherFolders = $state(false);
   const candidates = $derived(
     chars
-      .filter((c) => c.path !== sourcePath)
+      // A character cannot be its own copy target — but ONLY when it is the
+      // source. `sourcePath` is seeded from the open file and never cleared on
+      // switching to a preset source, so filtering on it directly kept the open
+      // character out of the list for the rest of the session.
+      .filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path))
       .filter((c) => allowOtherFolders || c.dir === folder)
       .slice()
       .sort((a, b) =>
@@ -138,6 +142,12 @@
       return c ? !targetDisabled(c.id) : false;
     }),
   );
+
+  // Applying onto the open document writes behind it: the in-memory copy goes
+  // stale and the only thing that notices is the save-time on-disk check, two
+  // steps later. Warn at the point of decision instead. Dirty state doesn't
+  // matter — the on-screen copy is out of date either way.
+  const targetsOpenFile = $derived(openPath !== null && effectiveTargets.includes(openPath));
 
   function selectAllTargets() {
     const next = new Set(selectedTargets);
@@ -294,6 +304,11 @@
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
             <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
           {/each}
+          {#if targetsOpenFile}
+            <p class="warn">⚠ One target is the file open in the editor. Its on-screen
+              copy will be out of date after this runs — reload it before editing
+              further, or your next save will collide with what this wrote.</p>
+          {/if}
           {#each plan.account_writes as w}
             <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}

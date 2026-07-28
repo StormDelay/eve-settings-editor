@@ -18,8 +18,8 @@ use settings_model::{
     Document, FileKind, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
-    unstack, add_to_stack, reorder_stack, create_stack, StackError,
-    create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
+    unstack, add_to_stack, reorder_stack, create_stack, delete_orphan_frames, StackError,
+    create_tab, create_window_mapping, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
@@ -963,6 +963,12 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
     edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
 }
 
+/// Give the account an explicit tab-to-window mapping. User slot only: window
+/// 0's char-side geometry key already exists on any account with an overview.
+pub fn overview_create_window_mapping(state: &AppState) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| create_window_mapping(v).map(|_| ()))
+}
+
 pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
     edit_user_tabs(state, |v| create_preset(v, &from, &new_name))
 }
@@ -1248,6 +1254,11 @@ pub fn stack_reorder(state: &AppState, container: &str, members: Vec<String>) ->
 pub fn stack_create(state: &AppState, member1: &str, member2: &str) -> Result<WindowLayout, ErrDto> {
     // create_stack returns the id; discard it here (the re-projection carries it).
     edit_char_stacks(state, |v| create_stack(v, member1, member2).map(|_| ()))
+}
+pub fn stack_delete_orphans(state: &AppState) -> Result<WindowLayout, ErrDto> {
+    // Returns the ids it removed; the re-projection is what the UI reads, so
+    // they are discarded here. Deleting nothing is a success, not an error.
+    edit_char_stacks(state, |v| { delete_orphan_frames(v); Ok(()) })
 }
 
 /// Project the CHAR slot's neocom bar.
@@ -1701,6 +1712,38 @@ mod tests {
         assert_eq!(cols.tabs.len(), 2, "no tabs deleted");
     }
 
+    fn windowless_user_bytes() -> Vec<u8> {
+        use blue_marshal::{encode, Value};
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::StrUcs2("Default".into())),
+            (bb("overview"), bb("P")),
+        ]);
+        encode(&Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+        ]))])).unwrap()
+    }
+
+    #[test]
+    fn creating_a_window_mapping_projects_one_window_holding_every_tab() {
+        let path = temp_file("ov-windowless", &windowless_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        // Before: the account projects no windows at all.
+        assert!(overview_columns(&state).unwrap().windows.is_empty());
+
+        let cols = overview_create_window_mapping(&state).unwrap();
+        assert_eq!(cols.windows.len(), 1);
+        assert_eq!(cols.windows[0].tab_indices, vec![0]);
+
+        // Doc still encodes/decodes (reshare ran without corrupting the tree).
+        let guard = state.user.lock().unwrap();
+        let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
+    }
+
     fn autofill_user_bytes() -> Vec<u8> {
         // root -> b"ui" -> b"editHistory" -> (ts, { "/a/box": ["Jita", "Amarr"] })
         let hist = Value::Dict(vec![(
@@ -2001,6 +2044,48 @@ mod tests {
         let guard = state.char.lock().unwrap();
         let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
         assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
+    }
+
+    fn orphaned_char_bytes() -> Vec<u8> {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        fn geom(x: i64) -> Value { Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)]) }
+        // Live stack C(m1, m2) plus one orphan frame "43".
+        encode(&Value::Dict(vec![(bb("windows"), Value::Dict(vec![
+            (bb("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (bb("m1"), geom(0)), (bb("m2"), geom(0)), (bb("C"), geom(0)), (bb("43"), geom(0)),
+            ])])),
+            (bb("openWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (bb("m1"), Value::Bool(true)), (bb("43"), Value::Bool(true)),
+            ])])),
+            (bb("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![(bb("m1"), bb("C")), (bb("m2"), bb("C"))])])),
+        ]))])).unwrap()
+    }
+
+    #[test]
+    fn delete_orphans_reprojects_and_reshares() {
+        let path = temp_file("stack-orphans", &orphaned_char_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+
+        let wl = stack_delete_orphans(&state).unwrap();
+        // The orphan is gone from the projection; the live stack is untouched.
+        assert!(!wl.windows.iter().any(|w| w.id == "43"));
+        assert_eq!(wl.stacks.len(), 1);
+        assert_eq!(wl.stacks[0].members, vec!["m1".to_string(), "m2".to_string()]);
+        // Doc still encodes/decodes (reshare ran without corrupting the tree).
+        let guard = state.char.lock().unwrap();
+        let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
+    }
+
+    #[test]
+    fn delete_orphans_on_a_clean_file_is_a_no_op_not_an_error() {
+        let path = temp_file("stack-noorphans", &stacked_char_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+        let wl = stack_delete_orphans(&state).unwrap();
+        assert_eq!(wl.stacks.len(), 1);
     }
 
     #[test]

@@ -6,7 +6,14 @@ const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: $
 
 check("resolves a client-provided label", labelFor("CmdActivateHighPowerSlot1") === "Activate High Power Slot 1");
 check("resolves a fleet broadcast label", labelFor("CmdFleetBroadcast_HealArmor") === "Broadcast: Need Armor");
-check("hand-corrected label is used", labelFor("ToggleCurrentSystemLocationWnd") === "Toggle Current System Location Window");
+// Hand-corrected labels: these two are NOT in EVE's localization data, so
+// gen-command-names.py de-camelcases them and both guesses were wrong. Checked
+// against the live client 2026-07-27 — "Local Locations" is confirmed by
+// binding (the account file has it on Ctrl+L, the only Ctrl+L row in-game), and
+// the portrait ids are 0-based where the client's labels are 1-based.
+check("hand-corrected label is used", labelFor("ToggleCurrentSystemLocationWnd") === "Local Locations");
+check("portrait labels are 1-based, not 0-based", labelFor("CmdPickPortrait0") === "Pick Portrait 1");
+check("the last portrait is 4", labelFor("CmdPickPortrait3") === "Pick Portrait 4");
 check("an unknown command de-camelcases", labelFor("CmdSomeFutureThing") === "Some Future Thing");
 check("an unknown Open command de-camelcases", labelFor("OpenFutureWindow") === "Open Future Window");
 

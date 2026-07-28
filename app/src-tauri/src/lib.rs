@@ -200,6 +200,10 @@ fn overview_window_remove(state: tauri::State<'_, AppState>, window_idx: usize) 
     ops::overview_window_remove(&state, window_idx)
 }
 #[tauri::command]
+fn overview_create_window_mapping(state: tauri::State<'_, AppState>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_create_window_mapping(&state)
+}
+#[tauri::command]
 fn preset_create(state: tauri::State<'_, AppState>, from: String, new_name: String) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::preset_create(&state, from, new_name)
 }
@@ -300,6 +304,10 @@ fn stack_reorder(state: tauri::State<'_, AppState>, container: String, members: 
 #[tauri::command]
 fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: String) -> Result<settings_model::WindowLayout, ErrDto> {
     ops::stack_create(&state, &member1, &member2)
+}
+#[tauri::command]
+fn stack_delete_orphans(state: tauri::State<'_, AppState>) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_delete_orphans(&state)
 }
 
 #[tauri::command]
@@ -463,7 +471,7 @@ pub fn run() {
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
-            overview_window_add, overview_window_remove,
+            overview_window_add, overview_window_remove, overview_create_window_mapping,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
             pack_preview, pack_import, pack_export,
@@ -472,7 +480,7 @@ pub fn run() {
             setup_preview, setup_apply,
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
-            stack_unstack, stack_add, stack_reorder, stack_create,
+            stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset,
             hud_layout, set_hud_value,
             preferences, set_preferences

@@ -5,10 +5,23 @@ DO NOT RE-RUN BLINDLY — the committed JSON is HAND-CORRECTED. 84 of the 101
 known commands resolve to EVE's own in-game strings via the SharedCache
 localization pickle (FullPath "UI/Commands" and
 "UI/Fleet/FleetBroadcast/Commands"); the remaining 17 fall back to a
-de-camelcased name, two of which read badly and were fixed by hand:
-  CmdPickPortrait0..3            -> "Pick Portrait 0".."Pick Portrait 3"
-  ToggleCurrentSystemLocationWnd -> "Toggle Current System Location Window"
-Re-verify those after regenerating.
+de-camelcased name. Two were hand-corrected against the live client on
+2026-07-27 and BOTH earlier guesses were wrong — restore these after any
+regeneration:
+  CmdPickPortrait0..3            -> "Pick Portrait 1".."Pick Portrait 4"
+      The ids are 0-based and the client's labels are 1-based. Four commands,
+      four in-game entries, so the mapping is one-to-one. The de-camelcased
+      guess ("Pick Portrait 0".."Pick Portrait 3") was off by one throughout.
+  ToggleCurrentSystemLocationWnd -> "Local Locations"
+      Confirmed by binding, not by eye: the account file binds it to
+      `[17, 76]` = Ctrl+L, and "Local Locations" is the only Ctrl+L entry on
+      the client's keybinding screen.
+Still unresolved: OpenAgencyNew falls back to "Open Agency New", while the
+client shows three entries for "agency" — "The Agency" twice and "The Agency -
+Encounter Surveillance System". All three were unbound, so there is no binding
+to disambiguate by. Needs a capture where one of them is bound.
+Re-verify the other 14 fallbacks the same way: bind the command in-game, log
+out, and read which label moved.
 
 Groups come from the command-name prefix families (see
 docs/settings-field-reference.md §5.3); they are ours, not CCP's.

@@ -35,7 +35,40 @@
       .catch(() => (catalog = mergeCatalog(b, [])));
   });
 
+  // What the box shows, and what the list actually filters on. They are separate
+  // because applying a query expands every category it matches, and doing that
+  // per keystroke re-renders the whole expanded set while the user is still
+  // typing. 150ms is below the threshold where a pause feels like lag.
+  let typedFilter = $state("");
   let groupFilter = $state("");
+  $effect(() => {
+    const next = typedFilter;
+    const t = setTimeout(() => (groupFilter = next), 150);
+    return () => clearTimeout(t);
+  });
+  // Which categories are expanded. A `<details>` hides its children but Svelte
+  // still builds every one and tracks it reactively, so 649 checkboxes stayed
+  // live at all times — and each backend round trip behind a tick re-evaluated
+  // all of them. Rows are rendered only while their category is open.
+  //
+  // Unset means "follow the filter": a query expands its matches, which is what
+  // makes filtering useful. Once the user toggles a category by hand that choice
+  // sticks, so a deliberately-collapsed Entity (400 rows) stays collapsed even
+  // while a broad query matches it.
+  //
+  // Only a DIVERGENCE from the filter's default is recorded, and that subtlety
+  // is load-bearing: assigning `details.open` fires `toggle` exactly as a click
+  // does, so `open={isOpen(...)}` echoes back through the handler. Storing that
+  // echo would let a query's auto-expand pin its categories open for good, and
+  // clearing the box would then render 450 rows (Entity + Ship) under an empty
+  // filter — the very cost this exists to avoid, on the ordinary type-then-clear
+  // flow, since any one-letter query matches Entity.
+  let openCats = $state<Record<number, boolean>>({});
+  const isOpen = (id: number) => openCats[id] ?? !!groupFilter.trim();
+  function noteToggle(id: number, open: boolean) {
+    if (open === !!groupFilter.trim()) delete openCats[id];
+    else openCats[id] = open;
+  }
   // A default profile that isn't (yet) stored on the account resolves its
   // contents from the bundled snapshot instead — that's what lets a clean
   // account edit a built-in's groups before any fork exists.
@@ -190,7 +223,7 @@
       <div class="preset-contents">
         <div class="contents-head">
           <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
-          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={groupFilter} />
+          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={typedFilter} />
         </div>
 
         <h4 class="section-heading">Types Shown</h4>
@@ -205,17 +238,22 @@
         {/if}
 
         {#each visibleCategories as cat (cat.id)}
-          <details class="group-cat" open={!!groupFilter.trim()}>
+          <details
+            class="group-cat"
+            open={isOpen(cat.id)}
+            ontoggle={(e) => noteToggle(cat.id, (e.currentTarget as HTMLDetailsElement).open)}>
             <summary>{cat.name}</summary>
-            <div class="group-grid">
-              {#each cat.groups as g (g.id)}
-                <label class="group-item">
-                  <input type="checkbox" checked={presetGroupSet.has(g.id)}
-                         onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
-                  {g.name}
-                </label>
-              {/each}
-            </div>
+            {#if isOpen(cat.id)}
+              <div class="group-grid">
+                {#each cat.groups as g (g.id)}
+                  <label class="group-item">
+                    <input type="checkbox" checked={presetGroupSet.has(g.id)}
+                           onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
+                    {g.name}
+                  </label>
+                {/each}
+              </div>
+            {/if}
           </details>
         {/each}
 

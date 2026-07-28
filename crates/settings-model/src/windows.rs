@@ -13,13 +13,13 @@ use serde::Serialize;
 use crate::mutate::NewValue;
 use crate::path::{NodePath, Step};
 use crate::treewalk::{
-    child_dict, collect_shared, effective, hex, is_bytes, section, text, timestamped_dict, Entries,
-    SharedTable,
+    as_list, child_dict, collect_shared, effective, hex, is_bytes, section, text, timestamped_dict,
+    Entries, SharedTable,
 };
 
 /// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
-const BOOL_FLAGS: [&str; 8] = [
+pub(crate) const BOOL_FLAGS: [&str; 8] = [
     "openWindows",
     "collapsedWindows",
     "minimizedWindows",
@@ -288,7 +288,12 @@ pub fn window_layout(root: &Value, user: Option<&Value>) -> WindowLayout {
     WindowLayout { reference_w, reference_h, windows, stacks }
 }
 
-fn decode_id(key: &Value) -> String {
+/// A window-id dict key as a plain string. Real files use `Bytes`, `Str` and
+/// `StrUcs2` interchangeably for these, so every reader must normalise all three
+/// or the same window reads as two different ids. Shared with `stacks.rs`, whose
+/// orphan-frame delete has to agree with this projection exactly — the UI counts
+/// orphans from what this produces and the delete acts on the tree.
+pub(crate) fn decode_id(key: &Value) -> String {
     match key {
         Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
         Value::Str(s) | Value::StrUcs2(s) => s.clone(),
@@ -365,20 +370,32 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
         .unwrap_or((0, 0))
 }
 
-/// `ui → chatchannels` is `List[Tuple(kind, channelKey, label)]` (367 of 384
-/// corpus files). Returns channelKey → label; the window id for a channel is
-/// `chatchannel_<channelKey>`. An absent section is normal, not an error.
+/// `ui → chatchannels` is `(timestamp, List[Tuple(key, fullChannelId, label)])`.
+/// Returns key → label; a channel's window id is `chatchannel_<key>`, the FIRST
+/// element — confirmed in-game 2026-07-28.
+///
+/// Two traps, both of which shipped here and named nothing on any real file
+/// while four unit tests passed. Keying on the SECOND element looks right
+/// because `player_*` rows repeat the same string in both, and silently misses
+/// every standing channel (`corp`, `alliance`, `local`, `fleet`, `faction`),
+/// whose second element is the fully-qualified `corp_98835672` form. And the
+/// wrapper is not optional in practice — matching a bare `List` returns an empty
+/// map for every real file.
+///
+/// `tests/chat_names_corpus.rs` is the guard; it counts names off the corpus, so
+/// the counts live there and cannot rot in a comment. An absent section is
+/// normal, not an error.
 fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some((ui, _)) = section(root, b"ui", sh) else { return out };
     let Some((_, v)) = ui.iter().find(|(k, _)| is_bytes(effective(k, sh), b"chatchannels")) else {
         return out;
     };
-    let Value::List(items) = effective(v, sh) else { return out };
+    let Some(items) = as_list(v, sh) else { return out };
     for it in items {
         let Value::Tuple(parts) = effective(it, sh) else { continue };
         if parts.len() < 3 { continue }
-        if let (Some(key), Some(label)) = (text(&parts[1], sh), text(&parts[2], sh)) {
+        if let (Some(key), Some(label)) = (text(&parts[0], sh), text(&parts[2], sh)) {
             if !key.is_empty() && !label.is_empty() {
                 out.insert(key, label);
             }
@@ -929,14 +946,21 @@ mod tests {
 
     #[test]
     fn a_chat_window_takes_its_real_channel_name() {
-        // ui → chatchannels is List[Tuple(kind, channelKey, label)]; the
-        // channelKey is the window id's suffix after "chatchannel_".
+        // ui → chatchannels is List[Tuple(key, fullChannelId, label)]; the
+        // window id's suffix after "chatchannel_" is the FIRST element. This
+        // fixture used to lead with Value::Int(1), modelling the tuple as
+        // (kind, channelKey, label) — a shape the corpus does not contain; every
+        // one of the 281 real files carrying the section stores the key itself
+        // there, as Bytes. Leading with an Int made the test pass only while the
+        // code read the second element, i.e. it asserted the bug.
         let root = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("chatchannel_local", 10, 20, 300, 200)])),
             (bytes("ui"), Value::Dict(vec![(
                 bytes("chatchannels"),
                 Value::List(vec![Value::Tuple(vec![
-                    Value::Int(1), bytes("local"), bytes("Local"),
+                    bytes("local"),
+                    Value::Str("local_30000142".into()),
+                    Value::Str("Local".into()),
                 ])]),
             )])),
         ]);
@@ -946,12 +970,68 @@ mod tests {
     }
 
     #[test]
+    fn an_unwrapped_chatchannels_list_is_still_read() {
+        // The BARE shape — no `(timestamp, …)` wrapper. It occurs in 0 of 281
+        // corpus files, so this is purely a don't-get-stricter guard: `as_list`
+        // takes both, and a file written by some older build must keep opening.
+        // The wrapped case, which is what every real file uses, is the test
+        // below; between them they pin both arms of the unwrap.
+        //
+        // Keyed on the FIRST element throughout: ("corp", "corp_98835672",
+        // "Corp"), window id `chatchannel_corp`.
+        let doc = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::List(vec![Value::Tuple(vec![
+                    bytes("corp"),
+                    Value::Str("corp_98835672".into()),
+                    Value::Str("Corp".into()),
+                ])]),
+            )])),
+        ]);
+        let layout = window_layout(&doc, None);
+        let w = layout.windows.iter().find(|w| w.id == "chatchannel_corp").expect("the chat window");
+        assert_eq!(w.name.as_deref(), Some("Corp"));
+    }
+
+    #[test]
+    fn chatchannels_is_read_through_its_timestamp_wrapper() {
+        // EVERY real file wraps it: `chatchannels` is `(timestamp, list)` in
+        // 281 of 281 corpus files carrying the section, never a bare list. A
+        // bare-list-only read returns an empty map on every one of them, so the
+        // names never resolved at all — independent of which tuple element the
+        // join keys on, and invisible to a fixture that seeds a bare list.
+        let doc = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::Tuple(vec![
+                    Value::Long(vec![0u8; 8]),
+                    Value::List(vec![Value::Tuple(vec![
+                        bytes("corp"),
+                        Value::Str("corp_98835672".into()),
+                        Value::Str("Corp".into()),
+                    ])]),
+                ]),
+            )])),
+        ]);
+        let layout = window_layout(&doc, None);
+        let w = layout.windows.iter().find(|w| w.id == "chatchannel_corp").expect("the chat window");
+        assert_eq!(w.name.as_deref(), Some("Corp"));
+    }
+
+    #[test]
     fn a_window_with_no_entry_gets_no_name() {
         let root = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("market", 0, 0, 100, 100)])),
             (bytes("ui"), Value::Dict(vec![(
                 bytes("chatchannels"),
-                Value::List(vec![Value::Tuple(vec![Value::Int(1), bytes("local"), bytes("Local")])]),
+                Value::List(vec![Value::Tuple(vec![
+                    bytes("local"),
+                    Value::Str("local_30000142".into()),
+                    Value::Str("Local".into()),
+                ])]),
             )])),
         ]);
         let layout = window_layout(&root, None);

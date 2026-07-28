@@ -67,6 +67,29 @@
     if (!data || data.windows.length === 0) return;
     pending = { kind: "addWindow", value: "Overview" };
   }
+  // A windowless account is normal: EVE's own overview importer deletes the
+  // tab-to-window mapping, so anyone who has imported a pack lands here. Writing
+  // one REPLACES the client's default distribution and pins every tab into a
+  // single window, so it is offered rather than done — and the confirm says so.
+  async function setUpWindowMapping() {
+    if (!data || data.windows.length > 0) return;
+    const n = data.tabs.length;
+    const ok = await confirm(
+      `Put all ${n} tab${n === 1 ? "" : "s"} in one overview window?\n\n` +
+        `This account currently lets EVE decide which of your overview windows each tab ` +
+        `appears in. Setting this up replaces that with an explicit list, so every tab ` +
+        `starts in one window and you arrange them from there.\n\n` +
+        `The editor can't undo this — it can't remove the last overview window. If you ` +
+        `save and change your mind, importing an overview pack through the client removes ` +
+        `the list again.`,
+      { title: "Set up per-window tabs", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      data = await api.overviewCreateWindowMapping();
+      onUserDirty();
+    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
   async function submitPending() {
     if (!pending) return;
     const p = pending;
@@ -288,6 +311,16 @@
           <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
         {/if}
       </div>
+      {#if data.windows.length === 0}
+        <div class="no-windows">
+          <span>
+            Tabs aren't assigned to specific overview windows on this account — EVE spreads them
+            across your windows itself. That's normal: importing an overview pack through the
+            client removes the assignment.
+          </span>
+          <button onclick={setUpWindowMapping}>Set up per-window tabs</button>
+        </div>
+      {/if}
       {#if pending}
         <div class="name-entry">
           <input type="text" bind:value={pending.value} use:focusInput
@@ -374,6 +407,18 @@
   .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
   .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
   .name-entry input { flex: 1; max-width: 16rem; }
+  .no-windows {
+    flex-basis: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.35rem 0.4rem;
+    font-size: 0.85em;
+    color: var(--fg-dim);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .no-windows button { flex: none; }
   button.danger { border-color: #a33; }
   /* Dark native controls: the app runs in a dark WebView2; give selects, their
      options, and inputs explicit dark colors (see the dark-native-controls memo). */

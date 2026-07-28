@@ -247,9 +247,57 @@ test("changing the source clears the aspects and targets already picked", async 
   expect(stillTicked).toEqual([]);
 });
 
+test("warns when a target is the file currently open", async () => {
+  // 90000001 is the open document. Point the source elsewhere so it becomes a
+  // selectable target, then select it: the apply would write behind the copy on
+  // screen, and until now nothing said so until the save-time on-disk check
+  // caught the divergence two steps later.
+  await mount();
+  await fireEvent.change(document.querySelector("#src") as HTMLSelectElement, {
+    target: { value: `${DIR}/core_char_90000002.dat` },
+  });
+  await fireEvent.click(targetBox(90000001));
+  await fireEvent.click(aspect("Window layout"));
+
+  expect(await screen.findByText(/open in the editor/i)).toBeTruthy();
+
+  // And it is about the open file specifically, not about any target.
+  await fireEvent.click(targetBox(90000001));
+  await fireEvent.click(targetBox(90000003));
+  await waitFor(() => expect(screen.queryByText(/open in the editor/i)).toBeNull());
+});
+
 test("no write is ever sent on mount", async () => {
   await mount();
   calls.never("setup_apply");
+});
+
+test("with a preset as the source, the open character is still a target", async () => {
+  // 90000001 is the open document, so it seeds sourcePath on mount and is
+  // rightly kept out of its own target list. Switching the source to a preset
+  // never cleared sourcePath, so the exclusion outlived its reason and the
+  // character you have open could not be written to for the rest of the session.
+  calls.stub("settings_preset_list", [
+    {
+      name: "Layout only",
+      dir: `${DIR}/presets/Layout only`,
+      char_path: `${DIR}/presets/Layout only/core_char.dat`,
+      user_path: `${DIR}/presets/Layout only/core_user.dat`,
+      modified_unix: 0,
+      aspects: ["layout"],
+      full: false,
+      error: null,
+    },
+  ]);
+  await mount();
+  expect(() => targetRow(90000001)).toThrow(); // as a character source, excluded
+
+  await fireEvent.click(screen.getByRole("radio", { name: /a preset/i }));
+  await fireEvent.change(document.querySelector("#srcpreset") as HTMLSelectElement, {
+    target: { value: `${DIR}/presets/Layout only` },
+  });
+
+  await waitFor(() => expect(targetRow(90000001)).toBeTruthy());
 });
 
 test("a preset source offers only what it holds and sends dir verbatim", async () => {

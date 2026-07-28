@@ -31,10 +31,18 @@ export function groupFor(command: string): string {
   return NAMES[command]?.group ?? "Misc";
 }
 
-/** EVE's factory binding, or null. The catalog ships EMPTY: no factory defaults
- *  exist anywhere in the settings files, and an account that never opened the
- *  keybinding screen has no table at all, so they must be captured from a
- *  reset-to-default logout. Spec §4. */
+/** EVE's factory binding, or null. The catalog ships EMPTY, and **cannot be
+ *  filled from a settings file** — confirmed in-game 2026-07-27: "Reset to
+ *  default" writes `customCmds: {}`, an *empty* dict. `customCmds` only ever
+ *  holds overrides, so a reset erases the table rather than spelling out the
+ *  defaults, and there is nothing to capture. (The design spec's §4 plan of
+ *  capturing them from a reset-to-default logout is therefore dead — do not
+ *  retry it.)
+ *
+ *  Fill this by transcribing EVE's keybinding screen instead. Partial data is
+ *  fine and is the expected way in: this returns null per command, so each
+ *  entry added lights up its own Default cell and per-row reset button while
+ *  every other row is unaffected. */
 export function defaultFor(command: string): number[] | null {
   return DEFAULTS[command] ?? null;
 }

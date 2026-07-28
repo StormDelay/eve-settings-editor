@@ -691,7 +691,175 @@ unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
 
-### HUD anchors (corpus-derived; the placement conventions are NOT yet confirmed in-game)
+**Deleted frames stay deleted.** Verified 2026-07-28: two orphaned stack frames
+(`43`, `51`) were removed from a real character file, the client was run through
+a full login/logout, and neither came back — while six untouched controls in the
+same file sat still. So an orphan frame is safe to delete outright; the client
+neither restores it nor treats its absence as damage.
+
+### Our pack export vs EVE's own
+
+Compared 2026-07-28 (live plan items 28, 29, 31), by exporting an account's
+overview through the editor, feeding that file to EVE's own Overview Settings
+importer, and exporting again from the client.
+
+- **EVE accepts our export.** The client imported it and the presets came back
+  by name. That is item 27.
+- **Tab order survives exactly** — all eight tabs, same order, both files
+  (item 31).
+- **`applyOnlyToShips` is in neither file.** It appears in no published pack
+  either, which confirms `overview_pack.rs`'s note that it is a pack name with
+  no key on current clients (item 29). Nothing to map it to.
+- **Neither export is a superset of the other**, so do not expect a byte match:
+  - *Formatting.* We write block style with quoted scalars (`-` on its own
+    line, `- 'ICON'`); EVE writes compact and bare (`- - background_13`,
+    `- ICON`). Identical content runs 1.5–2× the lines in ours, which is the
+    whole explanation for our `presets` section being 10,544 lines against
+    EVE's 5,645 — not lost data.
+  - *EVE materialises what the file leaves implicit.* Its export listed four
+    `flag_*` entries under `stateBlinks` that **are not in the account file at
+    all** (which holds two `background_*` and no flag entries). Ours emits only
+    what is stored.
+  - *EVE drops `userSettings` entirely* — it emitted `userSettings: []` where
+    ours carries the five booleans the file really holds
+    (`applyToStructures`, `applyToOtherObjects`, `useSmallColorTags`,
+    `useSmallText`, `overviewBroadcastsToTop`).
+
+  Note this cuts against the flag-surface rule below: EVE **keeps** `flag_*`
+  blinks but **discards** `flag_*` colours. Same key shape, different treatment.
+
+**EVE's own importer DELETES `tabsByWindowInstanceID`.** Account A carried the
+key through every offline staging (`baseline` … `staged-7`) and it was gone in
+the very next capture, taken after the session where a pack was fed to the
+client's own Overview Settings → Import. The account has held `tabsettings_new`
+with no window mapping ever since, and its overview still works in-game.
+
+Two consequences worth holding on to:
+
+- It explains why the pack format has no representation for the per-window tab
+  mapping — the client discards its own. Neither our export nor EVE's carries
+  the key (0 occurrences in both).
+- **The "windowless account" is not an exotic state.** The client puts an account
+  there itself, on an ordinary in-game pack import, so any user who imports a
+  pack through EVE and then opens our Overview editor is in it.
+  `overview.rs::window_groups` returns an empty vec, and `add_overview_window`
+  refuses with `NoWindowMapping` — which used to read like an edge case for
+  corrupt files, and was reworded on 2026-07-28 to describe a configuration
+  instead. See "`tabsByWindowInstanceID` shape on real accounts" below for the
+  rule that governs writing the key back.
+
+**Caveat on the comparison.** The two files are not a clean round-trip pair: a
+community pack was imported through the editor between our export and the
+client's, so a difference cannot be attributed to EVE's normalisation with
+certainty. The three points above are safe because each is a categorical
+difference (style, presence of a whole section, values absent from the file
+entirely) rather than a value that could have drifted. A strict round trip —
+export, import through EVE, export again, nothing in between — is still worth
+one session if the exact normalisation ever matters.
+
+### A minted zero timestamp is safe
+
+Creating a container key from nothing means inventing its `(timestamp, payload)`
+wrapper, and every such path in this codebase mints `Value::Long(vec![0u8; 8])`
+— a zero where every EVE-written key holds a real FILETIME (`134295…`).
+**Confirmed harmless in-game 2026-07-27**: account B went into the client with
+`tabsettings_new` and `tabsByWindowInstanceID` both at `0L`, and the client read
+them, used them, and stamped its own timestamps on the way out
+(`134296537985022289L`, `134296538635206714L`). The zero is never seen again.
+
+The same capture also shows **EVE tolerates and preserves empty overview
+windows**: account B's `tabsByWindowInstanceID` was `[[0,1,2,3,4],[],[],[]]`
+after a 5-tab pack landed on a 4-window account, and came back from the client
+unchanged rather than pruned.
+
+### HUD anchors
+
+**Placement conventions confirmed in-game 2026-07-27** (A1, 2560×1440, UI scale
+1.0), by the two-point capture in the live verification plan §4: write a known
+value, observe where the client draws it, drag it somewhere else, read the value
+back. One reading cannot separate an origin from a sign; two can.
+
+- **`shipuialignleftoffset` is centre-relative, and negative is leftward.**
+  Written `0.0`, the ship HUD rendered *dead centre* horizontally — which also
+  rules out a left-edge origin, since that would have put `0` against the
+  neocom. Dragged left, the client wrote back **`-642.0`**. Because `0` centres
+  it, the offset moves a **centre**, not the left edge: on a 2560 screen,
+  `-642.0` puts that point at 638. A1's pre-existing `-189.0` reads as "189px
+  left of centre". *Which* centre was settled by measurement on 2026-07-28 — it
+  is the capacitor wheel's, not the element's; see below.
+- **`fightersDetachedPosition` is the panel's top-left, in absolute screen
+  pixels, origin at the screen's top-left.** Settled 2026-07-28 by writing
+  `(839, 497)` — 497 being the exact top edge of that character's D-Scan window
+  — and photographing the two together: the fighter panel's ability grid drew
+  level with D-Scan's top, and the client wrote the pair back unchanged.
+  An earlier capture seemed to show y displaced by ~234px. It was wrong twice
+  over, and both traps are worth knowing for any future anchor work here: the
+  drag it came from was into a **corner, which clamps**, and the fighter panel's
+  *visible* extent changes with whether the fighter-ability grid is drawn — with
+  no fighters up, only the squad row shows, and that row sits ~150px below the
+  panel's anchor. The anchor is where the ability grid starts whether or not it
+  is drawn, which is what makes it stable. Measure against a known reference on
+  screen, never against a corner.
+- **`notification_badge_offset` was not captured** — it was never dragged, so it
+  is still the client's own `(2519, 131)`. On a 2560-wide screen that is 41px
+  from the right edge, which is consistent with a plain top-left-origin absolute
+  screen coordinate, but that is an inference from one untouched value, not a
+  capture. Still open.
+
+**`shipuialignleftoffset` anchors the capacitor wheel, not the element's box.**
+Measured 2026-07-28 from three native 2560×1440 screenshots (Storm Delay,
+profile `g_eve_shared_cache_sharedcache_tq_tranquility`, file written after the
+shots so the anchors match the pixels; `shipuialignleftoffset = -642.0`).
+
+Isolating the capacitor wheel by colour put its centre at **x = 638.5**, against
+`2560/2 + (-642) = 638` from the file. The element is strongly **asymmetric**
+about that point: it extends **148px left** and **495px right**, spanning
+490..1133 with the widest (8-slot) module row.
+
+Two shots of the same character at the same offset, flying a battleship and a
+frigate, share a pixel-identical left edge (490) and differ only on the right
+(1133 vs 896) — the racks grow rightward from a fixed left edge. This is also why
+the 2026-07-27 experiment saw offset 0.0 draw the HUD "dead centre": what centres
+is the capacitor, not the box.
+
+Vertical extent, top-aligned: **y 28..187** (height 160).
+
+**Confirmed at a second offset, and the margins are asymmetric (Session C,
+2026-07-28).** Dragging the HUD made the client write `-1052`, 410px left of the
+`-642` above. At that offset the capacitor wheel's centre measures **228.0**
+against `2560/2 + (-1052) = 228` — exact. The left-hand ship-control button
+column moved by exactly the same delta (`(490,512)` → `(80,102)`), so it belongs
+to the HUD and the 148px left extension is measured, not inferred.
+
+The same session captured the HUD **bottom-aligned** (`shipuialigntop` false) for
+the first time. The module rack block is 127px tall in both alignments and sits
+4px into the element, at y 32 top-aligned and y 1272 bottom-aligned — so
+bottom-aligned the element runs **1268..1428** and the gap below it is **12px**,
+not the 28 above. The element is NOT vertically symmetric, and mirroring the top
+margin (which the editor did until this was captured) drew the box 16px high.
+
+**`fightersDetachedPosition` is the panel's left edge and the ability grid's top**
+— confirmed again 2026-07-28: stored `(329, 289)` against a measured left edge of
+≈333 and a grid top of 289. With 4 squadrons (3 launched) the panel spans
+**381×253**; column pitch is **86**, shared by the ability grid and the squadron
+row, so the 5-squadron carrier maximum is **467** wide. Height is independent of
+squadron count.
+
+**Internal geometry of both elements**, measured the same day and recorded for a
+future drawing layer (the editor draws plain rectangles today). All offsets are
+from the element's own top-left corner:
+
+| Element | Part | Offset from box origin | Pitch | Count |
+|---|---|---|---|---|
+| Ship HUD | capacitor wheel centre | x 148 (= the anchor), y ~74 | — | 1 |
+| Ship HUD | capacitor ring outer | spans x 73..231 (⌀ ~158) | — | 1 |
+| Ship HUD | module slot rows | first slot x 245, row tops y ~2 / ~50 / ~94 | x 50, y ~46 | 8 × 3 max |
+| Fighter | ability grid | x 70, y 0 | 86 | 5 × 3 max |
+| Fighter | squadron row | x 43, y ~178 | 86 | 5 max |
+
+Slot and squadron pitch are stable across both ship shots, so a rack's width is
+`245 + 50 × slots` from the box origin — which is how the 8-slot maximum gives
+the 643 total width.
 
 Where EVE stores the screen furniture the layout canvas draws — the ship HUD
 (capacitor plus module racks), the detached fighter UI, the neocom and the
@@ -732,18 +900,25 @@ no `shipuialignleftoffset` at all. Minting one as `(Long(0), value)` — the
 zero-timestamp mint already proven by the overview-presets container — is what
 `hud.rs::set_hud_value` does.
 
-**Still unconfirmed (no in-game capture has been run for this slice).** The
-files store anchors but never sizes, and never state what an anchor is relative
-to. The editor currently assumes, and `app/src/lib/layout.ts` isolates, all of:
+**Both anchor conventions are now confirmed in-game** (2026-07-27/28) — see
+§"HUD anchors" above for the captures. Both guesses turned out right:
 
-- `shipuialignleftoffset` is **centre-relative**, positive to the right. Basis:
-  small negative values on clients of two different widths (1920 and 2560).
-- the two point tuples are **top-left corners** in absolute client pixels.
-  Counter-evidence worth resolving: one character reads `(1280, 660)` on a
-  2560×1440 client, where x is *exactly* half the screen width — which is what
-  a centre-anchored panel would look like.
-- nominal on-screen sizes, invented: ship HUD 686×250, fighter UI 400×120,
-  badge 32×32.
+- `shipuialignleftoffset` is **centre-relative**, positive to the right, and
+  anchors the **capacitor wheel's** centre — not the element's own, which the
+  2026-07-28 measurement above separated. The original basis (small negative
+  values on clients of two different widths) was sound.
+- the two point tuples are **top-left corners** in absolute client pixels. The
+  counter-evidence that worried this note — one character reading `(1280, 660)`
+  on a 2560×1440 client, x being exactly half the screen width — was a
+  coincidence, not a centre anchor.
+
+**The on-screen sizes are measured** as of 2026-07-28 (ship HUD 643×160, fighter
+UI 467×253) — see the footprint measurements above. Two live sessions had failed
+to: the ship HUD has no hard edge to align against, and the fighter panel's
+extent changes with whether its ability grid is drawn; the screenshots settled
+both. The old invented values (686×250 and 400×120) were undersized *and*, for
+the ship HUD, mis-anchored. **The badge's 32×32 is still invented** — it was
+never dragged and never measured.
 
 Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
@@ -881,6 +1056,14 @@ All remembered text-input history in the client is **one structure**, in
 
 ### `tabsByWindowInstanceID` shape on real accounts (overview pack review, 2026-07-26)
 
+**Anything that writes this key must write a COMPLETE mapping** — one that omits
+a tab hides that tab in game, and one that omits every tab hides the whole
+overview. That is why `create_window_mapping` refuses (rather than skipping) a
+tab whose key it cannot read, and why no other path may create the key at all:
+an absent mapping is a normal state, so a *partial* one is strictly worse than
+none. EVE's own overview importer deletes the key outright — evidence and
+capture under "Our pack export vs EVE's own" above (confirmed 2026-07-28).
+
 Measured across the full 1925-account corpus while fixing a pack-import bug
 (a re-import that re-pointed this mapping was duplicating a tab index across
 two windows): of 1925 corpus accounts, **825 carry a `tabsByWindowInstanceID`
@@ -998,9 +1181,9 @@ question the capture would have.
   (account-side — see "HUD anchors" above): the *bar* is per character, its
   *width* is per account.
 - **Class:** always `utillib.KeyVal` — 43,430/43,430, no other class observed.
-- **Keyset:** exactly `btnType, children, iconPath, id` on every instance,
-  43,430/43,430, with no variation at all. Authoring one is a fixed four-key
-  dict.
+- **Keyset:** on the *live bar*, exactly `btnType, children, iconPath, id` on
+  every instance, 43,430/43,430, with no variation at all. Authoring one is a
+  fixed four-key dict. **This does not hold for `Original` — see below.**
 - **`btnType`** takes four values, and each is an attribute of *what the
   button is*, not a user setting: `10` occurs exactly once per file and always
   on `chat`; `21` only on `airCareerProgram`; `4` on the inventory family
@@ -1019,8 +1202,25 @@ question the capture would have.
   None)` rather than plain `Bytes`. Rare, real, and it has to be tolerated on
   read and preserved on write — rewriting it would be a guess about what the
   client meant.
-- **`neocomButtonRawDataOriginal`** is the same instance shape, wrapped in a
-  `Tuple` of 8–14 entries rather than a `List`.
+- **`neocomButtonRawDataOriginal`** is wrapped in a `Tuple` of 8–14 entries
+  rather than a `List`, and — contrary to what this note used to say — is *not*
+  the same instance shape. **Its buttons carry no `iconPath` key at all:**
+  1226 of 1226 `Original` buttons across the 102 files that have one, against
+  0 of 1126 live-bar buttons in the same files. `Original` is a three-key dict,
+  the live bar a four-key one. The 43,430/43,430 keyset figure above was
+  measured on live bars and never held for `Original`.
+
+  This matters because the two shapes meet in the editor. `read_button` maps an
+  absent `iconPath` to `""` (`neocom.rs:102`), and `addableButtons` lets an
+  `Original` entry overwrite the catalog's (`neocom.ts:39`, deliberately — it
+  came from the character's own client), so adding a button offered from
+  `Original` writes a four-key instance whose `iconPath` is the empty string.
+  **An absent key and an empty string are not the same thing**, and the empty
+  string is a shape no client has been observed to write. Whether EVE treats it
+  as a literal path (blank icon) or as falsy (falls back by id) is a live
+  question — see the live verification plan §4, Phase 2, step 2.
+  `reset()` is unaffected: it copies `Original`'s raw values verbatim
+  (`neocom.rs:260`), writing genuine three-key buttons.
 
 **`Original` is a stale snapshot, not a catalog.** Only **495** of the
 ~4,061 files carrying the key have a live bar that is a subset of their own

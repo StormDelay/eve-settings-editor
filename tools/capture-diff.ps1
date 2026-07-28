@@ -23,7 +23,12 @@ param(
     [string]$Against,
     # Compare two labels that were already snapshotted, without taking a new
     # one — for re-reading a capture later, or diffing two historical labels.
-    [switch]$NoSnapshot
+    [switch]$NoSnapshot,
+    # Which settings folders to snapshot; see sync-corpus.ps1. Exact
+    # `settings_Default` keeps hand-made backups kept beside the live folder out
+    # of the capture — they diff as dozens of added files and decode for
+    # minutes, burying the one file the capture is about.
+    [string]$Settings = "settings_Default"
 )
 $ErrorActionPreference = "Stop"
 
@@ -70,7 +75,7 @@ cargo build -q -p blue-marshal --bin bmdump
 $bmdump = Join-Path $repo "target\debug\bmdump.exe"
 if (-not (Test-Path $bmdump)) { throw "bmdump did not build at $bmdump" }
 
-if (-not $NoSnapshot) { & (Join-Path $PSScriptRoot "sync-corpus.ps1") -Label $Label | Write-Host }
+if (-not $NoSnapshot) { & (Join-Path $PSScriptRoot "sync-corpus.ps1") -Label $Label -Settings $Settings | Write-Host }
 $newSnap = Find-Snapshot $Label
 if (-not $newSnap) { throw "no snapshot labelled '$Label' under $corpus" }
 if (-not $Against) { Write-Host "snapshot only; pass -Against <label> to diff"; return }
