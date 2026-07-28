@@ -256,7 +256,29 @@ fn write_scalar(n: &Node) -> String {
 /// near-miss would silently change the user's colours. Every name below
 /// mapped to exactly one RGBA across all contributing corpus files — no
 /// conflicts to resolve.
-pub(crate) const PALETTE: [(&str, [f64; 4]); 5] = [
+/// `black` was added on 2026-07-28 from a targeted live capture rather than
+/// from the corpus join above, because the join could never have produced it:
+/// no account here had ever imported a pack that names it, and the one
+/// published pack that does (Z-S) puts it on `flag_48` — and **EVE's own
+/// importer discards flag-surface colours outright**, so feeding Z-S through
+/// the client left no trace of it at all.
+///
+/// The capture that worked: a probe pack (`tools/derive-packs.py`) moving the
+/// name onto a background state, imported through EVE's own Overview Settings,
+/// after which the client had written
+/// `stateColors[("background", 66)] = (0.0, 0.0, 0.0, 1.0)`. That is the client
+/// deriving the RGBA from the name, which is the same evidence the corpus join
+/// provides. It independently matches the pixel-sampled `#000000` recorded for
+/// state 66 in `overview-states.json`.
+///
+/// Still missing: `green` and `purple`. `overview-states.json`'s notes put the
+/// full palette at eight names and give both as sampled hex (`#199919`,
+/// `#9926e5`), but a sampled hex does not invert to an exact float — 25/255 is
+/// 0.098…, consistent with both 0.098 and 0.1 — and `color_name` matches
+/// exactly, by design. Harvest them the same way: probe pack, background state,
+/// EVE's importer.
+pub(crate) const PALETTE: [(&str, [f64; 4]); 6] = [
+    ("black", [0.0, 0.0, 0.0, 1.0]),
     ("blue", [0.2, 0.5, 1.0, 1.0]),
     ("darkBlue", [0.0, 0.15, 0.6, 1.0]),
     ("orange", [1.0, 0.35, 0.0, 1.0]),
@@ -333,20 +355,16 @@ fn put(ov: &mut Entries, key: &[u8], value: Value) {
                     None => items.push(value),
                 }
             }
-            other => *other = value,
+            // A bare payload is not a shape the client writes — 0 of 4,187
+            // container keys across five untouched account files. One can only
+            // be here because an older build of this editor stripped the
+            // wrapper, so restore it instead of perpetuating it.
+            other => *other = Value::Tuple(vec![Value::Long(vec![0u8; 8]), value]),
         },
         None => ov.push((
             Value::Bytes(key.to_vec()),
             Value::Tuple(vec![Value::Long(vec![0u8; 8]), value]),
         )),
-    }
-}
-
-/// Columns are stored as a BARE list (no `(ts, _)` wrapper) on real files.
-fn put_bare(ov: &mut Entries, key: &[u8], value: Value) {
-    match ov.iter_mut().find(|(k, _)| is_b(k, key)) {
-        Some((_, slot)) => *slot = value,
-        None => ov.push((Value::Bytes(key.to_vec()), value)),
     }
 }
 
@@ -380,15 +398,24 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     }
 
     // --- build phase (no mutation) ---
-    let mut writes: Vec<(&[u8], Value, bool)> = Vec::new(); // (key, value, wrapped)
+    // Every overview container key is stored `(timestamp, payload)`.
+    let mut writes: Vec<(&[u8], Value)> = Vec::new();
 
     for (section, key) in LIST_SECTIONS {
         let Some(node) = pack.get(section) else { continue };
-        // Columns are stored BARE on real files; the four state lists are wrapped
-        // in `(timestamp, list)`. (`key` is a `&[u8]`, so compare against slices —
-        // a `b"…"` pattern is a `&[u8; N]` and will not typecheck here.)
-        let wrapped = key != b"overviewColumnOrder".as_slice() && key != b"overviewColumns".as_slice();
-        let value = if wrapped {
+        // The two column lists hold column-name Bytes, the four state lists hold
+        // Ints — but that is an element-type difference only. **All six are
+        // stored `(timestamp, list)`**: every `core_user_*` file in the corpus
+        // wraps both column keys, historical snapshots included, and so did this
+        // account before its first pack import. This flag used to double as the
+        // wrapper decision and stripped the wrapper off the two column keys on
+        // every import. (`key` is a `&[u8]`, so compare against slices — a `b"…"`
+        // pattern is a `&[u8; N]` and will not typecheck here.)
+        let is_columns = key == b"overviewColumnOrder".as_slice()
+            || key == b"overviewColumns".as_slice();
+        let value = if is_columns {
+            Value::List(strs(node).into_iter().map(|s| Value::Bytes(s.into_bytes())).collect())
+        } else {
             let mut ids = ints(node);
             // Enabled lists are stored sorted and deduplicated; order lists keep
             // the pack's sequence (the slice-3 convention).
@@ -397,10 +424,8 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 ids.dedup();
             }
             Value::List(ids.into_iter().map(Value::Int).collect())
-        } else {
-            Value::List(strs(node).into_iter().map(|s| Value::Bytes(s.into_bytes())).collect())
         };
-        writes.push((key, value, wrapped));
+        writes.push((key, value));
         report.applied.push(section.to_string());
     }
 
@@ -418,7 +443,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 Value::Tuple(vec![Value::Float(rgba[0]), Value::Float(rgba[1]), Value::Float(rgba[2]), Value::Float(rgba[3])]),
             ));
         }
-        writes.push((b"stateColors", Value::Dict(entries), true));
+        writes.push((b"stateColors", Value::Dict(entries)));
         report.applied.push("stateColorsNameList".to_string());
     }
 
@@ -432,7 +457,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 Value::Bool(*on),
             ));
         }
-        writes.push((b"stateBlinks", Value::Dict(entries), true));
+        writes.push((b"stateBlinks", Value::Dict(entries)));
         report.applied.push("stateBlinks".to_string());
     }
 
@@ -454,7 +479,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 .collect();
             list.push(Value::Dict(fields));
         }
-        writes.push((b"shipLabels", Value::List(list), true));
+        writes.push((b"shipLabels", Value::List(list)));
         report.applied.push("shipLabels".to_string());
     }
 
@@ -464,7 +489,7 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
             match USER_SETTINGS.iter().find(|(pack_name, _)| *pack_name == name) {
                 Some((_, file_key)) => {
                     debug_assert!(OVERVIEW_BOOLS.contains(file_key));
-                    writes.push((file_key.as_bytes(), Value::Bool(*on), true));
+                    writes.push((file_key.as_bytes(), Value::Bool(*on)));
                 }
                 None => report.warnings.push(format!("ignored unknown setting '{name}'")),
             }
@@ -513,8 +538,8 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     // --- mutate phase ---
     inline_all(v);
     let ov = overview_mut(v).map_err(|_| PackError::NoOverview)?;
-    for (key, value, wrapped) in writes {
-        if wrapped { put(ov, key, value) } else { put_bare(ov, key, value) }
+    for (key, value) in writes {
+        put(ov, key, value);
     }
 
     if let Some(value) = presets_value {
@@ -1291,16 +1316,36 @@ userSettings:
         assert_eq!(items[0], ts(), "an existing wrapper's own timestamp must survive, not be reset to zero");
     }
 
+    /// Every container key in an EVE-written file is `(timestamp, payload)` —
+    /// 4,187 of 4,187 across five untouched account files, columns included.
+    /// This used to assert the opposite on the strength of a comment, with a
+    /// fixture that seeded a bare list, so it passed while every real import
+    /// stripped the wrapper off both column keys.
     #[test]
-    fn apply_pack_stores_columns_as_a_bare_list() {
+    fn apply_pack_wraps_every_list_section() {
+        let mut doc = user_doc();
+        let pack = parse_pack(
+            "columnOrder:\n- TYPE\noverviewColumns:\n- TYPE\nbackgroundStates:\n- 44\n",
+        ).unwrap();
+        apply_pack(&mut doc, &pack).unwrap();
+
+        for key in ["overviewColumnOrder", "overviewColumns", "backgroundStates2"] {
+            let Value::Tuple(items) = raw_overview_entry(&doc, key) else {
+                panic!("{key} must be a (timestamp, list) tuple, not a bare payload");
+            };
+            assert!(matches!(items[0], Value::Long(_)), "{key} keeps a timestamp first");
+        }
+    }
+
+    /// A bare payload left by an older build is repaired, not perpetuated.
+    #[test]
+    fn apply_pack_rewraps_a_bare_payload() {
         let mut doc = user_doc();
         let pack = parse_pack("columnOrder:\n- TYPE\n").unwrap();
         apply_pack(&mut doc, &pack).unwrap();
-
-        assert!(
-            matches!(raw_overview_entry(&doc, "overviewColumnOrder"), Value::List(_)),
-            "columns are stored bare on real files, not wrapped in a (timestamp, list) tuple",
-        );
+        let Value::Tuple(_) = raw_overview_entry(&doc, "overviewColumnOrder") else {
+            panic!("the fixture's bare overviewColumnOrder must come back wrapped");
+        };
     }
 
     /// `apply_pack` rebuilds the file's ONE ship-label list by walking the pack's

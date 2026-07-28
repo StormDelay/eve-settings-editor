@@ -5,7 +5,7 @@
   import { loadRoster, aliasFor, accountsStore } from "./accounts.svelte";
   import { accountOf } from "./overview";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
-  import { primaryProfileDir, profileLabels } from "./profiles";
+  import { primaryProfileDir, profileLabels, profileNote } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
 
   let {
@@ -44,9 +44,9 @@
 
   // Profile labels come from profiles.ts, shared with the batch-apply source
   // picker (which faces the same ambiguity). Full path is on the tooltip.
-  // discover() returns them alphabetically; the profile whose files were
-  // touched most recently is the one actually in use, so it gets pinned on top
-  // and opened. Array.sort is stable, so the rest keep their alphabetical run.
+  // discover() returns them alphabetically; the profile EVE itself wrote last
+  // is the one actually in use, so it gets pinned on top and opened. Array.sort
+  // is stable, so the rest keep their alphabetical run.
   const rows = $derived.by(() => {
     const labels = profileLabels(profiles);
     const primaryDir = primaryProfileDir(profiles);
@@ -137,7 +137,7 @@
       <details open={primary}>
         <summary title={p.dir}>
           {label}
-          {#if primary}<span class="meta">most recent</span>{/if}
+          <span class="meta" class:not-live={!primary}>{profileNote(primary)}</span>
         </summary>
         <ul>
           {#each chars as f (f.path)}
@@ -171,6 +171,9 @@
     cursor: pointer;
   }
   .acct { color: var(--fg-dim); font-size: 0.85em; margin: 0 0.3em; }
+  /* A non-live profile is a real hazard, not a detail: editing one looks like
+     it worked and changes nothing the game reads. */
+  .meta.not-live { color: var(--warn, #d08770); }
   /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
      takes the remaining width and wraps within it. */
   .sidebar-top {

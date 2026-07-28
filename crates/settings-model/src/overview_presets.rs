@@ -259,8 +259,18 @@ pub fn set_preset_states(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overview_tabs::dict_inner;
 
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+
+    /// A container in the shape EVE writes: `(timestamp, dict)`. These fixtures
+    /// used to seed a bare dict, which no real file contains — so every test in
+    /// this module drove `tabs_mut`'s rewrap repair without asserting anything
+    /// about it, and the repair could have been deleted with the module still
+    /// green. A fixture that disagrees with reality proves nothing about it.
+    fn wrapped_dict(entries: Vec<(Value, Value)>) -> Value {
+        Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(entries)])
+    }
 
     /// user -> overview -> {
     ///   tabsettings_new: { 0: {overview:"alpha"}, 1: {overview:"beta"} },
@@ -272,7 +282,7 @@ mod tests {
         let tab1 = Value::Dict(vec![(b("overview"), b("beta"))]);
         let preset = |g: i64| Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(g)]))]);
         let overview = Value::Dict(vec![
-            (b("tabsettings_new"), Value::Dict(vec![
+            (b("tabsettings_new"), wrapped_dict(vec![
                 (Value::Int(0), tab0), (Value::Int(1), tab1),
             ])),
             (b("overviewProfilePresets"), Value::Tuple(vec![
@@ -339,7 +349,9 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        // Through the module's own unwrap: these fixtures seed a bare dict, and
+        // an edit that passes through `tabs_mut` hands it back wrapped.
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| matches!(k, Value::Int(i) if *i == idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
@@ -466,7 +478,7 @@ mod tests {
         let tab1 = Value::Dict(vec![(b("overview"), b("beta"))]);
         let preset = |g: i64| Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(g)]))]);
         let overview = Value::Dict(vec![
-            (b("tabsettings_new"), Value::Dict(vec![
+            (b("tabsettings_new"), wrapped_dict(vec![
                 (Value::Int(0), tab0), (Value::Int(1), tab1),
             ])),
             (b("overviewProfilePresets"), Value::Tuple(vec![
@@ -491,7 +503,7 @@ mod tests {
         // A clean account: overview has tabs but NO overviewProfilePresets.
         let tab0 = Value::Dict(vec![(b("overview"), b("DefaultPreset_1"))]);
         let overview = Value::Dict(vec![
-            (b("tabsettings_new"), Value::Dict(vec![(Value::Int(0), tab0)])),
+            (b("tabsettings_new"), wrapped_dict(vec![(Value::Int(0), tab0)])),
         ]);
         Value::Dict(vec![(b("overview"), overview)])
     }

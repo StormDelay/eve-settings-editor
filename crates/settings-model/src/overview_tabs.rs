@@ -23,8 +23,16 @@ pub enum OverviewTabError {
     LastTab,
     /// Refused: would remove the last overview window.
     LastWindow,
-    /// Refused: this overview has no window mapping to add onto (windowless account).
+    /// Refused: this account has no tab-to-window mapping. NOT damage — EVE's
+    /// own overview importer deletes `tabsByWindowInstanceID` (confirmed
+    /// 2026-07-28) and the client distributes tabs across its char-side windows
+    /// by default. `create_window_mapping` is the deliberate way out.
     NoWindowMapping,
+    /// Refused: this account already maps tabs to windows.
+    WindowMappingExists,
+    /// Refused: there are no tabs to map, and a mapping whose window lists no
+    /// tabs hides the entire overview.
+    NoTabsToMap,
     /// Refused: only the last overview window can be removed for now.
     NotLastWindow { index: usize },
     /// No preset with this name in `overviewProfilePresets`.
@@ -45,7 +53,9 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::UnknownWindow { index } => write!(f, "Overview window {index} does not exist."),
             OverviewTabError::LastTab => write!(f, "An overview must keep at least one tab."),
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
-            OverviewTabError::NoWindowMapping => write!(f, "This overview has no window layout to add to."),
+            OverviewTabError::NoWindowMapping => write!(f, "This account does not use per-window tabs, so there are no windows to change. EVE removes the tab-to-window mapping whenever an overview pack is imported through the client, and the overview works normally without it."),
+            OverviewTabError::WindowMappingExists => write!(f, "This account already uses per-window tabs."),
+            OverviewTabError::NoTabsToMap => write!(f, "There are no overview tabs to map to a window."),
             OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
             OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
             OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
@@ -78,6 +88,16 @@ pub(crate) fn fallback_tab() -> Value {
 }
 
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
+/// The read-only counterpart to `dict_inner_mut`, for callers — including this
+/// module's own tests — that must not create what they cannot find.
+pub(crate) fn dict_inner(v: &Value) -> Option<&Entries> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+        _ => None,
+    }
+}
+
 pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     match v {
         Value::Dict(d) => Some(d),
@@ -86,6 +106,32 @@ pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
             _ => None,
         }),
         _ => None,
+    }
+}
+
+/// Restore the `(timestamp, payload)` wrapper on a container key that lost it.
+///
+/// A bare payload is not a shape the client writes — 0 of 4,187 container keys
+/// across five untouched account files. One can only be there because an older
+/// build of this editor stripped the wrapper, which `tests/overview_tabs_corpus.rs`
+/// now confirms rather than assumes: of 134 real account files it edits, the
+/// single one carrying a bare container is an editor-written snapshot, and every
+/// untouched baseline of that same account is wrapped. So a write passing through
+/// here repairs it rather than perpetuating it.
+///
+/// Narrower than `overview_pack::put`, deliberately: `put` replaces the payload
+/// so it can wrap anything, including `Value::None`; this KEEPS the payload, and
+/// wrapping a `None` would only produce a `Tuple(Long, None)` that the caller's
+/// unwrap still rejects. Matching `Dict | List` is the whole of what is
+/// repairable here.
+///
+/// An existing wrapper is left alone, timestamp and all: the repair is for a
+/// MISSING wrapper, and resetting a real timestamp to zero would be a different
+/// kind of damage.
+fn rewrap(slot: &mut Value) {
+    if matches!(slot, Value::Dict(_) | Value::List(_)) {
+        let inner = std::mem::replace(slot, Value::None);
+        *slot = Value::Tuple(vec![Value::Long(vec![0u8; 8]), inner]);
     }
 }
 
@@ -132,18 +178,31 @@ pub(crate) fn tabs_mut(ov: &mut Entries) -> &mut Entries {
         }
     }
     if !ov.iter().any(|(k, _)| is_b(k, b"tabsettings_new")) {
-        ov.push((Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(Vec::new())));
+        // `(timestamp, payload)` — the file-wide wrapper convention, and a zero
+        // Long is what every other create-from-absent path mints (see
+        // `hud.rs`). Creating a bare Dict here produced a shape no client has
+        // ever written, on exactly the accounts least able to cope with it: a
+        // brand-new install, or one whose tab key was deleted.
+        ov.push((
+            Value::Bytes(b"tabsettings_new".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+    rewrap(v);
     dict_inner_mut(v).expect("tabsettings_new is a dict or (ts,dict)")
 }
 
 /// Mutable window-groups list under `tabsByWindowInstanceID`. Created empty if absent.
 fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
     if !ov.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
-        ov.push((Value::Bytes(b"tabsByWindowInstanceID".to_vec()), Value::List(Vec::new())));
+        ov.push((
+            Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::List(Vec::new())]),
+        ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+    rewrap(v);
     list_inner_mut(v).expect("tabsByWindowInstanceID is a list or (ts,list)")
 }
 
@@ -297,6 +356,19 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
 pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // `groups_mut` CREATES the mapping when it is absent, so this guard has to
+    // come first: on a windowless account the call below would refuse the edit
+    // and still leave an empty `tabsByWindowInstanceID` behind — which hides the
+    // account's whole overview. A refused edit must not FABRICATE a container.
+    //
+    // Note the precise claim. A refused edit can still normalise the document —
+    // every entry point inlines first, and `tabs_mut`/`groups_mut` repair a lost
+    // wrapper on the way through. Both are shape-preserving and change nothing
+    // the client reads. What must never happen on a refusal is a container
+    // coming into existence, because an empty or partial one hides real data.
+    if window_count(ov) == 0 {
+        return Err(OverviewTabError::NoWindowMapping);
+    }
     let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
         .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
     *inner = order.iter().map(|&i| Value::Int(i)).collect();
@@ -306,6 +378,11 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
 pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // Same as `reorder_tabs_in_window`: `groups_mut` below would fabricate an
+    // empty mapping on a windowless account even though the edit is refused.
+    if window_count(ov) == 0 {
+        return Err(OverviewTabError::NoWindowMapping);
+    }
     // Validate the destination window exists BEFORE mutating the source strip,
     // so an invalid to_window can't remove the tab from both windows.
     if groups_mut(ov).get_mut(to_window).and_then(list_inner_mut).is_none() {
@@ -323,12 +400,74 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     Ok(())
 }
 
+/// Give an account an explicit tab-to-window mapping: one window listing every
+/// tab it has, in ascending tab index.
+///
+/// This is the ONLY path in the codebase allowed to create
+/// `tabsByWindowInstanceID`, and it exists because the absent state is normal —
+/// EVE's own overview importer deletes the key (confirmed 2026-07-28) and the
+/// client then distributes tabs across its char-side windows by default. That
+/// default is char-side state this crate cannot read, so writing a mapping
+/// REPLACES it: every tab is pinned into one window until the user rearranges
+/// them. Destructive enough that it must never be implicit — the UI puts it
+/// behind a confirm that says so, and nothing else calls it.
+///
+/// Completeness is the safety property. A mapping that omits a tab hides that
+/// tab, and one that omits all of them hides the whole overview, so this either
+/// lists every tab or refuses.
+pub fn create_window_mapping(v: &mut Value) -> Result<usize, OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    if window_count(ov) > 0 {
+        return Err(OverviewTabError::WindowMappingExists);
+    }
+    // Read the tabs WITHOUT tabs_mut, which mints an empty `tabsettings_new`
+    // when the key is absent: a refused create must leave the file untouched,
+    // the same rule the reorder/move guards above exist for.
+    let Some(tabs) = ov
+        .iter()
+        .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
+        .and_then(|(_, v)| dict_inner(v))
+    else {
+        return Err(OverviewTabError::NoTabsToMap);
+    };
+
+    // Ascending index, not dict order. `project_overview` reports tabs in dict
+    // order, which is ascending on any file the client wrote (`create_tab`
+    // appends `max+1`) but need not be on a hand-edited one — so this is a
+    // deliberate normalisation, not a restatement of what the strip shows.
+    let mut indices: Vec<i64> = tabs.iter().filter_map(|(k, _)| as_int(k)).collect();
+    indices.sort_unstable();
+    if indices.is_empty() {
+        return Err(OverviewTabError::NoTabsToMap);
+    }
+    // Completeness is the whole safety property, so a tab this cannot name is a
+    // refusal, never a silent omission: `as_int` takes only `Value::Int`, and a
+    // dropped key would be a tab hidden in game that the editor still lists.
+    if indices.len() != tabs.len() {
+        return Err(OverviewTabError::NoTabsToMap);
+    }
+    // groups_mut creates the key in the wrapped `(timestamp, list)` shape every
+    // real file uses. Only reached once the refusals above have passed, so it
+    // can never leave a partial mapping behind.
+    let groups = groups_mut(ov);
+    groups.push(Value::List(indices.iter().map(|&i| Value::Int(i)).collect()));
+    Ok(indices.len())
+}
+
 /// Add a new overview window (user-file grouping half). Appends an empty inner
 /// list to `tabsByWindowInstanceID` and seeds it with one cloned tab (a window
-/// must have ≥1 tab). Refuses on a windowless account: adding positionally there
-/// would fabricate a partial mapping that hides the account's existing tabs (see
-/// `create_tab`). Returns the new window's index, always ≥1 here (a windowless
-/// account is refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
+/// must have ≥1 tab).
+///
+/// Refuses on an account with no mapping at all. That is not a damaged file: EVE
+/// deletes the key on every pack import, and distributes tabs across its
+/// char-side windows by default. Adding positionally there would fabricate a
+/// PARTIAL mapping listing only the new tab, which hides every other tab the
+/// account has. `create_window_mapping` writes a complete one instead, and is
+/// the only path allowed to create the key.
+///
+/// Returns the new window's index, always ≥1 here (an account with no mapping is
+/// refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
 pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> Result<usize, OverviewTabError> {
     inline_all(v);
     let new_window_idx = {
@@ -449,7 +588,15 @@ mod tests {
     use super::*;
     use blue_marshal::Value;
 
-    /// user tree: overview -> tabsettings_new (bare dict) -> {0:{bracket,color,name,overview:"P"}}
+    /// A zero timestamp, as every `(timestamp, payload)` container wrapper in
+    /// these fixtures carries. Real files hold a real one; nothing here reads it.
+    fn ts() -> Value {
+        Value::Long(vec![0u8; 8])
+    }
+
+    /// user tree: overview -> tabsettings_new `(ts, dict)` -> {0:{bracket,color,name,overview:"P"}}
+    /// Both containers are wrapped because that is the only shape EVE writes —
+    /// 0 of 4,187 container keys across five untouched account files are bare.
     /// The `bracket`/`color` keys mirror real EVE tabs — every real tab carries
     /// them, and a created tab must too (EVE's "reset overview" reads them).
     fn user_with_tabs() -> Value {
@@ -461,9 +608,9 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), tab)])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
             (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
-             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+             Value::Tuple(vec![ts(), Value::List(vec![Value::List(vec![Value::Int(0)])])])),
         ]);
         Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
     }
@@ -473,7 +620,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         fields.iter().find_map(|(k, val)| match (k, val) {
@@ -488,7 +635,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { return false };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { return false };
+        let Some(td) = dict_inner(tabs) else { return false };
         let Some((_, tab)) = td.iter().find(|(k, _)| as_int(k) == Some(idx)) else { return false };
         let Value::Dict(fields) = tab else { return false };
         fields.iter().any(|(k, _)| is_b(k, key))
@@ -499,8 +646,8 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
-        let Value::List(outer) = g else { panic!() };
-        let Value::List(inner) = &outer[window] else { panic!() };
+        let outer = list_inner(g).unwrap();
+        let inner = list_inner(&outer[window]).unwrap();
         inner.iter().filter_map(as_int).collect()
     }
 
@@ -546,7 +693,8 @@ mod tests {
             (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
         ]);
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
 
@@ -567,7 +715,8 @@ mod tests {
     fn create_with_no_sibling_still_carries_bracket_and_color() {
         // Empty tabsettings_new -> no sibling to clone -> the fallback tab.
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
         let idx = create_tab(&mut v, 0, "First", None).unwrap();
@@ -584,7 +733,7 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), mk("A")), (Value::Int(1), mk("B"))])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), mk("A")), (Value::Int(1), mk("B"))])])),
             // no tabsByWindowInstanceID
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
@@ -633,12 +782,12 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), tab("A")), (Value::Int(1), tab("B"))])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab("A")), (Value::Int(1), tab("B"))])])),
             (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
-             Value::List(vec![
+             Value::Tuple(vec![ts(), Value::List(vec![
                  Value::List(vec![Value::Int(0)]), // window 0 = [0]
                  Value::List(vec![Value::Int(1)]), // window 1 = [1]
-             ])),
+             ])])),
         ]);
         Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
     }
@@ -683,7 +832,8 @@ mod tests {
             (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
         ]);
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
         assert!(matches!(add_overview_window(&mut v, "X", Some(0)), Err(OverviewTabError::NoWindowMapping)));
@@ -699,7 +849,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
-        let Value::List(outer) = g else { panic!() };
+        let outer = list_inner(g).unwrap();
         assert_eq!(outer.len(), 1, "one window left");
         assert_eq!(tab_name(&v, 1), "B", "no tab deleted");
     }
@@ -746,7 +896,7 @@ mod tests {
         let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
         let Value::Dict(subs) = wins else { panic!() };
         let (_, sv) = subs.iter().find(|(k, _)| is_b(k, subdict)).unwrap();
-        let d = dict_inner_ref(sv).unwrap();
+        let d = dict_inner(sv).unwrap();
         d.iter().filter_map(|(k, _)| if let Value::Bytes(b) = k { Some(b.clone()) } else { None }).collect()
     }
 
@@ -756,7 +906,7 @@ mod tests {
         let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
         let Value::Dict(subs) = wins else { panic!() };
         let (_, sv) = subs.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")).unwrap();
-        let d = dict_inner_ref(sv).unwrap();
+        let d = dict_inner(sv).unwrap();
         let (_, g) = d.iter().find(|(k, _)| is_b(k, key)).unwrap();
         let Value::Tuple(items) = g else { panic!() };
         let Value::Int(x) = items[0] else { panic!() };
@@ -764,14 +914,6 @@ mod tests {
         (x, y)
     }
 
-    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above.
-    fn dict_inner_ref(v: &Value) -> Option<&Entries> {
-        match v {
-            Value::Dict(d) => Some(d),
-            Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
-            _ => None,
-        }
-    }
 
     #[test]
     fn add_geometry_clones_primary_into_overview_n_with_offset() {
@@ -812,7 +954,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
@@ -827,11 +969,247 @@ mod tests {
     }
 
     #[test]
+    fn the_windowless_message_does_not_read_as_damage() {
+        let msg = OverviewTabError::NoWindowMapping.to_string();
+        // The state is one EVE's own importer produces, so the wording has to
+        // describe a configuration, never a fault. "no ... to add to" read as a
+        // missing piece of the file.
+        assert!(msg.contains("per-window"), "message should name the feature: {msg}");
+        for bad in ["no window layout", "missing", "damaged", "corrupt", "invalid"] {
+            assert!(!msg.to_lowercase().contains(bad), "message still reads as damage ({bad}): {msg}");
+        }
+    }
+
+    #[test]
     fn set_tab_preset_unknown_tab_errors() {
         let mut v = user_with_tabs();
         assert!(matches!(
             set_tab_preset(&mut v, 9, "combat"),
             Err(OverviewTabError::UnknownTab { index: 9 })
         ));
+    }
+
+    /// An overview with tabs but no window mapping — the state EVE's own pack
+    /// importer leaves behind (verified 2026-07-28).
+    fn windowless_root() -> Value {
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::StrUcs2("Default".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![(Value::Int(0), tab)]),
+            ])),
+        ]))])
+    }
+
+    fn has_mapping(v: &Value) -> bool {
+        let Value::Dict(top) = v else { return false };
+        let Some((_, ov)) = top.iter().find(|(k, _)| is_b(k, b"overview")) else { return false };
+        let Value::Dict(entries) = ov else { return false };
+        entries.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+    }
+
+    #[test]
+    fn reorder_on_a_windowless_account_refuses_without_fabricating() {
+        let mut v = windowless_root();
+        assert!(matches!(
+            reorder_tabs_in_window(&mut v, 0, &[0]),
+            Err(OverviewTabError::NoWindowMapping),
+        ));
+        assert!(!has_mapping(&v), "a refused reorder must not create the mapping");
+    }
+
+    #[test]
+    fn move_on_a_windowless_account_refuses_without_fabricating() {
+        let mut v = windowless_root();
+        assert!(matches!(
+            move_tab(&mut v, 0, 0, 0, 0),
+            Err(OverviewTabError::NoWindowMapping),
+        ));
+        assert!(!has_mapping(&v), "a refused move must not create the mapping");
+    }
+
+    /// The mapping's single inner list, as plain ints.
+    fn mapped_tabs(v: &Value) -> Vec<i64> {
+        let Value::Dict(top) = v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        let (_, wv) = entries.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let groups = list_inner(wv).unwrap();
+        assert_eq!(groups.len(), 1, "exactly one window is created");
+        list_inner(&groups[0]).unwrap().iter().filter_map(as_int).collect()
+    }
+
+    #[test]
+    fn create_mapping_lists_every_tab_in_one_window() {
+        let mut v = windowless_root();
+        // Give it a second and third tab so "every tab, in index order" has
+        // something to prove — a one-tab account cannot distinguish the cases.
+        {
+            let ov = overview_mut(&mut v).unwrap();
+            let tabs = tabs_mut(ov);
+            let clone = tabs[0].1.clone();
+            tabs.push((Value::Int(5), clone.clone()));
+            tabs.push((Value::Int(2), clone));
+        }
+        assert_eq!(create_window_mapping(&mut v).unwrap(), 3);
+        // Ascending index order, and NOT dict order (0, 5, 2 as inserted).
+        assert_eq!(mapped_tabs(&v), vec![0, 2, 5]);
+    }
+
+    #[test]
+    fn create_mapping_refuses_when_one_already_exists() {
+        let mut v = windowless_root();
+        create_window_mapping(&mut v).unwrap();
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::WindowMappingExists),
+        ));
+    }
+
+    #[test]
+    fn create_mapping_refuses_an_overview_with_no_tabs() {
+        // A mapping whose only window lists no tabs would hide everything, and a
+        // zero-tab overview is a state that exists in the wild.
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(Vec::new()),
+            ])),
+        ]))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        assert!(!has_mapping(&v), "a refused create must not leave a partial mapping");
+    }
+
+    #[test]
+    fn create_mapping_refuses_a_tab_it_cannot_name() {
+        // Completeness is the safety property, so a tab key `as_int` cannot read
+        // must refuse rather than be quietly skipped: a mapping that omits a tab
+        // hides that tab in game while the editor still lists it, which is
+        // exactly the failure this whole design exists to prevent.
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![
+                    (Value::Int(0), tab.clone()),
+                    // Not an Int: silently dropped before this guard existed.
+                    (Value::Long(vec![1u8; 8]), tab),
+                ]),
+            ])),
+        ]))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        assert!(!has_mapping(&v), "a refused create must not leave a partial mapping");
+    }
+
+    #[test]
+    fn create_mapping_on_an_overview_with_no_tab_key_mints_nothing() {
+        // `tabs_mut` CREATES `tabsettings_new` when absent, so reading through it
+        // would leave an empty tab dict behind on a refused create — the same
+        // "a refused edit must not touch the file" rule the reorder/move guards
+        // exist for.
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(Vec::new()))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        let Value::Dict(top) = &v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        assert!(entries.is_empty(), "a refused create must not mint a tab dict: {entries:?}");
+    }
+
+    #[test]
+    fn create_mapping_leaves_a_tree_that_still_encodes() {
+        let mut v = windowless_root();
+        create_window_mapping(&mut v).unwrap();
+        let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    #[test]
+    fn add_window_works_once_a_mapping_exists() {
+        // The whole point of the opt-in: add_overview_window refused before, and
+        // must succeed afterwards.
+        let mut v = windowless_root();
+        assert!(matches!(add_overview_window(&mut v, "Second", None), Err(OverviewTabError::NoWindowMapping)));
+        create_window_mapping(&mut v).unwrap();
+        assert_eq!(add_overview_window(&mut v, "Second", None).unwrap(), 1);
+    }
+
+    /// The value stored under one `overview` container key, tree already plain.
+    fn container_slot<'a>(v: &'a Value, key: &[u8]) -> &'a Value {
+        let Value::Dict(top) = v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        let (_, slot) = entries.iter().find(|(k, _)| is_b(k, key)).unwrap();
+        slot
+    }
+
+    /// A bare payload is not a shape the client writes — 0 of 4,187 container
+    /// keys across five untouched account files. One can only be there because
+    /// an older build of this editor stripped the wrapper, so an edit that
+    /// passes through must restore it rather than perpetuate it.
+    #[test]
+    fn editing_tabs_rewraps_a_bare_tabsettings() {
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            // Deliberately bare, as an older build would have left it.
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+        ]))]);
+        rename_tab(&mut v, 0, "B").unwrap();
+
+        let slot = container_slot(&v, b"tabsettings_new");
+        let Value::Tuple(items) = slot else {
+            panic!("a bare tabsettings_new must come back wrapped, got {slot:?}");
+        };
+        assert!(matches!(items[0], Value::Long(_)), "the wrapper leads with a timestamp");
+        assert_eq!(tab_name(&v, 0), "B", "the edit itself still landed");
+    }
+
+    /// The same for the window-groups writer.
+    #[test]
+    fn editing_window_groups_rewraps_a_bare_mapping() {
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+            // Deliberately bare.
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]))]);
+        reorder_tabs_in_window(&mut v, 0, &[0]).unwrap();
+
+        let slot = container_slot(&v, b"tabsByWindowInstanceID");
+        let Value::Tuple(items) = slot else {
+            panic!("a bare tabsByWindowInstanceID must come back wrapped, got {slot:?}");
+        };
+        assert!(matches!(items[0], Value::Long(_)), "the wrapper leads with a timestamp");
+        assert_eq!(window_indices(&v, 0), vec![0], "the reorder itself still landed");
+    }
+
+    /// An EXISTING wrapper's own timestamp must survive — the repair is for a
+    /// missing wrapper, not an excuse to reset a real one to zero.
+    #[test]
+    fn rewrapping_never_resets_an_existing_timestamp() {
+        let stamp = Value::Long(vec![7u8; 8]);
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![stamp.clone(), Value::Dict(vec![(Value::Int(0), tab)])])),
+        ]))]);
+        rename_tab(&mut v, 0, "B").unwrap();
+
+        let slot = container_slot(&v, b"tabsettings_new");
+        let Value::Tuple(items) = slot else { panic!() };
+        assert_eq!(items[0], stamp, "an existing timestamp must not be reset to zero");
     }
 }
