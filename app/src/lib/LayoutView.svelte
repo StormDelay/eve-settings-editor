@@ -92,6 +92,8 @@
   const shownCount = $derived(drawnWindowCount(units));
   const totalCount = $derived(drawnWindowCount(allUnits));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
+  // Every window this document has — NOT the filtered set. See overrideCount.
+  const documentWindowIds = $derived(new Set((layout?.windows ?? []).map((w) => w.id)));
 
   async function load() {
     try {
@@ -798,10 +800,10 @@
             <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
           </span>
         {/if}
-        {#if overrideCount() > 0}
+        {#if overrideCount(documentWindowIds) > 0}
           <span class="showing">
-            · {overrideCount()} overridden
-            <button class="linkish" onclick={clearClutterOverrides}>clear</button>
+            · {overrideCount(documentWindowIds)} overridden
+            <button class="linkish" onclick={() => clearClutterOverrides(documentWindowIds)}>clear</button>
           </span>
         {/if}
       </p>
