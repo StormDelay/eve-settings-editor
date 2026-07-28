@@ -88,8 +88,8 @@ pub(crate) fn fallback_tab() -> Value {
 }
 
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
-/// Read-only `(timestamp, dict)` / bare-dict unwrap. The counterpart to
-/// `dict_inner_mut` for callers that must not create what they cannot find.
+/// The read-only counterpart to `dict_inner_mut`, for callers — including this
+/// module's own tests — that must not create what they cannot find.
 pub(crate) fn dict_inner(v: &Value) -> Option<&Entries> {
     match v {
         Value::Dict(d) => Some(d),
@@ -113,8 +113,17 @@ pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
 ///
 /// A bare payload is not a shape the client writes — 0 of 4,187 container keys
 /// across five untouched account files. One can only be there because an older
-/// build of this editor stripped the wrapper, so a write passing through here
-/// repairs it rather than perpetuating it. Mirrors `overview_pack::put`.
+/// build of this editor stripped the wrapper, which `tests/overview_tabs_corpus.rs`
+/// now confirms rather than assumes: of 134 real account files it edits, the
+/// single one carrying a bare container is an editor-written snapshot, and every
+/// untouched baseline of that same account is wrapped. So a write passing through
+/// here repairs it rather than perpetuating it.
+///
+/// Narrower than `overview_pack::put`, deliberately: `put` replaces the payload
+/// so it can wrap anything, including `Value::None`; this KEEPS the payload, and
+/// wrapping a `None` would only produce a `Tuple(Long, None)` that the caller's
+/// unwrap still rejects. Matching `Dict | List` is the whole of what is
+/// repairable here.
 ///
 /// An existing wrapper is left alone, timestamp and all: the repair is for a
 /// MISSING wrapper, and resetting a real timestamp to zero would be a different
@@ -350,7 +359,13 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
     // `groups_mut` CREATES the mapping when it is absent, so this guard has to
     // come first: on a windowless account the call below would refuse the edit
     // and still leave an empty `tabsByWindowInstanceID` behind — which hides the
-    // account's whole overview. A refused edit must not touch the file.
+    // account's whole overview. A refused edit must not FABRICATE a container.
+    //
+    // Note the precise claim. A refused edit can still normalise the document —
+    // every entry point inlines first, and `tabs_mut`/`groups_mut` repair a lost
+    // wrapper on the way through. Both are shape-preserving and change nothing
+    // the client reads. What must never happen on a refusal is a container
+    // coming into existence, because an empty or partial one hides real data.
     if window_count(ov) == 0 {
         return Err(OverviewTabError::NoWindowMapping);
     }
@@ -605,7 +620,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let td = dict_inner_ref(tabs).unwrap();
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         fields.iter().find_map(|(k, val)| match (k, val) {
@@ -620,7 +635,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { return false };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Some(td) = dict_inner_ref(tabs) else { return false };
+        let Some(td) = dict_inner(tabs) else { return false };
         let Some((_, tab)) = td.iter().find(|(k, _)| as_int(k) == Some(idx)) else { return false };
         let Value::Dict(fields) = tab else { return false };
         fields.iter().any(|(k, _)| is_b(k, key))
@@ -881,7 +896,7 @@ mod tests {
         let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
         let Value::Dict(subs) = wins else { panic!() };
         let (_, sv) = subs.iter().find(|(k, _)| is_b(k, subdict)).unwrap();
-        let d = dict_inner_ref(sv).unwrap();
+        let d = dict_inner(sv).unwrap();
         d.iter().filter_map(|(k, _)| if let Value::Bytes(b) = k { Some(b.clone()) } else { None }).collect()
     }
 
@@ -891,7 +906,7 @@ mod tests {
         let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
         let Value::Dict(subs) = wins else { panic!() };
         let (_, sv) = subs.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")).unwrap();
-        let d = dict_inner_ref(sv).unwrap();
+        let d = dict_inner(sv).unwrap();
         let (_, g) = d.iter().find(|(k, _)| is_b(k, key)).unwrap();
         let Value::Tuple(items) = g else { panic!() };
         let Value::Int(x) = items[0] else { panic!() };
@@ -899,11 +914,6 @@ mod tests {
         (x, y)
     }
 
-    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above. Delegates to
-    /// the module's own, so the tests cannot drift from what the code unwraps.
-    fn dict_inner_ref(v: &Value) -> Option<&Entries> {
-        dict_inner(v)
-    }
 
     #[test]
     fn add_geometry_clones_primary_into_overview_n_with_offset() {
@@ -944,7 +954,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let td = dict_inner_ref(tabs).unwrap();
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
