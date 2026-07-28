@@ -52,3 +52,26 @@ for n in range(len(entries), len(entries) + 4):
 out = lines[:b] + extra + lines[b:]
 open(os.path.join(D, "derived_zs_more_tabs.yaml"), "w", encoding="utf-8").writelines(out)
 print(f"more-tabs: {len(entries)} tabs -> {len(entries) + 4}")
+
+# --- palette probe: move `black` onto a BACKGROUND state -------------------
+# PALETTE (overview_pack.rs) holds 5 of the 8 names the client uses, and it can
+# only grow by joining `restoreData->data`'s stateColorsNameList against the
+# RGBA EVE derived into `stateColors` — both written by the client, never by us.
+# Session A fed Z-S through EVE's own importer to harvest its `black`, and got
+# nothing: Z-S sets `flag_48: black`, and **EVE discards flag-surface colours
+# outright** — after the import `flag_48` was absent from the file entirely and
+# `stateColors` held only `background` entries.
+#
+# So the probe has to put an unknown name on a surface the client keeps. State
+# 66 ("Pilot has retribution timer") is the one whose built-in colour is black
+# (overview-states.json defaultColors), which makes `background_66: black` the
+# natural pairing rather than an arbitrary one.
+lines, sec = split_sections(os.path.join(D, "zs_full_v10.06.09.yaml"))
+a, b = sec["stateColorsNameList"]
+body = lines[a + 1:b]
+kept = [l for l in body if "flag_" not in l and l.strip() != "- black"]
+indent = re.match(r"^(\s*)", kept[0]).group(1) if kept else "  "
+probe = [f"{indent}- - background_66\n", f"{indent}  - black\n"]
+out = lines[:a + 1] + kept + probe + lines[b:]
+open(os.path.join(D, "derived_palette_probe.yaml"), "w", encoding="utf-8").writelines(out)
+print("palette-probe: flag_48 dropped, background_66 -> black added")

@@ -141,21 +141,22 @@ export interface FurnitureRect {
 // ponytail: the nominal SIZES below are still invented — measure them off one
 // native-resolution screenshot, see HUD_NOMINAL.
 /**
- * Drawn sizes for the screen furniture, in data px. These are still INVENTED —
- * the 2026-07-27 live session measured the ship HUD off a screenshot at roughly
- * 610x175 against the 686x250 here, close on width and well out on height, but
- * that was eyeballed off a downscaled image and is not good enough to replace a
- * number with.
+ * Drawn sizes for the screen furniture, in data px. Still INVENTED, and two
+ * live sessions failed to measure the ship HUD: it has **no hard edge in-game**
+ * — the module racks fade out with no frame and nothing to butt against another
+ * window — so there is no crisp boundary to align or photograph. A native crop
+ * came out 751x258 including margin, which makes 686 a plausible underestimate
+ * on width and 250 about right on height, but that is not a measurement.
  *
- * `shipui.w` is not merely cosmetic: `shipOffsetFromX` reads it, so an error
- * here shifts every offset a DRAG writes by half that error. The other two are
- * cosmetic — the fighter and badge rects are placed from their stored point, not
- * derived from a size.
+ * Low stakes, which is why it stays invented. The width CANCELS out of a drag
+ * (see shipOffsetFromX), so nothing we write to a file depends on it. What it
+ * does affect is how the element is DRAWN, and therefore where 0.17.0's edge
+ * snapping puts a window that snaps against the ship HUD — a fuzzy target
+ * anyway, given the thing has no real edge.
  *
- * To measure: one native-resolution screenshot with `ship_offset` at a known
- * value. The HUD's centre is then `reference_w / 2 + offset` exactly (confirmed,
- * see shipOffsetFromX), so measuring either edge gives the width without having
- * to find both.
+ * If a number is ever wanted: the HUD's centre is `reference_w / 2 + offset`
+ * exactly (confirmed), so one edge measured against that centre gives the width
+ * without needing to find both.
  */
 export const HUD_NOMINAL = {
   shipui: { w: 686, h: 250 },
@@ -187,8 +188,10 @@ export function hudFlag(hud: Hud, name: string): boolean {
  * centre (which also rules out a left-edge origin); dragging it left made the
  * client write -642.0. See docs/format-notes.md § "HUD anchors".
  *
- * Note this reads HUD_NOMINAL.shipui.w, so a wrong nominal width makes a DRAG
- * compute a wrong offset — by half the error. See HUD_NOMINAL. */
+ * This reads HUD_NOMINAL.shipui.w, but the width CANCELS: hudRects draws at
+ * `centre + offset - w/2` and this adds the same `w/2` back, so the offset
+ * written for a given on-screen centre does not depend on it. Pinned by a test
+ * in layout.test.ts, because the opposite is an easy thing to assume. */
 export function shipOffsetFromX(x: number, referenceW: number): number {
   return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
 }
@@ -202,15 +205,19 @@ export function shipOffsetFromX(x: number, referenceW: number): number {
  * a measurable mid-screen position the client stored 839 against 838 measured,
  * and 0 is the leftmost value a drag can produce.
  *
- * `y` is NOT confirmed and is currently wrong by a constant. Writing 0 drew the
- * panel roughly 234px BELOW the screen top, and dragging it into the top-left
- * corner made the client write -234 — so negative is upward and the origin is
- * not the screen edge. It is left uncorrected rather than encoded as `y + 234`,
- * because 234 comes from a single 2560x1440 capture and nothing distinguishes an
- * absolute inset from a proportional one. To settle it in one capture: place the
- * panel, note the value, drag it a KNOWN number of pixels, and compare the two
- * deltas — a delta removes the anchor-point ambiguity that made the corner drag
- * (which clamps) only half-conclusive.
+ * `y` is CONFIRMED too, and is the panel's top edge with the origin at the
+ * screen's top — i.e. exactly what this already did. Session A appeared to show
+ * it wrong by ~234px; that reading was mistaken twice over. The corner drag it
+ * came from CLAMPS, and the fighter panel's *visible* extent changes with
+ * whether the fighter-ability grid is drawn: with no fighters only the squad row
+ * shows, and that row sits ~150px below the panel's anchor, so the panel looked
+ * displaced when only its lower half was on screen.
+ *
+ * Settled 2026-07-28 by writing y = 497 — the exact top edge of A1's D-Scan
+ * window — and photographing the two together: with fighters up, the ability
+ * grid's top lines up with D-Scan's top. The client then wrote (839, 497) back
+ * unchanged. The anchor is where the ability grid starts whether or not it is
+ * drawn, which is why it is stable.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x), y: Math.round(y) };
@@ -249,12 +256,11 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     });
   }
 
-  // The stored point is placed as the rect's top-left. `x` is confirmed correct
-  // in-game (it is the panel's left edge in absolute screen px); `y` is known
-  // WRONG by a constant — the client draws the panel about 234px lower than
-  // this puts it at 2560x1440 — and is left alone until one more capture says
-  // whether that inset is absolute or proportional. See hudPointFromRect, whose
-  // inverse must be corrected in the same change.
+  // The stored point is the rect's top-left, in absolute screen px with the
+  // origin at the screen's top-left. BOTH axes confirmed in-game (2026-07-28,
+  // see hudPointFromRect) — this needed no correction. Its `h` does: the panel
+  // is far taller than HUD_NOMINAL.fighter says once the fighter-ability grid
+  // is drawn, and the anchor is that grid's top even when it is not.
   const fx = hudNum(hud, "fighter_x");
   const fy = hudNum(hud, "fighter_y");
   if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {

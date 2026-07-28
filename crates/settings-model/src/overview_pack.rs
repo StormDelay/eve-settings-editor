@@ -256,7 +256,29 @@ fn write_scalar(n: &Node) -> String {
 /// near-miss would silently change the user's colours. Every name below
 /// mapped to exactly one RGBA across all contributing corpus files — no
 /// conflicts to resolve.
-pub(crate) const PALETTE: [(&str, [f64; 4]); 5] = [
+/// `black` was added on 2026-07-28 from a targeted live capture rather than
+/// from the corpus join above, because the join could never have produced it:
+/// no account here had ever imported a pack that names it, and the one
+/// published pack that does (Z-S) puts it on `flag_48` — and **EVE's own
+/// importer discards flag-surface colours outright**, so feeding Z-S through
+/// the client left no trace of it at all.
+///
+/// The capture that worked: a probe pack (`tools/derive-packs.py`) moving the
+/// name onto a background state, imported through EVE's own Overview Settings,
+/// after which the client had written
+/// `stateColors[("background", 66)] = (0.0, 0.0, 0.0, 1.0)`. That is the client
+/// deriving the RGBA from the name, which is the same evidence the corpus join
+/// provides. It independently matches the pixel-sampled `#000000` recorded for
+/// state 66 in `overview-states.json`.
+///
+/// Still missing: `green` and `purple`. `overview-states.json`'s notes put the
+/// full palette at eight names and give both as sampled hex (`#199919`,
+/// `#9926e5`), but a sampled hex does not invert to an exact float — 25/255 is
+/// 0.098…, consistent with both 0.098 and 0.1 — and `color_name` matches
+/// exactly, by design. Harvest them the same way: probe pack, background state,
+/// EVE's importer.
+pub(crate) const PALETTE: [(&str, [f64; 4]); 6] = [
+    ("black", [0.0, 0.0, 0.0, 1.0]),
     ("blue", [0.2, 0.5, 1.0, 1.0]),
     ("darkBlue", [0.0, 0.15, 0.6, 1.0]),
     ("orange", [1.0, 0.35, 0.0, 1.0]),
