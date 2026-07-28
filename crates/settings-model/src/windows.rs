@@ -19,7 +19,7 @@ use crate::treewalk::{
 
 /// The eight boolean per-window flags (see docs/format-notes.md). `stacksWindows`
 /// is handled separately — its value is a stack id, not a bool.
-const BOOL_FLAGS: [&str; 8] = [
+pub(crate) const BOOL_FLAGS: [&str; 8] = [
     "openWindows",
     "collapsedWindows",
     "minimizedWindows",
