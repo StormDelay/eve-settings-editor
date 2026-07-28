@@ -288,7 +288,12 @@ pub fn window_layout(root: &Value, user: Option<&Value>) -> WindowLayout {
     WindowLayout { reference_w, reference_h, windows, stacks }
 }
 
-fn decode_id(key: &Value) -> String {
+/// A window-id dict key as a plain string. Real files use `Bytes`, `Str` and
+/// `StrUcs2` interchangeably for these, so every reader must normalise all three
+/// or the same window reads as two different ids. Shared with `stacks.rs`, whose
+/// orphan-frame delete has to agree with this projection exactly — the UI counts
+/// orphans from what this produces and the delete acts on the tree.
+pub(crate) fn decode_id(key: &Value) -> String {
     match key {
         Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
         Value::Str(s) | Value::StrUcs2(s) => s.clone(),
