@@ -713,16 +713,26 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
   index alone changed nothing; both were needed. Now reads via
   `treewalk::as_list`, which already existed for exactly this.
 
-  Measured across the corpus: **0 of 11,071 chat windows named before, 1,072
-  after** — Corp, Alliance, Local, Militia and named private groups. The ~70
-  stale windows per character are closed conversations the file holds no name
-  for; they keep the derived `Chat · <detail>` label, which is right — thinning
-  that list is what `Hide clutter` is for.
+  Measured across the corpus: **0 of 11,480 chat windows named before, 1,113
+  after** — Corp, Alliance, Local, Fleet, Militia and named private groups.
+  (`fleet`, `faction`, `incursion` and `system` rows were never sampled while
+  diagnosing this and all key correctly on element 0; every one of the 1,114 rows
+  across 281 files matched a window, with no duplicate keys to shadow each
+  other.) The ~70 stale windows per character are closed conversations the file
+  holds no name for; they keep the derived `Chat · <detail>` label, which is
+  right — thinning that list is what `Hide clutter` is for.
 
   Neither bug was visible to the tests: the chat fixtures seeded a bare list AND
   led with an `Int` key, so one of them could only pass while the code read the
   wrong element. A fixture that shares the code's assumptions cannot falsify
-  them. _Added 2026-07-27; done 2026-07-28._
+  them — the third instance of that shape in one day, after the column-wrapper
+  bug and the `inline_all` guard. So this closes with the thing the other two
+  didn't get: **`tests/chat_names_corpus.rs`**, a real-data gate in the style of
+  the nine already here. It runs on the committed synthetic corpus as well as the
+  real one, and `gen_fixtures.rs` has carried the correct wrapped element-0 shape
+  since that corpus was created — so the gate would have failed from day one on a
+  checkout with no `testdata/` at all. Verified to fail: reverting either defect
+  drops it to 0 named. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **The neocom renders differently docked vs in space.** Settled in Session C
   by photographing the same character docked and in space and diffing the two
