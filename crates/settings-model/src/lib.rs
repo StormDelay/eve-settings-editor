@@ -38,11 +38,11 @@ pub use overview::{project_overview, set_column_order, set_column_visible, set_c
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
 pub use keybinds::{project_keybinds, set_keybind, KeybindEntry, KeybindError, Keybinds, MOD_ALT, MOD_CTRL, MOD_SHIFT};
 pub use batch::{apply_categories_to, apply_to_tree, extract_categories, full_copy_to, Category};
-pub use stacks::{add_to_stack, create_stack, reorder_stack, unstack, StackError};
+pub use stacks::{add_to_stack, create_stack, delete_orphan_frames, reorder_stack, unstack, StackError};
 pub use overview_tabs::{
-    add_overview_window, add_overview_window_geometry, create_tab, delete_tab, move_tab,
-    remove_overview_window, remove_overview_window_geometry, rename_tab, reorder_tabs_in_window,
-    set_tab_preset, OverviewTabError,
+    add_overview_window, add_overview_window_geometry, create_tab, create_window_mapping,
+    delete_tab, move_tab, remove_overview_window, remove_overview_window_geometry, rename_tab,
+    reorder_tabs_in_window, set_tab_preset, OverviewTabError,
 };
 pub use overview_presets::{create_preset, create_preset_from_lists, delete_preset, fork_preset, rename_preset, set_preset_groups, set_preset_states};
 pub use overview_states::{

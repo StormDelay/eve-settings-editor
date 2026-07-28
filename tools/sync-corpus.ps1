@@ -1,15 +1,22 @@
 # Copies EVE settings files from the live directory into testdata/corpus/.
 # This is the ONLY code in the project allowed to touch the live directory,
 # and it only ever reads from it (spec section 8).
+#
+# -Settings narrows which settings folders are taken. The default sweeps every
+# `settings_*` folder, which is what the corpus gates want — but a hand-made
+# backup kept beside the live one (`settings_Default - before live test`) also
+# matches, and lands in the snapshot as several dozen brand-new files. Pass an
+# exact name to take only the folder under test.
 param(
     [Parameter(Mandatory = $true)][string]$Label,
-    [string]$Source = "$env:LOCALAPPDATA\CCP\EVE"
+    [string]$Source = "$env:LOCALAPPDATA\CCP\EVE",
+    [string]$Settings = "settings_*"
 )
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHHmmssZ")
 $destRoot = Join-Path $PSScriptRoot "..\testdata\corpus\${stamp}_$Label"
 
 $files = Get-ChildItem -Path $Source -Directory |
-    ForEach-Object { Get-ChildItem $_.FullName -Directory -Filter "settings_*" -ErrorAction SilentlyContinue } |
+    ForEach-Object { Get-ChildItem $_.FullName -Directory -Filter $Settings -ErrorAction SilentlyContinue } |
     ForEach-Object { Get-ChildItem $_.FullName -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match '^core_(char|user|public)_.*\.(dat|yaml)$' -or $_.Name -eq 'prefs.ini' } }
 

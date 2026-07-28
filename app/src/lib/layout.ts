@@ -134,13 +134,68 @@ export interface FurnitureRect {
   drag: "none" | "x" | "xy";
 }
 
-// ponytail: EVE stores anchors but never sizes, and never says what the anchor
-// is relative to. These nominal sizes — and the centre-relative ship offset and
-// top-left point convention below — are ASSUMPTIONS, corrected from the slice's
-// live smoke. Nothing outside this table depends on the numbers.
+// EVE stores anchors but never sizes, and never says what an anchor is relative
+// to, so all of this began as assumption. Two live sessions settled the
+// conventions and 2026-07-28 settled the sizes, off three native 2560x1440
+// screenshots measured against the settings file that produced them.
+
+/**
+ * How far the ship HUD extends LEFT of its anchor.
+ *
+ * The anchor is the capacitor wheel's centre — NOT the element's centre. This is
+ * the correction that matters: two shots of one character at one offset, flying
+ * a battleship and a frigate, share a pixel-identical left edge (490) and differ
+ * only on the right (1133 vs 896). The element grows rightward from a fixed left
+ * edge, so it is strongly asymmetric about its anchor: 148px left, 495px right.
+ *
+ * Isolating the capacitor wheel by colour put its centre at x=638.5, against
+ * `2560/2 + (-642) = 638` from the file — a half-pixel match. That also explains
+ * the 2026-07-27 result that writing 0.0 drew the HUD "dead centre": it is the
+ * capacitor that centres, not the box.
+ */
+export const SHIP_ANCHOR_LEFT = 148;
+
+/**
+ * Gap between the top of the screen and the HUD when it is top-aligned.
+ * MEASURED 2026-07-28, twice, on shots 410px apart.
+ */
+export const SHIP_TOP_MARGIN = 28;
+
+/**
+ * Gap between the HUD and the bottom of the screen when it is bottom-aligned.
+ * MEASURED 2026-07-28 — and it is NOT the top margin mirrored, which is what
+ * this code assumed until a bottom-aligned shot existed.
+ *
+ * Derived from one character at one offset photographed both ways: the module
+ * rack block is 127px tall in both, sitting 4px into the element, at y 32 top-
+ * aligned and y 1272 bottom-aligned. So the element's top is 1268, its bottom
+ * `1268 + 160 = 1428`, and the gap below it is `1440 - 1428 = 12` — 16px less
+ * than the mirrored guess. ±2px: the element height reads 159-160.
+ */
+export const SHIP_BOTTOM_MARGIN = 12;
+
+/**
+ * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
+ * `badge`, which is still nominal.
+ *
+ * These are not cosmetic: `LayoutView` feeds each furniture rect's `w`/`h` into
+ * the snap-line set, so a box smaller than the real element makes windows snap
+ * against an edge the player cannot see and overlap the part we failed to draw.
+ * The previous values (shipui 686x250, fighter 400x120) were invented, and the
+ * shipui box was additionally drawn centred on the anchor — putting it 195px too
+ * far left while missing 152px of module rack on the right.
+ *
+ * `shipui` covers the widest possible rack: the battleship shot's widest row
+ * already carries the maximum 8 slots (pitch ~50), so 643 is a measured maximum
+ * rather than an extrapolation.
+ *
+ * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
+ * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
+ * to the measured 381. Height does not change with squadron count.
+ */
 export const HUD_NOMINAL = {
-  shipui: { w: 686, h: 250 },
-  fighter: { w: 400, h: 120 },
+  shipui: { w: 643, h: 160 },
+  fighter: { w: 467, h: 253 },
   badge: { w: 32, h: 32 },
 };
 
@@ -160,20 +215,52 @@ export function hudFlag(hud: Hud, name: string): boolean {
   return (e.value ?? e.default) === "true";
 }
 
-/** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects'
- * ship-HUD placement below — the two must be corrected together (see
- * hudRects' comment on the ship HUD branch). */
+/**
+ * Stored offset for a ship-HUD rect whose left edge is at data-px `x`. The exact
+ * inverse of hudRects' ship-HUD placement below — a matched pair, correct them
+ * together, and `layout.test.ts` round-trips them at even AND odd reference
+ * widths because getting this wrong writes a bad offset into a real settings
+ * file. The rounding lives here and nowhere else: rounding the placement too
+ * made the two biases stack on an odd width instead of cancelling.
+ *
+ * CONFIRMED in-game 2026-07-27 that the offset is centre-relative and negative
+ * is leftward; MEASURED 2026-07-28 that what it centres is the capacitor wheel,
+ * which sits `SHIP_ANCHOR_LEFT` from the element's left edge. The old version
+ * used `w/2` here and claimed the width cancelled out; that was true only while
+ * the drawn box was (wrongly) centred on the anchor.
+ */
 export function shipOffsetFromX(x: number, referenceW: number): number {
-  return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
+  return Math.round(x + SHIP_ANCHOR_LEFT - referenceW / 2);
 }
 
 /**
  * Stored (x, y) for a fighter/badge rect at data-px `x, y`. Inverse of
- * hudRects' fighter/badge placement below, which currently stores the rect's
- * top-left directly — the two must be corrected together (see hudRects'
- * comment on the fighter/badge branches) or a drag will jump by however much
- * the convention actually differs (e.g. half the element's size, if the
- * stored point turns out to be the panel's centre).
+ * hudRects' fighter/badge placement below.
+ *
+ * `x` is CONFIRMED in-game 2026-07-27 for the fighter UI: it is the panel's
+ * left edge in absolute screen pixels, origin at the screen's left. Dragged to
+ * a measurable mid-screen position the client stored 839 against 838 measured,
+ * and 0 is the leftmost value a drag can produce.
+ *
+ * `y` is CONFIRMED too, and is the panel's top edge with the origin at the
+ * screen's top — i.e. exactly what this already did. Session A appeared to show
+ * it wrong by ~234px; that reading was mistaken twice over. The corner drag it
+ * came from CLAMPS, and the fighter panel's *visible* extent changes with
+ * whether the fighter-ability grid is drawn: with no fighters only the squad row
+ * shows, and that row sits ~150px below the panel's anchor, so the panel looked
+ * displaced when only its lower half was on screen.
+ *
+ * Settled 2026-07-28 by writing y = 497 — the exact top edge of A1's D-Scan
+ * window — and photographing the two together: with fighters up, the ability
+ * grid's top lines up with D-Scan's top. The client then wrote (839, 497) back
+ * unchanged. The anchor is where the ability grid starts whether or not it is
+ * drawn, which is why it is stable.
+ *
+ * Sizes MEASURED 2026-07-28 from the same shot the anchor was confirmed on:
+ * with 4 squadrons (3 launched) the panel spans 381x253 from the anchor, on a
+ * column pitch of 86 shared by the ability grid and the squadron row. Five
+ * squadrons is the carrier maximum, hence the 467 width in HUD_NOMINAL. Height
+ * is independent of squadron count.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x), y: Math.round(y) };
@@ -193,26 +280,39 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     out.push({ kind: "neocom", label: "Neocom", x: 0, y: 0, w: neocom, h: layout.reference_h, drag: "none" });
   }
 
-  // Centre-relative placement. Its inverse is shipOffsetFromX, below — a
-  // matched pair that must be corrected together (see shipOffsetFromX's doc).
+  // The stored offset places the capacitor wheel's centre at
+  // `reference_w/2 + offset` (measured 2026-07-28 to within half a pixel). The
+  // element then extends SHIP_ANCHOR_LEFT to the left of that point and the rest
+  // to the right — it is NOT centred on it. Its inverse is shipOffsetFromX.
   const offset = hudNum(hud, "ship_offset");
   if (offset !== null) {
     const { w, h } = HUD_NOMINAL.shipui;
     out.push({
       kind: "shipui",
       label: "Ship HUD",
-      x: Math.round(layout.reference_w / 2 + offset - w / 2),
-      y: hudFlag(hud, "ship_top") ? 0 : layout.reference_h - h,
+      // Deliberately NOT rounded. On an odd `reference_w` the half-pixel centre
+      // makes `Math.round` bias half-up on BOTH sides, so the two rounds stack
+      // instead of cancelling and a drag writes an offset one px off what was
+      // dropped. Leaving x fractional makes shipOffsetFromX an exact inverse at
+      // every width, and nothing downstream needs an integer — snapLines takes
+      // plain numbers and toCanvas only multiplies.
+      x: layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT,
+      // Both margins measured, and they differ: 28 above, 12 below. Mirroring
+      // the top margin — what this did before a bottom-aligned shot existed —
+      // drew the box 16px high, so windows snapped to an edge the racks
+      // actually cover.
+      y: hudFlag(hud, "ship_top") ? SHIP_TOP_MARGIN : layout.reference_h - SHIP_BOTTOM_MARGIN - h,
       w,
       h,
       drag: "x",
     });
   }
 
-  // The stored point is placed as the rect's top-left. Its inverse is
-  // hudPointFromRect, below — a matched pair that must be corrected together
-  // (see hudPointFromRect's doc) if the live smoke shows this is wrong (e.g.
-  // the stored point is really the panel's centre).
+  // The stored point is the rect's top-left, in absolute screen px with the
+  // origin at the screen's top-left. BOTH axes confirmed in-game (2026-07-28,
+  // see hudPointFromRect) — this needed no correction. Its `h` does: the panel
+  // is far taller than HUD_NOMINAL.fighter says once the fighter-ability grid
+  // is drawn, and the anchor is that grid's top even when it is not.
   const fx = hudNum(hud, "fighter_x");
   const fy = hudNum(hud, "fighter_y");
   if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
@@ -251,14 +351,23 @@ export function filterIsActive(f: WindowFilter): boolean {
   return f.text.trim() !== "" || f.openOnly || f.hideClutter;
 }
 
+/**
+ * A minted numeric window id that belongs to no stack — a dead frame whose
+ * members are gone (see docs/format-notes.md, "Window stacks"). It paints a
+ * phantom "Window stack" rectangle until it is deleted.
+ *
+ * Shared by the `Hide clutter` filter and the delete offer on purpose: the
+ * offer must remove exactly the frames the filter calls dead, and two copies
+ * of this rule would eventually disagree.
+ */
+export function isOrphanFrame(w: WindowRect): boolean {
+  return w.stack === null && /^\d+$/.test(w.id);
+}
+
 export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrides): boolean {
   if (f.openOnly && !w.open) return false;
   if (f.hideClutter && isClutter(w.id, o)) return false;
-  // A minted numeric window id exists only to be a stack container (see
-  // docs/format-notes.md, "Window stacks"). One that belongs to no stack at all
-  // is a dead frame whose members are gone — it paints a phantom "Window stack"
-  // rectangle. Structural, so unlike the curated tables it needs no maintenance.
-  if (f.hideClutter && w.stack === null && /^\d+$/.test(w.id)) return false;
+  if (f.hideClutter && isOrphanFrame(w)) return false;
   const n = nameOf(w);
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
