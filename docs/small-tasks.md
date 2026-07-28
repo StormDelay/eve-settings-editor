@@ -72,22 +72,24 @@ Workflow:
   the default state lists and orders, so the shape is derivable, but it is a
   design call, not a bug fix. _Added 2026-07-27._
 
-- [ ] **The Layout aspect carries 2 of the 9 HUD fields, not 0 and not 9.**
-  `Category::Layout => &[b"windows"]` copies that whole section, and the nine
-  HUD fields are spread across three: `windows` holds
-  `shipuialignleftoffset` and `neocomWidth`, `ui` holds
-  `fightersDetachedPosition` / `shipuialigntop` / `detachFighterUI` /
-  `displayFighterUI`, and `notifications` holds `notification_badge_offset`
-  (`hud.rs:72–101`). So a Layout copy or a Layout preset moves the ship-HUD
-  offset and neocom width but leaves the fighter UI and badge behind — the
-  target comes out half-applied, which is more confusing than carrying none.
-  Confirmed on the live files: after an A1 → A2 Layout copy, `shipuialign
-  leftoffset` matched at `0.0` while `fightersDetachedPosition` stayed at A2's
-  own `(326, 54)` against A1's `(0, 0)`. Presets share the same key sets
-  (`presets.rs:113` reads `Category::key_path`), so both surfaces are affected.
-  Decide whether Layout should mean "the window layout" or "everything you see
-  on screen", then either pull the other seven in or split a HUD aspect out —
-  and say which in the aspect's UI label either way. _Added 2026-07-27._
+- [ ] **Decide what the Layout aspect should mean, then make it carry that.**
+  `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
+  fields span three (`hud.rs:72–101`): `windows` has `shipuialignleftoffset` and
+  `neocomWidth`, `ui` has `fightersDetachedPosition` / `shipuialigntop` /
+  `detachFighterUI` / `displayFighterUI`, and `notifications` has
+  `notification_badge_offset`. So a Layout copy or preset moves the ship-HUD
+  offset and neocom width and leaves the fighter UI and badge behind — half
+  applied, which is more confusing than carrying none. Confirmed on live files:
+  after an A1 → A2 Layout copy, `shipuialignleftoffset` matched at `0.0` while
+  `fightersDetachedPosition` stayed at A2's own `(326, 54)` against A1's `(0, 0)`.
+  Presets share the key sets (`presets.rs:113`), so both surfaces are affected.
+
+  Either pull the other seven in, or split a HUD aspect out. Both change what a
+  batch apply writes to other characters' files, so this wants its own branch and
+  a live smoke — it is the only remaining live-session finding that is a
+  behaviour change rather than a correction. **The misleading half is already
+  fixed**: the aspect's label now names the ship HUD it carries and the fighter
+  panel and badge it does not (2026-07-28). _Added 2026-07-27._
 
 - [ ] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
@@ -111,14 +113,6 @@ Workflow:
   colour will not survive an export. Blocked on the palette being complete —
   `PALETTE` has 5 of the 8 names (missing `black`, `green`, `purple`), see the
   live verification plan item 26b. _Added 2026-07-27._
-
-- [ ] **The keybinds "taken by" note overflows its row.** `KeybindsView.svelte:129`
-  renders `<span class="meta">taken by {stolenFrom[e.command]}</span>` inline
-  beside the binding button. With a long command name ("Activate High Power Slot
-  4") the note wraps onto a second line that escapes the row box and overlaps the
-  row beneath it. Either constrain the row's height and ellipsise the note (with
-  the full name on `title`), or let the row grow. Seen while staging the keybind
-  steal path for the live verification. _Added 2026-07-27._
 
 - [ ] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
@@ -680,6 +674,13 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The keybinds "taken by" note overflows its row.** Ellipsised rather than
+  wrapped, with the full command name on the `title`. The combo column is a fixed
+  16rem in a `table-layout: fixed` table, so a growing row was the other option —
+  the ellipsis bounds the row height whatever the command name, and a keybinding
+  table is scanned vertically, where uneven rows cost more than a truncated note.
+  _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Test fixtures encode bare container payloads, a shape EVE never writes.**
   Half of this was already done and the entry did not know it: `overview_pack`'s
