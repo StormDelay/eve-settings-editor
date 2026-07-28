@@ -2,7 +2,7 @@
 // framework — matching search.test.ts.
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
-  NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
+  NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
   snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
@@ -207,6 +207,11 @@ check("open filter keeps the right window", open[0].id === "a");
   check("hideClutter keeps a numeric id that is a stack member", windowMatches(memberFrame, { ...NO_FILTER, hideClutter: true }));
   check("a non-numeric id with no stack is unaffected by the orphan rule", windowMatches(market, { ...NO_FILTER, hideClutter: true }));
   check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
+
+  check("an orphaned numeric frame is an orphan", isOrphanFrame(orphanFrame));
+  check("a numeric id that IS a stack container is not", !isOrphanFrame(containerFrame));
+  check("a numeric id that is a stack member is not", !isOrphanFrame(memberFrame));
+  check("a non-numeric id with no stack is not", !isOrphanFrame(market));
 }
 
 // --- the filter searches the real channel name -----------------------------
