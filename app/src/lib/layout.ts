@@ -156,12 +156,23 @@ export interface FurnitureRect {
 export const SHIP_ANCHOR_LEFT = 148;
 
 /**
- * Gap between the screen edge and the HUD. MEASURED for the top-aligned case
- * only — every screenshot was top-aligned. `hudRects` mirrors it on the bottom
- * edge, which is a guess, not a measurement; see the second-offset follow-up in
- * docs/small-tasks.md for the shot that would settle it.
+ * Gap between the top of the screen and the HUD when it is top-aligned.
+ * MEASURED 2026-07-28, twice, on shots 410px apart.
  */
 export const SHIP_TOP_MARGIN = 28;
+
+/**
+ * Gap between the HUD and the bottom of the screen when it is bottom-aligned.
+ * MEASURED 2026-07-28 — and it is NOT the top margin mirrored, which is what
+ * this code assumed until a bottom-aligned shot existed.
+ *
+ * Derived from one character at one offset photographed both ways: the module
+ * rack block is 127px tall in both, sitting 4px into the element, at y 32 top-
+ * aligned and y 1272 bottom-aligned. So the element's top is 1268, its bottom
+ * `1268 + 160 = 1428`, and the gap below it is `1440 - 1428 = 12` — 16px less
+ * than the mirrored guess. ±2px: the element height reads 159-160.
+ */
+export const SHIP_BOTTOM_MARGIN = 12;
 
 /**
  * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
@@ -286,10 +297,11 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
       // every width, and nothing downstream needs an integer — snapLines takes
       // plain numbers and toCanvas only multiplies.
       x: layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT,
-      // Top-aligned leaves a measured 28px gap. The bottom-aligned case was not
-      // captured; mirroring the same margin is the honest guess and is what a
-      // screenshot should check next.
-      y: hudFlag(hud, "ship_top") ? SHIP_TOP_MARGIN : layout.reference_h - SHIP_TOP_MARGIN - h,
+      // Both margins measured, and they differ: 28 above, 12 below. Mirroring
+      // the top margin — what this did before a bottom-aligned shot existed —
+      // drew the box 16px high, so windows snapped to an edge the racks
+      // actually cover.
+      y: hudFlag(hud, "ship_top") ? SHIP_TOP_MARGIN : layout.reference_h - SHIP_BOTTOM_MARGIN - h,
       w,
       h,
       drag: "x",
