@@ -235,7 +235,7 @@ Workflow:
   1. ~~**The chat join is the one thing no test can settle.**~~ **DONE
      2026-07-28** — the id is `chatchannel_` + the tuple's FIRST element, the same
      shape for a named channel and a private conversation; written up in
-     `settings-field-reference.md`. Items 2-6 below are still open, and 4-6 need
+     `settings-field-reference.md`. Items 2-5 below are still open, and 4-5 need
      no client at all.
   2. A stack the **editor** minted should still read `Window stack · N`: per
      `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
@@ -248,10 +248,15 @@ Workflow:
      `preferences.json.bad`. The copy-vs-rename fallback has **no CI coverage at
      all** — CI is Linux-only and the test that exercises it is `#[cfg(windows)]`.
   5. Two rapid override toggles on one window: the file must end up matching the UI.
-  6. `overrideCount()` counts overrides across every character, so the counter can
-     read "· 3 overridden" on a file none of them apply to, and `clear` would wipe
-     another character's. Decide from real use whether to scope it to the open
-     layout. _Added 2026-07-26._
+  6. ~~`overrideCount()` counts overrides across every character~~ — **done
+     2026-07-28**: the counter and its `clear` are scoped to the windows the open
+     document has, so the line beside "showing N of M windows" describes that
+     layout rather than every character's, and `clear` can no longer remove an
+     override belonging to a file you do not have open. The stored list stays
+     application-wide by design; only what is reported and cleared is narrowed.
+     Scoped to the document's windows rather than the drawn ones deliberately —
+     a `clutter` override hides its own window, so a count over the drawn set
+     could never include one.
 
 - [x] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
   ships empty, so the Keybinds view's Default column and per-row reset are
