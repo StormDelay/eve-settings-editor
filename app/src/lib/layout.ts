@@ -237,6 +237,12 @@ export function shipOffsetFromX(x: number, referenceW: number): number {
  * grid's top lines up with D-Scan's top. The client then wrote (839, 497) back
  * unchanged. The anchor is where the ability grid starts whether or not it is
  * drawn, which is why it is stable.
+ *
+ * Sizes MEASURED 2026-07-28 from the same shot the anchor was confirmed on:
+ * with 4 squadrons (3 launched) the panel spans 381x253 from the anchor, on a
+ * column pitch of 86 shared by the ability grid and the squadron row. Five
+ * squadrons is the carrier maximum, hence the 467 width in HUD_NOMINAL. Height
+ * is independent of squadron count.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x), y: Math.round(y) };

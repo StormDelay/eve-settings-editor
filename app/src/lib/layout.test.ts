@@ -500,6 +500,29 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   }
 }
 
+// The 2026-07-28 fighter shot: anchor (329, 289), 4 squadrons with 3 launched.
+// The panel's own top-left IS the anchor — that half was already right — so this
+// pins the size, and specifically that the ability grid is inside it.
+{
+  // fighter_detached and fighter_shown are already true in fullHud's base, which
+  // is what makes hudRects emit the panel at all — only the point changes here.
+  const hud = fullHud({
+    fighter_x: hudEntry("fighter_x", "329", "int", "0"),
+    fighter_y: hudEntry("fighter_y", "289", "int", "0"),
+  });
+  const f = hudRects(hud, layout2560).find((x) => x.kind === "fighter")!;
+
+  check("the fighter panel starts at the stored anchor", f.x === 329 && f.y === 289);
+  check("it is wide enough for five squadrons", f.w === 467);
+  check(
+    "it is tall enough for the ability grid, not just the squadron row",
+    f.h === 253,
+  );
+  // The regression this guards: 120 covered the squadron row alone, so windows
+  // snapped straight through the abilities above it.
+  check("it is more than twice the old invented height", f.h > 2 * 120);
+}
+
 // --- snapping: candidate lines ---------------------------------------------
 {
   // The canvas edges are candidates even when nothing is drawn.
