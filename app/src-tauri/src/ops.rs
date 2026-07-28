@@ -19,7 +19,7 @@ use settings_model::{
     WindowLayout,
     apply_categories_to, extract_categories, full_copy_to, Category,
     unstack, add_to_stack, reorder_stack, create_stack, delete_orphan_frames, StackError,
-    create_tab, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
+    create_tab, create_window_mapping, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
@@ -963,6 +963,12 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
     edit_user_tabs(state, |v| create_tab(v, window_idx, &name, from_tab).map(|_| ()))
 }
 
+/// Give the account an explicit tab-to-window mapping. User slot only: window
+/// 0's char-side geometry key already exists on any account with an overview.
+pub fn overview_create_window_mapping(state: &AppState) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| create_window_mapping(v).map(|_| ()))
+}
+
 pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
     edit_user_tabs(state, |v| create_preset(v, &from, &new_name))
 }
@@ -1704,6 +1710,38 @@ mod tests {
         assert_eq!(cols.windows.len(), 1, "window removed");
         assert_eq!(cols.windows[0].tab_indices.len(), 2, "removed window's tab moved to window 0");
         assert_eq!(cols.tabs.len(), 2, "no tabs deleted");
+    }
+
+    fn windowless_user_bytes() -> Vec<u8> {
+        use blue_marshal::{encode, Value};
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::StrUcs2("Default".into())),
+            (bb("overview"), bb("P")),
+        ]);
+        encode(&Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+        ]))])).unwrap()
+    }
+
+    #[test]
+    fn creating_a_window_mapping_projects_one_window_holding_every_tab() {
+        let path = temp_file("ov-windowless", &windowless_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        // Before: the account projects no windows at all.
+        assert!(overview_columns(&state).unwrap().windows.is_empty());
+
+        let cols = overview_create_window_mapping(&state).unwrap();
+        assert_eq!(cols.windows.len(), 1);
+        assert_eq!(cols.windows[0].tab_indices, vec![0]);
+
+        // Doc still encodes/decodes (reshare ran without corrupting the tree).
+        let guard = state.user.lock().unwrap();
+        let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
     }
 
     fn autofill_user_bytes() -> Vec<u8> {

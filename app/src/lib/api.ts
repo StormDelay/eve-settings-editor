@@ -391,6 +391,7 @@ export const api = {
     invoke<OverviewColumns>("overview_window_add", { name, fromTab }),
   overviewWindowRemove: (windowIdx: number) =>
     invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
+  overviewCreateWindowMapping: () => invoke<OverviewColumns>("overview_create_window_mapping"),
   presetCreate: (from: string, newName: string) =>
     invoke<OverviewColumns>("preset_create", { from, newName }),
   presetRename: (oldName: string, newName: string) =>
