@@ -412,6 +412,37 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   );
 }
 
+// --- the conventions, against the live client ------------------------------
+// The round trip above only proves hudRects and its inverse agree with EACH
+// OTHER; it passes just as happily if both are wrong the same way. These pin
+// them to what the client actually did on 2026-07-27 at 2560x1440, character
+// 93622368. See docs/format-notes.md § "HUD anchors".
+{
+  const at = (offset: string) =>
+    hudRects(fullHud({ ship_offset: hudEntry("ship_offset", offset, "float", "0") }), layout2560)
+      .find((r) => r.kind === "shipui")!;
+
+  // Written 0.0, the client drew the HUD dead centre. Asserting on the CENTRE
+  // rather than the left edge is deliberate: it holds whatever HUD_NOMINAL's
+  // width turns out to be, so correcting that invented number cannot make this
+  // fail, while a regression to a left-edge origin still does.
+  const centred = at("0");
+  check("live: offset 0 centres the ship HUD", centred.x + centred.w / 2 === 1280);
+
+  // Dragged left, the client wrote -642.0 -> the HUD's centre sits at 638.
+  const dragged = at("-642");
+  check("live: offset -642 puts the HUD centre at 638", dragged.x + dragged.w / 2 === 638);
+  check("live: a negative offset moves the HUD left", dragged.x < centred.x);
+
+  // The fighter UI's x is the panel's LEFT EDGE in absolute screen px: dragged
+  // to mid-screen the client stored 839, measured at 838 on the screenshot.
+  const fighter = hudRects(
+    fullHud({ fighter_x: hudEntry("fighter_x", "839", "int", "0") }),
+    layout2560,
+  ).find((r) => r.kind === "fighter")!;
+  check("live: the fighter UI's stored x is its left edge", fighter.x === 839);
+}
+
 // --- snapping: candidate lines ---------------------------------------------
 {
   // The canvas edges are candidates even when nothing is drawn.

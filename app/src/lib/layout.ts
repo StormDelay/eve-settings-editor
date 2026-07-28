@@ -134,10 +134,29 @@ export interface FurnitureRect {
   drag: "none" | "x" | "xy";
 }
 
-// ponytail: EVE stores anchors but never sizes, and never says what the anchor
-// is relative to. These nominal sizes — and the centre-relative ship offset and
-// top-left point convention below — are ASSUMPTIONS, corrected from the slice's
-// live smoke. Nothing outside this table depends on the numbers.
+// EVE stores anchors but never sizes, and never says what an anchor is relative
+// to, so all of this began as assumption. The 2026-07-27 live session settled
+// the conventions: the ship offset is centre-relative (and was already written
+// that way), the fighter UI's x is its left edge, its y is wrong by a constant.
+// ponytail: the nominal SIZES below are still invented — measure them off one
+// native-resolution screenshot, see HUD_NOMINAL.
+/**
+ * Drawn sizes for the screen furniture, in data px. These are still INVENTED —
+ * the 2026-07-27 live session measured the ship HUD off a screenshot at roughly
+ * 610x175 against the 686x250 here, close on width and well out on height, but
+ * that was eyeballed off a downscaled image and is not good enough to replace a
+ * number with.
+ *
+ * `shipui.w` is not merely cosmetic: `shipOffsetFromX` reads it, so an error
+ * here shifts every offset a DRAG writes by half that error. The other two are
+ * cosmetic — the fighter and badge rects are placed from their stored point, not
+ * derived from a size.
+ *
+ * To measure: one native-resolution screenshot with `ship_offset` at a known
+ * value. The HUD's centre is then `reference_w / 2 + offset` exactly (confirmed,
+ * see shipOffsetFromX), so measuring either edge gives the width without having
+ * to find both.
+ */
 export const HUD_NOMINAL = {
   shipui: { w: 686, h: 250 },
   fighter: { w: 400, h: 120 },
@@ -161,19 +180,37 @@ export function hudFlag(hud: Hud, name: string): boolean {
 }
 
 /** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects'
- * ship-HUD placement below — the two must be corrected together (see
- * hudRects' comment on the ship HUD branch). */
+ * ship-HUD placement below — the two must be corrected together.
+ *
+ * CONFIRMED in-game 2026-07-27: the offset is centre-relative, it anchors the
+ * HUD's OWN centre, and negative is leftward. Writing 0.0 drew the HUD dead
+ * centre (which also rules out a left-edge origin); dragging it left made the
+ * client write -642.0. See docs/format-notes.md § "HUD anchors".
+ *
+ * Note this reads HUD_NOMINAL.shipui.w, so a wrong nominal width makes a DRAG
+ * compute a wrong offset — by half the error. See HUD_NOMINAL. */
 export function shipOffsetFromX(x: number, referenceW: number): number {
   return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
 }
 
 /**
  * Stored (x, y) for a fighter/badge rect at data-px `x, y`. Inverse of
- * hudRects' fighter/badge placement below, which currently stores the rect's
- * top-left directly — the two must be corrected together (see hudRects'
- * comment on the fighter/badge branches) or a drag will jump by however much
- * the convention actually differs (e.g. half the element's size, if the
- * stored point turns out to be the panel's centre).
+ * hudRects' fighter/badge placement below.
+ *
+ * `x` is CONFIRMED in-game 2026-07-27 for the fighter UI: it is the panel's
+ * left edge in absolute screen pixels, origin at the screen's left. Dragged to
+ * a measurable mid-screen position the client stored 839 against 838 measured,
+ * and 0 is the leftmost value a drag can produce.
+ *
+ * `y` is NOT confirmed and is currently wrong by a constant. Writing 0 drew the
+ * panel roughly 234px BELOW the screen top, and dragging it into the top-left
+ * corner made the client write -234 — so negative is upward and the origin is
+ * not the screen edge. It is left uncorrected rather than encoded as `y + 234`,
+ * because 234 comes from a single 2560x1440 capture and nothing distinguishes an
+ * absolute inset from a proportional one. To settle it in one capture: place the
+ * panel, note the value, drag it a KNOWN number of pixels, and compare the two
+ * deltas — a delta removes the anchor-point ambiguity that made the corner drag
+ * (which clamps) only half-conclusive.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x), y: Math.round(y) };
@@ -193,8 +230,11 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     out.push({ kind: "neocom", label: "Neocom", x: 0, y: 0, w: neocom, h: layout.reference_h, drag: "none" });
   }
 
-  // Centre-relative placement. Its inverse is shipOffsetFromX, below — a
-  // matched pair that must be corrected together (see shipOffsetFromX's doc).
+  // Centre-relative placement, anchoring the HUD's own centre — confirmed
+  // in-game 2026-07-27, see shipOffsetFromX. `centre + offset` is the HUD's
+  // centre and `- w/2` steps back to its left edge, so the drawn centre is
+  // independent of whether HUD_NOMINAL's width is right. Its inverse is
+  // shipOffsetFromX, below — a matched pair, correct them together.
   const offset = hudNum(hud, "ship_offset");
   if (offset !== null) {
     const { w, h } = HUD_NOMINAL.shipui;
@@ -209,10 +249,12 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     });
   }
 
-  // The stored point is placed as the rect's top-left. Its inverse is
-  // hudPointFromRect, below — a matched pair that must be corrected together
-  // (see hudPointFromRect's doc) if the live smoke shows this is wrong (e.g.
-  // the stored point is really the panel's centre).
+  // The stored point is placed as the rect's top-left. `x` is confirmed correct
+  // in-game (it is the panel's left edge in absolute screen px); `y` is known
+  // WRONG by a constant — the client draws the panel about 234px lower than
+  // this puts it at 2560x1440 — and is left alone until one more capture says
+  // whether that inset is absolute or proportional. See hudPointFromRect, whose
+  // inverse must be corrected in the same change.
   const fx = hudNum(hud, "fighter_x");
   const fy = hudNum(hud, "fighter_y");
   if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
