@@ -28,6 +28,11 @@ pub enum OverviewTabError {
     /// 2026-07-28) and the client distributes tabs across its char-side windows
     /// by default. `create_window_mapping` is the deliberate way out.
     NoWindowMapping,
+    /// Refused: this account already maps tabs to windows.
+    WindowMappingExists,
+    /// Refused: there are no tabs to map, and a mapping whose window lists no
+    /// tabs hides the entire overview.
+    NoTabsToMap,
     /// Refused: only the last overview window can be removed for now.
     NotLastWindow { index: usize },
     /// No preset with this name in `overviewProfilePresets`.
@@ -49,6 +54,8 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::LastTab => write!(f, "An overview must keep at least one tab."),
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
             OverviewTabError::NoWindowMapping => write!(f, "This account does not use per-window tabs, so there are no windows to change. EVE removes the tab-to-window mapping whenever an overview pack is imported through the client, and the overview works normally without it."),
+            OverviewTabError::WindowMappingExists => write!(f, "This account already uses per-window tabs."),
+            OverviewTabError::NoTabsToMap => write!(f, "There are no overview tabs to map to a window."),
             OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
             OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
             OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
@@ -347,6 +354,42 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     let at = pos.min(dst.len());
     dst.insert(at, Value::Int(tab_idx));
     Ok(())
+}
+
+/// Give an account an explicit tab-to-window mapping: one window listing every
+/// tab it has, in ascending tab index.
+///
+/// This is the ONLY path in the codebase allowed to create
+/// `tabsByWindowInstanceID`, and it exists because the absent state is normal —
+/// EVE's own overview importer deletes the key (confirmed 2026-07-28) and the
+/// client then distributes tabs across its char-side windows by default. That
+/// default is char-side state this crate cannot read, so writing a mapping
+/// REPLACES it: every tab is pinned into one window until the user rearranges
+/// them. Destructive enough that it must never be implicit — the UI puts it
+/// behind a confirm that says so, and nothing else calls it.
+///
+/// Completeness is the safety property. A mapping that omits a tab hides that
+/// tab, and one that omits all of them hides the whole overview, so this either
+/// lists every tab or refuses.
+pub fn create_window_mapping(v: &mut Value) -> Result<usize, OverviewTabError> {
+    inline_all(v);
+    let ov = overview_mut(v)?;
+    if window_count(ov) > 0 {
+        return Err(OverviewTabError::WindowMappingExists);
+    }
+    // Ascending index, not dict order: the tab strip is rendered in index order
+    // and a mapping in insertion order would silently reshuffle it.
+    let mut indices: Vec<i64> = tabs_mut(ov).iter().filter_map(|(k, _)| as_int(k)).collect();
+    indices.sort_unstable();
+    if indices.is_empty() {
+        return Err(OverviewTabError::NoTabsToMap);
+    }
+    // groups_mut creates the key in the wrapped `(timestamp, list)` shape every
+    // real file uses. Only reached once the refusals above have passed, so it
+    // can never leave a partial mapping behind.
+    let groups = groups_mut(ov);
+    groups.push(Value::List(indices.iter().map(|&i| Value::Int(i)).collect()));
+    Ok(indices.len())
 }
 
 /// Add a new overview window (user-file grouping half). Appends an empty inner
@@ -920,5 +963,78 @@ mod tests {
             Err(OverviewTabError::NoWindowMapping),
         ));
         assert!(!has_mapping(&v), "a refused move must not create the mapping");
+    }
+
+    /// The mapping's single inner list, as plain ints.
+    fn mapped_tabs(v: &Value) -> Vec<i64> {
+        let Value::Dict(top) = v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        let (_, wv) = entries.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        let groups = list_inner(wv).unwrap();
+        assert_eq!(groups.len(), 1, "exactly one window is created");
+        list_inner(&groups[0]).unwrap().iter().filter_map(as_int).collect()
+    }
+
+    #[test]
+    fn create_mapping_lists_every_tab_in_one_window() {
+        let mut v = windowless_root();
+        // Give it a second and third tab so "every tab, in index order" has
+        // something to prove — a one-tab account cannot distinguish the cases.
+        {
+            let ov = overview_mut(&mut v).unwrap();
+            let tabs = tabs_mut(ov);
+            let clone = tabs[0].1.clone();
+            tabs.push((Value::Int(5), clone.clone()));
+            tabs.push((Value::Int(2), clone));
+        }
+        assert_eq!(create_window_mapping(&mut v).unwrap(), 3);
+        // Ascending index order, and NOT dict order (0, 5, 2 as inserted).
+        assert_eq!(mapped_tabs(&v), vec![0, 2, 5]);
+    }
+
+    #[test]
+    fn create_mapping_refuses_when_one_already_exists() {
+        let mut v = windowless_root();
+        create_window_mapping(&mut v).unwrap();
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::WindowMappingExists),
+        ));
+    }
+
+    #[test]
+    fn create_mapping_refuses_an_overview_with_no_tabs() {
+        // A mapping whose only window lists no tabs would hide everything, and a
+        // zero-tab overview is a state that exists in the wild.
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(Vec::new()),
+            ])),
+        ]))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        assert!(!has_mapping(&v), "a refused create must not leave a partial mapping");
+    }
+
+    #[test]
+    fn create_mapping_leaves_a_tree_that_still_encodes() {
+        let mut v = windowless_root();
+        create_window_mapping(&mut v).unwrap();
+        let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    #[test]
+    fn add_window_works_once_a_mapping_exists() {
+        // The whole point of the opt-in: add_overview_window refused before, and
+        // must succeed afterwards.
+        let mut v = windowless_root();
+        assert!(matches!(add_overview_window(&mut v, "Second", None), Err(OverviewTabError::NoWindowMapping)));
+        create_window_mapping(&mut v).unwrap();
+        assert_eq!(add_overview_window(&mut v, "Second", None).unwrap(), 1);
     }
 }
