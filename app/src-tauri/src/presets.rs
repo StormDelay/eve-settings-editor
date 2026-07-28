@@ -598,7 +598,19 @@ mod tests {
     }
 
     #[test]
-    fn a_pruned_document_keeps_no_unrelated_root_keys() {
+    fn a_pruned_document_keeps_no_unrelated_data() {
+        // Was `a_pruned_document_keeps_no_unrelated_root_keys`, which pinned
+        // `root.len() == 1`. That's no longer the shape: HudFighterPos and
+        // HudBadge are `absent_means_default`, and `char_doc()` below has
+        // neither key, so `prune` now legitimately leaves empty `ui` and
+        // `notifications` parents behind — that non-empty-root shape is the
+        // deliberate "this preset explicitly captured EVE's default" signal
+        // spec §4.5 relies on (see `prune`'s doc comment), not a leak. What
+        // must still never happen is real, unrelated data landing in the
+        // preset — `charStore`, or `ui` carrying the source's
+        // `SortHeadersSizes` — so this asserts on root-key identity instead
+        // of count, and requires every allowed-but-unexpected key to be an
+        // empty dict rather than ignoring its content.
         let data = temp_data("no-siblings");
         let dir = create(
             &data,
@@ -609,9 +621,35 @@ mod tests {
         )
         .unwrap();
         let Value::Dict(root) = read_doc(&dir.join(CHAR_FILE)) else { panic!("root is a dict") };
-        // Exactly `windows` — not `charStore`, and no empty `ui` left behind.
-        assert_eq!(root.len(), 1, "root holds one key, got {root:?}");
-        assert_eq!(root[0].0, b("windows"));
+
+        let mut has_windows = false;
+        for (k, v) in &root {
+            let Value::Bytes(name) = k else { panic!("unexpected key shape: {k:?}") };
+            match name.as_slice() {
+                b"windows" => {
+                    has_windows = true;
+                    assert!(
+                        !matches!(v, Value::Dict(d) if d.is_empty()),
+                        "windows must carry the real category content, got {v:?}"
+                    );
+                }
+                // The only other keys a Layout prune may leave: the empty
+                // "EVE default" parents HudFighterPos/HudBadge build when the
+                // source lacks them. Real content here would be a leak, not
+                // the default signal.
+                b"ui" | b"notifications" => assert_eq!(
+                    *v,
+                    Value::Dict(Vec::new()),
+                    "{} must be the empty default-parent, not leaked data, got {v:?}",
+                    String::from_utf8_lossy(name)
+                ),
+                other => panic!(
+                    "unexpected root key {:?} — charStore or another unrelated key leaked",
+                    String::from_utf8_lossy(other)
+                ),
+            }
+        }
+        assert!(has_windows, "windows must be present");
     }
 
     #[test]
