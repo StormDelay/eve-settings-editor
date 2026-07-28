@@ -49,20 +49,6 @@ Workflow:
   the other half — it is how a player recognises what they are positioning
   against. Raised during the 2026-07-28 live session. _Added 2026-07-28._
 
-- [ ] **Build the "delete orphaned stack frames" offer.** Confirmed 2026-07-28:
-  **EVE does not re-create them.** Two orphan frames (`43`, `51`) were deleted
-  from a real character file, the client was run through a full login/logout,
-  and both stayed gone while six untouched controls sat still. The live plan had
-  this the other way round — item 12 was written to CLOSE the task if the client
-  restored them — so the task is alive and worth building. A frame is orphaned
-  when it appears in the per-window maps but no entry in `stacksWindows` points
-  at it; A1 carried eight (`43 51 63 82 156 181 219 221`), and unstacking a pair
-  creates another, so they accumulate through ordinary use. Each is 5-6 entries
-  spread across `isLightBackgroundWindows`, `isOverlayedWindows`,
-  `minimizedWindows`, `openWindows`, `windowSizesAndPositions_1` and sometimes
-  `lockedWindows` — which is exactly why it should be one offer rather than
-  hand-deletion. _Added 2026-07-28._
-
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
   file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
@@ -585,23 +571,6 @@ Workflow:
   member — then either auto-dissolve on the drag-out or leave this closed.
   _Added 2026-07-26 (layout stack polish)._
 
-- [ ] **Offer to delete orphaned stack frames from the file.** EVE mints a
-  numeric-string window id *only* to serve as a window-stack container (see
-  `format-notes.md`, "Window stacks"), so a numeric id that is the container of no
-  stack is a dead frame whose members are all gone. A real live character file had
-  **8** of them (`43`, `51`, `63`, `82`, `156`, `181`, `219`, `221`), all flagged
-  open, each painting a phantom "Window stack" rectangle. Slice 1a *hides* them
-  when `Hide clutter` is on — this task is to actually **remove** them: a cleanup
-  action that deletes the id from `windowSizesAndPositions_1` and from every
-  window-id-keyed flag dict (`openWindows`, `minimizedWindows`,
-  `isLightBackgroundWindows`, `isOverlayedWindows`, `lockedWindows`,
-  `collapsedWindows`, `compactWindows`, `pinnedWindows`, `stacksWindows`,
-  `preferredIdxInStack3`). Structural, so it belongs in `windows.rs`/`stacks.rs`
-  with the usual inline-first-then-reshare discipline, and it needs a confirm step
-  plus a live smoke — deleting window state is not something to get wrong. Check
-  first whether EVE simply re-creates them, in which case it is not worth doing.
-  _Added 2026-07-26._
-
 - [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
   Today the only way to abandon edits is to open a different file and accept the
   discard prompt, then come back — or to quit. Add a button next to the
@@ -799,6 +768,17 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Offer to delete orphaned stack frames from the file.** `delete_orphan_frames`
+  in `stacks.rs` removes every numeric-string id that is neither a stack member
+  nor a container, from `windowSizesAndPositions_1`, all eight `BOOL_FLAGS`
+  dicts, `stacksWindows` and `preferredIdxInStack3` — one action rather than the
+  5-6 hand-deletions each frame needs. The window panel offers it whenever the
+  open file carries any, behind a confirm that names the count. Safe because the
+  client was verified not to re-create them (2026-07-28: two frames deleted from
+  a real file survived a full login/logout). The backend re-derives the orphan
+  set rather than trusting an id list over IPC. _Added 2026-07-26 and 2026-07-28
+  (two entries, one task); done 2026-07-28._
 
 - [x] **Nothing marks which settings folder EVE actually uses.** The diagnosis in
   this entry was wrong: the marker existed (`primaryProfileDir` pinned a profile
