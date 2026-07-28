@@ -23,7 +23,10 @@ pub enum OverviewTabError {
     LastTab,
     /// Refused: would remove the last overview window.
     LastWindow,
-    /// Refused: this overview has no window mapping to add onto (windowless account).
+    /// Refused: this account has no tab-to-window mapping. NOT damage — EVE's
+    /// own overview importer deletes `tabsByWindowInstanceID` (confirmed
+    /// 2026-07-28) and the client distributes tabs across its char-side windows
+    /// by default. `create_window_mapping` is the deliberate way out.
     NoWindowMapping,
     /// Refused: only the last overview window can be removed for now.
     NotLastWindow { index: usize },
@@ -45,7 +48,7 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::UnknownWindow { index } => write!(f, "Overview window {index} does not exist."),
             OverviewTabError::LastTab => write!(f, "An overview must keep at least one tab."),
             OverviewTabError::LastWindow => write!(f, "There must be at least one overview window."),
-            OverviewTabError::NoWindowMapping => write!(f, "This overview has no window layout to add to."),
+            OverviewTabError::NoWindowMapping => write!(f, "This account does not use per-window tabs, so there are no windows to change. EVE removes the tab-to-window mapping whenever an overview pack is imported through the client, and the overview works normally without it."),
             OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
             OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
             OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
@@ -348,10 +351,17 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
 
 /// Add a new overview window (user-file grouping half). Appends an empty inner
 /// list to `tabsByWindowInstanceID` and seeds it with one cloned tab (a window
-/// must have ≥1 tab). Refuses on a windowless account: adding positionally there
-/// would fabricate a partial mapping that hides the account's existing tabs (see
-/// `create_tab`). Returns the new window's index, always ≥1 here (a windowless
-/// account is refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
+/// must have ≥1 tab).
+///
+/// Refuses on an account with no mapping at all. That is not a damaged file: EVE
+/// deletes the key on every pack import, and distributes tabs across its
+/// char-side windows by default. Adding positionally there would fabricate a
+/// PARTIAL mapping listing only the new tab, which hides every other tab the
+/// account has. `create_window_mapping` writes a complete one instead, and is
+/// the only path allowed to create the key.
+///
+/// Returns the new window's index, always ≥1 here (an account with no mapping is
+/// refused with `NoWindowMapping`), so the char key is `overview_{idx}`.
 pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> Result<usize, OverviewTabError> {
     inline_all(v);
     let new_window_idx = {
@@ -847,6 +857,18 @@ mod tests {
         let mut v = user_with_tabs();
         set_tab_preset(&mut v, 0, "combat").unwrap();
         assert_eq!(tab_preset(&v, 0), "combat");
+    }
+
+    #[test]
+    fn the_windowless_message_does_not_read_as_damage() {
+        let msg = OverviewTabError::NoWindowMapping.to_string();
+        // The state is one EVE's own importer produces, so the wording has to
+        // describe a configuration, never a fault. "no ... to add to" read as a
+        // missing piece of the file.
+        assert!(msg.contains("per-window"), "message should name the feature: {msg}");
+        for bad in ["no window layout", "missing", "damaged", "corrupt", "invalid"] {
+            assert!(!msg.to_lowercase().contains(bad), "message still reads as damage ({bad}): {msg}");
+        }
     }
 
     #[test]
