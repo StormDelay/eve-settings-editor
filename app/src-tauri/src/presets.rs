@@ -574,6 +574,21 @@ mod tests {
         decode(&std::fs::read(p).expect("preset file exists")).expect("preset file decodes")
     }
 
+    /// A user document carrying all four account-side HUD keys the Layout
+    /// aspect writes: `ui/shipuialigntop`, `ui/detachFighterUI`,
+    /// `ui/displayFighterUI`, and `windows/neocomWidth`. Built beside
+    /// `user_doc()` rather than folding into it, since `user_doc()` — which
+    /// deliberately carries none of these — is what other tests depend on.
+    fn user_doc_with_account_hud() -> Value {
+        let ui = Value::Dict(vec![
+            (b("shipuialigntop"), Value::Bool(true)),
+            (b("detachFighterUI"), Value::Bool(false)),
+            (b("displayFighterUI"), Value::Bool(true)),
+        ]);
+        let windows = Value::Dict(vec![(b("neocomWidth"), Value::Int(240))]);
+        Value::Dict(vec![(b("ui"), ui), (b("windows"), windows)])
+    }
+
     #[test]
     fn a_layout_preset_carries_the_layout_and_nothing_else() {
         let data = temp_data("layout-only");
@@ -1002,6 +1017,58 @@ mod tests {
                 "the parent for {} was built",
                 String::from_utf8_lossy(key)
             );
+        }
+    }
+
+    #[test]
+    fn a_freshly_created_layout_preset_removes_account_hud_keys_an_old_preset_would_leave_alone() {
+        // The design distinguishes a Layout preset created BEFORE this branch
+        // (account side is an empty root `{}` — applying it must leave the
+        // target's HUD keys alone) from one created AFTER (account side is at
+        // minimum `{ui: {}, windows: {}}` — applying it removes HUD keys the
+        // source lacks). This exercises that discrimination end to end,
+        // through `presets::create`, rather than on hand-built documents.
+        let data = temp_data("layout-hud-e2e");
+        // user_doc() stores none of the four account-side HUD keys.
+        let dir = create(
+            &data,
+            "New layout",
+            &[Aspect::Layout],
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&user_doc()) },
+            false,
+        )
+        .unwrap();
+        let preset_user = read_doc(&dir.join(USER_FILE));
+        assert!(
+            !is_empty_root(&preset_user),
+            "a newly created Layout preset's user.dat is never an empty root"
+        );
+
+        let w = aspect_writes(&[Aspect::Layout]);
+        let hud_cats = [
+            Category::HudShipTop,
+            Category::HudFighterDetached,
+            Category::HudFighterShown,
+            Category::HudNeocomWidth,
+        ];
+
+        // New-preset path: the preset's account side reports each key as an
+        // explicit removal, so a target that has them loses them.
+        let extracted = extract_categories(&preset_user, &w.account_categories);
+        let mut target = user_doc_with_account_hud();
+        apply_to_tree(&mut target, &extracted);
+        for cat in hud_cats {
+            assert!(!has_category(&target, cat), "{cat:?} must be removed by a freshly created Layout preset");
+        }
+
+        // Old-preset path, as the contrast case: an empty-root account side
+        // (what every Layout preset's user.dat was before this branch)
+        // contributes neither values nor removals, so the same keys survive.
+        let old_extracted = extract_categories(&Value::Dict(vec![]), &w.account_categories);
+        let mut old_target = user_doc_with_account_hud();
+        apply_to_tree(&mut old_target, &old_extracted);
+        for cat in hud_cats {
+            assert!(has_category(&old_target, cat), "{cat:?} must survive an old preset's empty-root account side");
         }
     }
 
