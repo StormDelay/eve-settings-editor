@@ -13,16 +13,27 @@ Workflow:
 
 ## Open
 
-- [ ] **Draw the fighter-ability grid on the layout canvas.** The ship HUD is
-  drawn with its module racks, but the fighter UI is drawn as a bare box, and
-  in-game the panel is mostly the ability grid above the squad row — that grid
-  is the panel's anchor point, so the canvas currently shows the element as far
-  shorter than it is and anchored at the wrong-looking place.
-  `HUD_NOMINAL.fighter` says 400x120; the real panel with abilities up is
-  roughly twice that tall. Measure it the same way the anchor was settled
-  (against a window edge of known y, fighters deployed) and draw the grid, so a
-  drag lands where the user expects. Suggested during the 2026-07-28 live
-  session. _Added 2026-07-28._
+- [ ] **The HUD furniture must cover its real in-game footprint — module racks
+  and fighter abilities included.** Both elements are drawn as bare boxes at
+  invented `HUD_NOMINAL` sizes, and the sizes are what everything else is placed
+  against: `LayoutView.svelte:349` pushes each furniture rect's `w`/`h` into the
+  snap-line set, so a box that is too small makes windows snap to an edge the
+  player cannot see and overlap the part we did not draw. This is placement, not
+  decoration.
+  - **Ship HUD:** the racks are most of its width. `HUD_NOMINAL.shipui` says
+    686x250; a native crop of the real thing (speed gauge plus three rows of
+    module slots) measures roughly **715x205** including its margin, so we are
+    narrow and tall. There is no hard edge in-game to align against — the racks
+    fade out with no frame — but the slot circles are discrete and countable, so
+    a native screenshot can be measured icon-to-icon even though nothing snaps.
+  - **Fighter UI:** in-game the panel is mostly the ability grid ABOVE the squad
+    row, and that grid's top is the stored anchor point (confirmed 2026-07-28)
+    even when no fighters are up. `HUD_NOMINAL.fighter` says 400x120; with
+    abilities drawn it is roughly twice that tall. Measure it the way the anchor
+    was settled: against a window edge of known y, fighters deployed.
+  Drawing the racks and the grid inside the box, rather than just sizing it, is
+  the other half — it is how a player recognises what they are positioning
+  against. Raised during the 2026-07-28 live session. _Added 2026-07-28._
 
 - [ ] **Build the "delete orphaned stack frames" offer.** Confirmed 2026-07-28:
   **EVE does not re-create them.** Two orphan frames (`43`, `51`) were deleted
