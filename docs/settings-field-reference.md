@@ -367,6 +367,40 @@ mirror kept alive for old clients, `tabsettings2` an abandoned intermediate
 generation. The app's read order (`tabsettings_new` then `tabsettings`) is
 correct; `tabsettings2` should be left alone, which it is.
 
+**Confirmed against the whole corpus, 2026-07-28.** Scanning all **174 distinct
+account files** (2,897 copies deduped by content), 130 carry at least one tab key:
+
+| Keys present | Files |
+|---|---|
+| `tabsettings` + `tabsettings2` + `tabsettings_new` | 60 |
+| `tabsettings` only | 46 |
+| `tabsettings_new` only | 12 |
+| `tabsettings` + `tabsettings2` | 11 |
+| `tabsettings2` + `tabsettings_new` | 1 |
+| **`tabsettings2` only** | **0** |
+
+Two facts justify ignoring it:
+
+1. **`tabsettings2` is never the only tab key** (0 of 130). The read order can
+   therefore never leave the editor showing an empty tab list while
+   `tabsettings2` holds one.
+2. **On every file carrying `tabsettings_new`, `tabsettings2` is older** — no
+   exceptions among the 61 such files. Where the modern key exists, the
+   abandoned one is always behind it.
+
+There *are* 11 files where `tabsettings2` carries the newest timestamp, which
+looks alarming until you see that **all 11 carry no `tabsettings_new` at all**.
+They are pre-Photon backups (`settings_Default - before photon mandatory`, plus
+one `core_user_13036531 - old.dat`) in which `tabsettings2` was written roughly
+0.08s *after* `tabsettings` — the same save, written last.
+
+**The one honest caveat.** On those pre-Photon files the two keys hold genuinely
+different content (`tabsettings2` is about twice the size, with different presets
+and column lists), and the editor reads `tabsettings`. Which one that era's
+client read is unknown and now untestable — no current client reads a pre-Photon
+file. It is only reachable by opening a historical backup, and nothing the editor
+writes there would be loaded by a live client anyway.
+
 ### 5.3 `cmd → customCmds` — the keybindings
 
 175/175 files, 101 distinct command names, 0–96 entries per file.

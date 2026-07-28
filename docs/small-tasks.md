@@ -145,21 +145,6 @@ Workflow:
   and backed out during the live session because it failed those 14 fixtures —
   `overview_pack::put` already does it. _Added 2026-07-27._
 
-- [ ] **`tabsettings2` exists and the editor has never read it.** There are
-  three tab-table keys in the wild, not two: `overview.rs::tab_dict` tries
-  `tabsettings_new` then `tabsettings`, and `tabsettings2` is invisible to it.
-  It is not rare — a scan of 43 corpus accounts carrying any tab key found it in
-  **21** of them (19 with all three keys, 1 with `tabsettings`+`tabsettings2`,
-  1 with `tabsettings2`+`tabsettings_new`). Structurally it is the same tab dict
-  (index → `bracket`/`color`/`overview`/`showAll`/`tabColumns`/`name`). On most
-  accounts its timestamp is the oldest of the three, so it reads as another
-  migration leftover like `tabsettings` — **but on one corpus account it carries
-  the newest timestamp of all three**, so "always stale" cannot be assumed.
-  Decide what it is (in-game: does a client with only `tabsettings2` read it?),
-  then either read it in the fallback chain or say in `format-notes.md` why it
-  is ignored. Until then the editor can show a tab list that the client does not
-  use. Found while manufacturing the zero-tab state. _Added 2026-07-27._
-
 - [ ] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
   `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
@@ -751,6 +736,26 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **`tabsettings2` exists and the editor has never read it.** Resolved by a
+  corpus scan rather than an in-game test, and the read order stands unchanged.
+  Scanned all **174 distinct account files** (2,897 copies deduped by content);
+  130 carry at least one tab key, 72 carry `tabsettings2`. Two facts settle it:
+  `tabsettings2` is **never the only tab key** (0 of 130), so the editor never
+  shows an empty tab list where it holds one; and on **every** file carrying
+  `tabsettings_new` — the key the current client actually rewrites —
+  `tabsettings2` is older, with no exceptions. The entry's worry that "one corpus
+  account carries the newest timestamp of all three" does not survive: the 11
+  files where `tabsettings2` is newest carry **no `tabsettings_new` at all**. They
+  are pre-Photon backups (`settings_Default - before photon mandatory`, one
+  `- old`), where `tabsettings2` was written ~0.08s after `tabsettings` in the
+  same save. So "stale relative to the authoritative key" holds everywhere it
+  matters. The reasoning is recorded in `settings-field-reference.md` §5.2 with
+  one honest caveat: on such a pre-Photon backup the editor reads `tabsettings`
+  while that era's client may have read `tabsettings2` (their contents differ —
+  `tabsettings2` is roughly twice the size with different presets and columns).
+  Untestable and unreachable in practice: no current client reads those files.
+  _Added 2026-07-27; done 2026-07-28._
 
 - [x] **The overview filter list is slow.** Categories now render their checkbox
   rows only while open, and the filter box is debounced 150ms. The entry's count
