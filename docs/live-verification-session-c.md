@@ -1,4 +1,24 @@
-# Live verification — Session C (2026-07-28)
+# Live verification — Session C (2026-07-28) — **COMPLETE, all checks passed**
+
+## Results
+
+| Check | Verdict |
+|---|---|
+| **W** Windowless opt-in | **PASS.** All 5 tabs present, named and ordered correctly in game; the client kept `[[0,1,2,3,4]]` verbatim across a login/logout — it did not rewrite, renumber or delete it. First live proof the opt-in is safe. |
+| **O** Orphan-frame delete | **PASS.** 381 → 375 windows, the six ids purged from every dict with zero residue, all 8 live stacks intact. The client brought back **none** of them and added/removed nothing. |
+| **H** HUD second offset | **PASS, and it found a bug.** Anchor exact at a second offset; the left button column proved to move with the HUD; and the bottom margin turned out to be **12, not the 28** the code mirrored. |
+| **N** Neocom docked vs space | **Answered.** An addition, not a filter or reorder — nothing reflows. |
+
+The pre-flight was worth it: staging was verified on disk before the launch, so
+the client session only had to answer questions the files could not.
+
+One correction found before launch: the banner offered **6** frames, not the 4 a
+shell scan had predicted. The banner was right — the scan text-scraped a
+structured dump and overran. See §3 step 0.4.
+
+---
+
+# Plan (as executed)
 
 Everything shipped on `live-verification-session-a` that **writes to a settings
 file and has never been run against a running client**, plus the one measurement
