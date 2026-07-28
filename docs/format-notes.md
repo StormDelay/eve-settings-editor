@@ -691,6 +691,21 @@ unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
 
+### A minted zero timestamp is safe
+
+Creating a container key from nothing means inventing its `(timestamp, payload)`
+wrapper, and every such path in this codebase mints `Value::Long(vec![0u8; 8])`
+— a zero where every EVE-written key holds a real FILETIME (`134295…`).
+**Confirmed harmless in-game 2026-07-27**: account B went into the client with
+`tabsettings_new` and `tabsByWindowInstanceID` both at `0L`, and the client read
+them, used them, and stamped its own timestamps on the way out
+(`134296537985022289L`, `134296538635206714L`). The zero is never seen again.
+
+The same capture also shows **EVE tolerates and preserves empty overview
+windows**: account B's `tabsByWindowInstanceID` was `[[0,1,2,3,4],[],[],[]]`
+after a 5-tab pack landed on a 4-window account, and came back from the client
+unchanged rather than pruned.
+
 ### HUD anchors
 
 **Placement conventions confirmed in-game 2026-07-27** (A1, 2560×1440, UI scale
@@ -705,14 +720,19 @@ back. One reading cannot separate an origin from a sign; two can.
   it, the offset moves the HUD's own **centre**, not its left edge: on a 2560
   screen, `-642.0` puts the HUD centre at 638. A1's pre-existing `-189.0` reads
   as "189px left of centre".
-- **`fightersDetachedPosition` is NOT a screen-corner tuple.** Written `(0, 0)`,
-  the fighter UI rendered roughly 165px *below* the screen top, not in the
-  corner. Dragged hard into the top-left corner, the client wrote back
-  **`(0, -234)`** — x unchanged, so `x = 0` is already the leftmost achievable
-  position, while y went negative going up. So y's origin sits ~234px below the
-  screen top and negative is upward. The exact origin and scale still need one
-  more capture: drag it to a *measurable middle* position and read the value,
-  rather than into a corner where it clamps.
+- **`fightersDetachedPosition` is the panel's top-left, in absolute screen
+  pixels, origin at the screen's top-left.** Settled 2026-07-28 by writing
+  `(839, 497)` — 497 being the exact top edge of that character's D-Scan window
+  — and photographing the two together: the fighter panel's ability grid drew
+  level with D-Scan's top, and the client wrote the pair back unchanged.
+  An earlier capture seemed to show y displaced by ~234px. It was wrong twice
+  over, and both traps are worth knowing for any future anchor work here: the
+  drag it came from was into a **corner, which clamps**, and the fighter panel's
+  *visible* extent changes with whether the fighter-ability grid is drawn — with
+  no fighters up, only the squad row shows, and that row sits ~150px below the
+  panel's anchor. The anchor is where the ability grid starts whether or not it
+  is drawn, which is what makes it stable. Measure against a known reference on
+  screen, never against a corner.
 - **`notification_badge_offset` was not captured** — it was never dragged, so it
   is still the client's own `(2519, 131)`. On a 2560-wide screen that is 41px
   from the right edge, which is consistent with a plain top-left-origin absolute

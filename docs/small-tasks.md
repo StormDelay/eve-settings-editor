@@ -13,6 +13,47 @@ Workflow:
 
 ## Open
 
+- [ ] **Draw the fighter-ability grid on the layout canvas.** The ship HUD is
+  drawn with its module racks, but the fighter UI is drawn as a bare box, and
+  in-game the panel is mostly the ability grid above the squad row — that grid
+  is the panel's anchor point, so the canvas currently shows the element as far
+  shorter than it is and anchored at the wrong-looking place.
+  `HUD_NOMINAL.fighter` says 400x120; the real panel with abilities up is
+  roughly twice that tall. Measure it the same way the anchor was settled
+  (against a window edge of known y, fighters deployed) and draw the grid, so a
+  drag lands where the user expects. Suggested during the 2026-07-28 live
+  session. _Added 2026-07-28._
+
+- [ ] **Build the "delete orphaned stack frames" offer.** Confirmed 2026-07-28:
+  **EVE does not re-create them.** Two orphan frames (`43`, `51`) were deleted
+  from a real character file, the client was run through a full login/logout,
+  and both stayed gone while six untouched controls sat still. The live plan had
+  this the other way round — item 12 was written to CLOSE the task if the client
+  restored them — so the task is alive and worth building. A frame is orphaned
+  when it appears in the per-window maps but no entry in `stacksWindows` points
+  at it; A1 carried eight (`43 51 63 82 156 181 219 221`), and unstacking a pair
+  creates another, so they accumulate through ordinary use. Each is 5-6 entries
+  spread across `isLightBackgroundWindows`, `isOverlayedWindows`,
+  `minimizedWindows`, `openWindows`, `windowSizesAndPositions_1` and sometimes
+  `lockedWindows` — which is exactly why it should be one offer rather than
+  hand-deletion. _Added 2026-07-28._
+
+- [ ] **Nothing marks which settings folder EVE actually uses.** `discover`
+  picks up every `settings_*` directory and the sidebar lists them alike, but
+  players keep hand-made backups beside the live one — this machine has **nine**
+  under one profile (`settings_Default`, ` - backup`, ` - before claude`,
+  ` - before multi overview`, ` - before photon mandatory`, ` - before
+  reworking overview`, ` - fucked up`, ` - new weird stuff`, and one named
+  ` - USE THIS ONE` that is *not* the one in use). A whole staging round of the
+  live verification was done in the wrong folder before anyone noticed, and the
+  contents look plausible either way because a stale backup is a real settings
+  file. The editor knows enough to say so: the live folder is the one EVE most
+  recently wrote, so rank by newest mtime across the profile and mark it — a
+  "last written <when>" line per folder, or an explicit badge on the newest.
+  Copying from the wrong one is the dangerous direction: the backup here was
+  weeks stale and would have silently reverted confirmed work. _Added
+  2026-07-28._
+
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
   file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
