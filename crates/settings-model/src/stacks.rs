@@ -82,6 +82,79 @@ pub fn unstack(v: &mut Value, member: &str) -> Result<(), StackError> {
     Ok(())
 }
 
+/// Delete every orphaned stack frame, returning the ids removed.
+///
+/// EVE mints a numeric-string window id ONLY to be a stack container (see
+/// docs/format-notes.md, "Window stacks"), so a numeric id that is the
+/// container of no stack, and a member of none, is a dead frame: its members
+/// are gone but its geometry and flags remain, painting an empty rectangle.
+/// One real character file carried eight, and unstacking a pair mints another,
+/// so they accumulate through ordinary use.
+///
+/// Safe to delete: confirmed in-game 2026-07-28 that the client does not
+/// re-create them across a full login/logout.
+///
+/// This re-derives the orphan set itself rather than taking a caller's list —
+/// it is a destructive write reached from an IPC command, and the id list is
+/// exactly the thing that must not be trusted from outside.
+pub fn delete_orphan_frames(v: &mut Value) -> Vec<String> {
+    inline_all(v);
+    let Ok(win) = windows_mut(v) else { return Vec::new() };
+
+    // Live ids: every member (key) and every container (value) in stacksWindows.
+    let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some((_, sw)) = win.iter().find(|(k, _)| is_b(k, b"stacksWindows")) {
+        if let Some(entries) = dict_of(sw) {
+            for (k, val) in entries {
+                if let Value::Bytes(b) = k { live.insert(String::from_utf8_lossy(b).into_owned()); }
+                if let Value::Bytes(b) = val { live.insert(String::from_utf8_lossy(b).into_owned()); }
+            }
+        }
+    }
+
+    // Candidates come from geometry: that is the dict the projection enumerates
+    // windows from, so this deletes exactly what the UI counted as an orphan.
+    let mut orphans: Vec<String> = Vec::new();
+    if let Some((_, g)) = win.iter().find(|(k, _)| is_b(k, b"windowSizesAndPositions_1")) {
+        if let Some(entries) = dict_of(g) {
+            for (k, _) in entries {
+                let Value::Bytes(bytes) = k else { continue };
+                let id = String::from_utf8_lossy(bytes).into_owned();
+                if !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()) && !live.contains(&id) {
+                    orphans.push(id);
+                }
+            }
+        }
+    }
+    if orphans.is_empty() {
+        return orphans;
+    }
+
+    // Purge from geometry, the eight flag dicts, and both stack dicts. The
+    // presence check matters: child_inner CREATES a missing child, and a file
+    // that never had `lockedWindows` must not grow one from a delete.
+    let mut names: Vec<&[u8]> = vec![b"windowSizesAndPositions_1", b"stacksWindows", b"preferredIdxInStack3"];
+    names.extend(crate::windows::BOOL_FLAGS.iter().map(|n| n.as_bytes()));
+    for name in names {
+        if !win.iter().any(|(k, _)| is_b(k, name)) {
+            continue;
+        }
+        let d = child_inner(win, name);
+        d.retain(|(k, _)| !matches!(k, Value::Bytes(b) if orphans.iter().any(|o| o.as_bytes() == b.as_slice())));
+    }
+    orphans
+}
+
+/// The dict inside a `windows` child, whether bare or `(timestamp, dict)`.
+/// Read-only counterpart to `child_inner`, which creates what it cannot find.
+fn dict_of(v: &Value) -> Option<&Vec<(Value, Value)>> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(t) => t.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+        _ => None,
+    }
+}
+
 pub fn add_to_stack(v: &mut Value, member: &str, container: &str) -> Result<(), StackError> {
     inline_all(v);
     let win = windows_mut(v)?;
@@ -420,5 +493,110 @@ mod tests {
             !win(&v).iter().any(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windowSizesAndPositions_1")),
             "the geometry dict must not be fabricated by a membership write",
         );
+    }
+
+    /// A file with one live stack (container "C", members m1/m2) and two orphan
+    /// frames: "43" carries geometry + four flags, "51" only geometry. Also a
+    /// non-numeric id "market" with no stack, which must survive — the orphan
+    /// rule is about MINTED numeric ids, and a normal window is never one.
+    fn orphans_root() -> Value {
+        fn geom(x: i64) -> Value {
+            Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)])
+        }
+        let boolset = |ids: &[&str]| Value::Tuple(vec![ts(), Value::Dict(
+            ids.iter().map(|i| (b(i), Value::Bool(true))).collect())]);
+        Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("m1"), geom(1)), (b("m2"), geom(1)), (b("C"), geom(1)),
+                (b("43"), geom(7)), (b("51"), geom(9)), (b("market"), geom(3)),
+            ])])),
+            (b("openWindows"), boolset(&["m1", "m2", "C", "43", "market"])),
+            (b("minimizedWindows"), boolset(&["43"])),
+            (b("isOverlayedWindows"), boolset(&["43"])),
+            (b("isLightBackgroundWindows"), boolset(&["43"])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("m1"), b("C")), (b("m2"), b("C")),
+            ])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), Value::Dict(vec![(b("m1"), Value::Int(0)), (b("m2"), Value::Int(1))])),
+                // A stale leftover: the orphan still has its own member dict.
+                (b("43"), Value::Dict(vec![(b("gone"), Value::Int(0))])),
+            ])])),
+        ]))])
+    }
+
+    #[test]
+    fn delete_orphans_removes_only_the_dead_numeric_frames() {
+        let mut v = orphans_root();
+        let deleted = delete_orphan_frames(&mut v);
+        assert_eq!(deleted, vec!["43".to_string(), "51".to_string()]);
+
+        // Gone from geometry; the live stack and the ordinary window survive.
+        let g = keys(inner(win(&v), b"windowSizesAndPositions_1"));
+        assert_eq!(g, vec!["m1".to_string(), "m2".to_string(), "C".to_string(), "market".to_string()]);
+    }
+
+    #[test]
+    fn delete_orphans_clears_every_flag_dict_and_the_stale_pref_entry() {
+        let mut v = orphans_root();
+        delete_orphan_frames(&mut v);
+        for dict in [b"openWindows".as_slice(), b"minimizedWindows", b"isOverlayedWindows", b"isLightBackgroundWindows"] {
+            assert!(
+                !keys(inner(win(&v), dict)).contains(&"43".to_string()),
+                "43 still present in {}", String::from_utf8_lossy(dict),
+            );
+        }
+        // openWindows keeps everything else it had.
+        assert!(keys(inner(win(&v), b"openWindows")).contains(&"market".to_string()));
+        // The orphan's own preferredIdxInStack3 container entry goes too.
+        assert!(!keys(inner(win(&v), b"preferredIdxInStack3")).contains(&"43".to_string()));
+        assert!(keys(inner(win(&v), b"preferredIdxInStack3")).contains(&"C".to_string()));
+    }
+
+    #[test]
+    fn a_container_and_a_member_are_never_orphans() {
+        // "C" is a container (a VALUE in stacksWindows) and would otherwise look
+        // orphaned if only keys were checked. Give the members numeric ids too,
+        // so the numeric test alone cannot save them.
+        let mut v = Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("70"), Value::Int(0)), (b("71"), Value::Int(0)), (b("99"), Value::Int(0)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("70"), b("99")), (b("71"), b("99")),
+            ])])),
+        ]))]);
+        assert_eq!(delete_orphan_frames(&mut v), Vec::<String>::new());
+    }
+
+    #[test]
+    fn delete_orphans_does_not_fabricate_absent_dicts() {
+        // Only geometry and stacksWindows exist. The seven other flag dicts must
+        // still be absent afterwards — child_inner would happily create them.
+        let mut v = Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("43"), Value::Int(0)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![])])),
+        ]))]);
+        assert_eq!(delete_orphan_frames(&mut v), vec!["43".to_string()]);
+        let names = keys(win(&v));
+        assert_eq!(names, vec!["windowSizesAndPositions_1".to_string(), "stacksWindows".to_string()]);
+    }
+
+    #[test]
+    fn delete_orphans_leaves_a_tree_that_still_encodes() {
+        // Same guarantee unstack_that_drops_a_shared_def_still_encodes gives:
+        // without inline-first, dropping a Shared def leaves a dangling Ref.
+        let mut v = orphans_root();
+        delete_orphan_frames(&mut v);
+        let bytes = blue_marshal::encode(&v).expect("edited tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    #[test]
+    fn a_file_with_no_windows_dict_deletes_nothing() {
+        let mut v = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        assert_eq!(delete_orphan_frames(&mut v), Vec::<String>::new());
     }
 }
