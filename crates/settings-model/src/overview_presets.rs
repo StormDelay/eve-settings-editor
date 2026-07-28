@@ -259,6 +259,7 @@ pub fn set_preset_states(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overview_tabs::dict_inner;
 
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
@@ -339,7 +340,9 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        // Through the module's own unwrap: these fixtures seed a bare dict, and
+        // an edit that passes through `tabs_mut` hands it back wrapped.
+        let td = dict_inner(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| matches!(k, Value::Int(i) if *i == idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
