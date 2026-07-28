@@ -2,7 +2,7 @@
 // framework — matching search.test.ts.
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
-  NO_FILTER, filterIsActive, windowMatches, visibleIds, drawnWindowCount,
+  NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
   snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
@@ -207,6 +207,11 @@ check("open filter keeps the right window", open[0].id === "a");
   check("hideClutter keeps a numeric id that is a stack member", windowMatches(memberFrame, { ...NO_FILTER, hideClutter: true }));
   check("a non-numeric id with no stack is unaffected by the orphan rule", windowMatches(market, { ...NO_FILTER, hideClutter: true }));
   check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
+
+  // The four hideClutter checks above already run these fixtures through
+  // isOrphanFrame — windowMatches calls it — so re-asserting each one adds no
+  // coverage. This pins the exported name, which the delete offer counts with.
+  check("the orphan rule is exported for the delete offer to count with", isOrphanFrame(orphanFrame));
 }
 
 // --- the filter searches the real channel name -----------------------------
@@ -292,7 +297,7 @@ check("open filter keeps the right window", open[0].id === "a");
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
-import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL } from "./layout.ts";
+import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
 // The four account-scoped fields, by name — a literal list rather than a
@@ -346,10 +351,15 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 37 && neocom.h === 1440);
   check("the neocom is not draggable", neocom.drag === "none");
 
-  // Centre-relative offset: x = w/2 + offset - nominal/2 = 1280 - 100 - 343.
+  // The offset places the CAPACITOR's centre; the left edge is 148px left of
+  // that (measured 2026-07-28): x = 1280 - 100 - 148.
   const ship = rects[1];
-  check("the ship HUD is centred plus the offset", ship.x === 1280 - 100 - HUD_NOMINAL.shipui.w / 2);
-  check("the ship HUD sits at the bottom by default", ship.y === 1440 - HUD_NOMINAL.shipui.h);
+  check("the ship HUD's anchor is centre plus the offset", ship.x + 148 === 1280 - 100);
+  // 12, not the 28 above it: both margins are measured now (2026-07-28, one
+  // character photographed top- and bottom-aligned at one offset) and the
+  // element is NOT vertically symmetric. Mirroring the top margin, which this
+  // asserted before, drew the box 16px high.
+  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 12 - 160);
   check("the ship HUD drags on x only", ship.drag === "x");
 
   const fighter = rects[2];
@@ -359,7 +369,8 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
 {
   const rects = hudRects(fullHud({ ship_top: hudEntry("ship_top", "true", "bool", "false") }), layout2560);
-  check("ship_top anchors the HUD to the top", rects[1].y === 0);
+  // Top-aligned it clears the screen edge by the measured 28px, not by 0.
+  check("ship_top anchors the HUD to the top", rects[1].y === 28);
 }
 
 {
@@ -409,6 +420,115 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check(
     "hudPointFromRect inverts hudRects' badge placement",
     badgePoint.x === hudNum(hud, "badge_x") && badgePoint.y === hudNum(hud, "badge_y"),
+  );
+}
+
+// --- the conventions, against the live client ------------------------------
+// The round trip above only proves hudRects and its inverse agree with EACH
+// OTHER; it passes just as happily if both are wrong the same way. These pin
+// them to what the client actually did on 2026-07-27 at 2560x1440, character
+// 93622368. See docs/format-notes.md § "HUD anchors".
+{
+  const at = (offset: string) =>
+    hudRects(fullHud({ ship_offset: hudEntry("ship_offset", offset, "float", "0") }), layout2560)
+      .find((r) => r.kind === "shipui")!;
+
+  // Written 0.0, the client drew the HUD "dead centre" — and 2026-07-28 showed
+  // what actually centres is the CAPACITOR wheel, at SHIP_ANCHOR_LEFT from the
+  // left edge, not the box. Asserting on the anchor rather than the left edge is
+  // deliberate for the same reason it always was: it holds whatever
+  // HUD_NOMINAL's width turns out to be, while a regression to a left-edge
+  // origin still fails it.
+  const centred = at("0");
+  check("live: offset 0 centres the ship HUD's capacitor", centred.x + SHIP_ANCHOR_LEFT === 1280);
+
+  // Dragged left, the client wrote -642.0 -> the capacitor sits at 638
+  // (measured 638.5 off the screenshot).
+  const dragged = at("-642");
+  check("live: offset -642 puts the capacitor at 638", dragged.x + SHIP_ANCHOR_LEFT === 638);
+  check("live: a negative offset moves the HUD left", dragged.x < centred.x);
+
+  // The fighter UI's stored point is the panel's top-left in absolute screen
+  // px. x: dragged mid-screen the client stored 839, measured at 838. y: given
+  // 497 — the exact top of A1's D-Scan window — the panel's ability grid drew
+  // level with D-Scan's top, and the client wrote (839, 497) straight back.
+  const fighter = hudRects(
+    fullHud({
+      fighter_x: hudEntry("fighter_x", "839", "int", "0"),
+      fighter_y: hudEntry("fighter_y", "497", "int", "0"),
+    }),
+    layout2560,
+  ).find((r) => r.kind === "fighter")!;
+  check("live: the fighter UI's stored point is its top-left", fighter.x === 839 && fighter.y === 497);
+}
+
+// The 2026-07-28 screenshot, reproduced: Storm Delay, 2560x1440, offset -642,
+// top-aligned. Every number is measured, not assumed — see the plan's
+// Background table. If one of these changes, a real screenshot disagreed.
+{
+  const hud = fullHud({
+    ship_offset: hudEntry("ship_offset", "-642", "float", "0"),
+    ship_top: hudEntry("ship_top", "true", "bool", "false"),
+  });
+  const ship = hudRects(hud, layout2560).find((f) => f.kind === "shipui")!;
+
+  check("the ship HUD's left edge sits 148px left of the anchor", ship.x === 490);
+  check("its right edge covers the widest slot row", ship.x + ship.w === 1133);
+  check("its top clears the screen edge by the measured margin", ship.y === 28);
+  check("its bottom edge, 160px below the top", ship.y + ship.h === 188);
+
+  // The anchor: the capacitor wheel's centre, measured at 638.5 against 638
+  // predicted. NOTE this check holds for any SHIP_ANCHOR_LEFT — it pins the
+  // formula's SHAPE, not the constant. What pins 148 is the literal 490 above,
+  // which is why that one is written as a number and not as an expression.
+  check(
+    "the anchor lands on the capacitor wheel, not the box centre",
+    ship.x + SHIP_ANCHOR_LEFT === 2560 / 2 - 642,
+  );
+}
+
+// shipOffsetFromX must be the exact inverse of the placement above, or a drag
+// writes an offset that puts the HUD somewhere other than where it was dropped.
+// ODD widths are the case that matters and the one a 2560-only loop cannot see:
+// a half-pixel screen centre makes Math.round bias half-up, so rounding on both
+// sides stacks instead of cancelling and every drag writes an offset 1px off.
+// 2559 fails this loop if the placement is ever rounded again.
+{
+  for (const referenceW of [2560, 1920, 3440, 2559, 1921]) {
+    const layout = { ...layout2560, reference_w: referenceW };
+    for (const offset of [-642, -189, 0, 300]) {
+      const hud = fullHud({
+        ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
+        ship_top: hudEntry("ship_top", "true", "bool", "false"),
+      });
+      const ship = hudRects(hud, layout).find((f) => f.kind === "shipui")!;
+      check(
+        `dragging to its own drawn x round-trips the offset (w=${referenceW}, ${offset})`,
+        shipOffsetFromX(ship.x, referenceW) === offset,
+      );
+    }
+  }
+}
+
+// The 2026-07-28 fighter shot: anchor (329, 289), 4 squadrons with 3 launched.
+// The panel's own top-left IS the anchor — that half was already right — so this
+// pins the size, and specifically that the ability grid is inside it.
+{
+  // fighter_detached and fighter_shown are already true in fullHud's base, which
+  // is what makes hudRects emit the panel at all — only the point changes here.
+  const hud = fullHud({
+    fighter_x: hudEntry("fighter_x", "329", "int", "0"),
+    fighter_y: hudEntry("fighter_y", "289", "int", "0"),
+  });
+  const f = hudRects(hud, layout2560).find((x) => x.kind === "fighter")!;
+
+  check("the fighter panel starts at the stored anchor", f.x === 329 && f.y === 289);
+  check("it is wide enough for five squadrons", f.w === 467);
+  // The regression this guards: the old 120 covered the squadron row alone, so
+  // windows snapped straight through the ability grid above it.
+  check(
+    "it is tall enough for the ability grid, not just the squadron row",
+    f.h === 253,
   );
 }
 

@@ -11,22 +11,59 @@ import type { Profile } from "./api";
  * common case stays short.
  */
 /**
- * The profile actually in use: the one whose files were touched most recently.
- * `null` when there are no profiles, or when none carries a usable timestamp —
+ * Files only EVE writes. The editor writes `core_char_<id>.dat` and
+ * `core_user_<id>.dat`; it never touches the anonymous ones. Verified over the
+ * 2026-07-27/28 live captures: 11 editor-only captures touched none of these,
+ * and all 4 captures taken after a client run touched three of them.
+ */
+const EVE_WRITTEN = /^core_(char|user)__\.dat$|^core_public__\.yaml$/;
+
+/**
+ * The profile actually in use: the one EVE wrote most recently.
+ *
+ * Ranking on ANY file — which this used to do — is wrong in the case that
+ * matters. Players keep hand-made backups beside the live folder (one machine
+ * had nine under a single profile), and editing one through this very editor
+ * makes it the most recently touched. On 2026-07-28 that pinned a weeks-stale
+ * backup to the top of the sidebar and a full round of work went into it.
+ * Ranking on files only EVE writes cannot be moved by our own saves.
+ *
+ * `null` when there are no profiles, or none carries a usable timestamp —
  * callers then have nothing better to guess with. Ties keep the first, which is
  * discovery's alphabetical order.
  */
 export function primaryProfileDir(profiles: Profile[]): string | null {
-  let best: string | null = null;
-  let bestTime = 0;
-  for (const p of profiles) {
-    const touched = p.files.reduce((max, f) => Math.max(max, f.modified_unix ?? 0), 0);
-    if (touched > bestTime) {
-      bestTime = touched;
-      best = p.dir;
+  const newest = (p: Profile, eveOnly: boolean) =>
+    p.files.reduce(
+      (max, f) =>
+        eveOnly && !EVE_WRITTEN.test(f.file_name) ? max : Math.max(max, f.modified_unix ?? 0),
+      0,
+    );
+  // Prefer the EVE-only signal. Fall back to any file only when no profile has
+  // one at all, so a profile the client has never run in is still selectable.
+  for (const eveOnly of [true, false]) {
+    let best: string | null = null;
+    let bestTime = 0;
+    for (const p of profiles) {
+      const t = newest(p, eveOnly);
+      if (t > bestTime) {
+        bestTime = t;
+        best = p.dir;
+      }
     }
+    if (best) return best;
   }
-  return best;
+  return null;
+}
+
+/**
+ * What to show beside a profile in the list. The wording is deliberately about
+ * EVE rather than about timestamps: "most recent" is what this used to say, and
+ * it reads as a ranking rather than as "this is the one the game loads" — which
+ * is the question a user with nine backup folders is actually asking.
+ */
+export function profileNote(isPrimary: boolean): string {
+  return isPrimary ? "in use by EVE" : "not in use — EVE has not written here";
 }
 
 export function profileLabels(profiles: Profile[]): Map<string, string> {

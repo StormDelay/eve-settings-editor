@@ -391,6 +391,7 @@ export const api = {
     invoke<OverviewColumns>("overview_window_add", { name, fromTab }),
   overviewWindowRemove: (windowIdx: number) =>
     invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
+  overviewCreateWindowMapping: () => invoke<OverviewColumns>("overview_create_window_mapping"),
   presetCreate: (from: string, newName: string) =>
     invoke<OverviewColumns>("preset_create", { from, newName }),
   presetRename: (oldName: string, newName: string) =>
@@ -440,6 +441,7 @@ export const api = {
   stackAdd: (member: string, container: string) => invoke<WindowLayout>("stack_add", { member, container }),
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
+  stackDeleteOrphans: () => invoke<WindowLayout>("stack_delete_orphans"),
   neocomBar: () => invoke<NeocomBar>("neocom_bar"),
   neocomReorder: (order: number[]) => invoke<NeocomBar>("neocom_reorder", { order }),
   neocomRemove: (index: number) => invoke<NeocomBar>("neocom_remove", { index }),

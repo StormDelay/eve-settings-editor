@@ -268,6 +268,23 @@ cached ISK values: `market_searchText`, `market_value`, `market_last_update`,
 **Chat.** `chatchannels` (367) `List[Tuple(kind, channelKey, label)]` — the
 character's joined channels; `chat_OldChannelsMigrated` (367) `Bool`.
 
+A chat window's id under `windows` is **`chatchannel_` + the tuple's FIRST
+element** — confirmed in-game 2026-07-28, for a named standing channel and a
+private conversation alike:
+
+| `chatchannels` entry | window id |
+|---|---|
+| `(b"corp", "corp_98835672", "Corp")` | `chatchannel_corp` |
+| `(b"alliance", "alliance_99010468", "Alliance")` | `chatchannel_alliance` |
+| `("private_40fcd4de…", "private_40fcd4de…", "Private Chat (2)")` | `chatchannel_private_40fcd4de…` |
+
+This was previously inferred rather than observed, and the worry was that a real
+id might carry a kind segment the key does not — in which case every chat window
+would silently keep a wrong derived name with no error anywhere. It does not: a
+private conversation's key already carries its own `private_` prefix, so both
+kinds derive identically. The third element is the channel's display name, which
+`windowLabels.ts` does not yet use (see `docs/small-tasks.md`).
+
 **Neocom.** `neocomButtonRawData` (370) `List[Instance]`,
 `neocomButtonRawDataOriginal` (367) `Tuple[Instance]` — the neocom button set.
 Format recorded in `format-notes.md` §"Neocom buttons"; already modelled
@@ -349,6 +366,40 @@ So the ordering is: `tabsettings_new` authoritative, `tabsettings` a legacy
 mirror kept alive for old clients, `tabsettings2` an abandoned intermediate
 generation. The app's read order (`tabsettings_new` then `tabsettings`) is
 correct; `tabsettings2` should be left alone, which it is.
+
+**Confirmed against the whole corpus, 2026-07-28.** Scanning all **174 distinct
+account files** (2,897 copies deduped by content), 130 carry at least one tab key:
+
+| Keys present | Files |
+|---|---|
+| `tabsettings` + `tabsettings2` + `tabsettings_new` | 60 |
+| `tabsettings` only | 46 |
+| `tabsettings_new` only | 12 |
+| `tabsettings` + `tabsettings2` | 11 |
+| `tabsettings2` + `tabsettings_new` | 1 |
+| **`tabsettings2` only** | **0** |
+
+Two facts justify ignoring it:
+
+1. **`tabsettings2` is never the only tab key** (0 of 130). The read order can
+   therefore never leave the editor showing an empty tab list while
+   `tabsettings2` holds one.
+2. **On every file carrying `tabsettings_new`, `tabsettings2` is older** — no
+   exceptions among the 61 such files. Where the modern key exists, the
+   abandoned one is always behind it.
+
+There *are* 11 files where `tabsettings2` carries the newest timestamp, which
+looks alarming until you see that **all 11 carry no `tabsettings_new` at all**.
+They are pre-Photon backups (`settings_Default - before photon mandatory`, plus
+one `core_user_13036531 - old.dat`) in which `tabsettings2` was written roughly
+0.08s *after* `tabsettings` — the same save, written last.
+
+**The one honest caveat.** On those pre-Photon files the two keys hold genuinely
+different content (`tabsettings2` is about twice the size, with different presets
+and column lists), and the editor reads `tabsettings`. Which one that era's
+client read is unknown and now untestable — no current client reads a pre-Photon
+file. It is only reachable by opening a historical backup, and nothing the editor
+writes there would be loaded by a live client anyway.
 
 ### 5.3 `cmd → customCmds` — the keybindings
 

@@ -1,8 +1,12 @@
 use blue_marshal::Value;
 
-/// True if any node in the subtree is a `Shared` store. Removing such a
-/// subtree would orphan its slot (encode fails SlotOutOfRange) or dangle
-/// Refs elsewhere — so removal is blocked at the mutation layer.
+use crate::path::resolve;
+use crate::treewalk::inline_all;
+
+/// True if any node in the subtree is a `Shared` store. Removing one naively
+/// would orphan its slot (encode fails SlotOutOfRange) or dangle Refs
+/// elsewhere, so `remove_entry` routes these through `remove_inlined` instead
+/// of removing in place.
 pub fn subtree_contains_shared(v: &Value) -> bool {
     match v {
         Value::Shared { .. } => true,
@@ -73,9 +77,6 @@ pub enum MutateError {
     /// A `Parse` failure in the *key* half of an insert. Same failure, its own
     /// code, so the UI can put the message next to the field that caused it.
     ParseKey(String),
-    /// Removal refused: the subtree contains a `Shared` store whose slot
-    /// the encoder needs (and Refs elsewhere may point at).
-    SharedSubtree,
     NotRemovable,
     NotAContainer(&'static str),
     BadIndex(usize),
@@ -89,11 +90,6 @@ impl std::fmt::Display for MutateError {
             MutateError::BadPath => write!(f, "no such node"),
             MutateError::NotScalar(kind) => write!(f, "not an editable scalar: {kind}"),
             MutateError::Parse(detail) | MutateError::ParseKey(detail) => write!(f, "{detail}"),
-            MutateError::SharedSubtree => write!(
-                f,
-                "contains a shared object that other entries point at — removing it \
-                 would break them"
-            ),
             MutateError::NotRemovable => write!(f, "this node cannot be removed"),
             MutateError::NotAContainer(kind) => write!(f, "not a container: {kind}"),
             MutateError::BadIndex(i) => write!(f, "index out of range: {i}"),
@@ -184,19 +180,64 @@ fn set_scalar(node: &mut Value, text: &str) -> Result<(), MutateError> {
     Ok(())
 }
 
+/// Remove a node whose subtree defines `Shared` slots that `Ref`s elsewhere may
+/// point at. Inlining first dissolves every store and every `Ref` into plain
+/// values, so nothing outside the removed subtree can still point into it; the
+/// `reshare` afterwards rebuilds canonical sharing over what is left. This is
+/// the same inline-then-edit pattern `neocom.rs` uses for its own mutations —
+/// the raw tree was the one edit path that never adopted it, which is why it
+/// had to refuse instead.
+///
+/// The path needs rewriting to match: inlining replaces each `Shared { value }`
+/// with `value`, which removes exactly the levels a `SharedInner` step descends
+/// through, and changes no dict entry count or list index. Dropping those steps
+/// therefore re-points the path at the same node.
+fn remove_inlined(root: &mut Value, path: &NodePath) -> Result<(), MutateError> {
+    inline_all(root);
+    let flat: NodePath = path.iter().copied().filter(|s| *s != Step::SharedInner).collect();
+    remove_resolved(root, &flat)?;
+    *root = blue_marshal::reshare(root);
+    Ok(())
+}
+
 fn remove_entry(root: &mut Value, path: &NodePath) -> Result<(), MutateError> {
+    // Only pay for inlining when the node actually holds a shared store —
+    // the common case must not reshuffle the whole file's shared slots.
+    if removal_needs_inlining(root, path)? {
+        return remove_inlined(root, path);
+    }
+    remove_resolved(root, path)
+}
+
+/// Does removing this node strand a `Shared` store? Read-only; the answer
+/// decides between the plain and the inlining removal path.
+fn removal_needs_inlining(root: &Value, path: &NodePath) -> Result<bool, MutateError> {
     let Some((last, parent_path)) = path.split_last() else {
         return Err(MutateError::NotRemovable); // the root itself
     };
-    // Guard BEFORE mutating: the node being removed (for dict entries: key
-    // AND value) must not contain a Shared store.
+    let parent = resolve(root, parent_path).ok_or(MutateError::BadPath)?;
+    Ok(match (last, parent) {
+        (Step::DictValue(i) | Step::DictKey(i), Value::Dict(entries)) => {
+            let (k, v) = entries.get(*i).ok_or(MutateError::BadPath)?;
+            subtree_contains_shared(k) || subtree_contains_shared(v)
+        }
+        (Step::List(i) | Step::Tuple(i), Value::List(items) | Value::Tuple(items)) => {
+            subtree_contains_shared(items.get(*i).ok_or(MutateError::BadPath)?)
+        }
+        _ => false,
+    })
+}
+
+fn remove_resolved(root: &mut Value, path: &NodePath) -> Result<(), MutateError> {
+    let Some((last, parent_path)) = path.split_last() else {
+        return Err(MutateError::NotRemovable); // the root itself
+    };
     match last {
         Step::DictValue(i) | Step::DictKey(i) => {
             let parent = resolve_mut(root, parent_path).ok_or(MutateError::BadPath)?;
             let Value::Dict(entries) = parent else { return Err(MutateError::BadPath) };
-            let (k, v) = entries.get(*i).ok_or(MutateError::BadPath)?;
-            if subtree_contains_shared(k) || subtree_contains_shared(v) {
-                return Err(MutateError::SharedSubtree);
+            if *i >= entries.len() {
+                return Err(MutateError::BadPath);
             }
             entries.remove(*i);
             Ok(())
@@ -206,9 +247,8 @@ fn remove_entry(root: &mut Value, path: &NodePath) -> Result<(), MutateError> {
             let (Value::List(items) | Value::Tuple(items)) = parent else {
                 return Err(MutateError::BadPath);
             };
-            let item = items.get(*i).ok_or(MutateError::BadPath)?;
-            if subtree_contains_shared(item) {
-                return Err(MutateError::SharedSubtree);
+            if *i >= items.len() {
+                return Err(MutateError::BadPath);
             }
             items.remove(*i);
             Ok(())
@@ -330,14 +370,84 @@ mod tests {
         assert_eq!(entries[1].0, Value::Bytes(b"shared".to_vec()));
     }
 
+    /// Removing a subtree that *defines* a shared slot used to be refused,
+    /// because Refs elsewhere point at that slot and the encoder needs it.
+    /// It is now inlined and reshared around instead. The load-bearing
+    /// assertion is the last one: the result must still encode, which is what
+    /// would fail (SlotOutOfRange) if the slot were simply dropped.
     #[test]
-    fn remove_refuses_shared_subtrees() {
+    fn remove_of_a_shared_subtree_inlines_and_reshares() {
         let mut v = doc();
+        let before = v.clone();
+        apply(&mut v, &Mutation::RemoveEntry { path: vec![Step::DictValue(2)] }).unwrap();
+        let Value::Dict(entries) = &v else { unreachable!() };
+        assert_eq!(entries.len(), 2, "the shared entry is gone");
+        assert!(!entries.iter().any(|(k, _)| *k == Value::Bytes(b"shared".to_vec())));
+        // Everything we did not remove survives, with its values intact.
+        let Value::Dict(before_entries) = &before else { unreachable!() };
+        assert_eq!(entries[0], before_entries[0]);
+        assert_eq!(entries[1], before_entries[1]);
+        let bytes = blue_marshal::encode(&v).expect("the reshared tree still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v, "and round-trips");
+    }
+
+    /// Removing a plain scalar that merely *sits inside* a shared subtree needs
+    /// no inlining — nothing is stranded — so the sharing is left alone.
+    #[test]
+    fn remove_inside_a_shared_subtree_leaves_the_sharing_alone() {
+        let mut v = Value::Dict(vec![(
+            Value::Bytes(b"k".to_vec()),
+            Value::Shared {
+                slot: 1,
+                value: Box::new(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+            },
+        )]);
+        apply(&mut v, &Mutation::RemoveEntry {
+            path: vec![Step::DictValue(0), Step::SharedInner, Step::List(1)],
+        }).unwrap();
+        let Value::Dict(entries) = &v else { unreachable!() };
         assert_eq!(
-            apply(&mut v, &Mutation::RemoveEntry { path: vec![Step::DictValue(2)] }),
-            Err(MutateError::SharedSubtree)
+            entries[0].1,
+            Value::Shared {
+                slot: 1,
+                value: Box::new(Value::List(vec![Value::Int(1), Value::Int(3)])),
+            },
+            "the middle item goes, the Shared store stays",
         );
-        // The root itself, and steps into fixed shapes, stay non-removable.
+    }
+
+    /// The path-rewriting case: the node being removed is itself a shared
+    /// store, and the path reaches it *through* another one. Inlining drops
+    /// exactly the levels a `SharedInner` step descends, so the rewritten path
+    /// must still land on the item the caller named — not its neighbour.
+    #[test]
+    fn remove_of_a_shared_store_through_a_shared_step() {
+        let mut v = Value::Dict(vec![(
+            Value::Bytes(b"k".to_vec()),
+            Value::Shared {
+                slot: 1,
+                value: Box::new(Value::List(vec![
+                    Value::Shared { slot: 2, value: Box::new(Value::Bytes(b"aa".to_vec())) },
+                    Value::Int(4),
+                ])),
+            },
+        )]);
+        apply(&mut v, &Mutation::RemoveEntry {
+            path: vec![Step::DictValue(0), Step::SharedInner, Step::List(0)],
+        }).unwrap();
+        let Value::Dict(entries) = &v else { unreachable!() };
+        assert_eq!(
+            entries[0].1,
+            Value::List(vec![Value::Int(4)]),
+            "the shared store named by the path goes, Int(4) stays",
+        );
+        let bytes = blue_marshal::encode(&v).expect("still encodes");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), v);
+    }
+
+    #[test]
+    fn the_root_itself_is_never_removable() {
+        let mut v = doc();
         assert_eq!(
             apply(&mut v, &Mutation::RemoveEntry { path: vec![] }),
             Err(MutateError::NotRemovable)
@@ -370,7 +480,7 @@ mod tests {
         let Value::List(items) = &entries[0].1 else { unreachable!() };
         assert_eq!(items[2], Value::Tuple(vec![Value::Str("chan".into())]));
 
-        // Guards still hold inside tuples: out-of-range index, Shared subtree.
+        // The out-of-range guard still holds inside tuples.
         assert_eq!(
             apply(&mut v, &Mutation::InsertListItem {
                 parent: tup.clone(),
@@ -379,14 +489,13 @@ mod tests {
             }),
             Err(MutateError::BadIndex(9))
         );
-        let mut shared_tup = Value::Tuple(vec![Value::Shared {
-            slot: 1,
-            value: Box::new(Value::Int(9)),
-        }]);
-        assert_eq!(
-            apply(&mut shared_tup, &Mutation::RemoveEntry { path: vec![Step::Tuple(0)] }),
-            Err(MutateError::SharedSubtree)
-        );
+        // A Shared member of a tuple removes like any other member.
+        let mut shared_tup = Value::Tuple(vec![
+            Value::Shared { slot: 1, value: Box::new(Value::Int(9)) },
+            Value::Int(4),
+        ]);
+        apply(&mut shared_tup, &Mutation::RemoveEntry { path: vec![Step::Tuple(0)] }).unwrap();
+        assert_eq!(shared_tup, Value::Tuple(vec![Value::Int(4)]));
     }
 
     #[test]
