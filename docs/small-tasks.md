@@ -111,8 +111,10 @@ Workflow:
   palette is therefore dropped from a pack export with no warning. Offer the
   palette as swatches, with free-form as a labelled escape hatch that says the
   colour will not survive an export. Blocked on the palette being complete —
-  `PALETTE` has 5 of the 8 names (missing `black`, `green`, `purple`), see the
-  live verification plan item 26b. _Added 2026-07-27._
+  `PALETTE` has 6 of the 8 names, missing `green` and `purple` (`black` was
+  harvested 2026-07-28); see the live verification plan item 26b and
+  `overview_pack.rs:274`, which records why a sampled hex cannot be inverted into
+  the exact floats `color_name` needs. _Added 2026-07-27._
 
 - [ ] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
@@ -690,11 +692,6 @@ rectangle per open stack, coherent move/resize, and membership editing
 capture experiment. Membership editing depends on the codec foundation above.
 _Added 2026-07-17; designed 2026-07-18._
 
-**Resize layout windows from any corner — independent, ship anytime.** In the
-layout canvas a selected window resizes only from the bottom-right handle today;
-add handles on all four corners (edges optional). No codec dependency — its
-resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
-
 ## Shipped
 
 ### Unreleased (on master)
@@ -964,6 +961,14 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
   measurement this item used to carry now lives in `windowLabels.ts`'s own
   comment above `isClutter`) into a one-click fix per window. _Added 2026-07-26;
   done 2026-07-26 (layout names-and-noise)._
+
+### 0.10.0
+
+- [x] **Resize layout windows from any corner.** All four corner handles, not
+  just the bottom-right (`LayoutView.svelte`'s `.resize.tl/.tr/.bl/.br` and
+  `layout.ts`'s `Corner`/`resizeRect`), and the coherent stack resize reuses
+  them as planned. _Added 2026-07-15; shipped 2026-07-18 (`9998e40`), noticed
+  still listed as pending 2026-07-28._
 
 ### 0.6.0
 
