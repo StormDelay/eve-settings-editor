@@ -13,27 +13,15 @@ Workflow:
 
 ## Open
 
-- [ ] **The HUD furniture must cover its real in-game footprint — module racks
-  and fighter abilities included.** Both elements are drawn as bare boxes at
-  invented `HUD_NOMINAL` sizes, and the sizes are what everything else is placed
-  against: `LayoutView.svelte:349` pushes each furniture rect's `w`/`h` into the
-  snap-line set, so a box that is too small makes windows snap to an edge the
-  player cannot see and overlap the part we did not draw. This is placement, not
-  decoration.
-  - **Ship HUD:** the racks are most of its width. `HUD_NOMINAL.shipui` says
-    686x250; a native crop of the real thing (speed gauge plus three rows of
-    module slots) measures roughly **715x205** including its margin, so we are
-    narrow and tall. There is no hard edge in-game to align against — the racks
-    fade out with no frame — but the slot circles are discrete and countable, so
-    a native screenshot can be measured icon-to-icon even though nothing snaps.
-  - **Fighter UI:** in-game the panel is mostly the ability grid ABOVE the squad
-    row, and that grid's top is the stored anchor point (confirmed 2026-07-28)
-    even when no fighters are up. `HUD_NOMINAL.fighter` says 400x120; with
-    abilities drawn it is roughly twice that tall. Measure it the way the anchor
-    was settled: against a window edge of known y, fighters deployed.
-  Drawing the racks and the grid inside the box, rather than just sizing it, is
-  the other half — it is how a player recognises what they are positioning
-  against. Raised during the 2026-07-28 live session. _Added 2026-07-28._
+- [ ] **Confirm the ship HUD's anchor at a second offset.** The 2026-07-28
+  measurement fixed the anchor model from two screenshots that share one offset
+  (-642), which pins the geometry but cannot prove the left-hand ship-control
+  button column moves with the HUD rather than being independently
+  screen-anchored — the 148px left extension assumes it does. One screenshot
+  after dragging the ship HUD sideways settles both: the button column should
+  have moved with it, and the capacitor wheel's centre should still land on
+  `reference_w/2 + offset`. Cheap, and it is the only inferred number in
+  `HUD_NOMINAL`. _Added 2026-07-28._
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
@@ -722,6 +710,25 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The HUD furniture must cover its real in-game footprint — module racks
+  and fighter abilities included.** Measured off three native screenshots
+  2026-07-28 and corrected. The ship HUD was wrong in a way the entry did not
+  anticipate: not merely mis-sized but mis-*anchored*. The stored offset centres
+  the capacitor wheel (measured 638.5 against 638 predicted), and the element
+  extends 148px left of it and 495px right — so the old box, centred on the
+  anchor, sat 195px too far left and missed 152px of module rack. Now 643×160
+  from `anchor-148`, with `shipOffsetFromX` corrected as its exact inverse and a
+  round-trip test pinning the pair. The fighter panel keeps its (already correct)
+  anchor and grows from 400×120 to 467×253 — the old height covered the squadron
+  row alone, so windows snapped straight through the ability grid above it. Both
+  boxes now COVER their contents; actually drawing the racks and the ability grid
+  inside them was left out — the internal geometry (slot pitch, grid pitch, ring
+  diameter) is recorded in `docs/format-notes.md` § "HUD anchors" for whenever a
+  drawing layer wants it. One assumption remains unverified: that the
+  left-hand ship-control button column moves with the HUD rather than being
+  screen-anchored — both shots share one offset, so they cannot separate the two.
+  _Added 2026-07-28; done 2026-07-28._
 
 - [x] **A windowless account is a normal state, and the editor treats it as an
   error.** Reworded throughout, and given a way out that does not lie. The

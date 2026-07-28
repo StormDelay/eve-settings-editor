@@ -781,9 +781,10 @@ back. One reading cannot separate an origin from a sign; two can.
   Written `0.0`, the ship HUD rendered *dead centre* horizontally — which also
   rules out a left-edge origin, since that would have put `0` against the
   neocom. Dragged left, the client wrote back **`-642.0`**. Because `0` centres
-  it, the offset moves the HUD's own **centre**, not its left edge: on a 2560
-  screen, `-642.0` puts the HUD centre at 638. A1's pre-existing `-189.0` reads
-  as "189px left of centre".
+  it, the offset moves a **centre**, not the left edge: on a 2560 screen,
+  `-642.0` puts that point at 638. A1's pre-existing `-189.0` reads as "189px
+  left of centre". *Which* centre was settled by measurement on 2026-07-28 — it
+  is the capacitor wheel's, not the element's; see below.
 - **`fightersDetachedPosition` is the panel's top-left, in absolute screen
   pixels, origin at the screen's top-left.** Settled 2026-07-28 by writing
   `(839, 497)` — 497 being the exact top edge of that character's D-Scan window
@@ -802,6 +803,48 @@ back. One reading cannot separate an origin from a sign; two can.
   from the right edge, which is consistent with a plain top-left-origin absolute
   screen coordinate, but that is an inference from one untouched value, not a
   capture. Still open.
+
+**`shipuialignleftoffset` anchors the capacitor wheel, not the element's box.**
+Measured 2026-07-28 from three native 2560×1440 screenshots (Storm Delay,
+profile `g_eve_shared_cache_sharedcache_tq_tranquility`, file written after the
+shots so the anchors match the pixels; `shipuialignleftoffset = -642.0`).
+
+Isolating the capacitor wheel by colour put its centre at **x = 638.5**, against
+`2560/2 + (-642) = 638` from the file. The element is strongly **asymmetric**
+about that point: it extends **148px left** and **495px right**, spanning
+490..1133 with the widest (8-slot) module row.
+
+Two shots of the same character at the same offset, flying a battleship and a
+frigate, share a pixel-identical left edge (490) and differ only on the right
+(1133 vs 896) — the racks grow rightward from a fixed left edge. This is also why
+the 2026-07-27 experiment saw offset 0.0 draw the HUD "dead centre": what centres
+is the capacitor, not the box.
+
+Vertical extent, top-aligned: **y 28..187** (height 160). The bottom-aligned case
+has not been captured.
+
+**`fightersDetachedPosition` is the panel's left edge and the ability grid's top**
+— confirmed again 2026-07-28: stored `(329, 289)` against a measured left edge of
+≈333 and a grid top of 289. With 4 squadrons (3 launched) the panel spans
+**381×253**; column pitch is **86**, shared by the ability grid and the squadron
+row, so the 5-squadron carrier maximum is **467** wide. Height is independent of
+squadron count.
+
+**Internal geometry of both elements**, measured the same day and recorded for a
+future drawing layer (the editor draws plain rectangles today). All offsets are
+from the element's own top-left corner:
+
+| Element | Part | Offset from box origin | Pitch | Count |
+|---|---|---|---|---|
+| Ship HUD | capacitor wheel centre | x 148 (= the anchor), y ~74 | — | 1 |
+| Ship HUD | capacitor ring outer | spans x 73..231 (⌀ ~158) | — | 1 |
+| Ship HUD | module slot rows | first slot x 245, row tops y ~2 / ~50 / ~94 | x 50, y ~46 | 8 × 3 max |
+| Fighter | ability grid | x 70, y 0 | 86 | 5 × 3 max |
+| Fighter | squadron row | x 43, y ~178 | 86 | 5 max |
+
+Slot and squadron pitch are stable across both ship shots, so a rack's width is
+`245 + 50 × slots` from the box origin — which is how the 8-slot maximum gives
+the 643 total width.
 
 Where EVE stores the screen furniture the layout canvas draws — the ship HUD
 (capacitor plus module racks), the detached fighter UI, the neocom and the
@@ -846,20 +889,21 @@ zero-timestamp mint already proven by the overview-presets container — is what
 §"HUD anchors" above for the captures. Both guesses turned out right:
 
 - `shipuialignleftoffset` is **centre-relative**, positive to the right, and
-  anchors the HUD's own centre. The original basis (small negative values on
-  clients of two different widths) was sound.
+  anchors the **capacitor wheel's** centre — not the element's own, which the
+  2026-07-28 measurement above separated. The original basis (small negative
+  values on clients of two different widths) was sound.
 - the two point tuples are **top-left corners** in absolute client pixels. The
   counter-evidence that worried this note — one character reading `(1280, 660)`
   on a 2560×1440 client, x being exactly half the screen width — was a
   coincidence, not a centre anchor.
 
-**Still invented: the nominal on-screen sizes** (ship HUD 686×250, fighter UI
-400×120, badge 32×32). Two live sessions could not measure them: the ship HUD
-has no hard edge to align against, and the fighter panel's extent changes with
-whether its ability grid is drawn. They are undersized — the racks and the
-ability grid are most of each element — which matters for edge snapping rather
-than for anything written to a file (the width cancels out of a drag). See the
-footprint task in `docs/small-tasks.md`.
+**The on-screen sizes are measured** as of 2026-07-28 (ship HUD 643×160, fighter
+UI 467×253) — see the footprint measurements above. Two live sessions had failed
+to: the ship HUD has no hard edge to align against, and the fighter panel's
+extent changes with whether its ability grid is drawn; the screenshots settled
+both. The old invented values (686×250 and 400×120) were undersized *and*, for
+the ship HUD, mis-anchored. **The badge's 32×32 is still invented** — it was
+never dragged and never measured.
 
 Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
