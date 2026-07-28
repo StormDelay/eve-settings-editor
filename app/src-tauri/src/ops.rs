@@ -118,6 +118,19 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
             Aspect::Layout => {
                 char_categories.push(Category::Layout);
                 char_categories.push(Category::NeocomButtons);
+                // The char-side HUD keys. The ship offset needs no category:
+                // it lives inside the `windows` subtree Category::Layout
+                // already splices whole.
+                char_categories.push(Category::HudFighterPos);
+                char_categories.push(Category::HudBadge);
+                // The account-side four. These are what make a layout copy
+                // write the account file — and therefore change every other
+                // character on it. EVE stores them per account; there is no
+                // per-character form to carry instead.
+                account_categories.push(Category::HudShipTop);
+                account_categories.push(Category::HudFighterDetached);
+                account_categories.push(Category::HudFighterShown);
+                account_categories.push(Category::HudNeocomWidth);
             }
             Aspect::Overview => {
                 char_categories.push(Category::OverviewWidths);
@@ -1308,6 +1321,8 @@ mod tests {
     use super::*;
     use blue_marshal::{encode, Value};
 
+    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -1844,20 +1859,121 @@ mod tests {
     }
 
     #[test]
-    fn layout_is_char_only_no_account_write() {
+    fn layout_now_writes_the_account_side_too() {
+        // Was `layout_is_char_only_no_account_write`: it pinned the exact
+        // opposite of what this task makes true. Updated rather than deleted
+        // or dropped — `layout_carries_the_whole_hud_across_both_files` below
+        // pins the exact category lists; this keeps the narrower, still-named
+        // claim that used to be false.
         let w = aspect_writes(&[Aspect::Layout]);
         assert!(w.char_categories.contains(&Category::Layout));
-        assert!(w.account_categories.is_empty());
-        assert!(!w.writes_account());
+        assert!(!w.account_categories.is_empty(), "layout now carries account-side HUD fields too");
+        assert!(w.writes_account());
         assert!(w.copies_char_geometry());
     }
 
     #[test]
     fn the_layout_aspect_carries_the_neocom_buttons() {
         let w = aspect_writes(&[Aspect::Layout]);
-        assert_eq!(w.char_categories, vec![Category::Layout, Category::NeocomButtons]);
-        assert!(w.account_categories.is_empty(), "the neocom bar is character-side");
+        assert!(w.char_categories.contains(&Category::NeocomButtons), "the neocom bar is character-side");
         assert!(w.copies_char_geometry(), "the resolution warning still applies");
+    }
+
+    #[test]
+    fn layout_carries_the_whole_hud_across_both_files() {
+        let w = aspect_writes(&[Aspect::Layout]);
+        assert_eq!(
+            w.char_categories,
+            vec![
+                Category::Layout,
+                Category::NeocomButtons,
+                Category::HudFighterPos,
+                Category::HudBadge
+            ]
+        );
+        assert_eq!(
+            w.account_categories,
+            vec![
+                Category::HudShipTop,
+                Category::HudFighterDetached,
+                Category::HudFighterShown,
+                Category::HudNeocomWidth
+            ]
+        );
+        assert!(w.writes_account(), "layout writes the account file now");
+        assert!(w.copies_char_geometry(), "the badge offset is absolute px, so the resolution warning must fire");
+    }
+
+    /// A char doc carrying the char-side half of the HUD.
+    fn hud_char_doc() -> Value {
+        Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![(b("shipuialignleftoffset"), Value::Float(-1052.0))])),
+            (
+                b("ui"),
+                Value::Dict(vec![(
+                    b("fightersDetachedPosition"),
+                    Value::Tuple(vec![Value::Int(326), Value::Int(54)]),
+                )]),
+            ),
+            (
+                b("notifications"),
+                Value::Dict(vec![(
+                    b("notification_badge_offset"),
+                    Value::Tuple(vec![Value::Int(2519), Value::Int(131)]),
+                )]),
+            ),
+        ])
+    }
+
+    /// An account doc carrying the account-side half.
+    fn hud_user_doc() -> Value {
+        Value::Dict(vec![
+            (
+                b("ui"),
+                Value::Dict(vec![
+                    (b("shipuialigntop"), Value::Bool(true)),
+                    (b("detachFighterUI"), Value::Bool(true)),
+                    (b("displayFighterUI"), Value::Bool(true)),
+                ]),
+            ),
+            (b("windows"), Value::Dict(vec![(b("neocomWidth"), Value::Int(72))])),
+        ])
+    }
+
+    #[test]
+    fn a_layout_copy_leaves_every_hud_field_equal() {
+        // Asserted through project_hud rather than raw keys: the projection is
+        // what the HUD editor shows, so this is the user-visible claim.
+        let w = aspect_writes(&[Aspect::Layout]);
+        let (src_char, src_user) = (hud_char_doc(), hud_user_doc());
+
+        let mut tgt_char = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        let mut tgt_user = Value::Dict(vec![
+            (b("ui"), Value::Dict(vec![(b("shipuialigntop"), Value::Bool(false))])),
+            (b("windows"), Value::Dict(vec![(b("neocomWidth"), Value::Int(37))])),
+        ]);
+        settings_model::apply_to_tree(&mut tgt_char, &extract_categories(&src_char, &w.char_categories));
+        settings_model::apply_to_tree(&mut tgt_user, &extract_categories(&src_user, &w.account_categories));
+
+        let before = settings_model::project_hud(&src_char, Some(&src_user));
+        let after = settings_model::project_hud(&tgt_char, Some(&tgt_user));
+        for (b_entry, a_entry) in before.entries.iter().zip(after.entries.iter()) {
+            assert_eq!(b_entry.name, a_entry.name, "same field order");
+            assert_eq!(b_entry.value, a_entry.value, "{} did not come across", b_entry.name);
+        }
+    }
+
+    #[test]
+    fn an_account_side_of_only_removals_is_not_suppressed_as_a_no_op() {
+        // source_side_empty feeds setup_preview's no-op suppression. A source
+        // storing none of the four account HUD keys yields four REMOVALS, which
+        // is real work — counting only present values here would silently kill
+        // the removal path and half-apply the copy again.
+        let w = aspect_writes(&[Aspect::Layout]);
+        let source_without_hud = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        let extracted = extract_categories(&source_without_hud, &w.account_categories);
+        assert_eq!(extracted.len(), 4, "four removals");
+        assert!(!extracted.is_empty(), "so the side is not a no-op");
     }
 
     #[test]
@@ -1922,13 +2038,18 @@ mod tests {
     }
 
     #[test]
-    fn layout_only_includes_unpaired_targets_no_account_write() {
+    fn a_layout_copy_excludes_an_unpaired_target() {
+        // Was `layout_only_includes_unpaired_targets_no_account_write`, which
+        // asserted the reverse of the now-intended behaviour on this exact
+        // setup (char 4 is the unpaired id `store_2accounts` already leaves
+        // out) — updated in place rather than left contradicting the spec.
         let cp = paths(&[1, 3, 4], "char");
         let up = paths(&[10, 20], "user");
         let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 4], &[Aspect::Layout]);
-        assert!(plan.excluded.is_empty(), "layout needs no pairing");
-        assert_eq!(plan.char_writes.len(), 2);
-        assert!(plan.account_writes.is_empty());
+        assert!(
+            plan.excluded.iter().any(|e| e.char_id == 4 && e.reason.contains("No account paired")),
+            "an unpaired target cannot receive the account-side HUD fields"
+        );
     }
 
     #[test]
@@ -2002,19 +2123,17 @@ mod tests {
     #[test]
     fn a_preset_source_warns_on_no_resolution_mismatch() {
         // With no source character there is no source resolution, so the
-        // off-screen warning is correctly silent.
+        // off-screen warning is correctly silent. Target 1 is paired to
+        // account 10 — layout now writes the account file too, so an
+        // unpaired target would be excluded before resolution is even
+        // considered (see a_layout_copy_excludes_an_unpaired_target).
         let cp = paths(&[1], "char");
+        let up = paths(&[10], "user");
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] });
         let mut res = HashMap::new();
         res.insert(1u64, (1920i64, 1080i64));
-        let plan = plan_setup(
-            &cp,
-            &HashMap::new(),
-            &accounts::AccountsStore::default(),
-            &res,
-            None,
-            &[1],
-            &[Aspect::Layout],
-        );
+        let plan = plan_setup(&cp, &up, &store, &res, None, &[1], &[Aspect::Layout]);
         assert_eq!(plan.char_writes.len(), 1);
         assert!(!plan.char_writes[0].resolution_mismatch);
     }
@@ -2186,13 +2305,25 @@ mod tests {
         let app_dir = base.join("appdata");
         std::fs::create_dir_all(&app_dir).unwrap();
 
-        // A Layout-only preset holding distinctive windows content.
+        // Layout now writes the account file too, so target 700 must be
+        // paired — an unpaired target is excluded outright (see
+        // a_layout_copy_excludes_an_unpaired_target). Its account's file
+        // just needs to exist and decode; this test's own claim is about the
+        // char side only.
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(750, accounts::Account { alias: None, characters: vec![700] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+        std::fs::write(prof.join("core_user_750.dat"), encode(&Value::Dict(vec![])).unwrap()).unwrap();
+
+        // A Layout-only preset holding distinctive windows content. The
+        // account side needs a real (if empty) doc now that Layout writes
+        // it too — `create` refuses a `None` side once an aspect writes it.
         let preset_char_doc = Value::Dict(vec![(bb("windows"), Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))]))]);
         crate::presets::create(
             &app_dir,
             "LayoutOnly",
             &[Aspect::Layout],
-            crate::presets::CreateInput { char_doc: Some(&preset_char_doc), user_doc: None },
+            crate::presets::CreateInput { char_doc: Some(&preset_char_doc), user_doc: Some(&Value::Dict(vec![])) },
             false,
         )
         .unwrap();
