@@ -208,10 +208,10 @@ check("open filter keeps the right window", open[0].id === "a");
   check("a non-numeric id with no stack is unaffected by the orphan rule", windowMatches(market, { ...NO_FILTER, hideClutter: true }));
   check("without hideClutter, an orphaned numeric frame is kept", windowMatches(orphanFrame, NO_FILTER));
 
-  check("an orphaned numeric frame is an orphan", isOrphanFrame(orphanFrame));
-  check("a numeric id that IS a stack container is not", !isOrphanFrame(containerFrame));
-  check("a numeric id that is a stack member is not", !isOrphanFrame(memberFrame));
-  check("a non-numeric id with no stack is not", !isOrphanFrame(market));
+  // The four hideClutter checks above already run these fixtures through
+  // isOrphanFrame — windowMatches calls it — so re-asserting each one adds no
+  // coverage. This pins the exported name, which the delete offer counts with.
+  check("the orphan rule is exported for the delete offer to count with", isOrphanFrame(orphanFrame));
 }
 
 // --- the filter searches the real channel name -----------------------------
