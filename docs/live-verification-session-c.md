@@ -71,9 +71,20 @@ pwsh tools\sync-corpus.ps1 -Label c-baseline -Settings settings_Default
 
 - [ ] **0.4 Stage O — delete Storm Delay's orphan frames.** Open
   `core_char_93622368.dat` in the editor, go to the Layout view, and **read the
-  banner before clicking**: it should offer **4** empty stack frames. Record the
-  number it actually says — the point of this check is that the number the UI
-  names is the number that disappears. Click *Delete them*, confirm, **save**.
+  banner before clicking**: it offers **6** empty stack frames —
+  `63 82 156 181 219 221`. Click *Delete them*, confirm, **save**.
+
+  **6 is confirmed correct, and the number has a history.** The ledger recorded
+  A1 carrying *eight* (`43 51 63 82 156 181 219 221`); the 2026-07-28 experiment
+  hand-deleted `43` and `51` to prove the client does not re-create them, leaving
+  exactly these six. Running the shipped predicates over the `c-baseline` copy
+  agrees: the projection's frontend rule and `delete_orphan_frames` both return
+  the same six.
+
+  That agreement is itself a first: the banner's count and the model's delete set
+  are computed independently in two languages, and nothing in the test suite ties
+  them together (the review flagged exactly this). This is the first evidence on a
+  real file that they match.
 
 - [ ] **0.5 Stage W — give the ghost account per-window tabs.** Open the account
   file for `32945923` (character `2124209999`), go to the Overview view.
