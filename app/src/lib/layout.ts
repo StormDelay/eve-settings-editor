@@ -155,7 +155,12 @@ export interface FurnitureRect {
  */
 export const SHIP_ANCHOR_LEFT = 148;
 
-/** Gap between the screen edge and the HUD when it is top-aligned (measured). */
+/**
+ * Gap between the screen edge and the HUD. MEASURED for the top-aligned case
+ * only — every screenshot was top-aligned. `hudRects` mirrors it on the bottom
+ * edge, which is a guess, not a measurement; see the second-offset follow-up in
+ * docs/small-tasks.md for the shot that would settle it.
+ */
 export const SHIP_TOP_MARGIN = 28;
 
 /**
@@ -202,8 +207,10 @@ export function hudFlag(hud: Hud, name: string): boolean {
 /**
  * Stored offset for a ship-HUD rect whose left edge is at data-px `x`. The exact
  * inverse of hudRects' ship-HUD placement below — a matched pair, correct them
- * together, and `layout.test.ts` round-trips them because getting this wrong
- * writes a bad offset into a real settings file.
+ * together, and `layout.test.ts` round-trips them at even AND odd reference
+ * widths because getting this wrong writes a bad offset into a real settings
+ * file. The rounding lives here and nowhere else: rounding the placement too
+ * made the two biases stack on an odd width instead of cancelling.
  *
  * CONFIRMED in-game 2026-07-27 that the offset is centre-relative and negative
  * is leftward; MEASURED 2026-07-28 that what it centres is the capacitor wheel,
@@ -272,7 +279,13 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     out.push({
       kind: "shipui",
       label: "Ship HUD",
-      x: Math.round(layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT),
+      // Deliberately NOT rounded. On an odd `reference_w` the half-pixel centre
+      // makes `Math.round` bias half-up on BOTH sides, so the two rounds stack
+      // instead of cancelling and a drag writes an offset one px off what was
+      // dropped. Leaving x fractional makes shipOffsetFromX an exact inverse at
+      // every width, and nothing downstream needs an integer — snapLines takes
+      // plain numbers and toCanvas only multiplies.
+      x: layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT,
       // Top-aligned leaves a measured 28px gap. The bottom-aligned case was not
       // captured; mirroring the same margin is the honest guess and is what a
       // screenshot should check next.
