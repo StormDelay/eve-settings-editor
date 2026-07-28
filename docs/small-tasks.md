@@ -29,16 +29,6 @@ Workflow:
   Split out of the HUD-footprint task, which shipped the sizing half.
   _Added 2026-07-28._
 
-- [ ] **Confirm the ship HUD's anchor at a second offset.** The 2026-07-28
-  measurement fixed the anchor model from two screenshots that share one offset
-  (-642), which pins the geometry but cannot prove the left-hand ship-control
-  button column moves with the HUD rather than being independently
-  screen-anchored — the 148px left extension assumes it does. One screenshot
-  after dragging the ship HUD sideways settles both: the button column should
-  have moved with it, and the capacitor wheel's centre should still land on
-  `reference_w/2 + offset`. Cheap, and it is the only inferred number in
-  `HUD_NOMINAL`. _Added 2026-07-28._
-
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
   file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
@@ -726,6 +716,28 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Confirm the ship HUD's anchor at a second offset.** Done in Session C,
+  and it settled more than it set out to. The client wrote `-1052` after the drag
+  (410px left of the `-642` the first measurements used), and at that offset the
+  capacitor wheel's centre measures **228.0** against `2560/2 + (-1052) = 228`
+  — exact, on a wheel span of 50px matching the reference's 51. The anchor model
+  now holds at two offsets 410px apart.
+
+  **The inferred number is now measured.** The left-hand ship-control button
+  column moved by exactly the offset delta: its runs go `(490, 512)` → `(80,
+  102)`, i.e. −410 and −410. It travels with the HUD, so the 148px left extension
+  is a measurement rather than an assumption, and `HUD_NOMINAL` has no guessed
+  numbers left except the badge.
+
+  **And the bottom margin was wrong.** The bottom-aligned shot (the flag flipped
+  in the same session) shows the element's rack block is 127px tall either way,
+  sitting 4px into the element, at y 32 top-aligned and y 1272 bottom-aligned —
+  so bottom-aligned the element runs 1268..1428 and the gap below is **12px, not
+  the 28 the code mirrored from the top margin**. The element is not vertically
+  symmetric. Corrected with its own `SHIP_BOTTOM_MARGIN`; the old guess drew the
+  box 16px high, which is the snap-line bug this whole task exists to fix, just
+  on the other edge. _Added 2026-07-28; done 2026-07-28._
 
 - [x] **The HUD furniture must cover its real in-game footprint — module racks
   and fighter abilities included.** Measured off three native screenshots
