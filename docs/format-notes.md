@@ -691,6 +691,12 @@ unknown — whether a next-window-id counter is persisted anywhere *outside*
 `b"windows"` — is unresolved by this single capture; pick a high free id
 defensively and confirm no collision in the feature's live smoke.
 
+**Deleted frames stay deleted.** Verified 2026-07-28: two orphaned stack frames
+(`43`, `51`) were removed from a real character file, the client was run through
+a full login/logout, and neither came back — while six untouched controls in the
+same file sat still. So an orphan frame is safe to delete outright; the client
+neither restores it nor treats its absence as damage.
+
 ### Our pack export vs EVE's own
 
 Compared 2026-07-28 (live plan items 28, 29, 31), by exporting an account's
