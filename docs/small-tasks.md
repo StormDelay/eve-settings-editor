@@ -13,6 +13,22 @@ Workflow:
 
 ## Open
 
+- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
+  columns.** The furniture boxes now cover the right area (2026-07-28) but are
+  still blank rectangles, and a blank rectangle does not tell a player what they
+  are positioning against — recognising the thing is half of why the footprint
+  mattered. The ship-HUD and fighter geometry needed for it is already measured
+  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
+  from the box origin with a ~158px ring, module slot rows starting at x 245 on
+  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
+  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
+  All offsets are from each element's own top-left, so they can be expressed as
+  percentages of the drawn box and rescale with the canvas for free. Overview
+  columns would need their own measuring pass — nothing is captured for them yet.
+  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
+  Split out of the HUD-footprint task, which shipped the sizing half.
+  _Added 2026-07-28._
+
 - [ ] **Confirm the ship HUD's anchor at a second offset.** The 2026-07-28
   measurement fixed the anchor model from two screenshots that share one offset
   (-642), which pins the geometry but cannot prove the left-hand ship-control
