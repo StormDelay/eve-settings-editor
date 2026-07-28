@@ -1,7 +1,7 @@
 // Run: npm test  (node --test; Node strips the types itself). No test
 // framework and no @types/node on purpose — the frontend dependency list stays
 // as scaffolded. A throw is a failing exit code, which is all a runner needs.
-import { primaryProfileDir, profileLabels } from "./profiles.ts";
+import { primaryProfileDir, profileLabels, profileNote } from "./profiles.ts";
 import type { Profile, SettingsFile } from "./api.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -138,6 +138,14 @@ const withFiles = (dir: string, files: SettingsFile[]): Profile => ({
   check(
     "order does not matter for the EVE-written signal",
     primaryProfileDir([backup, live]) === "/settings_Default",
+  );
+}
+
+{
+  check("the live profile is named as in use", profileNote(true) === "in use by EVE");
+  check(
+    "every other profile is called out as not",
+    profileNote(false) === "not in use — EVE has not written here",
   );
 }
 
