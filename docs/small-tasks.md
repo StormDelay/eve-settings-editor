@@ -678,9 +678,17 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 - [x] **The keybinds "taken by" note overflows its row.** Ellipsised rather than
   wrapped, with the full command name on the `title`. The combo column is a fixed
   16rem in a `table-layout: fixed` table, so a growing row was the other option —
-  the ellipsis bounds the row height whatever the command name, and a keybinding
-  table is scanned vertically, where uneven rows cost more than a truncated note.
-  _Added 2026-07-27; done 2026-07-28._
+  a keybinding table is scanned vertically, where uneven rows cost more than a
+  truncated note. Precisely: the note is an `inline-block` capped at the cell, so
+  it can never spill over the row beneath, but because the binding button holds
+  `min-width: 7rem` on the same line a long note can still drop to a second line
+  *inside* the cell rather than truncating on the first. Bounded at two lines,
+  not one — tightening further means a fixed `max-width` or making the cell a
+  flexbox, and the overlap this was raised for is gone either way.
+
+  Note `.meta` is shared by three spans in that file, including a searchbar
+  instruction with no `title` fallback; the constraint is scoped to `.combo .meta`
+  so the others keep wrapping. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Test fixtures encode bare container payloads, a shape EVE never writes.**
   Half of this was already done and the entry did not know it: `overview_pack`'s
