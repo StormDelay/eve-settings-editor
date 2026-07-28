@@ -95,9 +95,12 @@ pub struct CreateInput<'a> {
     pub user_doc: Option<&'a Value>,
 }
 
-/// Whether a document holds anything under `cat`.
+/// Whether a document holds a VALUE under `cat`. An `absent_means_default`
+/// category the document lacks comes back as `(cat, None)` — a removal
+/// instruction, not something the document holds — so this cannot be an
+/// `.is_empty()` check.
 pub fn has_category(doc: &Value, cat: Category) -> bool {
-    !extract_categories(doc, &[cat]).is_empty()
+    extract_categories(doc, &[cat]).iter().any(|(_, v)| v.is_some())
 }
 
 /// Whether `doc` is an empty root dict — the shape a pruned side (e.g. a
@@ -134,9 +137,14 @@ fn parent_entries(cats: &[Category]) -> Vec<(Value, Value)> {
 
 /// A document holding only `cats` from `source`, and nothing else.
 ///
-/// Parents are built only for the categories the source ACTUALLY has, so no
-/// empty `ui` or `cmd` dict can survive — which also means nothing has to be
-/// removed after `apply_to_tree` has already resharded the tree.
+/// Parents are built for every category `extract_categories` reports back —
+/// which includes an `absent_means_default` category the source lacks,
+/// reported as `(cat, None)`. That is deliberate, not a gap: for those
+/// categories the built (non-empty) parent IS the signal that this document
+/// carries an explicit "use EVE's default" instruction, which is what keeps a
+/// newly created Layout preset's `user.dat` off the empty-root shape an older
+/// preset has. `Autofill` and `Keybinds` never report an absence, so this
+/// exception never puts an empty `ui` or `cmd` dict in their way.
 pub fn prune(source: &Value, cats: &[Category]) -> Value {
     let extracted = extract_categories(source, cats);
     let present: Vec<Category> = extracted.iter().map(|(c, _)| *c).collect();
@@ -923,6 +931,40 @@ mod tests {
         std::fs::write(&p, blue_marshal::encode(&bundle_value).unwrap()).unwrap();
         assert!(import_from(&data, &p).is_err());
         assert!(!preset_path(&data, "Bad").unwrap().exists(), "nothing written on failure");
+    }
+
+    #[test]
+    fn has_category_reports_values_not_absences() {
+        // extract_categories returns (cat, None) for a requested-but-absent leaf
+        // HUD key, so an `.is_empty()` reading here would answer "yes, it has
+        // one" for a document that has nothing.
+        let doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        assert!(!has_category(&doc, Category::HudShipTop), "an absent key is not a category the doc holds");
+
+        let with_key = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(b("shipuialigntop"), Value::Bool(true))]),
+        )]);
+        assert!(has_category(&with_key, Category::HudShipTop), "a present key is");
+    }
+
+    #[test]
+    fn prune_builds_a_parent_for_a_requested_but_absent_hud_key() {
+        // This is the mechanism behind a Layout preset never having an empty-root
+        // user.dat: `present` maps over the (cat, None) entries too, so
+        // parent_entries builds `ui` and `windows` for them. Filtering this to
+        // Some would silently reintroduce the old-preset ambiguity.
+        let source = Value::Dict(vec![(b("unrelated"), Value::Int(1))]);
+        let out = prune(&source, &[Category::HudShipTop, Category::HudNeocomWidth]);
+        assert!(!is_empty_root(&out), "a pruned Layout account side is never an empty root");
+        let Value::Dict(root) = &out else { panic!("root is a dict") };
+        for key in [b"ui".as_slice(), b"windows".as_slice()] {
+            assert!(
+                root.iter().any(|(k, _)| matches!(k, Value::Bytes(v) if v.as_slice() == key)),
+                "the parent for {} was built",
+                String::from_utf8_lossy(key)
+            );
+        }
     }
 
     #[test]
