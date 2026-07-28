@@ -120,4 +120,25 @@ const withFiles = (dir: string, files: SettingsFile[]): Profile => ({
   );
 }
 
+// The exact failure from the 2026-07-28 session: the user had edited a stale
+// backup that morning, so it was the most recently *touched* profile, and the
+// editor pinned it to the top and opened it. EVE had not written it in weeks.
+{
+  const live = withFiles("/settings_Default", [
+    file("core_char_93622368.dat", 100),
+    file("core_public__.yaml", 500), // only EVE writes this
+  ]);
+  const backup = withFiles("/settings_Default - USE THIS ONE", [
+    file("core_char_93622368.dat", 900), // the user's own later edit
+  ]);
+  check(
+    "the profile EVE last wrote wins over one the user edited more recently",
+    primaryProfileDir([live, backup]) === "/settings_Default",
+  );
+  check(
+    "order does not matter for the EVE-written signal",
+    primaryProfileDir([backup, live]) === "/settings_Default",
+  );
+}
+
 console.log("profiles.test.ts: all checks passed");
