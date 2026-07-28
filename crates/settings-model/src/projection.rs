@@ -6,6 +6,7 @@ use blue_marshal::{string_table::STRING_TABLE, Value};
 use serde::Serialize;
 
 use crate::path::{NodePath, Step};
+use crate::treewalk::{collect_shared, effective, SharedTable};
 
 #[derive(Debug, Serialize)]
 pub struct Node {
@@ -21,7 +22,9 @@ pub struct Node {
 }
 
 pub fn project(root: &Value) -> Node {
-    build(root, None, Vec::new(), false, false)
+    let mut sh = SharedTable::new();
+    collect_shared(root, &mut sh);
+    build(root, None, Vec::new(), false, false, &sh)
 }
 
 fn build(
@@ -30,6 +33,7 @@ fn build(
     path: NodePath,
     removable: bool,
     in_shared: bool,
+    sh: &SharedTable,
 ) -> Node {
     let kind = crate::projection_kind(v);
     let editable = match v {
@@ -49,7 +53,7 @@ fn build(
     let child = |v: &Value, label: Option<String>, step: Step, removable: bool| {
         let mut p = path.clone();
         p.push(step);
-        build(v, label, p, removable, in_shared)
+        build(v, label, p, removable, in_shared, sh)
     };
     match v {
         // Entries of a container are removable regardless of what they contain:
@@ -70,7 +74,7 @@ fn build(
             for (i, (key, value)) in entries.iter().enumerate() {
                 children.push(child(
                     value,
-                    Some(compact_display(key, 2)),
+                    Some(compact_display(key, 2, sh)),
                     Step::DictValue(i),
                     true,
                 ));
@@ -93,12 +97,12 @@ fn build(
         Value::Shared { value, .. } => {
             let mut p = path.clone();
             p.push(Step::SharedInner);
-            children.push(build(value, None, p, false, true));
+            children.push(build(value, None, p, false, true, sh));
         }
         Value::Stream(inner) => {
             let mut p = path.clone();
             p.push(Step::StreamInner);
-            children.push(build(inner, None, p, false, in_shared));
+            children.push(build(inner, None, p, false, in_shared, sh));
         }
         _ => {}
     }
@@ -171,15 +175,25 @@ fn node_display(v: &Value) -> String {
 
 /// One-line rendering for dict-key labels; containers render inline to
 /// `depth` levels (tuple keys like ("overviewScroll2", 1) are real keys).
-fn compact_display(v: &Value, depth: usize) -> String {
+///
+/// A key that is a `Ref` is resolved through the shared table and rendered as
+/// what it POINTS AT. On a real file the per-window maps (`openWindows`,
+/// `windowSizesAndPositions_1`, …) store their window ids exactly once and Ref
+/// them from every other map, so rendering the ref itself labelled hundreds of
+/// rows `ref[114]` and made those maps unnavigable — you could not find the
+/// window you wanted, which is how this surfaced. The ref is still visible: it
+/// is the child node's own `display`.
+fn compact_display(v: &Value, depth: usize, sh: &SharedTable) -> String {
     match v {
         Value::Tuple(items) | Value::List(items) if depth > 0 => {
             let inner: Vec<String> =
-                items.iter().map(|i| compact_display(i, depth - 1)).collect();
+                items.iter().map(|i| compact_display(i, depth - 1, sh)).collect();
             let (open, close) = if matches!(v, Value::Tuple(_)) { ("(", ")") } else { ("[", "]") };
             format!("{open}{}{close}", inner.join(", "))
         }
-        other => node_display(other),
+        // `effective` also unwraps a `Shared` store, so a key that DEFINES a
+        // slot reads the same as every key that refers to it.
+        other => node_display(effective(other, sh)),
     }
 }
 
@@ -273,4 +287,33 @@ mod tests {
 
     // NOTE: the edit_text ↔ SetScalar round-trip contract is tested in
     // mutate.rs (Task 5), which owns the other half of that contract.
+}
+
+#[cfg(test)]
+mod ref_key_tests {
+    use super::*;
+    use blue_marshal::Value;
+
+    /// The per-window maps on a real file store each window id once and `Ref`
+    /// it from every other map. Labelling those rows `ref[7]` made the maps
+    /// unnavigable, so a Ref key renders as what it points at.
+    #[test]
+    fn a_ref_dict_key_is_labelled_by_its_target() {
+        let id = || Value::Bytes(b"43".to_vec());
+        let v = Value::Dict(vec![
+            // openWindows: the map that DEFINES the shared id
+            (Value::Bytes(b"openWindows".to_vec()),
+             Value::Dict(vec![(Value::Shared { slot: 7, value: Box::new(id()) }, Value::Bool(true))])),
+            // minimizedWindows: the same id, by reference
+            (Value::Bytes(b"minimizedWindows".to_vec()),
+             Value::Dict(vec![(Value::Ref(7), Value::Bool(false))])),
+        ]);
+        let n = project(&v);
+        let labels: Vec<_> = n.children.iter().map(|c| c.children[0].label.clone().unwrap()).collect();
+        assert_eq!(labels, vec![r#"b"43""#, r#"b"43""#],
+            "a defining key and a referring key must read the same");
+        // Only the LABEL is resolved; each row still shows its own value.
+        assert_eq!(n.children[0].children[0].display, "True", "openWindows[43]");
+        assert_eq!(n.children[1].children[0].display, "False", "minimizedWindows[43]");
+    }
 }
