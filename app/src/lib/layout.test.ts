@@ -434,13 +434,18 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("live: offset -642 puts the HUD centre at 638", dragged.x + dragged.w / 2 === 638);
   check("live: a negative offset moves the HUD left", dragged.x < centred.x);
 
-  // The fighter UI's x is the panel's LEFT EDGE in absolute screen px: dragged
-  // to mid-screen the client stored 839, measured at 838 on the screenshot.
+  // The fighter UI's stored point is the panel's top-left in absolute screen
+  // px. x: dragged mid-screen the client stored 839, measured at 838. y: given
+  // 497 — the exact top of A1's D-Scan window — the panel's ability grid drew
+  // level with D-Scan's top, and the client wrote (839, 497) straight back.
   const fighter = hudRects(
-    fullHud({ fighter_x: hudEntry("fighter_x", "839", "int", "0") }),
+    fullHud({
+      fighter_x: hudEntry("fighter_x", "839", "int", "0"),
+      fighter_y: hudEntry("fighter_y", "497", "int", "0"),
+    }),
     layout2560,
   ).find((r) => r.kind === "fighter")!;
-  check("live: the fighter UI's stored x is its left edge", fighter.x === 839);
+  check("live: the fighter UI's stored point is its top-left", fighter.x === 839 && fighter.y === 497);
 }
 
 // --- snapping: candidate lines ---------------------------------------------
@@ -693,3 +698,27 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 console.log("layout: all checks passed");
+
+// HUD_NOMINAL.shipui.w is invented, and the live sessions could not measure it:
+// the ship HUD has no hard edge in-game to align against. That is tolerable
+// because the width CANCELS in a drag round trip — hudRects draws at
+// `centre + offset - w/2` and shipOffsetFromX inverts with the same `w`, so the
+// offset written for a given on-screen CENTRE is independent of it. This pins
+// that, so the invented number can be corrected later without fear, and so that
+// nobody re-derives the false worry that a wrong width skews what we write.
+{
+  const hud = fullHud({ ship_offset: hudEntry("ship_offset", "-642", "float", "0") });
+  const ship = hudRects(hud, layout2560).find((r) => r.kind === "shipui")!;
+  const centre = ship.x + ship.w / 2;
+
+  // Re-derive the offset for the SAME centre under a different assumed width.
+  const asIfWider = (w: number) => Math.round((centre - w / 2) + w / 2 - layout2560.reference_w / 2);
+  check(
+    "the stored offset depends on the centre, not on the nominal width",
+    asIfWider(686) === -642 && asIfWider(900) === -642 && asIfWider(400) === -642,
+  );
+  check(
+    "shipOffsetFromX agrees at the real nominal width",
+    shipOffsetFromX(ship.x, layout2560.reference_w) === -642,
+  );
+}
