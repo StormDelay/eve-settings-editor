@@ -45,16 +45,6 @@ Workflow:
   Cross-check any ambiguous row by binding it in-game and reading which id moves
   in `customCmds`. _Added 2026-07-27._
 
-- [ ] **Every chat window is labelled just "Chat".** `windowLabels.ts:97` maps
-  the whole `chatchannel` family to one flat label, so a character with dozens of
-  them (A1 has 74 in one stack) shows dozens of identical rows. The friendly name
-  is already in the file: `ui → chatchannels` is a list of
-  `(key, id, displayName)` tuples — `(b"corp", "corp_98835672", "Corp")`,
-  `("private_40fcd4de…", "private_40fcd4de…", "Private Chat (2)")` — and the
-  window id is `chatchannel_` + the first element, confirmed in-game 2026-07-27
-  for both a named standing channel and a private conversation. Join on that and
-  show the third element. _Added 2026-07-27._
-
 - [ ] **Creating an `Everything` preset says nothing about what it captures.**
   The privacy confirmation lives on *export* (`PresetGroup.svelte:96`: "carries
   everything the editor does not model, including your autofill history —
@@ -703,6 +693,32 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Every chat window is labelled just "Chat".** The entry read as a feature
+  request; it was **two** bugs in a feature that already shipped. The join it
+  asked for existed end to end — `windows.rs::chat_channel_names` reads
+  `ui → chatchannels`, `window_layout` assigns `WindowRect.name`, and
+  `windowLabels.ts::nameOf` already prefers it. `PARAM.chatchannel = "Chat"` is
+  the *fallback*, correct as one.
+
+  (1) The join keyed on the tuple's SECOND element while the window id is built
+  from the FIRST — for `player_*` rows those are the same string, so it looked
+  right and missed every standing channel. (2) More seriously, it matched a bare
+  `Value::List` while the section is `(timestamp, list)` in **281 of 281** corpus
+  files carrying it, so it returned an empty map on every real file. Fixing the
+  index alone changed nothing; both were needed. Now reads via
+  `treewalk::as_list`, which already existed for exactly this.
+
+  Measured across the corpus: **0 of 11,071 chat windows named before, 1,072
+  after** — Corp, Alliance, Local, Militia and named private groups. The ~70
+  stale windows per character are closed conversations the file holds no name
+  for; they keep the derived `Chat · <detail>` label, which is right — thinning
+  that list is what `Hide clutter` is for.
+
+  Neither bug was visible to the tests: the chat fixtures seeded a bare list AND
+  led with an `Int` key, so one of them could only pass while the code read the
+  wrong element. A fixture that shares the code's assumptions cannot falsify
+  them. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **The neocom renders differently docked vs in space.** Settled in Session C
   by photographing the same character docked and in space and diffing the two
