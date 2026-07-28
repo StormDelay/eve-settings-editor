@@ -13,20 +13,6 @@ Workflow:
 
 ## Open
 
-- [ ] **A windowless account is a normal state, and the editor treats it as an
-  error.** Confirmed 2026-07-28: **EVE's own overview importer deletes
-  `tabsByWindowInstanceID`.** Account A carried the key through every offline
-  staging and lost it in the capture straight after a pack was imported through
-  the client's own Overview Settings; the account has had `tabsettings_new` with
-  no window mapping ever since, and its overview works in-game regardless. So
-  any user who imports a pack the normal way and then opens our Overview editor
-  is in this state. Today `overview.rs::window_groups` returns an empty vec and
-  `add_overview_window` refuses with `NoWindowMapping`, which is written as
-  though the file were damaged. Decide what the editor should do — most likely
-  rebuild a single-window mapping from the tabs that exist, since that is
-  evidently what the client does — and reword the refusal so it does not read as
-  corruption. _Added 2026-07-28._
-
 - [ ] **The HUD furniture must cover its real in-game footprint — module racks
   and fighter abilities included.** Both elements are drawn as bare boxes at
   invented `HUD_NOMINAL` sizes, and the sizes are what everything else is placed
@@ -618,12 +604,12 @@ Workflow:
   when the account has no `tabsByWindowInstanceID` now adds it to `tabsettings_new`
   and leaves the window mapping to EVE's default (the tab shows, verified in-game);
   placing it in a SPECIFIC overview window needs the char-side window↔tab mapping,
-  deferred to the Phase B overview-window capture. (b) **Align
-  `reorder_tabs_in_window` / `move_tab` to the no-fabricate read pattern** —
-  `create_tab` and `delete_tab` now avoid materializing an empty
-  `tabsByWindowInstanceID` when it's absent (an empty/partial mapping can hide the
-  whole overview), but reorder/move still go through `groups_mut`, which fabricates
-  it. They're UI-unreachable on a windowless account today, but worth aligning. (c)
+  deferred to the Phase B overview-window capture.
+  (b) ~~Align `reorder_tabs_in_window` / `move_tab` to the no-fabricate read
+  pattern~~ — **done 2026-07-28**: both now refuse with `NoWindowMapping` before
+  reaching `groups_mut`, so a refused edit no longer leaves an empty mapping
+  behind.
+  (c)
   **Orphan-tab create placement:** creating a tab while an "Other" (orphan) tab is
   selected on an account that HAS windows lands the new tab in window 0 (via the
   `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
@@ -736,6 +722,22 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **A windowless account is a normal state, and the editor treats it as an
+  error.** Reworded throughout, and given a way out that does not lie. The
+  entry's suggested fix — rebuild a single-window mapping "since that is
+  evidently what the client does" — was not taken, because it over-reads the
+  evidence: Session B proved the client *deletes* the mapping and keeps working,
+  not that it rebuilds one. An absent mapping means EVE distributes tabs across
+  its char-side windows, which this crate cannot read, so fabricating one pins
+  every tab into a single window and silently flattens a multi-window overview.
+  Instead `create_window_mapping` writes a COMPLETE mapping (every tab, ascending
+  index) and is reachable only from an explicit "Set up per-window tabs" action
+  behind a confirm that says what it replaces. `NoWindowMapping` now describes a
+  configuration rather than a fault, and `reorder_tabs_in_window` / `move_tab` no
+  longer fabricate an empty mapping on a refused edit — which was item (b) of the
+  windowless/no-fabricate follow-ups entry, closed with this. _Added 2026-07-28;
+  done 2026-07-28._
 
 - [x] **`tabsettings2` exists and the editor has never read it.** Resolved by a
   corpus scan rather than an in-game test, and the read order stands unchanged.
