@@ -301,6 +301,10 @@ fn stack_reorder(state: tauri::State<'_, AppState>, container: String, members: 
 fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: String) -> Result<settings_model::WindowLayout, ErrDto> {
     ops::stack_create(&state, &member1, &member2)
 }
+#[tauri::command]
+fn stack_delete_orphans(state: tauri::State<'_, AppState>) -> Result<settings_model::WindowLayout, ErrDto> {
+    ops::stack_delete_orphans(&state)
+}
 
 #[tauri::command]
 fn neocom_bar(state: tauri::State<'_, AppState>) -> Result<settings_model::NeocomBar, ErrDto> {
@@ -472,7 +476,7 @@ pub fn run() {
             setup_preview, setup_apply,
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
-            stack_unstack, stack_add, stack_reorder, stack_create,
+            stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset,
             hud_layout, set_hud_value,
             preferences, set_preferences
