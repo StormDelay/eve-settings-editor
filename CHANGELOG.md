@@ -279,13 +279,12 @@ The ship HUD, fighter UI and neocom on the layout canvas.
 
 Overview pack import and export.
 
-- **Treat this release's overview features as unstable.** Import and export of
-  overview packs has not yet been tested against a running EVE client — it is
-  covered by an extensive automated suite, including a check that 1771 real
-  settings files survive a full export-and-reimport unchanged, but nothing here
-  has been confirmed in-game. Back up your settings before importing a pack, and
-  expect rough edges in the Overview editor generally while this milestone
-  finishes.
+> **Confirmed in-game on 2026-07-28.** This release originally shipped with a
+> warning that none of it had been tested against a running client. It has been
+> since: community packs import and render, EVE's own importer accepts what we
+> export, and tab order survives a full round trip. The warning is withdrawn.
+> Two bugs the testing found — a stripped timestamp on the column keys, and a
+> malformed tab table on accounts that had none — are fixed in a later release.
 
 ### Added
 - **Import and export overview packs.** The Overview editor reads and writes the

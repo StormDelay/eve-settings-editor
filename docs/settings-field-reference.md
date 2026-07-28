@@ -268,6 +268,23 @@ cached ISK values: `market_searchText`, `market_value`, `market_last_update`,
 **Chat.** `chatchannels` (367) `List[Tuple(kind, channelKey, label)]` — the
 character's joined channels; `chat_OldChannelsMigrated` (367) `Bool`.
 
+A chat window's id under `windows` is **`chatchannel_` + the tuple's FIRST
+element** — confirmed in-game 2026-07-28, for a named standing channel and a
+private conversation alike:
+
+| `chatchannels` entry | window id |
+|---|---|
+| `(b"corp", "corp_98835672", "Corp")` | `chatchannel_corp` |
+| `(b"alliance", "alliance_99010468", "Alliance")` | `chatchannel_alliance` |
+| `("private_40fcd4de…", "private_40fcd4de…", "Private Chat (2)")` | `chatchannel_private_40fcd4de…` |
+
+This was previously inferred rather than observed, and the worry was that a real
+id might carry a kind segment the key does not — in which case every chat window
+would silently keep a wrong derived name with no error anywhere. It does not: a
+private conversation's key already carries its own `private_` prefix, so both
+kinds derive identically. The third element is the channel's display name, which
+`windowLabels.ts` does not yet use (see `docs/small-tasks.md`).
+
 **Neocom.** `neocomButtonRawData` (370) `List[Instance]`,
 `neocomButtonRawDataOriginal` (367) `Tuple[Instance]` — the neocom button set.
 Format recorded in `format-notes.md` §"Neocom buttons"; already modelled
