@@ -739,12 +739,14 @@ Two consequences worth holding on to:
 - It explains why the pack format has no representation for the per-window tab
   mapping — the client discards its own. Neither our export nor EVE's carries
   the key (0 occurrences in both).
-- **The "windowless account" is not an exotic state.** `overview.rs::
-  window_groups` returns an empty vec for it and `add_overview_window` refuses
-  with `NoWindowMapping`, which reads like an edge case for corrupt files. It is
-  not: the client puts an account there itself, on an ordinary in-game pack
-  import. Any user who imports a pack through EVE and then opens our Overview
-  editor is in it.
+- **The "windowless account" is not an exotic state.** The client puts an account
+  there itself, on an ordinary in-game pack import, so any user who imports a
+  pack through EVE and then opens our Overview editor is in it.
+  `overview.rs::window_groups` returns an empty vec, and `add_overview_window`
+  refuses with `NoWindowMapping` — which used to read like an edge case for
+  corrupt files, and was reworded on 2026-07-28 to describe a configuration
+  instead. See "`tabsByWindowInstanceID` shape on real accounts" below for the
+  rule that governs writing the key back.
 
 **Caveat on the comparison.** The two files are not a clean round-trip pair: a
 community pack was imported through the editor between our export and the
@@ -1041,16 +1043,13 @@ All remembered text-input history in the client is **one structure**, in
 
 ### `tabsByWindowInstanceID` shape on real accounts (overview pack review, 2026-07-26)
 
-**EVE's own overview importer deletes `tabsByWindowInstanceID`.** Confirmed
-2026-07-28: account A carried the key through every offline staging session and
-lost it in the capture taken straight after a pack was imported through the
-client's own Overview Settings. It has had `tabsettings_new` with no window
-mapping ever since, and its overview works in-game regardless. So an account
-with no tab-to-window mapping is a normal, common state — not a damaged file —
-and anything that writes the key must write a COMPLETE mapping: one that omits a
-tab hides that tab, and one that omits all of them hides the whole overview.
-(The capture this comes from is written up under "Our pack export vs EVE's own"
-above.)
+**Anything that writes this key must write a COMPLETE mapping** — one that omits
+a tab hides that tab in game, and one that omits every tab hides the whole
+overview. That is why `create_window_mapping` refuses (rather than skipping) a
+tab whose key it cannot read, and why no other path may create the key at all:
+an absent mapping is a normal state, so a *partial* one is strictly worse than
+none. EVE's own overview importer deletes the key outright — evidence and
+capture under "Our pack export vs EVE's own" above (confirmed 2026-07-28).
 
 Measured across the full 1925-account corpus while fixing a pack-import bug
 (a re-import that re-pointed this mapping was duplicating a tab index across

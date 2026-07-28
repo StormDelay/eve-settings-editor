@@ -88,6 +88,16 @@ pub(crate) fn fallback_tab() -> Value {
 }
 
 /// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
+/// Read-only `(timestamp, dict)` / bare-dict unwrap. The counterpart to
+/// `dict_inner_mut` for callers that must not create what they cannot find.
+pub(crate) fn dict_inner(v: &Value) -> Option<&Entries> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+        _ => None,
+    }
+}
+
 pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     match v {
         Value::Dict(d) => Some(d),
@@ -377,11 +387,30 @@ pub fn create_window_mapping(v: &mut Value) -> Result<usize, OverviewTabError> {
     if window_count(ov) > 0 {
         return Err(OverviewTabError::WindowMappingExists);
     }
-    // Ascending index, not dict order: the tab strip is rendered in index order
-    // and a mapping in insertion order would silently reshuffle it.
-    let mut indices: Vec<i64> = tabs_mut(ov).iter().filter_map(|(k, _)| as_int(k)).collect();
+    // Read the tabs WITHOUT tabs_mut, which mints an empty `tabsettings_new`
+    // when the key is absent: a refused create must leave the file untouched,
+    // the same rule the reorder/move guards above exist for.
+    let Some(tabs) = ov
+        .iter()
+        .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
+        .and_then(|(_, v)| dict_inner(v))
+    else {
+        return Err(OverviewTabError::NoTabsToMap);
+    };
+
+    // Ascending index, not dict order. `project_overview` reports tabs in dict
+    // order, which is ascending on any file the client wrote (`create_tab`
+    // appends `max+1`) but need not be on a hand-edited one — so this is a
+    // deliberate normalisation, not a restatement of what the strip shows.
+    let mut indices: Vec<i64> = tabs.iter().filter_map(|(k, _)| as_int(k)).collect();
     indices.sort_unstable();
     if indices.is_empty() {
+        return Err(OverviewTabError::NoTabsToMap);
+    }
+    // Completeness is the whole safety property, so a tab this cannot name is a
+    // refusal, never a silent omission: `as_int` takes only `Value::Int`, and a
+    // dropped key would be a tab hidden in game that the editor still lists.
+    if indices.len() != tabs.len() {
         return Err(OverviewTabError::NoTabsToMap);
     }
     // groups_mut creates the key in the wrapped `(timestamp, list)` shape every
@@ -840,13 +869,10 @@ mod tests {
         (x, y)
     }
 
-    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above.
+    /// Read-only `(ts,dict)`/dict unwrap, for the assertions above. Delegates to
+    /// the module's own, so the tests cannot drift from what the code unwraps.
     fn dict_inner_ref(v: &Value) -> Option<&Entries> {
-        match v {
-            Value::Dict(d) => Some(d),
-            Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
-            _ => None,
-        }
+        dict_inner(v)
     }
 
     #[test]
@@ -1018,6 +1044,47 @@ mod tests {
             Err(OverviewTabError::NoTabsToMap),
         ));
         assert!(!has_mapping(&v), "a refused create must not leave a partial mapping");
+    }
+
+    #[test]
+    fn create_mapping_refuses_a_tab_it_cannot_name() {
+        // Completeness is the safety property, so a tab key `as_int` cannot read
+        // must refuse rather than be quietly skipped: a mapping that omits a tab
+        // hides that tab in game while the editor still lists it, which is
+        // exactly the failure this whole design exists to prevent.
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![
+                    (Value::Int(0), tab.clone()),
+                    // Not an Int: silently dropped before this guard existed.
+                    (Value::Long(vec![1u8; 8]), tab),
+                ]),
+            ])),
+        ]))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        assert!(!has_mapping(&v), "a refused create must not leave a partial mapping");
+    }
+
+    #[test]
+    fn create_mapping_on_an_overview_with_no_tab_key_mints_nothing() {
+        // `tabs_mut` CREATES `tabsettings_new` when absent, so reading through it
+        // would leave an empty tab dict behind on a refused create — the same
+        // "a refused edit must not touch the file" rule the reorder/move guards
+        // exist for.
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(Vec::new()))]);
+        assert!(matches!(
+            create_window_mapping(&mut v),
+            Err(OverviewTabError::NoTabsToMap),
+        ));
+        let Value::Dict(top) = &v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        assert!(entries.is_empty(), "a refused create must not mint a tab dict: {entries:?}");
     }
 
     #[test]

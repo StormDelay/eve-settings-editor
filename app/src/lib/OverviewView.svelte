@@ -78,8 +78,10 @@
       `Put all ${n} tab${n === 1 ? "" : "s"} in one overview window?\n\n` +
         `This account currently lets EVE decide which of your overview windows each tab ` +
         `appears in. Setting this up replaces that with an explicit list, so every tab ` +
-        `starts in one window and you arrange them from there. EVE removes this list again ` +
-        `whenever you import an overview pack through the client.`,
+        `starts in one window and you arrange them from there.\n\n` +
+        `The editor can't undo this — it can't remove the last overview window. If you ` +
+        `save and change your mind, importing an overview pack through the client removes ` +
+        `the list again.`,
       { title: "Set up per-window tabs", kind: "warning" },
     );
     if (!ok) return;
