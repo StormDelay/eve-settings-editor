@@ -370,9 +370,19 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
         .unwrap_or((0, 0))
 }
 
-/// `ui → chatchannels` is `List[Tuple(kind, channelKey, label)]` (367 of 384
-/// corpus files). Returns channelKey → label; the window id for a channel is
-/// `chatchannel_<channelKey>`. An absent section is normal, not an error.
+/// `ui → chatchannels` is `List[Tuple(key, fullChannelId, label)]` (367 of 384
+/// corpus files). Returns key → label; the window id for a channel is
+/// `chatchannel_<key>` — the FIRST element, confirmed in-game 2026-07-28 for
+/// both a standing channel and a private conversation.
+///
+/// Not the second: for `player_*` rows the first two elements are the same
+/// string, so keying on the second appears to work and then silently misses
+/// every standing channel (`corp`, `alliance`, `local`), whose second element
+/// is the fully-qualified `corp_98835672` form. Measured on the 2026-07-28
+/// capture: the first element matched 5 of 5 and 3 of 3, the second 2 of 5 and
+/// 1 of 3.
+///
+/// An absent section is normal, not an error.
 fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some((ui, _)) = section(root, b"ui", sh) else { return out };
@@ -383,7 +393,7 @@ fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<Stri
     for it in items {
         let Value::Tuple(parts) = effective(it, sh) else { continue };
         if parts.len() < 3 { continue }
-        if let (Some(key), Some(label)) = (text(&parts[1], sh), text(&parts[2], sh)) {
+        if let (Some(key), Some(label)) = (text(&parts[0], sh), text(&parts[2], sh)) {
             if !key.is_empty() && !label.is_empty() {
                 out.insert(key, label);
             }
@@ -934,14 +944,21 @@ mod tests {
 
     #[test]
     fn a_chat_window_takes_its_real_channel_name() {
-        // ui → chatchannels is List[Tuple(kind, channelKey, label)]; the
-        // channelKey is the window id's suffix after "chatchannel_".
+        // ui → chatchannels is List[Tuple(key, fullChannelId, label)]; the
+        // window id's suffix after "chatchannel_" is the FIRST element. This
+        // fixture used to lead with Value::Int(1), modelling the tuple as
+        // (kind, channelKey, label) — a shape the corpus does not contain; every
+        // one of the 281 real files carrying the section stores the key itself
+        // there, as Bytes. Leading with an Int made the test pass only while the
+        // code read the second element, i.e. it asserted the bug.
         let root = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("chatchannel_local", 10, 20, 300, 200)])),
             (bytes("ui"), Value::Dict(vec![(
                 bytes("chatchannels"),
                 Value::List(vec![Value::Tuple(vec![
-                    Value::Int(1), bytes("local"), bytes("Local"),
+                    bytes("local"),
+                    Value::Str("local_30000142".into()),
+                    Value::Str("Local".into()),
                 ])]),
             )])),
         ]);
@@ -951,12 +968,39 @@ mod tests {
     }
 
     #[test]
+    fn a_standing_channel_is_named_from_the_first_tuple_element() {
+        // Real shape: ("corp", "corp_98835672", "Corp") — the window id is
+        // `chatchannel_` + the FIRST element (confirmed in-game 2026-07-28),
+        // while the second is the fully-qualified channel id. Joining on the
+        // second matches only player_* rows, where the two happen to be equal,
+        // and silently misses every standing channel.
+        let doc = Value::Dict(vec![
+            (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
+            (bytes("ui"), Value::Dict(vec![(
+                bytes("chatchannels"),
+                Value::List(vec![Value::Tuple(vec![
+                    bytes("corp"),
+                    Value::Str("corp_98835672".into()),
+                    Value::Str("Corp".into()),
+                ])]),
+            )])),
+        ]);
+        let layout = window_layout(&doc, None);
+        let w = layout.windows.iter().find(|w| w.id == "chatchannel_corp").expect("the chat window");
+        assert_eq!(w.name.as_deref(), Some("Corp"));
+    }
+
+    #[test]
     fn a_window_with_no_entry_gets_no_name() {
         let root = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("market", 0, 0, 100, 100)])),
             (bytes("ui"), Value::Dict(vec![(
                 bytes("chatchannels"),
-                Value::List(vec![Value::Tuple(vec![Value::Int(1), bytes("local"), bytes("Local")])]),
+                Value::List(vec![Value::Tuple(vec![
+                    bytes("local"),
+                    Value::Str("local_30000142".into()),
+                    Value::Str("Local".into()),
+                ])]),
             )])),
         ]);
         let layout = window_layout(&root, None);
