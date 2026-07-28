@@ -23,6 +23,18 @@ pub enum Category {
     OverviewWidths,
     Keybinds,
     NeocomButtons,
+    // The HUD's individual keys. `hud.rs`'s FIELDS table is the source of
+    // truth for these paths; `Aspect::Layout` carries all six so a layout
+    // copy moves the whole of a character's screen furniture. They cannot be
+    // whole-section splices: char `ui` also holds editHistory and
+    // SortHeadersSizes, so copying the section would carry the target's
+    // autofill away.
+    HudFighterPos,
+    HudBadge,
+    HudShipTop,
+    HudFighterDetached,
+    HudFighterShown,
+    HudNeocomWidth,
 }
 
 impl Category {
@@ -41,7 +53,33 @@ impl Category {
             // BUTTONS are per character. Original is deliberately not a category
             // — it is the target's own client baseline.
             Category::NeocomButtons => &[b"ui", b"neocomButtonRawData"],
+            Category::HudFighterPos => &[b"ui", b"fightersDetachedPosition"],
+            Category::HudBadge => &[b"notifications", b"notification_badge_offset"],
+            Category::HudShipTop => &[b"ui", b"shipuialigntop"],
+            Category::HudFighterDetached => &[b"ui", b"detachFighterUI"],
+            Category::HudFighterShown => &[b"ui", b"displayFighterUI"],
+            // Account-side `windows`, which holds only this key — a different
+            // document from the char-side `windows` Category::Layout splices.
+            Category::HudNeocomWidth => &[b"windows", b"neocomWidth"],
         }
+    }
+
+    /// Whether an absent key on the SOURCE means "EVE's default" rather than
+    /// "nothing to copy". True only for the leaf HUD keys: 851 of 3059 corpus
+    /// account files store none of them, so treating absence as "leave the
+    /// target alone" would half-apply a Layout copy on a quarter of accounts.
+    /// Never true for a whole-section category — a source with no `overview`
+    /// deleting the target's would be data loss, not a copy.
+    pub fn absent_means_default(self) -> bool {
+        matches!(
+            self,
+            Category::HudFighterPos
+                | Category::HudBadge
+                | Category::HudShipTop
+                | Category::HudFighterDetached
+                | Category::HudFighterShown
+                | Category::HudNeocomWidth
+        )
     }
 }
 
@@ -465,5 +503,40 @@ mod tests {
         let Value::Tuple(orig_items) = original else { panic!() };
         assert_eq!(orig_items[1], Value::Tuple(vec![b("TARGET-ORIGINAL")]),
             "the target's Original was overwritten or the source's Original leaked across");
+    }
+
+    #[test]
+    fn the_hud_categories_address_the_keys_hud_rs_writes() {
+        // Exactly the paths in hud.rs's FIELDS table, which is the only other
+        // place these keys are named. A drift here half-applies a Layout copy
+        // silently, which is the bug this whole branch exists to fix.
+        let expected: [(Category, &[&[u8]]); 6] = [
+            (Category::HudFighterPos, &[b"ui", b"fightersDetachedPosition"]),
+            (Category::HudBadge, &[b"notifications", b"notification_badge_offset"]),
+            (Category::HudShipTop, &[b"ui", b"shipuialigntop"]),
+            (Category::HudFighterDetached, &[b"ui", b"detachFighterUI"]),
+            (Category::HudFighterShown, &[b"ui", b"displayFighterUI"]),
+            (Category::HudNeocomWidth, &[b"windows", b"neocomWidth"]),
+        ];
+        for (cat, path) in expected {
+            assert_eq!(cat.key_path(), path, "{cat:?} addresses the wrong key");
+            assert!(cat.absent_means_default(), "{cat:?} is a leaf HUD key");
+        }
+    }
+
+    #[test]
+    fn a_whole_section_category_never_means_default() {
+        // The destructive case: absent_means_default makes apply_to_tree DELETE
+        // the target's value. A source with no overview must never wipe one.
+        for cat in [
+            Category::Layout,
+            Category::Autofill,
+            Category::Overview,
+            Category::OverviewWidths,
+            Category::Keybinds,
+            Category::NeocomButtons,
+        ] {
+            assert!(!cat.absent_means_default(), "{cat:?} must never delete on the target");
+        }
     }
 }
