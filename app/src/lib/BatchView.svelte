@@ -96,7 +96,11 @@
   let allowOtherFolders = $state(false);
   const candidates = $derived(
     chars
-      .filter((c) => c.path !== sourcePath)
+      // A character cannot be its own copy target — but ONLY when it is the
+      // source. `sourcePath` is seeded from the open file and never cleared on
+      // switching to a preset source, so filtering on it directly kept the open
+      // character out of the list for the rest of the session.
+      .filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path))
       .filter((c) => allowOtherFolders || c.dir === folder)
       .slice()
       .sort((a, b) =>
