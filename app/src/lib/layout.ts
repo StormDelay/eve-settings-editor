@@ -148,15 +148,19 @@ export interface FurnitureRect {
  * came out 751x258 including margin, which makes 686 a plausible underestimate
  * on width and 250 about right on height, but that is not a measurement.
  *
- * Low stakes, which is why it stays invented. The width CANCELS out of a drag
- * (see shipOffsetFromX), so nothing we write to a file depends on it. What it
- * does affect is how the element is DRAWN, and therefore where 0.17.0's edge
- * snapping puts a window that snaps against the ship HUD — a fuzzy target
- * anyway, given the thing has no real edge.
+ * Nothing WRITTEN to a file depends on these: the width cancels out of a drag
+ * (see shipOffsetFromX). But they are not cosmetic either — `LayoutView` feeds
+ * each furniture rect's `w`/`h` into the snap-line set, so a box smaller than
+ * the real element makes windows snap against an edge the player cannot see and
+ * overlap the part we failed to draw. Both elements are bigger than these
+ * numbers say: the ship HUD's module racks are most of its width, and the
+ * fighter panel is mostly the ability grid above its squad row. See the
+ * footprint task in docs/small-tasks.md.
  *
- * If a number is ever wanted: the HUD's centre is `reference_w / 2 + offset`
- * exactly (confirmed), so one edge measured against that centre gives the width
- * without needing to find both.
+ * If a number is wanted for the ship HUD: its centre is
+ * `reference_w / 2 + offset` exactly (confirmed), so one edge measured against
+ * that centre gives the width without needing to find both. The racks have no
+ * frame, but the slot circles are discrete and countable on a native shot.
  */
 export const HUD_NOMINAL = {
   shipui: { w: 686, h: 250 },
