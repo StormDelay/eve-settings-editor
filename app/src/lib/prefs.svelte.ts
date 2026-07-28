@@ -33,9 +33,8 @@ export const clutterOverrides = (): ClutterOverrides => ({
  * depends on the file you have open — so a global tally sat beside "showing N
  * of M windows" claiming to describe this layout while describing every
  * character's. Scoped to the open document's windows, not to the windows
- * currently drawn: a `clutter` override's whole effect is to hide its window,
- * so a count over the drawn set could never include one, and a count that moved
- * while you typed in the filter box would be worse than one that is too broad.
+ * currently drawn, for stability: a count that moved while you typed in the
+ * filter box would be worse than one that is slightly too broad.
  */
 export const overrideCount = (ids: ReadonlySet<string>): number => countIn(prefs.layout, ids);
 
@@ -82,10 +81,18 @@ export function setClutterOverride(id: string, mode: "clutter" | "visible" | "de
 }
 
 /** Drop only the overrides naming a window the given document has. Every other
- * override is left on disk: the stored list is application-wide, so a `clear`
- * from one layout must not delete an override belonging to a file you do not
- * have open. Same chained write as `setClutterOverride` — only the value
- * written changed. */
+ * override is left on disk.
+ *
+ * Note the exact guarantee, which is narrower than it first looks: it cannot
+ * delete an override for a window THIS DOCUMENT DOES NOT HAVE. It is not
+ * per-character isolation, and cannot be — window ids are per-character dict
+ * keys and the common ones (`overview`, `market`) repeat across characters, so
+ * clearing from A still drops B's override on a window they share. Making that
+ * true would mean keying the stored list by character, which is a different and
+ * larger change; the list is application-wide on purpose, because marking a
+ * window as clutter is a statement about the window, not about one pilot.
+ *
+ * Same chained write as `setClutterOverride` — only the value written changed. */
 export function clearClutterOverrides(ids: ReadonlySet<string>): void {
   prefs = { ...prefs, layout: withoutIn(prefs.layout, ids) };
   persist(prefs);

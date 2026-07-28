@@ -1,6 +1,6 @@
 // Run: npm test  (node --test; Node strips the types itself). No test
-// framework and no @types/node on purpose — the frontend dependency list stays
-// as scaffolded. A throw is a failing exit code, which is all a runner needs.
+// framework on purpose — the frontend dependency list stays as scaffolded. A
+// throw is a failing exit code, which is all a runner needs.
 import { primaryProfileDir, profileLabels, profileNote } from "./profiles.ts";
 import type { Profile, SettingsFile } from "./api.ts";
 

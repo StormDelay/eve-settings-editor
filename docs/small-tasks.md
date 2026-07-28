@@ -251,12 +251,31 @@ Workflow:
   6. ~~`overrideCount()` counts overrides across every character~~ — **done
      2026-07-28**: the counter and its `clear` are scoped to the windows the open
      document has, so the line beside "showing N of M windows" describes that
-     layout rather than every character's, and `clear` can no longer remove an
-     override belonging to a file you do not have open. The stored list stays
-     application-wide by design; only what is reported and cleared is narrowed.
-     Scoped to the document's windows rather than the drawn ones deliberately —
-     a `clutter` override hides its own window, so a count over the drawn set
-     could never include one.
+     layout rather than every character's. The stored list stays application-wide
+     by design; only what is reported and cleared is narrowed.
+
+     **The guarantee is narrower than "another character's overrides are safe",**
+     and the first wording of this entry overclaimed it. Window ids are
+     per-character dict keys and the common ones (`overview`, `market`) repeat
+     across characters, so clearing from A still drops B's override on a window
+     they share. What it cannot do is remove an override for a window *this
+     document does not have*. Real isolation would mean keying the stored list by
+     character — a different and larger change, and arguably the wrong one, since
+     marking a window as clutter is a statement about the window.
+
+     Scoped to the document's windows rather than the drawn ones for stability:
+     a counter that moved while you typed in the filter box would be worse than
+     one that is slightly broad. (An earlier version of this note also argued a
+     drawn-set count "could never include a clutter override" — that only holds
+     while Hide clutter is on, so the stability argument carries the decision by
+     itself.)
+
+     **Known cost:** an override naming a window that no longer exists anywhere
+     is now never counted and never cleared, so the list is append-only in
+     practice. Harmless — `isClutter` only consults ids that are present — but
+     there is no longer a UI path to prune one. Worth a "forget overrides for
+     windows nothing has" action if `preferences.json` ever grows enough to
+     notice.
 
 - [x] **Capture EVE's factory keybindings.** `app/src/lib/data/command-defaults.json`
   ships empty, so the Keybinds view's Default column and per-row reset are

@@ -1,5 +1,5 @@
-// Run: npm test (node --test). No framework, no @types/node — a throw is a
-// failing exit code, which is all a runner needs.
+// Run: npm test (node --test). No test framework — a throw is a failing exit
+// code, which is all a runner needs.
 import { countIn, withoutIn } from "./prefs.ts";
 
 const check = (name: string, ok: boolean) => {
