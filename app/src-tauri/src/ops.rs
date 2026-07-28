@@ -1876,6 +1876,7 @@ mod tests {
     fn the_layout_aspect_carries_the_neocom_buttons() {
         let w = aspect_writes(&[Aspect::Layout]);
         assert!(w.char_categories.contains(&Category::NeocomButtons), "the neocom bar is character-side");
+        assert!(!w.account_categories.contains(&Category::NeocomButtons), "the neocom bar is character-side");
         assert!(w.copies_char_geometry(), "the resolution warning still applies");
     }
 
@@ -1968,12 +1969,20 @@ mod tests {
         // source_side_empty feeds setup_preview's no-op suppression. A source
         // storing none of the four account HUD keys yields four REMOVALS, which
         // is real work — counting only present values here would silently kill
-        // the removal path and half-apply the copy again.
+        // the removal path and half-apply the copy again. Routed through the
+        // real function (not just extract_categories) so a "tidy-up" that
+        // narrowed source_side_empty to count only present values would fail
+        // this test, not just the assertion below it.
         let w = aspect_writes(&[Aspect::Layout]);
         let source_without_hud = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
         let extracted = extract_categories(&source_without_hud, &w.account_categories);
         assert_eq!(extracted.len(), 4, "four removals");
-        assert!(!extracted.is_empty(), "so the side is not a no-op");
+
+        let path = temp_file("hud-removals-only", &encode(&source_without_hud).unwrap());
+        assert!(
+            !source_side_empty(&path, &w.account_categories),
+            "a removals-only account side must not be treated as a no-op"
+        );
     }
 
     #[test]
@@ -2050,6 +2059,8 @@ mod tests {
             plan.excluded.iter().any(|e| e.char_id == 4 && e.reason.contains("No account paired")),
             "an unpaired target cannot receive the account-side HUD fields"
         );
+        assert_eq!(plan.char_writes.len(), 1, "only the paired target receives a char write");
+        assert_eq!(plan.char_writes[0].char_id, 1, "the paired target, not the excluded one");
     }
 
     #[test]
