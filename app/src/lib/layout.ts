@@ -135,36 +135,51 @@ export interface FurnitureRect {
 }
 
 // EVE stores anchors but never sizes, and never says what an anchor is relative
-// to, so all of this began as assumption. The 2026-07-27 live session settled
-// the conventions: the ship offset is centre-relative (and was already written
-// that way), the fighter UI's x is its left edge, its y is wrong by a constant.
-// ponytail: the nominal SIZES below are still invented — measure them off one
-// native-resolution screenshot, see HUD_NOMINAL.
+// to, so all of this began as assumption. Two live sessions settled the
+// conventions and 2026-07-28 settled the sizes, off three native 2560x1440
+// screenshots measured against the settings file that produced them.
+
 /**
- * Drawn sizes for the screen furniture, in data px. Still INVENTED, and two
- * live sessions failed to measure the ship HUD: it has **no hard edge in-game**
- * — the module racks fade out with no frame and nothing to butt against another
- * window — so there is no crisp boundary to align or photograph. A native crop
- * came out 751x258 including margin, which makes 686 a plausible underestimate
- * on width and 250 about right on height, but that is not a measurement.
+ * How far the ship HUD extends LEFT of its anchor.
  *
- * Nothing WRITTEN to a file depends on these: the width cancels out of a drag
- * (see shipOffsetFromX). But they are not cosmetic either — `LayoutView` feeds
- * each furniture rect's `w`/`h` into the snap-line set, so a box smaller than
- * the real element makes windows snap against an edge the player cannot see and
- * overlap the part we failed to draw. Both elements are bigger than these
- * numbers say: the ship HUD's module racks are most of its width, and the
- * fighter panel is mostly the ability grid above its squad row. See the
- * footprint task in docs/small-tasks.md.
+ * The anchor is the capacitor wheel's centre — NOT the element's centre. This is
+ * the correction that matters: two shots of one character at one offset, flying
+ * a battleship and a frigate, share a pixel-identical left edge (490) and differ
+ * only on the right (1133 vs 896). The element grows rightward from a fixed left
+ * edge, so it is strongly asymmetric about its anchor: 148px left, 495px right.
  *
- * If a number is wanted for the ship HUD: its centre is
- * `reference_w / 2 + offset` exactly (confirmed), so one edge measured against
- * that centre gives the width without needing to find both. The racks have no
- * frame, but the slot circles are discrete and countable on a native shot.
+ * Isolating the capacitor wheel by colour put its centre at x=638.5, against
+ * `2560/2 + (-642) = 638` from the file — a half-pixel match. That also explains
+ * the 2026-07-27 result that writing 0.0 drew the HUD "dead centre": it is the
+ * capacitor that centres, not the box.
+ */
+export const SHIP_ANCHOR_LEFT = 148;
+
+/** Gap between the screen edge and the HUD when it is top-aligned (measured). */
+export const SHIP_TOP_MARGIN = 28;
+
+/**
+ * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
+ * `badge`, which is still nominal.
+ *
+ * These are not cosmetic: `LayoutView` feeds each furniture rect's `w`/`h` into
+ * the snap-line set, so a box smaller than the real element makes windows snap
+ * against an edge the player cannot see and overlap the part we failed to draw.
+ * The previous values (shipui 686x250, fighter 400x120) were invented, and the
+ * shipui box was additionally drawn centred on the anchor — putting it 195px too
+ * far left while missing 152px of module rack on the right.
+ *
+ * `shipui` covers the widest possible rack: the battleship shot's widest row
+ * already carries the maximum 8 slots (pitch ~50), so 643 is a measured maximum
+ * rather than an extrapolation.
+ *
+ * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
+ * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
+ * to the measured 381. Height does not change with squadron count.
  */
 export const HUD_NOMINAL = {
-  shipui: { w: 686, h: 250 },
-  fighter: { w: 400, h: 120 },
+  shipui: { w: 643, h: 160 },
+  fighter: { w: 467, h: 253 },
   badge: { w: 32, h: 32 },
 };
 
@@ -184,20 +199,20 @@ export function hudFlag(hud: Hud, name: string): boolean {
   return (e.value ?? e.default) === "true";
 }
 
-/** Stored offset for a ship-HUD rect at data-px `x`. Inverse of hudRects'
- * ship-HUD placement below — the two must be corrected together.
+/**
+ * Stored offset for a ship-HUD rect whose left edge is at data-px `x`. The exact
+ * inverse of hudRects' ship-HUD placement below — a matched pair, correct them
+ * together, and `layout.test.ts` round-trips them because getting this wrong
+ * writes a bad offset into a real settings file.
  *
- * CONFIRMED in-game 2026-07-27: the offset is centre-relative, it anchors the
- * HUD's OWN centre, and negative is leftward. Writing 0.0 drew the HUD dead
- * centre (which also rules out a left-edge origin); dragging it left made the
- * client write -642.0. See docs/format-notes.md § "HUD anchors".
- *
- * This reads HUD_NOMINAL.shipui.w, but the width CANCELS: hudRects draws at
- * `centre + offset - w/2` and this adds the same `w/2` back, so the offset
- * written for a given on-screen centre does not depend on it. Pinned by a test
- * in layout.test.ts, because the opposite is an easy thing to assume. */
+ * CONFIRMED in-game 2026-07-27 that the offset is centre-relative and negative
+ * is leftward; MEASURED 2026-07-28 that what it centres is the capacitor wheel,
+ * which sits `SHIP_ANCHOR_LEFT` from the element's left edge. The old version
+ * used `w/2` here and claimed the width cancelled out; that was true only while
+ * the drawn box was (wrongly) centred on the anchor.
+ */
 export function shipOffsetFromX(x: number, referenceW: number): number {
-  return Math.round(x + HUD_NOMINAL.shipui.w / 2 - referenceW / 2);
+  return Math.round(x + SHIP_ANCHOR_LEFT - referenceW / 2);
 }
 
 /**
@@ -241,19 +256,21 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
     out.push({ kind: "neocom", label: "Neocom", x: 0, y: 0, w: neocom, h: layout.reference_h, drag: "none" });
   }
 
-  // Centre-relative placement, anchoring the HUD's own centre — confirmed
-  // in-game 2026-07-27, see shipOffsetFromX. `centre + offset` is the HUD's
-  // centre and `- w/2` steps back to its left edge, so the drawn centre is
-  // independent of whether HUD_NOMINAL's width is right. Its inverse is
-  // shipOffsetFromX, below — a matched pair, correct them together.
+  // The stored offset places the capacitor wheel's centre at
+  // `reference_w/2 + offset` (measured 2026-07-28 to within half a pixel). The
+  // element then extends SHIP_ANCHOR_LEFT to the left of that point and the rest
+  // to the right — it is NOT centred on it. Its inverse is shipOffsetFromX.
   const offset = hudNum(hud, "ship_offset");
   if (offset !== null) {
     const { w, h } = HUD_NOMINAL.shipui;
     out.push({
       kind: "shipui",
       label: "Ship HUD",
-      x: Math.round(layout.reference_w / 2 + offset - w / 2),
-      y: hudFlag(hud, "ship_top") ? 0 : layout.reference_h - h,
+      x: Math.round(layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT),
+      // Top-aligned leaves a measured 28px gap. The bottom-aligned case was not
+      // captured; mirroring the same margin is the honest guess and is what a
+      // screenshot should check next.
+      y: hudFlag(hud, "ship_top") ? SHIP_TOP_MARGIN : layout.reference_h - SHIP_TOP_MARGIN - h,
       w,
       h,
       drag: "x",
