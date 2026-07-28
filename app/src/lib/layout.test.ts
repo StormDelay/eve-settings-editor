@@ -297,7 +297,7 @@ check("open filter keeps the right window", open[0].id === "a");
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
-import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL } from "./layout.ts";
+import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
 // The four account-scoped fields, by name — a literal list rather than a
@@ -351,10 +351,11 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 37 && neocom.h === 1440);
   check("the neocom is not draggable", neocom.drag === "none");
 
-  // Centre-relative offset: x = w/2 + offset - nominal/2 = 1280 - 100 - 343.
+  // The offset places the CAPACITOR's centre; the left edge is 148px left of
+  // that (measured 2026-07-28): x = 1280 - 100 - 148.
   const ship = rects[1];
-  check("the ship HUD is centred plus the offset", ship.x === 1280 - 100 - HUD_NOMINAL.shipui.w / 2);
-  check("the ship HUD sits at the bottom by default", ship.y === 1440 - HUD_NOMINAL.shipui.h);
+  check("the ship HUD's anchor is centre plus the offset", ship.x + 148 === 1280 - 100);
+  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 28 - 160);
   check("the ship HUD drags on x only", ship.drag === "x");
 
   const fighter = rects[2];
@@ -364,7 +365,8 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
 {
   const rects = hudRects(fullHud({ ship_top: hudEntry("ship_top", "true", "bool", "false") }), layout2560);
-  check("ship_top anchors the HUD to the top", rects[1].y === 0);
+  // Top-aligned it clears the screen edge by the measured 28px, not by 0.
+  check("ship_top anchors the HUD to the top", rects[1].y === 28);
 }
 
 {
@@ -427,16 +429,19 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     hudRects(fullHud({ ship_offset: hudEntry("ship_offset", offset, "float", "0") }), layout2560)
       .find((r) => r.kind === "shipui")!;
 
-  // Written 0.0, the client drew the HUD dead centre. Asserting on the CENTRE
-  // rather than the left edge is deliberate: it holds whatever HUD_NOMINAL's
-  // width turns out to be, so correcting that invented number cannot make this
-  // fail, while a regression to a left-edge origin still does.
+  // Written 0.0, the client drew the HUD "dead centre" — and 2026-07-28 showed
+  // what actually centres is the CAPACITOR wheel, at SHIP_ANCHOR_LEFT from the
+  // left edge, not the box. Asserting on the anchor rather than the left edge is
+  // deliberate for the same reason it always was: it holds whatever
+  // HUD_NOMINAL's width turns out to be, while a regression to a left-edge
+  // origin still fails it.
   const centred = at("0");
-  check("live: offset 0 centres the ship HUD", centred.x + centred.w / 2 === 1280);
+  check("live: offset 0 centres the ship HUD's capacitor", centred.x + SHIP_ANCHOR_LEFT === 1280);
 
-  // Dragged left, the client wrote -642.0 -> the HUD's centre sits at 638.
+  // Dragged left, the client wrote -642.0 -> the capacitor sits at 638
+  // (measured 638.5 off the screenshot).
   const dragged = at("-642");
-  check("live: offset -642 puts the HUD centre at 638", dragged.x + dragged.w / 2 === 638);
+  check("live: offset -642 puts the capacitor at 638", dragged.x + SHIP_ANCHOR_LEFT === 638);
   check("live: a negative offset moves the HUD left", dragged.x < centred.x);
 
   // The fighter UI's stored point is the panel's top-left in absolute screen
@@ -451,6 +456,48 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     layout2560,
   ).find((r) => r.kind === "fighter")!;
   check("live: the fighter UI's stored point is its top-left", fighter.x === 839 && fighter.y === 497);
+}
+
+// The 2026-07-28 screenshot, reproduced: Storm Delay, 2560x1440, offset -642,
+// top-aligned. Every number is measured, not assumed — see the plan's
+// Background table. If one of these changes, a real screenshot disagreed.
+{
+  const hud = fullHud({
+    ship_offset: hudEntry("ship_offset", "-642", "float", "0"),
+    ship_top: hudEntry("ship_top", "true", "bool", "false"),
+  });
+  const ship = hudRects(hud, layout2560).find((f) => f.kind === "shipui")!;
+
+  check("the ship HUD's left edge sits 148px left of the anchor", ship.x === 490);
+  check("its right edge covers the widest slot row", ship.x + ship.w === 1133);
+  check("its top clears the screen edge by the measured margin", ship.y === 28);
+  check("its bottom is where the speed readout ends", ship.y + ship.h === 188);
+
+  // The anchor itself: the capacitor wheel's centre, measured at 638.5.
+  check(
+    "the anchor lands on the capacitor wheel, not the box centre",
+    ship.x + SHIP_ANCHOR_LEFT === 2560 / 2 - 642,
+  );
+  check(
+    "the box is NOT centred on the anchor (it grows rightward)",
+    ship.x + ship.w / 2 !== 2560 / 2 - 642,
+  );
+}
+
+// shipOffsetFromX must be the exact inverse of the placement above, or a drag
+// writes an offset that puts the HUD somewhere other than where it was dropped.
+{
+  for (const offset of [-642, -189, 0, 300]) {
+    const hud = fullHud({
+      ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
+      ship_top: hudEntry("ship_top", "true", "bool", "false"),
+    });
+    const ship = hudRects(hud, layout2560).find((f) => f.kind === "shipui")!;
+    check(
+      `dragging to its own drawn x round-trips the offset (${offset})`,
+      shipOffsetFromX(ship.x, 2560) === offset,
+    );
+  }
 }
 
 // --- snapping: candidate lines ---------------------------------------------
@@ -704,23 +751,31 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
 console.log("layout: all checks passed");
 
-// HUD_NOMINAL.shipui.w is invented, and the live sessions could not measure it:
-// the ship HUD has no hard edge in-game to align against. That is tolerable
-// because the width CANCELS in a drag round trip — hudRects draws at
-// `centre + offset - w/2` and shipOffsetFromX inverts with the same `w`, so the
-// offset written for a given on-screen CENTRE is independent of it. This pins
-// that, so the invented number can be corrected later without fear, and so that
-// nobody re-derives the false worry that a wrong width skews what we write.
+// HUD_NOMINAL.shipui.w is MEASURED as of 2026-07-28 (643), but what a drag
+// WRITES still does not depend on it: hudRects places the left edge at
+// `centre + offset - SHIP_ANCHOR_LEFT` and shipOffsetFromX inverts with the same
+// constant, so the width is an input to neither. This used to be argued as "the
+// width cancels", which was only true while the box was (wrongly) drawn centred
+// on the anchor — so re-derive it through the real functions instead of by hand,
+// and nobody can re-derive the false worry that a wrong width skews what we
+// write.
 {
   const hud = fullHud({ ship_offset: hudEntry("ship_offset", "-642", "float", "0") });
   const ship = hudRects(hud, layout2560).find((r) => r.kind === "shipui")!;
-  const centre = ship.x + ship.w / 2;
 
-  // Re-derive the offset for the SAME centre under a different assumed width.
-  const asIfWider = (w: number) => Math.round((centre - w / 2) + w / 2 - layout2560.reference_w / 2);
+  // Redraw and re-invert under a different assumed width. Same answer every
+  // time, because the width is not part of the placement's x.
+  const real = HUD_NOMINAL.shipui.w;
+  const asIfWider = (w: number) => {
+    HUD_NOMINAL.shipui.w = w;
+    const r = hudRects(hud, layout2560).find((x) => x.kind === "shipui")!;
+    return { x: r.x, offset: shipOffsetFromX(r.x, layout2560.reference_w) };
+  };
+  const widths = [686, 900, 400].map(asIfWider);
+  HUD_NOMINAL.shipui.w = real;
   check(
-    "the stored offset depends on the centre, not on the nominal width",
-    asIfWider(686) === -642 && asIfWider(900) === -642 && asIfWider(400) === -642,
+    "the drawn left edge and the stored offset ignore the nominal width",
+    widths.every((r) => r.x === ship.x && r.offset === -642),
   );
   check(
     "shipOffsetFromX agrees at the real nominal width",
