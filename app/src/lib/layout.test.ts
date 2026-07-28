@@ -772,8 +772,6 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   }
 }
 
-console.log("layout: all checks passed");
-
 // HUD_NOMINAL.shipui.w is MEASURED as of 2026-07-28 (643), but what a drag
 // WRITES still does not depend on it: hudRects places the left edge at
 // `centre + offset - SHIP_ANCHOR_LEFT` and shipOffsetFromX inverts with the same
@@ -794,8 +792,15 @@ console.log("layout: all checks passed");
     const r = hudRects(hud, layout2560).find((x) => x.kind === "shipui")!;
     return { x: r.x, offset: shipOffsetFromX(r.x, layout2560.reference_w) };
   };
-  const widths = [686, 900, 400].map(asIfWider);
-  HUD_NOMINAL.shipui.w = real;
+  // finally, not a bare restore: this mutates a module-level const, so a throw
+  // inside the map would otherwise leave every later check running against a
+  // fabricated width.
+  let widths: { x: number; offset: number }[];
+  try {
+    widths = [686, 900, 400].map(asIfWider);
+  } finally {
+    HUD_NOMINAL.shipui.w = real;
+  }
   check(
     "the drawn left edge and the stored offset ignore the nominal width",
     widths.every((r) => r.x === ship.x && r.offset === -642),
