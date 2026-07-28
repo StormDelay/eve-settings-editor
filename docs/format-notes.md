@@ -822,8 +822,21 @@ frigate, share a pixel-identical left edge (490) and differ only on the right
 the 2026-07-27 experiment saw offset 0.0 draw the HUD "dead centre": what centres
 is the capacitor, not the box.
 
-Vertical extent, top-aligned: **y 28..187** (height 160). The bottom-aligned case
-has not been captured.
+Vertical extent, top-aligned: **y 28..187** (height 160).
+
+**Confirmed at a second offset, and the margins are asymmetric (Session C,
+2026-07-28).** Dragging the HUD made the client write `-1052`, 410px left of the
+`-642` above. At that offset the capacitor wheel's centre measures **228.0**
+against `2560/2 + (-1052) = 228` — exact. The left-hand ship-control button
+column moved by exactly the same delta (`(490,512)` → `(80,102)`), so it belongs
+to the HUD and the 148px left extension is measured, not inferred.
+
+The same session captured the HUD **bottom-aligned** (`shipuialigntop` false) for
+the first time. The module rack block is 127px tall in both alignments and sits
+4px into the element, at y 32 top-aligned and y 1272 bottom-aligned — so
+bottom-aligned the element runs **1268..1428** and the gap below it is **12px**,
+not the 28 above. The element is NOT vertically symmetric, and mirroring the top
+margin (which the editor did until this was captured) drew the box 16px high.
 
 **`fightersDetachedPosition` is the panel's left edge and the ability grid's top**
 — confirmed again 2026-07-28: stored `(329, 289)` against a measured left edge of
