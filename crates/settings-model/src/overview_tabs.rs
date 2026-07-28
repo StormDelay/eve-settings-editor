@@ -109,6 +109,23 @@ pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     }
 }
 
+/// Restore the `(timestamp, payload)` wrapper on a container key that lost it.
+///
+/// A bare payload is not a shape the client writes — 0 of 4,187 container keys
+/// across five untouched account files. One can only be there because an older
+/// build of this editor stripped the wrapper, so a write passing through here
+/// repairs it rather than perpetuating it. Mirrors `overview_pack::put`.
+///
+/// An existing wrapper is left alone, timestamp and all: the repair is for a
+/// MISSING wrapper, and resetting a real timestamp to zero would be a different
+/// kind of damage.
+fn rewrap(slot: &mut Value) {
+    if matches!(slot, Value::Dict(_) | Value::List(_)) {
+        let inner = std::mem::replace(slot, Value::None);
+        *slot = Value::Tuple(vec![Value::Long(vec![0u8; 8]), inner]);
+    }
+}
+
 /// Inner list of a plain (post-inline) value, unwrapping a `(ts, list)` tuple.
 /// `pub(crate)` so `overview_pack.rs`'s window re-pointing can reuse the same
 /// unwrap rather than writing it out again.
@@ -163,6 +180,7 @@ pub(crate) fn tabs_mut(ov: &mut Entries) -> &mut Entries {
         ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+    rewrap(v);
     dict_inner_mut(v).expect("tabsettings_new is a dict or (ts,dict)")
 }
 
@@ -175,6 +193,7 @@ fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
         ));
     }
     let (_, v) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+    rewrap(v);
     list_inner_mut(v).expect("tabsByWindowInstanceID is a list or (ts,list)")
 }
 
@@ -1114,5 +1133,73 @@ mod tests {
         assert!(matches!(add_overview_window(&mut v, "Second", None), Err(OverviewTabError::NoWindowMapping)));
         create_window_mapping(&mut v).unwrap();
         assert_eq!(add_overview_window(&mut v, "Second", None).unwrap(), 1);
+    }
+
+    /// The value stored under one `overview` container key, tree already plain.
+    fn container_slot<'a>(v: &'a Value, key: &[u8]) -> &'a Value {
+        let Value::Dict(top) = v else { panic!() };
+        let (_, ov) = top.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(entries) = ov else { panic!() };
+        let (_, slot) = entries.iter().find(|(k, _)| is_b(k, key)).unwrap();
+        slot
+    }
+
+    /// A bare payload is not a shape the client writes — 0 of 4,187 container
+    /// keys across five untouched account files. One can only be there because
+    /// an older build of this editor stripped the wrapper, so an edit that
+    /// passes through must restore it rather than perpetuate it.
+    #[test]
+    fn editing_tabs_rewraps_a_bare_tabsettings() {
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            // Deliberately bare, as an older build would have left it.
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+        ]))]);
+        rename_tab(&mut v, 0, "B").unwrap();
+
+        let slot = container_slot(&v, b"tabsettings_new");
+        let Value::Tuple(items) = slot else {
+            panic!("a bare tabsettings_new must come back wrapped, got {slot:?}");
+        };
+        assert!(matches!(items[0], Value::Long(_)), "the wrapper leads with a timestamp");
+        assert_eq!(tab_name(&v, 0), "B", "the edit itself still landed");
+    }
+
+    /// The same for the window-groups writer.
+    #[test]
+    fn editing_window_groups_rewraps_a_bare_mapping() {
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
+            // Deliberately bare.
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]))]);
+        reorder_tabs_in_window(&mut v, 0, &[0]).unwrap();
+
+        let slot = container_slot(&v, b"tabsByWindowInstanceID");
+        let Value::Tuple(items) = slot else {
+            panic!("a bare tabsByWindowInstanceID must come back wrapped, got {slot:?}");
+        };
+        assert!(matches!(items[0], Value::Long(_)), "the wrapper leads with a timestamp");
+        assert_eq!(window_indices(&v, 0), vec![0], "the reorder itself still landed");
+    }
+
+    /// An EXISTING wrapper's own timestamp must survive — the repair is for a
+    /// missing wrapper, not an excuse to reset a real one to zero.
+    #[test]
+    fn rewrapping_never_resets_an_existing_timestamp() {
+        let stamp = Value::Long(vec![7u8; 8]);
+        let tab = Value::Dict(vec![(Value::Str("name".into()), Value::StrUcs2("A".into()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![stamp.clone(), Value::Dict(vec![(Value::Int(0), tab)])])),
+        ]))]);
+        rename_tab(&mut v, 0, "B").unwrap();
+
+        let slot = container_slot(&v, b"tabsettings_new");
+        let Value::Tuple(items) = slot else { panic!() };
+        assert_eq!(items[0], stamp, "an existing timestamp must not be reset to zero");
     }
 }
