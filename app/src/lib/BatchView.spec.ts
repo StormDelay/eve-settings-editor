@@ -122,11 +122,16 @@ describe("which characters can be written", () => {
     expect(targetBox(90000002).disabled).toBe(false);
   });
 
-  test("a character-scoped aspect leaves an unpaired character available", async () => {
+  test("a layout-only selection warns that the account file is written", async () => {
+    // Layout carries the account-side HUD fields now, so it must disable
+    // unpaired targets the way every other account aspect does.
     await mount();
-    await fireEvent.click(aspect("Window layout"));
-    await waitFor(() => expect(aspect("Window layout").checked).toBe(true));
     expect(targetBox(90000003).disabled).toBe(false);
+
+    await fireEvent.click(aspect("Window layout"));
+    await waitFor(() => expect(targetBox(90000003).disabled).toBe(true));
+    // A paired one stays available.
+    expect(targetBox(90000002).disabled).toBe(false);
   });
 
   test("a disabled row hides its tick but keeps the selection for later", async () => {
