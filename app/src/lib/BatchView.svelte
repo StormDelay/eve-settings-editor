@@ -143,6 +143,12 @@
     }),
   );
 
+  // Applying onto the open document writes behind it: the in-memory copy goes
+  // stale and the only thing that notices is the save-time on-disk check, two
+  // steps later. Warn at the point of decision instead. Dirty state doesn't
+  // matter — the on-screen copy is out of date either way.
+  const targetsOpenFile = $derived(openPath !== null && effectiveTargets.includes(openPath));
+
   function selectAllTargets() {
     const next = new Set(selectedTargets);
     for (const c of candidates) if (!targetDisabled(c.id)) next.add(c.path);
@@ -298,6 +304,11 @@
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
             <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
           {/each}
+          {#if targetsOpenFile}
+            <p class="warn">⚠ One target is the file open in the editor. Its on-screen
+              copy will be out of date after this runs — reload it before editing
+              further, or your next save will collide with what this wrote.</p>
+          {/if}
           {#each plan.account_writes as w}
             <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}
