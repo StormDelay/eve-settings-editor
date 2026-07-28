@@ -89,19 +89,6 @@ Workflow:
   on screen", then either pull the other seven in or split a HUD aspect out —
   and say which in the aspect's UI label either way. _Added 2026-07-27._
 
-- [ ] **Test fixtures encode bare container payloads, a shape EVE never writes.**
-  Every container key in a real file is `(timestamp, payload)` — 4,187 of 4,187
-  across five untouched accounts — but several fixtures build bare ones:
-  `overview_pack.rs`'s `user_doc()` seeds a bare `overviewColumnOrder`, and the
-  `overview_tabs.rs` fixtures build a bare `tabsettings_new` (14 tests destructure
-  it as `Value::Dict` directly). This is exactly how the column-wrapper bug
-  survived: a test named `apply_pack_stores_columns_as_a_bare_list` asserted the
-  wrong thing and passed, because the fixture shared the code's wrong assumption.
-  Move the fixtures to the wrapped shape and have the helpers unwrap. Then add
-  the `rewrap` repair to `overview_tabs::tabs_mut`/`groups_mut` that was written
-  and backed out during the live session because it failed those 14 fixtures —
-  `overview_pack::put` already does it. _Added 2026-07-27._
-
 - [ ] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
   `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
@@ -693,6 +680,23 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Test fixtures encode bare container payloads, a shape EVE never writes.**
+  Half of this was already done and the entry did not know it: `overview_pack`'s
+  repair shipped, and its `user_doc()` fixture's bare `overviewColumnOrder` is now
+  *deliberate* — it is the input for `apply_pack_rewraps_a_bare_payload`, and
+  `apply_pack_wraps_every_list_section` records the same history the entry
+  describes. Wrapping that fixture would have deleted the only coverage of the
+  repair, so it was left alone.
+
+  The `overview_tabs` side is what remained. Its fixtures now build
+  `tabsettings_new` in the `(timestamp, dict)` shape every real file uses, which
+  unblocked the `rewrap` repair that was written during the live session and
+  backed out because those fixtures failed it. `tabs_mut` and `groups_mut` now
+  restore a missing wrapper the way `overview_pack::put` does — and leave an
+  existing timestamp alone, which has its own test, because resetting a real one
+  to zero would be a different kind of damage. _Added 2026-07-27; done
+  2026-07-28._
 
 - [x] **Every chat window is labelled just "Chat".** The entry read as a feature
   request; it was **two** bugs in a feature that already shipped. The join it
