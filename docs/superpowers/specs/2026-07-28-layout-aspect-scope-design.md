@@ -128,13 +128,24 @@ variants. A missing source `overview` deleting the target's would be destructive
 so this guard gets its own test rather than resting on the predicate being read
 correctly.
 
-Three call sites *inspect* the result and need updating; every other one forwards
-it to `apply_to_tree` unchanged:
+Three call sites *inspect* the result rather than forwarding it to
+`apply_to_tree`. Only one of them changes, and the other two must be left alone
+**deliberately** — traced through their callers, not assumed:
 
-- `presets.rs:100` `has_category` — `.is_empty()` must become "holds a present
-  value", or a requested-but-absent HUD category makes it answer true.
-- `presets.rs:142` `prune` — its `present` list must filter to `Some`.
-- `ops.rs:359` — same `.is_empty()` reading as `has_category`.
+- `presets.rs:100` `has_category` — **changes.** `.is_empty()` must become "holds
+  a present value", or a requested-but-absent HUD category makes it answer true.
+  `derive_aspects` only ever passes whole-section categories today, so this is a
+  footgun rather than a live bug; it is one line and gets a test.
+- `presets.rs:142` `prune` — **unchanged, load-bearing.** Its `present` list maps
+  over every entry including the `None`s, so `parent_entries` builds `ui` and
+  `windows` for a requested-but-absent HUD category. That is precisely what §4.5
+  needs, and it falls out for free. Filtering to `Some` here would break it.
+- `ops.rs:354` `source_side_empty` — **unchanged, load-bearing.** It feeds
+  `setup_preview`'s no-op suppression (`ops.rs:486-499`), which clears a side's
+  writes when the source has none of its categories. A side that yields only
+  removals is *not* a no-op, and the `None` entries already make `.is_empty()`
+  answer false. Anyone later "tidying" this to count only present values would
+  silently kill the removal path, so it gets a test naming that.
 
 The char-side ship offset gets match semantics for free: a wholesale `windows`
 splice replaces the target's subtree, so a key the source lacks disappears with it.
@@ -152,9 +163,9 @@ preset keeps applying char-only, faithful to what it captured.
 
 The check belongs in `extract_categories` itself — an empty root source returns an
 empty result — so it holds for every caller rather than for whichever call site
-remembered it. A real settings file is never an empty root, so this cannot fire on
-a character source; `is_empty_root` moves into `settings-model` beside
-`extract_categories`, and `presets.rs` re-exports or calls it there.
+remembered it. It is `root.is_empty()` on the dict the function has already
+destructured, so `presets::is_empty_root` stays where it is and keeps serving the
+`Everything` refusal it was written for.
 
 ### 4.5 What makes §4.4 a reliable discriminator
 
@@ -164,9 +175,14 @@ old one — §4.4 would then silently disable the account side for it.
 
 Fix: `prune` builds parent dicts for every **requested** `absent_means_default`
 category rather than only the present ones, so a new Layout preset's `user.dat` is
-at minimum `{ui: {}, windows: {}}` and never an empty root. Scoped to those
-categories, so Autofill and Keybinds presets keep the property `prune`'s comment
-records today — "no empty `ui` or `cmd` dict can survive".
+at minimum `{ui: {}, windows: {}}` and never an empty root.
+
+This needs no code: `prune`'s `present` list already maps over every entry
+`extract_categories` returns, so once an absent HUD category is returned as
+`(cat, None)` its parent gets built. Autofill and Keybinds are not
+`absent_means_default`, so they are still returned as nothing at all when absent
+and still build no parent — the property `prune`'s comment records today, "no
+empty `ui` or `cmd` dict can survive", holds unchanged.
 
 This is the one place where the design depends on a shape rather than a value, so
 it is pinned directly: a test creates a Layout preset from a character storing no
@@ -227,18 +243,25 @@ Rust:
 7. `has_category` answers false for a requested-but-absent HUD category (§4.3).
 8. `plan_setup` excludes an unpaired target for a Layout-only selection, and
    refuses an unpaired source (§3.2).
+9. **`setup_preview` does not suppress an account side that yields only
+   removals** — the source stores none of the four, the target stores them, and
+   the account write survives into the plan (§4.3, the `source_side_empty`
+   footgun).
+10. `prune` on a source with no HUD keys still returns `(cat, None)` entries, so
+    the parent dicts get built (§4.5's mechanism, tested separately from its
+    effect in test 6).
 
 Frontend:
 
-9. The collateral-character warning renders for a layout-only selection in
-   `BatchView`.
-10. `PresetGroup` requires an open account file before offering Layout.
+11. The collateral-character warning renders for a layout-only selection in
+    `BatchView`.
+12. `PresetGroup` requires an open account file before offering Layout.
 
 Live smoke — the behaviour change this branch introduces, so it does not merge
 without it:
 
-11. Copy Layout A1 → A2 in-game, log in as A2, confirm all nine fields land.
-12. Confirm a third character on A2's account sees the account-side four.
-13. Copy from a source storing none of the four onto a target that stores them,
+13. Copy Layout A1 → A2 in-game, log in as A2, confirm all nine fields land.
+14. Confirm a third character on A2's account sees the account-side four.
+15. Copy from a source storing none of the four onto a target that stores them,
     and confirm the target comes up at EVE's defaults (§3.3 — the removal path,
     which no offline test can prove the client honours).
