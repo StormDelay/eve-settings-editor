@@ -370,29 +370,27 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
         .unwrap_or((0, 0))
 }
 
-/// `ui → chatchannels` is `List[Tuple(key, fullChannelId, label)]` (367 of 384
-/// corpus files). Returns key → label; the window id for a channel is
-/// `chatchannel_<key>` — the FIRST element, confirmed in-game 2026-07-28 for
-/// both a standing channel and a private conversation.
+/// `ui → chatchannels` is `(timestamp, List[Tuple(key, fullChannelId, label)])`.
+/// Returns key → label; a channel's window id is `chatchannel_<key>`, the FIRST
+/// element — confirmed in-game 2026-07-28.
 ///
-/// Not the second: for `player_*` rows the first two elements are the same
-/// string, so keying on the second appears to work and then silently misses
-/// every standing channel (`corp`, `alliance`, `local`), whose second element
-/// is the fully-qualified `corp_98835672` form. Measured on the 2026-07-28
-/// capture: the first element matched 5 of 5 and 3 of 3, the second 2 of 5 and
-/// 1 of 3.
+/// Two traps, both of which shipped here and named nothing on any real file
+/// while four unit tests passed. Keying on the SECOND element looks right
+/// because `player_*` rows repeat the same string in both, and silently misses
+/// every standing channel (`corp`, `alliance`, `local`, `fleet`, `faction`),
+/// whose second element is the fully-qualified `corp_98835672` form. And the
+/// wrapper is not optional in practice — matching a bare `List` returns an empty
+/// map for every real file.
 ///
-/// An absent section is normal, not an error.
+/// `tests/chat_names_corpus.rs` is the guard; it counts names off the corpus, so
+/// the counts live there and cannot rot in a comment. An absent section is
+/// normal, not an error.
 fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some((ui, _)) = section(root, b"ui", sh) else { return out };
     let Some((_, v)) = ui.iter().find(|(k, _)| is_bytes(effective(k, sh), b"chatchannels")) else {
         return out;
     };
-    // `as_list`, not a bare `Value::List` match: the section is `(timestamp,
-    // list)` in 281 of 281 corpus files that carry it, so matching only the bare
-    // shape returned an empty map for every real file and no chat window ever
-    // got a name. The bare form is still accepted — `as_list` takes both.
     let Some(items) = as_list(v, sh) else { return out };
     for it in items {
         let Value::Tuple(parts) = effective(it, sh) else { continue };
@@ -972,12 +970,15 @@ mod tests {
     }
 
     #[test]
-    fn a_standing_channel_is_named_from_the_first_tuple_element() {
-        // Real shape: ("corp", "corp_98835672", "Corp") — the window id is
-        // `chatchannel_` + the FIRST element (confirmed in-game 2026-07-28),
-        // while the second is the fully-qualified channel id. Joining on the
-        // second matches only player_* rows, where the two happen to be equal,
-        // and silently misses every standing channel.
+    fn an_unwrapped_chatchannels_list_is_still_read() {
+        // The BARE shape — no `(timestamp, …)` wrapper. It occurs in 0 of 281
+        // corpus files, so this is purely a don't-get-stricter guard: `as_list`
+        // takes both, and a file written by some older build must keep opening.
+        // The wrapped case, which is what every real file uses, is the test
+        // below; between them they pin both arms of the unwrap.
+        //
+        // Keyed on the FIRST element throughout: ("corp", "corp_98835672",
+        // "Corp"), window id `chatchannel_corp`.
         let doc = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
             (bytes("ui"), Value::Dict(vec![(
