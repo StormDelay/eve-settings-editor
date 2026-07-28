@@ -77,11 +77,28 @@ pwsh tools\sync-corpus.ps1 -Label c-baseline -Settings settings_Default
 
 - [ ] **0.5 Stage W — give the ghost account per-window tabs.** Open the account
   file for `32945923` (character `2124209999`), go to the Overview view.
-  - **Write down every tab name, in the order shown.** This list is the entire
-    check: after login, it must be identical.
   - Confirm the notice reads "Tabs aren't assigned to specific overview
     windows on this account…".
   - Click *Set up per-window tabs*, read the confirm, accept, **save**.
+
+  **The account's state was read out of the file before staging, so this check
+  does not depend on transcribing anything.** It carries **5 tabs**, indices
+  `0..4`:
+
+  | Index | Name |
+  |---|---|
+  | 0 | General |
+  | 1 | Targets |
+  | 2 | Mining |
+  | 3 | WarpTo |
+  | 4 | All |
+
+  So the opt-in must write exactly `tabsByWindowInstanceID = [[0, 1, 2, 3, 4]]`
+  — one window, all five, ascending. Any shorter list is the failure the design
+  exists to prevent, and it would show up in game as a missing tab.
+
+  Five tabs is what makes this a real test: a single-tab account could not tell
+  "lists every tab" apart from "lists the first tab".
 
 - [ ] **0.6 Capture what was staged.**
 
