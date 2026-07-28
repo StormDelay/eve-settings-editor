@@ -355,9 +355,11 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // that (measured 2026-07-28): x = 1280 - 100 - 148.
   const ship = rects[1];
   check("the ship HUD's anchor is centre plus the offset", ship.x + 148 === 1280 - 100);
-  // NOTE the 28 here is the top margin MIRRORED, not a measured bottom margin —
-  // every screenshot was top-aligned. This pins current behaviour, not a fact.
-  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 28 - 160);
+  // 12, not the 28 above it: both margins are measured now (2026-07-28, one
+  // character photographed top- and bottom-aligned at one offset) and the
+  // element is NOT vertically symmetric. Mirroring the top margin, which this
+  // asserted before, drew the box 16px high.
+  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 12 - 160);
   check("the ship HUD drags on x only", ship.drag === "x");
 
   const fighter = rects[2];
