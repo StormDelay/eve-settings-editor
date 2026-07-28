@@ -6,7 +6,63 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Delete the empty stack frames a settings file collects.** Unstacking two
+  windows leaves behind the invisible container EVE minted to hold them, and
+  they accumulate: a real character file had eight, each painting an empty
+  "Window stack" rectangle on the canvas and a dead row in the window list. The
+  Layout view now offers to remove them all in one action, behind a confirm that
+  names the count. Each frame is 5–6 entries spread across six different lists,
+  which is why hand-deletion was never realistic. Verified in-game: the client
+  does not re-create them, and it left a cleaned file untouched across a full
+  login and logout.
+- **Turn on per-window overview tabs when EVE has switched them off.** Importing
+  an overview pack through the client deletes the account's tab-to-window
+  assignment, after which the editor could show you tabs but not which window
+  each belongs to. That state is normal, not damage — the game distributes the
+  tabs itself — so the Overview view now says so plainly and offers to set up an
+  explicit assignment when you want one. It writes a complete list or refuses:
+  a partial one would hide the tabs it left out.
+- **A warning when a batch apply targets the file you have open.** The copy
+  writes to disk behind the open document, so the copy on screen goes stale.
+  Nothing said so until the save-time check caught it two steps later.
+
 ### Fixed
+- **The editor no longer recommends a stale backup folder.** Players keep
+  hand-made backups beside the live settings folder — one machine had nine under
+  a single profile, including one named " - USE THIS ONE" that was not the one in
+  use. The sidebar picked whichever folder was touched most recently, which the
+  editor's own saves moved, so editing a backup promoted it to the top and kept
+  it there. It now ranks on the files only EVE writes, which our saves cannot
+  disturb, and labels the winner "in use by EVE" and every other folder "not in
+  use" in a warning colour. A full round of work went into the wrong folder
+  before this was found.
+- **Chat windows show their real names.** Corp, Alliance, Local, Fleet, Militia
+  and named private groups were all labelled a flat "Chat", so a character with
+  seventy of them showed seventy identical rows. The name was in the file all
+  along and the editor was reading it from the wrong place, twice over — across
+  the whole corpus this went from naming nothing to naming 1,113 windows. The
+  windows that stay unnamed are conversations long closed, which the file holds
+  no name for; "Hide clutter" is what thins those.
+- **The ship HUD and fighter panel now cover the space they really occupy on
+  screen.** Both were drawn at invented sizes, and windows snap to their edges —
+  so windows could snap to a boundary you cannot see and end up overlapping the
+  part that was never drawn. Measured from native screenshots: the ship HUD is
+  anchored on its capacitor, not its centre, and extends far further right than
+  left; the fighter panel is more than twice as tall as it was drawn, because
+  the ability grid above the squadron row was never counted.
+- **The character you have open can be a batch-copy target again.** It was
+  offered as the *source* by default, and correctly excluded from its own target
+  list — but switching the source to a preset never lifted the exclusion, so the
+  open character could not receive a preset for the rest of the session.
+- **The overview's filter list no longer drags.** Every one of its 649 group
+  checkboxes was live at all times, with 400 in a single category, so each tick
+  re-evaluated the lot for a one-bit change. A category's rows are now built only
+  while it is open, and the filter box waits for a pause in typing.
+- **A settings file that lost a timestamp gets it repaired, not perpetuated.**
+  EVE stores every setting as a `(timestamp, value)` pair. An earlier version of
+  this editor could strip that wrapper off the overview's tab tables; editing
+  such a file now restores it, while leaving a real timestamp untouched.
 - **Importing an overview pack no longer strips the timestamp off your column
   settings.** Every setting in an EVE settings file is stored as a
   `(timestamp, value)` pair — 4,187 of 4,187 across five untouched account
