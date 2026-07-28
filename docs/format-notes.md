@@ -997,6 +997,17 @@ All remembered text-input history in the client is **one structure**, in
 
 ### `tabsByWindowInstanceID` shape on real accounts (overview pack review, 2026-07-26)
 
+**EVE's own overview importer deletes `tabsByWindowInstanceID`.** Confirmed
+2026-07-28: account A carried the key through every offline staging session and
+lost it in the capture taken straight after a pack was imported through the
+client's own Overview Settings. It has had `tabsettings_new` with no window
+mapping ever since, and its overview works in-game regardless. So an account
+with no tab-to-window mapping is a normal, common state — not a damaged file —
+and anything that writes the key must write a COMPLETE mapping: one that omits a
+tab hides that tab, and one that omits all of them hides the whole overview.
+(The capture this comes from is written up under "Our pack export vs EVE's own"
+above.)
+
 Measured across the full 1925-account corpus while fixing a pack-import bug
 (a re-import that re-pointed this mapping was duplicating a tab index across
 two windows): of 1925 corpus accounts, **825 carry a `tabsByWindowInstanceID`
