@@ -35,7 +35,17 @@
       .catch(() => (catalog = mergeCatalog(b, [])));
   });
 
+  // What the box shows, and what the list actually filters on. They are separate
+  // because applying a query expands every category it matches, and doing that
+  // per keystroke re-renders the whole expanded set while the user is still
+  // typing. 150ms is below the threshold where a pause feels like lag.
+  let typedFilter = $state("");
   let groupFilter = $state("");
+  $effect(() => {
+    const next = typedFilter;
+    const t = setTimeout(() => (groupFilter = next), 150);
+    return () => clearTimeout(t);
+  });
   // Which categories are expanded. A `<details>` hides its children but Svelte
   // still builds every one and tracks it reactively, so 649 checkboxes stayed
   // live at all times — and each backend round trip behind a tick re-evaluated
@@ -201,7 +211,7 @@
       <div class="preset-contents">
         <div class="contents-head">
           <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
-          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={groupFilter} />
+          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={typedFilter} />
         </div>
 
         <h4 class="section-heading">Types Shown</h4>

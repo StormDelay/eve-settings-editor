@@ -5,7 +5,7 @@
 // backend round trip behind each tick re-evaluated all 649 for a one-bit
 // change. Collapsed categories must therefore cost nothing at all — a
 // `<details>` hides its children but Svelte still builds and tracks them.
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import OverviewFiltersTab from "$lib/OverviewFiltersTab.svelte";
 import { calls } from "$lib/test/setup";
@@ -74,5 +74,28 @@ describe("the group checklist", () => {
     ship.open = false;
     await fireEvent(ship, new Event("toggle"));
     await waitFor(() => expect(groupBoxes().length).toBe(0));
+  });
+});
+
+describe("the group filter", () => {
+  test("does not expand matches until typing pauses", async () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      await vi.advanceTimersByTimeAsync(0);
+      const box = document.querySelector(".group-filter") as HTMLInputElement;
+
+      // A query that actually matches: the catalog holds *group* names
+      // ("Shuttle"), not type names, so "vexor" would match nothing and the
+      // test would pass for the wrong reason.
+      await fireEvent.input(box, { target: { value: "shuttle" } });
+      // Mid-burst: nothing has expanded yet.
+      expect(groupBoxes().length).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(groupBoxes().length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
