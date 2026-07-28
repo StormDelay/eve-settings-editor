@@ -554,7 +554,15 @@ mod tests {
     use super::*;
     use blue_marshal::Value;
 
-    /// user tree: overview -> tabsettings_new (bare dict) -> {0:{bracket,color,name,overview:"P"}}
+    /// A zero timestamp, as every `(timestamp, payload)` container wrapper in
+    /// these fixtures carries. Real files hold a real one; nothing here reads it.
+    fn ts() -> Value {
+        Value::Long(vec![0u8; 8])
+    }
+
+    /// user tree: overview -> tabsettings_new `(ts, dict)` -> {0:{bracket,color,name,overview:"P"}}
+    /// Both containers are wrapped because that is the only shape EVE writes —
+    /// 0 of 4,187 container keys across five untouched account files are bare.
     /// The `bracket`/`color` keys mirror real EVE tabs — every real tab carries
     /// them, and a created tab must too (EVE's "reset overview" reads them).
     fn user_with_tabs() -> Value {
@@ -566,9 +574,9 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), tab)])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
             (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
-             Value::List(vec![Value::List(vec![Value::Int(0)])])),
+             Value::Tuple(vec![ts(), Value::List(vec![Value::List(vec![Value::Int(0)])])])),
         ]);
         Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
     }
@@ -578,7 +586,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        let td = dict_inner_ref(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         fields.iter().find_map(|(k, val)| match (k, val) {
@@ -593,7 +601,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { return false };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { return false };
+        let Some(td) = dict_inner_ref(tabs) else { return false };
         let Some((_, tab)) = td.iter().find(|(k, _)| as_int(k) == Some(idx)) else { return false };
         let Value::Dict(fields) = tab else { return false };
         fields.iter().any(|(k, _)| is_b(k, key))
@@ -604,8 +612,8 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
-        let Value::List(outer) = g else { panic!() };
-        let Value::List(inner) = &outer[window] else { panic!() };
+        let outer = list_inner(g).unwrap();
+        let inner = list_inner(&outer[window]).unwrap();
         inner.iter().filter_map(as_int).collect()
     }
 
@@ -651,7 +659,8 @@ mod tests {
             (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
         ]);
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
 
@@ -672,7 +681,8 @@ mod tests {
     fn create_with_no_sibling_still_carries_bracket_and_color() {
         // Empty tabsettings_new -> no sibling to clone -> the fallback tab.
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
         let idx = create_tab(&mut v, 0, "First", None).unwrap();
@@ -689,7 +699,7 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), mk("A")), (Value::Int(1), mk("B"))])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), mk("A")), (Value::Int(1), mk("B"))])])),
             // no tabsByWindowInstanceID
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
@@ -738,12 +748,12 @@ mod tests {
         ]);
         let overview = Value::Dict(vec![
             (Value::Bytes(b"tabsettings_new".to_vec()),
-             Value::Dict(vec![(Value::Int(0), tab("A")), (Value::Int(1), tab("B"))])),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab("A")), (Value::Int(1), tab("B"))])])),
             (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
-             Value::List(vec![
+             Value::Tuple(vec![ts(), Value::List(vec![
                  Value::List(vec![Value::Int(0)]), // window 0 = [0]
                  Value::List(vec![Value::Int(1)]), // window 1 = [1]
-             ])),
+             ])])),
         ]);
         Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
     }
@@ -788,7 +798,8 @@ mod tests {
             (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
         ]);
         let overview = Value::Dict(vec![
-            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Dict(vec![(Value::Int(0), tab)])),
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), tab)])])),
         ]);
         let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
         assert!(matches!(add_overview_window(&mut v, "X", Some(0)), Err(OverviewTabError::NoWindowMapping)));
@@ -804,7 +815,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
-        let Value::List(outer) = g else { panic!() };
+        let outer = list_inner(g).unwrap();
         assert_eq!(outer.len(), 1, "one window left");
         assert_eq!(tab_name(&v, 1), "B", "no tab deleted");
     }
@@ -914,7 +925,7 @@ mod tests {
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
         let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
-        let Value::Dict(td) = tabs else { panic!() };
+        let td = dict_inner_ref(tabs).unwrap();
         let (_, tab) = td.iter().find(|(k, _)| as_int(k) == Some(idx)).unwrap();
         let Value::Dict(fields) = tab else { panic!() };
         let (_, val) = fields.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
