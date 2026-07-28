@@ -444,7 +444,7 @@ fn prune_builds_a_parent_for_a_requested_but_absent_hud_key() {
 
 - [ ] **Step 2: Run the tests to verify one fails**
 
-Run: `cargo test -p eve-settings-editor presets::tests::has_category_reports`
+Run: `cargo test -p app presets::tests::has_category_reports`
 Expected: FAIL — `assert!(!has_category(...))` fires, because `.is_empty()` sees the `(cat, None)` entry.
 `prune_builds_a_parent_for_a_requested_but_absent_hud_key` should already PASS; run it too and confirm, since it pins behaviour that must not change.
 
@@ -462,7 +462,7 @@ pub fn has_category(doc: &Value, cat: Category) -> bool {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p eve-settings-editor presets::`
+Run: `cargo test -p app presets::`
 Expected: PASS, including the existing preset create/prune cases.
 
 - [ ] **Step 5: Commit**
@@ -608,7 +608,7 @@ fn hud_user_doc() -> Value {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p eve-settings-editor ops::tests::layout_carries`
+Run: `cargo test -p app ops::tests::layout_carries`
 Expected: FAIL — `char_categories` is `[Layout, NeocomButtons]` and `account_categories` is empty.
 
 - [ ] **Step 3: Route the six categories**
@@ -637,7 +637,7 @@ Expected: FAIL — `char_categories` is `[Layout, NeocomButtons]` and `account_c
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p eve-settings-editor ops::`
+Run: `cargo test -p app ops::`
 Expected: PASS for the new cases. **Existing `plan_setup` tests using `Aspect::Layout` will now fail** — `layout` writes the account file, so an unpaired target is excluded and an unpaired source errors. That is the intended behaviour change (spec §3.2). Update each failing case to pair its characters, and add:
 
 ```rust
