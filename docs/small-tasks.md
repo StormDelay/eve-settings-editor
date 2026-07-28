@@ -63,22 +63,6 @@ Workflow:
   `lockedWindows` — which is exactly why it should be one offer rather than
   hand-deletion. _Added 2026-07-28._
 
-- [ ] **Nothing marks which settings folder EVE actually uses.** `discover`
-  picks up every `settings_*` directory and the sidebar lists them alike, but
-  players keep hand-made backups beside the live one — this machine has **nine**
-  under one profile (`settings_Default`, ` - backup`, ` - before claude`,
-  ` - before multi overview`, ` - before photon mandatory`, ` - before
-  reworking overview`, ` - fucked up`, ` - new weird stuff`, and one named
-  ` - USE THIS ONE` that is *not* the one in use). A whole staging round of the
-  live verification was done in the wrong folder before anyone noticed, and the
-  contents look plausible either way because a stale backup is a real settings
-  file. The editor knows enough to say so: the live folder is the one EVE most
-  recently wrote, so rank by newest mtime across the profile and mark it — a
-  "last written <when>" line per folder, or an explicit badge on the newest.
-  Copying from the wrong one is the dangerous direction: the backup here was
-  weeks stale and would have silently reverted confirmed work. _Added
-  2026-07-28._
-
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
   file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
@@ -145,19 +129,6 @@ Workflow:
   the default state lists and orders, so the shape is derivable, but it is a
   design call, not a bug fix. _Added 2026-07-27._
 
-- [ ] **The open character file is missing from the batch target list when the
-  source is a preset.** `BatchView.svelte:38` seeds `sourcePath` from `openPath`
-  so the open file is the default source, and line 99 excludes the source from
-  the candidates (`.filter((c) => c.path !== sourcePath)`) — right for a
-  character → character copy. But switching `sourceKind` to `"preset"` never
-  clears `sourcePath`, so the exclusion outlives the reason for it and the open
-  character cannot be picked as a target. Gate the filter on the source actually
-  in use rather than the stale path, e.g.
-  `.filter((c) => !(source?.kind === "character" && c.path === source.path))`.
-  Note the interaction with the open-document staleness item below: whatever
-  lands there should decide deliberately whether the open file is a legal target
-  at all, rather than excluding it here by accident. _Added 2026-07-27._
-
 - [ ] **The Layout aspect carries 2 of the 9 HUD fields, not 0 and not 9.**
   `Category::Layout => &[b"windows"]` copies that whole section, and the nine
   HUD fields are spread across three: `windows` holds
@@ -219,16 +190,6 @@ Workflow:
   then either read it in the fallback chain or say in `format-notes.md` why it
   is ignored. Until then the editor can show a tab list that the client does not
   use. Found while manufacturing the zero-tab state. _Added 2026-07-27._
-
-- [ ] **A batch apply onto the open file warns too late.** With unsaved edits to
-  a file, running a batch apply that targets that same file gives no warning at
-  apply time — it writes to disk behind the open in-memory document. Re-selecting
-  the file warns about unsaved changes but does not reload it, so the stale
-  in-memory copy stays; only the save-time on-disk-changed check catches the
-  divergence. No data is lost (that last check is a real backstop), but the user
-  finds out two steps after the fact. The batch planner should refuse, or at
-  least warn, when a target is the currently-open dirty document. Found while
-  staging the live verification. _Added 2026-07-27._
 
 - [ ] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
@@ -838,6 +799,31 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Nothing marks which settings folder EVE actually uses.** The diagnosis in
+  this entry was wrong: the marker existed (`primaryProfileDir` pinned a profile
+  on top and opened it) and it was pointing at the wrong folder. Ranking on the
+  newest mtime *across any file* — which is what this entry asked for — is the
+  bug, because the editor's own saves move it: staging four edits into
+  ` - USE THIS ONE` through this editor is what promoted a weeks-stale backup to
+  the top. `primaryProfileDir` now ranks on the anonymous `core_char__.dat` /
+  `core_user__.dat` / `core_public__.yaml` files, which only EVE writes (11
+  editor-only captures touched none; all 4 post-client captures touched three),
+  falling back to any file when no profile carries one. The sidebar says "in use
+  by EVE" and marks every other folder "not in use — EVE has not written here" in
+  warning colour. _Added 2026-07-28; done 2026-07-28._
+- [x] **The open character file is missing from the batch target list when the
+  source is a preset.** `candidates` now excludes the source only when the source
+  is a character (`batchSource?.kind === "character"`) rather than filtering on
+  the `sourcePath` seeded from `openPath`, so switching to a preset source no
+  longer outlives its reason. Decided deliberately, per this entry's note: the
+  open file *is* a legal target — the item below warns about it instead of hiding
+  it. _Added 2026-07-27; done 2026-07-28._
+- [x] **A batch apply onto the open file warns too late.** The plan summary warns
+  whenever an effective target is the open document, regardless of dirty state —
+  the on-screen copy goes stale either way, and that needs no dirty-tracking
+  plumbing. The save-time on-disk check stays as the backstop; this just moves the
+  news to the point of decision. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Add a search/filter to the window list in the Layout editor.** Shipped by
   layout slice 1a as a filter box plus `Open only` and `Hide chat & session
