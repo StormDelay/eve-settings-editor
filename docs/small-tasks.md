@@ -55,19 +55,6 @@ Workflow:
   for both a named standing channel and a private conversation. Join on that and
   show the third element. _Added 2026-07-27._
 
-- [ ] **The neocom renders differently docked vs in space.** Observed in-game
-  2026-07-27 on A1: the bar order matched what the editor wrote while docked in
-  a player structure, but showed a different set/order in space. The editor
-  models `neocomButtonRawData` as one ordered list and the panel presents it as
-  the bar, so if the client filters or reorders it per environment, the panel is
-  showing "the docked bar" without saying so. Establish which environment the
-  stored list corresponds to (docked, on this evidence), whether the difference
-  is a filter or a reorder, and whether anything in the file drives it — the
-  per-environment window mapping (live plan item 35, the dock/undock diff) is
-  the obvious place to look, since window geometry is already known to be
-  environment-scoped. Until then item 1's "the bar order matches the editor's"
-  is only meaningful docked. _Added 2026-07-27._
-
 - [ ] **Creating an `Everything` preset says nothing about what it captures.**
   The privacy confirmation lives on *export* (`PresetGroup.svelte:96`: "carries
   everything the editor does not model, including your autofill history —
@@ -716,6 +703,23 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The neocom renders differently docked vs in space.** Settled in Session C
+  by photographing the same character docked and in space and diffing the two
+  bars pixel-for-pixel. **It is an addition, not a filter and not a reorder, and
+  nothing reflows.** In space two extra icons (drones and the scanner, by their
+  glyphs) appear in slots that sit *empty* while docked; every other icon is at
+  an identical y in both shots. Apart from those two bands, the clock digits and
+  the screen edge, the strips are byte-identical — 63 differing rows out of 1440.
+
+  So the editor's model is right and the panel is not "showing the docked bar":
+  `neocomButtonRawData` holds one fixed ordered list (12 instances on this
+  character), positions are fixed, and the client shows or hides
+  environment-specific buttons in place on top of it. Nothing in the file drives
+  it and nothing needs to. The earlier "different set/order in space" reading was
+  the additions appearing, not the stored list being reordered — so item 1's "the
+  bar order matches the editor's" is meaningful in **both** environments.
+  _Added 2026-07-27; done 2026-07-28._
 
 - [x] **Confirm the ship HUD's anchor at a second offset.** Done in Session C,
   and it settled more than it set out to. The client wrote `-1052` after the drag
