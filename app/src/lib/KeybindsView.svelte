@@ -126,7 +126,8 @@
                 </button>
               {/if}
               {#if stolenFrom[e.command]}
-                <span class="meta">taken by {stolenFrom[e.command]}</span>
+                <span class="meta" title={stolenFrom[e.command]}
+                  >taken by {stolenFrom[e.command]}</span>
               {/if}
             </td>
             <td class="default">{keysToLabel(defaultFor(e.command))}</td>
@@ -160,6 +161,20 @@
   .default { opacity: 0.5; }
   tr.malformed { opacity: 0.6; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  /* Ellipsised, not wrapped: the combo column is a fixed 16rem in a
+     `table-layout: fixed` table, so a long command name ("Activate High Power
+     Slot 4") used to spill out of the row and overlap the one beneath. The full
+     name is on the `title`. Scoped to the combo cell — `.meta` is shared with
+     the searchbar and capture-bar hints, which are not width-constrained and
+     would lose their text to the same ellipsis. */
+  .combo .meta {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
   .binds { table-layout: fixed; width: 100%; }
   .c-combo { width: 16rem; }
   .c-default { width: 9rem; }
