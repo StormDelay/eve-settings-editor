@@ -4,7 +4,7 @@
 
 **Goal:** Make the ship HUD and fighter UI cover the screen area they really occupy, so windows stop snapping to edges the player cannot see and overlapping the parts the editor never drew.
 
-**Architecture:** Three corrections in `layout.ts`, all driven by measurements taken off three native screenshots on 2026-07-28 (see Background). The ship HUD's *anchor model* changes — the stored offset positions the capacitor wheel's centre, and the element is strongly asymmetric about it — so `hudRects` and its inverse `shipOffsetFromX` are corrected as a matched pair. Then the boxes get drawn contents (slot rows, ability grid) so a player recognises what they are positioning against.
+**Architecture:** Two corrections in `layout.ts`, both driven by measurements taken off three native screenshots on 2026-07-28 (see Background). The ship HUD's *anchor model* changes — the stored offset positions the capacitor wheel's centre, and the element is strongly asymmetric about it — so `hudRects` and its inverse `shipOffsetFromX` are corrected as a matched pair. The furniture stays a plain rectangle; the internal detail (slot rows, ability grid) is deliberately **not** built here, and its measurements are recorded for a later drawing layer instead.
 
 **Tech Stack:** Svelte 5 (runes), TypeScript, `node --test` for pure logic (`layout.test.ts`).
 
@@ -78,8 +78,7 @@ The left edge at 490 is a column of four round ship-control buttons. Both shots 
 |---|---|---|
 | `app/src/lib/layout.ts` | Furniture geometry and its inverse | Modify: `HUD_NOMINAL`, `hudRects`, `shipOffsetFromX` |
 | `app/src/lib/layout.test.ts` | Pure logic tests | Modify: pin the measured geometry and the round trip |
-| `app/src/lib/LayoutView.svelte` | The canvas | Modify: draw slot rows and the ability grid |
-| `docs/format-notes.md` | Format reference | Modify: record the anchor model |
+| `docs/format-notes.md` | Format reference | Modify: record the anchor model and the internal geometry |
 | `docs/small-tasks.md` | The ledger | Modify: close the entry |
 
 ---
@@ -92,7 +91,7 @@ The left edge at 490 is a column of four round ship-control buttons. Both shots 
 
 **Interfaces:**
 - Consumes: `Hud`, `WindowLayout` from `./api`; `hudNum`, `hudFlag` (already in this file).
-- Produces: `HUD_NOMINAL.shipui` becomes `{ w: 643, h: 160 }`; new exported const `SHIP_ANCHOR_LEFT = 148` and `SHIP_TOP_MARGIN = 28`. `shipOffsetFromX(x, referenceW)` keeps its signature, changed arithmetic. Task 3 reads `SHIP_ANCHOR_LEFT` for the drawn contents.
+- Produces: `HUD_NOMINAL.shipui` becomes `{ w: 643, h: 160 }`; new exported const `SHIP_ANCHOR_LEFT = 148` and `SHIP_TOP_MARGIN = 28`. `shipOffsetFromX(x, referenceW)` keeps its signature, changed arithmetic.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -342,98 +341,7 @@ git commit -m "Size the fighter panel to include its ability grid"
 
 ---
 
-### Task 3: Draw the racks and the ability grid
-
-**Files:**
-- Modify: `app/src/lib/LayoutView.svelte:744-756` (the furniture markup) and its `<style>` block
-
-**Interfaces:**
-- Consumes: `FurnitureRect` (`kind` discriminates); nothing new from `layout.ts` — the contents are expressed as percentages of the box, so they scale with the canvas for free.
-- Produces: nothing other tasks depend on.
-
-Sizing the box is half the job; the ledger asks for the other half, because a bare rectangle does not tell a player what they are positioning against. Contents are **decoration only** — they must not affect `hudRects`, the snap lines, or any drag.
-
-Percentages come from the measurements. Ship HUD box is 643 wide, 160 tall, left edge at anchor−148:
-- capacitor centre at `148/643` ≈ **23%** from the left, radius ~78px ≈ **12%** of width
-- slot rows start at `(735-490)/643` ≈ **38%**, pitch `50/643` ≈ **7.8%**, 8 columns reaching ~100%
-- three rows spanning roughly `2/160` to `89%` of the height
-
-Fighter box is 467 wide, 253 tall, anchored at its top-left:
-- ability grid starts at `(399-329)/467` ≈ **15%**, pitch `86/467` ≈ **18.4%**, 5 columns, 3 rows in the upper ~62%
-- squadron row across the lower ~38%
-
-- [ ] **Step 1: Add the contents**
-
-In `app/src/lib/LayoutView.svelte`, replace the furniture body (line 754) so the label keeps its place and the schematic sits behind it:
-
-```svelte
-            <span class="furniture-label">{f.label}</span>
-            {#if f.kind === "shipui"}
-              <!-- Decoration only: a schematic of the capacitor and the three
-                   module rows, so the box reads as the thing it represents.
-                   Percentages come from the 2026-07-28 measurements, so it
-                   rescales with the canvas and needs no scale arithmetic. -->
-              <div class="cap"></div>
-              {#each [0, 1, 2] as row}
-                {#each [0, 1, 2, 3, 4, 5, 6, 7] as col}
-                  <div class="slot" style="left: {38 + col * 7.8}%; top: {6 + row * 30}%;"></div>
-                {/each}
-              {/each}
-            {:else if f.kind === "fighter"}
-              {#each [0, 1, 2] as row}
-                {#each [0, 1, 2, 3, 4] as col}
-                  <div class="ability" style="left: {15 + col * 18.4}%; top: {2 + row * 20}%;"></div>
-                {/each}
-              {/each}
-              {#each [0, 1, 2, 3, 4] as col}
-                <div class="squad" style="left: {15 + col * 18.4}%;"></div>
-              {/each}
-            {/if}
-```
-
-And add to the `<style>` block:
-
-```css
-  /* HUD schematics. Pointer-events off throughout: the box is what gets
-     dragged, and a child intercepting the pointer would break the drag. */
-  .furniture .cap,
-  .furniture .slot,
-  .furniture .ability,
-  .furniture .squad {
-    position: absolute;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-    opacity: 0.35;
-    pointer-events: none;
-  }
-  .furniture .cap { left: 11%; top: 18%; width: 24%; height: 64%; }
-  .furniture .slot { width: 6.2%; height: 25%; }
-  .furniture .ability { width: 14%; height: 17%; }
-  .furniture .squad { width: 14%; height: 22%; top: 70%; }
-```
-
-- [ ] **Step 2: Check it renders and still drags**
-
-Run from `app/`: `npm run check`
-Expected: 0 type errors.
-
-Then confirm by eye that the ship HUD box shows a capacitor circle plus three rows of eight, the fighter box shows a 5×3 grid above a squadron row, and **dragging either still works** — the schematic must not swallow the pointer. Use the `run` skill if a launch recipe is wanted.
-
-- [ ] **Step 3: Run the full suite**
-
-Run from `app/`: `npm test`
-Expected: PASS. Nothing here touches geometry, so a failure means the schematic leaked into `hudRects` or the snap lines.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add app/src/lib/LayoutView.svelte
-git commit -m "Draw the module racks and the fighter ability grid in their boxes"
-```
-
----
-
-### Task 4: Record the measurements and close the ledger
+### Task 3: Record the measurements and close the ledger
 
 **Files:**
 - Modify: `docs/format-notes.md` (the "HUD anchors" section)
@@ -471,6 +379,22 @@ has not been captured.
 **381×253**; column pitch is **86**, shared by the ability grid and the squadron
 row, so the 5-squadron carrier maximum is **467** wide. Height is independent of
 squadron count.
+
+**Internal geometry of both elements**, measured the same day and recorded for a
+future drawing layer (the editor draws plain rectangles today). All offsets are
+from the element's own top-left corner:
+
+| Element | Part | Offset from box origin | Pitch | Count |
+|---|---|---|---|---|
+| Ship HUD | capacitor wheel centre | x 148 (= the anchor), y ~74 | — | 1 |
+| Ship HUD | capacitor ring outer | spans x 73..231 (⌀ ~158) | — | 1 |
+| Ship HUD | module slot rows | first slot x 245, row tops y ~2 / ~50 / ~94 | x 50, y ~46 | 8 × 3 max |
+| Fighter | ability grid | x 70, y 0 | 86 | 5 × 3 max |
+| Fighter | squadron row | x 43, y ~178 | 86 | 5 max |
+
+Slot and squadron pitch are stable across both ship shots, so a rack's width is
+`245 + 50 × slots` from the box origin — which is how the 8-slot maximum gives
+the 643 total width.
 ```
 
 - [ ] **Step 2: Close the ledger entry**
