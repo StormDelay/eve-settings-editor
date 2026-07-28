@@ -84,34 +84,54 @@ impl Category {
 }
 
 /// Inline the source's sharing, then clone each requested category's subtree.
-/// Categories the source lacks are skipped (absent from the result).
-pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, Value)> {
+/// A category the source lacks is skipped — EXCEPT an `absent_means_default`
+/// one, which is returned as `(cat, None)` so the splice removes the target's
+/// own value. An absent leaf HUD key is EVE's default, not "nothing to copy".
+pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, Option<Value>)> {
     let mut s = source.clone();
     inline_all(&mut s);
     let Value::Dict(root) = &s else { return Vec::new() };
+    // An empty root is a preset side that was pruned away, never a real
+    // settings file. It holds no values AND claims no absences: a Layout
+    // preset created before the aspect grew an account side must not delete
+    // the target's HUD keys. See the spec's §4.4.
+    if root.is_empty() {
+        return Vec::new();
+    }
     cats.iter()
         .filter_map(|&cat| {
             let keys = cat.key_path();
             let (parent_keys, last) = keys.split_at(keys.len() - 1);
-            let parent = descend_ref(root, parent_keys)?;
-            let (_, v) = parent.iter().find(|(k, _)| is_bytes(k, last[0]))?;
-            Some((cat, v.clone()))
+            let found = descend_ref(root, parent_keys)
+                .and_then(|parent| parent.iter().find(|(k, _)| is_bytes(k, last[0])))
+                .map(|(_, v)| v.clone());
+            match found {
+                Some(v) => Some((cat, Some(v))),
+                None if cat.absent_means_default() => Some((cat, None)),
+                None => None,
+            }
         })
         .collect()
 }
 
-/// Inline the target's sharing, then replace (or insert) each category's subtree.
+/// Inline the target's sharing, then replace (or insert) each category's
+/// subtree — or REMOVE it, for a `None` (see `extract_categories`).
 /// A missing intermediate parent dict (e.g. no `ui`) skips that category.
-pub fn apply_to_tree(target: &mut Value, extracted: &[(Category, Value)]) {
+pub fn apply_to_tree(target: &mut Value, extracted: &[(Category, Option<Value>)]) {
     inline_all(target);
     if let Value::Dict(root) = target {
         for (cat, subtree) in extracted {
             let keys = cat.key_path();
             let (parent_keys, last) = keys.split_at(keys.len() - 1);
             let Some(parent) = descend_mut(root, parent_keys) else { continue };
-            match parent.iter_mut().find(|(k, _)| is_bytes(k, last[0])) {
-                Some((_, v)) => *v = subtree.clone(),
-                None => parent.push((Value::Bytes(last[0].to_vec()), subtree.clone())),
+            match subtree {
+                // The source is at EVE's default, so the target's own value
+                // has to go — leaving it would half-apply the copy.
+                None => parent.retain(|(k, _)| !is_bytes(k, last[0])),
+                Some(subtree) => match parent.iter_mut().find(|(k, _)| is_bytes(k, last[0])) {
+                    Some((_, v)) => *v = subtree.clone(),
+                    None => parent.push((Value::Bytes(last[0].to_vec()), subtree.clone())),
+                },
             }
         }
     }
@@ -134,7 +154,7 @@ pub fn full_copy_to(source_bytes: &[u8], target: &Path) -> Result<PathBuf, Strin
 /// no genuine conflict to guard against.
 pub fn apply_categories_to(
     target: &Path,
-    extracted: &[(Category, Value)],
+    extracted: &[(Category, Option<Value>)],
 ) -> Result<SaveReport, String> {
     let mut doc = Document::load(target).map_err(|e| match e {
         LoadError::Io(m) => format!("Io: {m}"),
@@ -400,7 +420,7 @@ mod tests {
             (Value::Bytes(b"lockedWindows".to_vec()), Value::Dict(vec![(id(), Value::Bool(false))])),
             (Value::Bytes(b"stacksWindows".to_vec()), Value::Dict(vec![(id(), id())])),
         ]);
-        let extracted = vec![(Category::Layout, windows)];
+        let extracted = vec![(Category::Layout, Some(windows))];
 
         let mut target = Value::Dict(vec![(Value::Bytes(b"windows".to_vec()), Value::Dict(vec![]))]);
         apply_to_tree(&mut target, &extracted);
@@ -538,5 +558,93 @@ mod tests {
         ] {
             assert!(!cat.absent_means_default(), "{cat:?} must never delete on the target");
         }
+    }
+
+    /// A user doc holding the account-side HUD keys the copy cares about.
+    fn user_with_hud() -> Value {
+        Value::Dict(vec![
+            (b("ui"), Value::Dict(vec![(b("shipuialigntop"), Value::Bool(true))])),
+            (b("windows"), Value::Dict(vec![(b("neocomWidth"), Value::Int(72))])),
+        ])
+    }
+
+    #[test]
+    fn an_absent_leaf_hud_key_removes_the_targets_own_value() {
+        // The source is at EVE's default (no key at all), so the target must end
+        // up at the same default rather than keeping its own 72.
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        let extracted = extract_categories(&source, &[Category::HudNeocomWidth]);
+        assert_eq!(extracted.len(), 1, "the absence is reported, not dropped");
+        assert!(extracted[0].1.is_none(), "absence is a removal");
+
+        let mut target = user_with_hud();
+        apply_to_tree(&mut target, &extracted);
+
+        let Value::Dict(root) = &target else { panic!("root is a dict") };
+        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows survives");
+        let Value::Dict(w) = windows else { panic!("windows is a dict") };
+        assert!(
+            !w.iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
+            "the target's own neocomWidth is gone"
+        );
+    }
+
+    #[test]
+    fn an_absent_whole_section_category_leaves_the_target_alone() {
+        // The destructive case. A source with no overview must not wipe one.
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        let extracted = extract_categories(&source, &[Category::Overview]);
+        assert!(extracted.is_empty(), "a missing section is nothing to copy");
+
+        let mut target = Value::Dict(vec![(b("overview"), Value::Int(7))]);
+        apply_to_tree(&mut target, &extracted);
+        let Value::Dict(root) = &target else { panic!("root is a dict") };
+        assert!(root.iter().any(|(k, _)| is_bytes(k, b"overview")), "the target's overview survives");
+    }
+
+    #[test]
+    fn a_removal_with_no_parent_section_on_the_target_is_a_no_op() {
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        let extracted = extract_categories(&source, &[Category::HudBadge]);
+        let mut target = Value::Dict(vec![(b("keep"), Value::Int(1))]);
+        apply_to_tree(&mut target, &extracted);
+        let Value::Dict(root) = &target else { panic!("root is a dict") };
+        assert!(root.iter().any(|(k, _)| is_bytes(k, b"keep")), "nothing else was touched");
+    }
+
+    #[test]
+    fn an_empty_root_source_contributes_neither_values_nor_removals() {
+        // A Layout preset created before the aspect grew an account side has a
+        // user.dat of `{}`. Applying it must not delete the target's HUD keys.
+        let extracted = extract_categories(
+            &Value::Dict(vec![]),
+            &[Category::HudNeocomWidth, Category::HudShipTop],
+        );
+        assert!(extracted.is_empty(), "a pruned-away side carries no absences");
+
+        let mut target = user_with_hud();
+        apply_to_tree(&mut target, &extracted);
+        let Value::Dict(root) = &target else { panic!("root is a dict") };
+        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows survives");
+        let Value::Dict(w) = windows else { panic!("windows is a dict") };
+        assert!(
+            w.iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
+            "an old preset leaves the target's neocom width alone"
+        );
+    }
+
+    #[test]
+    fn a_present_leaf_hud_key_is_copied_over_the_targets_own() {
+        let extracted = extract_categories(&user_with_hud(), &[Category::HudNeocomWidth]);
+        let mut target = Value::Dict(vec![(
+            b("windows"),
+            Value::Dict(vec![(b("neocomWidth"), Value::Int(37))]),
+        )]);
+        apply_to_tree(&mut target, &extracted);
+        let Value::Dict(root) = &target else { panic!("root is a dict") };
+        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows exists");
+        let Value::Dict(w) = windows else { panic!("windows is a dict") };
+        let (_, v) = w.iter().find(|(k, _)| is_bytes(k, b"neocomWidth")).expect("the key was copied");
+        assert_eq!(*v, Value::Int(72), "the source's width won");
     }
 }
