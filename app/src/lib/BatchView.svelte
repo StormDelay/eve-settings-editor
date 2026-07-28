@@ -67,7 +67,7 @@
 
   // Aspects. "Everything" is exclusive.
   const ASPECTS: { key: Aspect; label: string; account: boolean }[] = [
-    { key: "layout", label: "Window layout (positions, neocom buttons)", account: false },
+    { key: "layout", label: "Window layout (positions, neocom, ship HUD — not the fighter panel or badge)", account: false },
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
     { key: "keybinds", label: "Keybindings", account: true },
