@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **The "Window layout" copy option now says what it leaves behind.** It carries
+  window positions, the neocom and the ship HUD offset — but not the fighter
+  panel or the notification badge, which EVE keeps in different parts of the file.
+  Copying it moved some of your screen furniture and not the rest, without
+  saying so. What gets copied is unchanged for now; the label just stops implying
+  more than it does.
+
 ### Added
 - **Delete the empty stack frames a settings file collects.** Unstacking two
   windows leaves behind the invisible container EVE minted to hold them, and
@@ -28,6 +36,17 @@ All notable changes to this project are documented here. The format follows
   Nothing said so until the save-time check caught it two steps later.
 
 ### Fixed
+- **The "N overridden · clear" counter describes the layout you are looking at.**
+  It counted every clutter override you had ever set, across every character, from
+  a line sitting beside "showing N of M windows" — so it could read "· 3
+  overridden" on a file none of them applied to. Worse, its `clear` wiped the lot,
+  including overrides belonging to characters you did not have open. Both are now
+  limited to the windows the open file actually has. What you mark as clutter is
+  still remembered everywhere, as before; only the count and the clear are scoped.
+- **A long "taken by" note stays inside its row in the keybindings table.** Binding
+  a key that another command already holds shows which one — and a long name like
+  "Activate High Power Slot 4" spilled out of its cell and over the row beneath.
+  It is now truncated with the full name on hover.
 - **The editor no longer recommends a stale backup folder.** Players keep
   hand-made backups beside the live settings folder — one machine had nine under
   a single profile, including one named " - USE THIS ONE" that was not the one in
