@@ -55,8 +55,20 @@
   // makes filtering useful. Once the user toggles a category by hand that choice
   // sticks, so a deliberately-collapsed Entity (400 rows) stays collapsed even
   // while a broad query matches it.
+  //
+  // Only a DIVERGENCE from the filter's default is recorded, and that subtlety
+  // is load-bearing: assigning `details.open` fires `toggle` exactly as a click
+  // does, so `open={isOpen(...)}` echoes back through the handler. Storing that
+  // echo would let a query's auto-expand pin its categories open for good, and
+  // clearing the box would then render 450 rows (Entity + Ship) under an empty
+  // filter — the very cost this exists to avoid, on the ordinary type-then-clear
+  // flow, since any one-letter query matches Entity.
   let openCats = $state<Record<number, boolean>>({});
   const isOpen = (id: number) => openCats[id] ?? !!groupFilter.trim();
+  function noteToggle(id: number, open: boolean) {
+    if (open === !!groupFilter.trim()) delete openCats[id];
+    else openCats[id] = open;
+  }
   // A default profile that isn't (yet) stored on the account resolves its
   // contents from the bundled snapshot instead — that's what lets a clean
   // account edit a built-in's groups before any fork exists.
@@ -229,7 +241,7 @@
           <details
             class="group-cat"
             open={isOpen(cat.id)}
-            ontoggle={(e) => (openCats[cat.id] = (e.currentTarget as HTMLDetailsElement).open)}>
+            ontoggle={(e) => noteToggle(cat.id, (e.currentTarget as HTMLDetailsElement).open)}>
             <summary>{cat.name}</summary>
             {#if isOpen(cat.id)}
               <div class="group-grid">

@@ -98,4 +98,54 @@ describe("the group filter", () => {
       vi.useRealTimers();
     }
   });
+
+  test("clearing the filter collapses what the filter expanded", async () => {
+    // Assigning `details.open` fires `toggle` just like a click does, so a
+    // filter's auto-expand would otherwise write itself into the user's
+    // per-category state and pin those categories open forever. Clearing the
+    // box then leaves 450 rows rendered (Entity 400 + Ship 50) with an empty
+    // filter — the exact cost this component exists to avoid, reachable by the
+    // ordinary type-then-clear flow since any one-letter query matches Entity.
+    vi.useFakeTimers();
+    try {
+      mount();
+      await vi.advanceTimersByTimeAsync(0);
+      const box = document.querySelector(".group-filter") as HTMLInputElement;
+
+      await fireEvent.input(box, { target: { value: "shuttle" } });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(groupBoxes().length).toBeGreaterThan(0);
+
+      await fireEvent.input(box, { target: { value: "" } });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(groupBoxes().length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a category the user opened by hand survives a filter round trip", async () => {
+    // The other half of the same rule: only a DIVERGENCE from the filter's
+    // default is the user's choice. Opening Ship with no filter is a real
+    // choice and must outlive a query that comes and goes.
+    vi.useFakeTimers();
+    try {
+      mount();
+      await vi.advanceTimersByTimeAsync(0);
+      const ship = categoryNamed("Ship").closest("details") as HTMLDetailsElement;
+      ship.open = true;
+      await fireEvent(ship, new Event("toggle"));
+      expect(groupBoxes().length).toBe(50);
+
+      const box = document.querySelector(".group-filter") as HTMLInputElement;
+      await fireEvent.input(box, { target: { value: "shuttle" } });
+      await vi.advanceTimersByTimeAsync(200);
+      await fireEvent.input(box, { target: { value: "" } });
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(groupBoxes().length).toBe(50);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
