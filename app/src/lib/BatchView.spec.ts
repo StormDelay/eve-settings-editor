@@ -247,6 +247,26 @@ test("changing the source clears the aspects and targets already picked", async 
   expect(stillTicked).toEqual([]);
 });
 
+test("warns when a target is the file currently open", async () => {
+  // 90000001 is the open document. Point the source elsewhere so it becomes a
+  // selectable target, then select it: the apply would write behind the copy on
+  // screen, and until now nothing said so until the save-time on-disk check
+  // caught the divergence two steps later.
+  await mount();
+  await fireEvent.change(document.querySelector("#src") as HTMLSelectElement, {
+    target: { value: `${DIR}/core_char_90000002.dat` },
+  });
+  await fireEvent.click(targetBox(90000001));
+  await fireEvent.click(aspect("Window layout"));
+
+  expect(await screen.findByText(/open in the editor/i)).toBeTruthy();
+
+  // And it is about the open file specifically, not about any target.
+  await fireEvent.click(targetBox(90000001));
+  await fireEvent.click(targetBox(90000003));
+  await waitFor(() => expect(screen.queryByText(/open in the editor/i)).toBeNull());
+});
+
 test("no write is ever sent on mount", async () => {
   await mount();
   calls.never("setup_apply");
