@@ -3,7 +3,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, NO_FILTER, filterIsActive, visibleIds, drawnWindowCount,
+    hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, dropAction,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
@@ -11,7 +11,7 @@
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { confirm, message } from "@tauri-apps/plugin-dialog";
 
   let {
     slot,
@@ -235,6 +235,20 @@
   const onReorder = (container: string, members: string[]) => runStack(api.stackReorder(container, members));
   const onAddToStack = (member: string, container: string) => runStack(api.stackAdd(member, container));
   const onCreateStack = (m1: string, m2: string) => runStack(api.stackCreate(m1, m2));
+
+  // Deleting window state is not something to get wrong, so it asks first and
+  // names the count. Safe to offer at all only because the client was verified
+  // not to re-create these (2026-07-28) — see docs/format-notes.md.
+  async function onDeleteOrphans() {
+    const n = layout?.windows.filter(isOrphanFrame).length ?? 0;
+    const ok = await confirm(
+      `Delete ${n} empty stack frame${n === 1 ? "" : "s"}? Each is a leftover container whose ` +
+        `windows were unstacked. EVE does not re-create them. The change is applied to the open ` +
+        `file — save to write it to disk.`,
+      { title: "Delete empty stack frames", kind: "warning" },
+    );
+    if (ok) await runStack(api.stackDeleteOrphans());
+  }
 
   /** Write one HUD field and refresh the projection. */
   async function setHud(name: string, text: string) {
@@ -822,6 +836,7 @@
         {onReorder}
         {onAddToStack}
         {onCreateStack}
+        {onDeleteOrphans}
         overrides={clutterOverrides()}
         onClutterOverride={setClutterOverride}
         bind:filter
