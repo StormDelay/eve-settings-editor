@@ -1,9 +1,17 @@
 // Editor preferences, loaded once at startup and written through on change.
 // Nothing here touches an EVE settings file — see app/src-tauri/src/prefs.rs.
+//
+// Split from prefs.ts: this half uses runes ($state), which only the
+// Svelte/Vite compiler understands, so it can't be loaded by plain
+// `node --test` — the pure helpers live there instead and are re-exported here
+// for callers that want everything from one module.
 import { api, errMessage } from "$lib/api";
 import type { Preferences } from "$lib/api";
 import type { ClutterOverrides } from "$lib/windowLabels";
+import { countIn, withoutIn } from "$lib/prefs";
 import { message } from "@tauri-apps/plugin-dialog";
+
+export { countIn, withoutIn } from "$lib/prefs";
 
 let prefs = $state<Preferences>({ layout: { clutter: [], visible: [] } });
 
@@ -18,7 +26,18 @@ export const clutterOverrides = (): ClutterOverrides => ({
   visible: new Set(prefs.layout.visible),
 });
 
-export const overrideCount = () => prefs.layout.clutter.length + prefs.layout.visible.length;
+/**
+ * How many overrides are doing something in the document on screen.
+ *
+ * The stored list is application-wide, but what it is DOING at any moment
+ * depends on the file you have open — so a global tally sat beside "showing N
+ * of M windows" claiming to describe this layout while describing every
+ * character's. Scoped to the open document's windows, not to the windows
+ * currently drawn: a `clutter` override's whole effect is to hide its window,
+ * so a count over the drawn set could never include one, and a count that moved
+ * while you typed in the filter box would be worse than one that is too broad.
+ */
+export const overrideCount = (ids: ReadonlySet<string>): number => countIn(prefs.layout, ids);
 
 /** Every write is chained after the previous one settles, rather than fired
  * independently — this is a single-user desktop app with one UI, so awaiting
@@ -62,7 +81,12 @@ export function setClutterOverride(id: string, mode: "clutter" | "visible" | "de
   persist(prefs);
 }
 
-export function clearClutterOverrides(): void {
-  prefs = { ...prefs, layout: { clutter: [], visible: [] } };
+/** Drop only the overrides naming a window the given document has. Every other
+ * override is left on disk: the stored list is application-wide, so a `clear`
+ * from one layout must not delete an override belonging to a file you do not
+ * have open. Same chained write as `setClutterOverride` — only the value
+ * written changed. */
+export function clearClutterOverrides(ids: ReadonlySet<string>): void {
+  prefs = { ...prefs, layout: withoutIn(prefs.layout, ids) };
   persist(prefs);
 }
