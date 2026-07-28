@@ -530,7 +530,7 @@ pub fn setup_apply(
     // zero-length `bytes` is never legitimate for a non-empty `cats` list —
     // it must decode, or this returns a decode error instead of silently
     // treating "empty file" as "empty projection".
-    let extract_side = |bytes: &[u8], cats: &[Category]| -> Result<Vec<(Category, Value)>, ErrDto> {
+    let extract_side = |bytes: &[u8], cats: &[Category]| -> Result<Vec<(Category, Option<Value>)>, ErrDto> {
         if cats.is_empty() {
             return Ok(Vec::new());
         }
@@ -2212,7 +2212,7 @@ mod tests {
         let extracted = extract_categories(&val, &[Category::Layout]);
         assert_eq!(
             extracted,
-            vec![(Category::Layout, Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))]))],
+            vec![(Category::Layout, Some(Value::Dict(vec![(bb("marker"), bb("FROM_PRESET"))])))],
             "target must carry the preset's windows content, not merely report ok"
         );
     }
@@ -2382,7 +2382,7 @@ mod tests {
         let extracted = extract_categories(&val, &[Category::Overview]);
         assert_eq!(
             extracted,
-            vec![(Category::Overview, Value::Dict(vec![(bb("marker"), bb("FROM_DEFAULT"))]))],
+            vec![(Category::Overview, Some(Value::Dict(vec![(bb("marker"), bb("FROM_DEFAULT"))])))],
             "must carry the source's OWN profile's account settings, not another profile's"
         );
     }
