@@ -308,6 +308,13 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
 pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // `groups_mut` CREATES the mapping when it is absent, so this guard has to
+    // come first: on a windowless account the call below would refuse the edit
+    // and still leave an empty `tabsByWindowInstanceID` behind — which hides the
+    // account's whole overview. A refused edit must not touch the file.
+    if window_count(ov) == 0 {
+        return Err(OverviewTabError::NoWindowMapping);
+    }
     let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
         .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
     *inner = order.iter().map(|&i| Value::Int(i)).collect();
@@ -317,6 +324,11 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
 pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // Same as `reorder_tabs_in_window`: `groups_mut` below would fabricate an
+    // empty mapping on a windowless account even though the edit is refused.
+    if window_count(ov) == 0 {
+        return Err(OverviewTabError::NoWindowMapping);
+    }
     // Validate the destination window exists BEFORE mutating the source strip,
     // so an invalid to_window can't remove the tab from both windows.
     if groups_mut(ov).get_mut(to_window).and_then(list_inner_mut).is_none() {
@@ -844,5 +856,47 @@ mod tests {
             set_tab_preset(&mut v, 9, "combat"),
             Err(OverviewTabError::UnknownTab { index: 9 })
         ));
+    }
+
+    /// An overview with tabs but no window mapping — the state EVE's own pack
+    /// importer leaves behind (verified 2026-07-28).
+    fn windowless_root() -> Value {
+        let tab = Value::Dict(vec![
+            (Value::Str("name".into()), Value::StrUcs2("Default".into())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![(Value::Int(0), tab)]),
+            ])),
+        ]))])
+    }
+
+    fn has_mapping(v: &Value) -> bool {
+        let Value::Dict(top) = v else { return false };
+        let Some((_, ov)) = top.iter().find(|(k, _)| is_b(k, b"overview")) else { return false };
+        let Value::Dict(entries) = ov else { return false };
+        entries.iter().any(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+    }
+
+    #[test]
+    fn reorder_on_a_windowless_account_refuses_without_fabricating() {
+        let mut v = windowless_root();
+        assert!(matches!(
+            reorder_tabs_in_window(&mut v, 0, &[0]),
+            Err(OverviewTabError::NoWindowMapping),
+        ));
+        assert!(!has_mapping(&v), "a refused reorder must not create the mapping");
+    }
+
+    #[test]
+    fn move_on_a_windowless_account_refuses_without_fabricating() {
+        let mut v = windowless_root();
+        assert!(matches!(
+            move_tab(&mut v, 0, 0, 0, 0),
+            Err(OverviewTabError::NoWindowMapping),
+        ));
+        assert!(!has_mapping(&v), "a refused move must not create the mapping");
     }
 }
