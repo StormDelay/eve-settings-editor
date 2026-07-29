@@ -100,8 +100,12 @@
       if (p.kind === "createTab") {
         // No overview windows: currentWindowIndex is null; window 0 is a sentinel
         // the backend ignores for a windowless account (it distributes by default).
+        const before = new Set(data?.tabs.map((t) => t.index) ?? []);
         data = await api.tabCreate(currentWindowIndex ?? 0, name, tabIndex);
-        tabIndex = Math.max(...data.tabs.map((t) => t.index));
+        // Select whichever index is NEW rather than the highest one: the
+        // backend allocating max+1 is its business, and a set diff keeps this
+        // right if it ever reuses a gap instead.
+        tabIndex = data.tabs.find((t) => !before.has(t.index))?.index ?? tabIndex;
         onUserDirty();
       } else if (p.kind === "renameTab") {
         if (name === data?.tabs.find((t) => t.index === p.tabIdx)?.name) return;
@@ -113,8 +117,9 @@
         // window's position never persists. Then hand the new window's id up so
         // the Layout editor selects it: it defaults offset on top of window 0, so
         // without selecting it it's easy to miss.
+        const before = new Set(data?.tabs.map((t) => t.index) ?? []);
         data = await api.overviewWindowAdd(name, tabIndex);
-        tabIndex = Math.max(...data.tabs.map((t) => t.index));
+        tabIndex = data.tabs.find((t) => !before.has(t.index))?.index ?? tabIndex;
         onUserDirty();
         onCharDirty();
         const w = data.windows[data.windows.length - 1];
