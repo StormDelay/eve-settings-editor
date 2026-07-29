@@ -69,43 +69,20 @@ pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
-/// Deep-resolve every `Shared`/`Ref` into an owned, fully-inlined tree (no
-/// sharing left). An edit can drop a `Shared` token DEFINITION that the rest of
-/// the file still `Ref`s, which then fails to encode (`RefBeforeStore`); running
-/// this over the tree before encode removes that hazard by construction — the
-/// output has no `Ref`, so the encoder's store-before-ref invariant is trivially
-/// met. Marshal sharing of immutable settings data is a size optimization, not
-/// semantics, so inlining is value-preserving. Decoded trees are acyclic (the
-/// encoder rejects cycles), so this terminates.
-pub(crate) fn inline_shares(v: &Value, sh: &SharedTable) -> Value {
-    match effective(v, sh) {
-        Value::List(items) => Value::List(items.iter().map(|c| inline_shares(c, sh)).collect()),
-        Value::Tuple(items) => Value::Tuple(items.iter().map(|c| inline_shares(c, sh)).collect()),
-        Value::Dict(entries) => Value::Dict(
-            entries.iter().map(|(k, val)| (inline_shares(k, sh), inline_shares(val, sh))).collect(),
-        ),
-        Value::Stream(inner) => Value::Stream(Box::new(inline_shares(inner, sh))),
-        Value::Instance { class, state } => Value::Instance {
-            class: Box::new(inline_shares(class, sh)),
-            state: Box::new(inline_shares(state, sh)),
-        },
-        Value::Reduce { ctor, items, pairs } => Value::Reduce {
-            ctor: Box::new(inline_shares(ctor, sh)),
-            items: items.iter().map(|c| inline_shares(c, sh)).collect(),
-            pairs: pairs.iter().map(|(k, val)| (inline_shares(k, sh), inline_shares(val, sh))).collect(),
-        },
-        scalar => scalar.clone(),
-    }
-}
-
 /// Drop ALL Shared/Ref sharing from a tree in place (inline every Shared to its
 /// value, resolve every Ref). Used before a structural list edit so replacing a
 /// list can never destroy a Shared definition that a Ref elsewhere still needs.
-/// The re-saved file is larger (dedup gone) but valid; EVE re-dedups on logout.
+/// The re-saved file is larger (dedup gone) but valid; EVE re-dedups on logout —
+/// and the structural editors follow this with `blue_marshal::reshare` anyway.
+///
+/// This is `blue_marshal::inline` rather than a local walk because an embedded
+/// `Value::Stream` is an independent marshal blob whose slots restart at 1: the
+/// local version resolved the whole tree against one flat `SharedTable`, so a
+/// stream carrying its own slot 1 would shadow the outer one. Unreachable on
+/// real data (no corpus file contains a STREAM opcode), but there is no reason
+/// to keep a second, wronger copy of the same pass.
 pub(crate) fn inline_all(v: &mut Value) {
-    let mut sh = SharedTable::new();
-    collect_shared(v, &mut sh);
-    *v = inline_shares(v, &sh);
+    *v = blue_marshal::inline(v);
 }
 
 pub(crate) fn unwrap_shared(v: &Value, mut path: NodePath) -> (&Value, NodePath) {
@@ -198,14 +175,6 @@ pub(crate) fn as_list<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<
     }
 }
 
-pub(crate) fn bytes_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Str(s) => Some(s.clone()),
-        _ => None,
-    }
-}
-
 pub(crate) fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
     let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
     dict_inner_mut(v)
@@ -260,11 +229,11 @@ pub(crate) fn section<'a>(
     }
 }
 
-/// A value's text, whatever string shape the client stored it in.
-///
-/// Unlike `bytes_str` above, this resolves through `Shared`/`Ref` first and
-/// understands `StrUcs2`. The two are near-duplicates that arrived from
-/// opposite sides of a merge; see the ledger item about folding them together.
+/// A value's text, whatever string shape the client stored it in, resolving
+/// `Shared`/`Ref` on the way. Absorbed the near-identical `bytes_str` (which
+/// took an already-resolved value and missed `StrUcs2`); its two call sites
+/// were both `bytes_str(effective(k, &sh))`, so they read the same keys as
+/// before plus any stored as UCS2.
 pub(crate) fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
@@ -337,6 +306,36 @@ mod tests {
         assert_eq!(text(&Value::Str("Local".into()), &sh).as_deref(), Some("Local"));
         assert_eq!(text(&Value::StrUcs2("Local".into()), &sh).as_deref(), Some("Local"));
         assert_eq!(text(&Value::Int(3), &sh), None);
+    }
+
+    #[test]
+    fn inline_all_keeps_an_embedded_stream_in_its_own_slot_scope() {
+        // An embedded Stream is its own marshal blob: its slot 1 has nothing to
+        // do with the outer slot 1. The local walk this helper used to run
+        // resolved both against one flat table, so whichever definition was
+        // collected last won and the outer Ref came back with the stream's
+        // value. Unreachable on real files (no STREAM opcode in the corpus).
+        let mut root = Value::Dict(vec![
+            (b("a"), Value::Shared { slot: 1, value: Box::new(b("outer")) }),
+            (b("b"), Value::Ref(1)),
+            (
+                b("s"),
+                Value::Stream(Box::new(Value::List(vec![
+                    Value::Shared { slot: 1, value: Box::new(b("inner")) },
+                    Value::Ref(1),
+                ]))),
+            ),
+        ]);
+        inline_all(&mut root);
+        assert_eq!(
+            root,
+            Value::Dict(vec![
+                (b("a"), b("outer")),
+                (b("b"), b("outer")),
+                (b("s"), Value::Stream(Box::new(Value::List(vec![b("inner"), b("inner")])))),
+            ]),
+            "each scope resolves against its own slots"
+        );
     }
 
     #[test]
