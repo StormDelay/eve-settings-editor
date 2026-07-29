@@ -67,27 +67,57 @@ fn collect(v: &Value, out: &mut HashMap<u32, Value>) {
 }
 
 fn resolve(v: &Value, table: &HashMap<u32, Value>) -> Value {
+    resolve_in(v, table, &mut Vec::new())
+}
+
+/// `open` holds the slots currently being resolved further up the recursion, so
+/// a slot whose value refers back to itself is left as a bare `Ref` instead of
+/// recursing until the stack dies. `decode` rejects cyclic input and no edit
+/// path builds one, so this is unreachable today — but `treewalk::effective`,
+/// which resolves the same shapes on the read side, has always been bounded, and
+/// an unbounded walk here was the one place a hand-built cycle could crash the
+/// app rather than fail. A left-behind `Ref` fails `encode` with
+/// `RefBeforeStore`, which is the safe direction.
+fn resolve_in(v: &Value, table: &HashMap<u32, Value>, open: &mut Vec<u32>) -> Value {
     match v {
-        Value::Shared { value, .. } => resolve(value, table),
+        // The store counts as open too: a `Ref` back to this slot from inside
+        // the value it stores is the same cycle seen from the definition side.
+        Value::Shared { slot, value } => {
+            open.push(*slot);
+            let out = resolve_in(value, table, open);
+            open.pop();
+            out
+        }
         Value::Ref(slot) => match table.get(slot) {
-            Some(t) => resolve(t, table),
+            Some(_) if open.contains(slot) => v.clone(),
+            Some(t) => {
+                open.push(*slot);
+                let out = resolve_in(t, table, open);
+                open.pop();
+                out
+            }
             None => v.clone(),
         },
-        Value::Tuple(xs) => Value::Tuple(xs.iter().map(|c| resolve(c, table)).collect()),
-        Value::List(xs) => Value::List(xs.iter().map(|c| resolve(c, table)).collect()),
-        Value::Dict(es) => {
-            Value::Dict(es.iter().map(|(k, val)| (resolve(k, table), resolve(val, table))).collect())
-        }
+        Value::Tuple(xs) => Value::Tuple(xs.iter().map(|c| resolve_in(c, table, open)).collect()),
+        Value::List(xs) => Value::List(xs.iter().map(|c| resolve_in(c, table, open)).collect()),
+        Value::Dict(es) => Value::Dict(
+            es.iter()
+                .map(|(k, val)| (resolve_in(k, table, open), resolve_in(val, table, open)))
+                .collect(),
+        ),
         // Own scope: the embedded stream inlines independently of the outer table.
         Value::Stream(inner) => Value::Stream(Box::new(inline(inner))),
         Value::Instance { class, state } => Value::Instance {
-            class: Box::new(resolve(class, table)),
-            state: Box::new(resolve(state, table)),
+            class: Box::new(resolve_in(class, table, open)),
+            state: Box::new(resolve_in(state, table, open)),
         },
         Value::Reduce { ctor, items, pairs } => Value::Reduce {
-            ctor: Box::new(resolve(ctor, table)),
-            items: items.iter().map(|c| resolve(c, table)).collect(),
-            pairs: pairs.iter().map(|(k, val)| (resolve(k, table), resolve(val, table))).collect(),
+            ctor: Box::new(resolve_in(ctor, table, open)),
+            items: items.iter().map(|c| resolve_in(c, table, open)).collect(),
+            pairs: pairs
+                .iter()
+                .map(|(k, val)| (resolve_in(k, table, open), resolve_in(val, table, open)))
+                .collect(),
         },
         scalar => scalar.clone(),
     }
@@ -328,6 +358,24 @@ mod tests {
         let bytes = encode(&out).expect("reshared tree containing a Stream encodes");
         assert_eq!(decode(&bytes).unwrap(), out, "round-trips");
         assert_eq!(inline(&decode(&bytes).unwrap()), inline(&t), "semantics preserved");
+    }
+
+    #[test]
+    fn a_self_referential_ref_terminates_instead_of_overflowing() {
+        // Only reachable by hand — `decode` rejects cycles — but before the
+        // `open` chain guard this recursed Ref -> slot 1 -> Ref forever.
+        let t = Value::Shared {
+            slot: 1,
+            value: Box::new(Value::List(vec![Value::Ref(1), b("aa")])),
+        };
+        assert_eq!(
+            inline(&t),
+            Value::List(vec![Value::Ref(1), b("aa")]),
+            "the cycle-closing Ref is left alone; everything else still resolves"
+        );
+        // And the surviving Ref is what makes the encode fail rather than the
+        // stack: nothing silently ships a tree whose sharing is nonsense.
+        assert!(encode(&inline(&t)).is_err(), "a dangling Ref still refuses to encode");
     }
 
     // --- test helpers (walk the tree counting share nodes) ---
