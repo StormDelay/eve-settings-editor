@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Saving an `Everything` preset now says what it captures.** The warning that
+  a full preset carries your autofill history — station names, searches and
+  typed text — only appeared when you exported one to share it. It now also
+  appears where you tick `Everything`, which is where the snapshot is actually
+  taken. Nothing blocks and nothing about export changed.
 - **"Window layout" now carries your whole screen, not half of it.** It moved
   window positions, the neocom and the ship HUD offset, but left the fighter
   panel, the notification badge and the neocom width behind — so a copy landed
