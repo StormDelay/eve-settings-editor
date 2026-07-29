@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    as_dict, as_list, collect_shared, effective, find_child, is_bytes, unwrap_shared,
+    as_dict, as_list, collect_shared, effective, find_child, is_bytes, key_is, unwrap_shared,
     unwrap_shared_ref, Entries, SharedTable,
 };
 
@@ -344,19 +344,6 @@ fn as_int(v: &Value) -> Option<i64> {
     match v {
         Value::Int(n) => Some(*n),
         _ => None,
-    }
-}
-
-/// True if the dict key is the string `name`, whether stored plainly or as a
-/// string-table reference — real files store the `"name"` key as `t52`.
-fn key_is(k: &Value, name: &str) -> bool {
-    match k {
-        Value::Str(s) | Value::StrUcs2(s) => s == name,
-        Value::StrTable(i) => blue_marshal::string_table::STRING_TABLE
-            .get(*i as usize)
-            .map(|s| *s == name)
-            .unwrap_or(false),
-        _ => false,
     }
 }
 

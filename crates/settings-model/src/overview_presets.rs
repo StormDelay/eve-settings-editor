@@ -132,14 +132,17 @@ pub fn create_preset(v: &mut Value, from: &str, new_name: &str) -> Result<(), Ov
     inline_all(v);
     let ov = overview_mut(v)?;
     let presets = presets_mut(ov).ok_or(OverviewTabError::UnknownPreset { name: from.to_string() })?;
-    if presets.iter().any(|(k, _)| as_str(k).as_deref() == Some(new_name)) {
-        return Err(OverviewTabError::PresetExists { name: new_name.to_string() });
-    }
+    // Resolve the source BEFORE checking the target name. The other order
+    // reports "that name is taken" for a copy whose source does not exist,
+    // which sends the user to fix the wrong end of the dialog.
     let blob = presets
         .iter()
         .find(|(k, _)| as_str(k).as_deref() == Some(from))
         .map(|(_, val)| val.clone())
         .ok_or(OverviewTabError::UnknownPreset { name: from.to_string() })?;
+    if presets.iter().any(|(k, _)| as_str(k).as_deref() == Some(new_name)) {
+        return Err(OverviewTabError::PresetExists { name: new_name.to_string() });
+    }
     presets.push((Value::Bytes(new_name.as_bytes().to_vec()), blob));
     Ok(())
 }
@@ -341,6 +344,15 @@ mod tests {
         assert!(matches!(
             create_preset(&mut v, "alpha", "beta"),
             Err(OverviewTabError::PresetExists { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_reports_the_unknown_source_before_the_taken_target() {
+        let mut v = user_with_presets(); // "beta" is taken, "nope" does not exist
+        assert!(matches!(
+            create_preset(&mut v, "nope", "beta"),
+            Err(OverviewTabError::UnknownPreset { .. })
         ));
     }
 

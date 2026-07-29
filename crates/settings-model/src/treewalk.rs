@@ -69,6 +69,24 @@ pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
+/// True if a dict key is the string `name`, in whichever shape the client stored
+/// the key — plain `Bytes`/`Str`/`StrUcs2`, or a string-table token (real files
+/// store the tab `"name"` key as `t52`).
+///
+/// Unlike `is_bytes`, this does NOT resolve `Shared`/`Ref`; callers that need
+/// that pass `effective(k, sh)`.
+pub(crate) fn key_is(k: &Value, name: &str) -> bool {
+    match k {
+        Value::Bytes(b) => b.as_slice() == name.as_bytes(),
+        Value::Str(s) | Value::StrUcs2(s) => s == name,
+        Value::StrTable(i) => blue_marshal::string_table::STRING_TABLE
+            .get(*i as usize)
+            .map(|s| *s == name)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Deep-resolve every `Shared`/`Ref` into an owned, fully-inlined tree (no
 /// sharing left). An edit can drop a `Shared` token DEFINITION that the rest of
 /// the file still `Ref`s, which then fails to encode (`RefBeforeStore`); running
@@ -198,14 +216,6 @@ pub(crate) fn as_list<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<
     }
 }
 
-pub(crate) fn bytes_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Str(s) => Some(s.clone()),
-        _ => None,
-    }
-}
-
 pub(crate) fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
     let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
     dict_inner_mut(v)
@@ -260,11 +270,8 @@ pub(crate) fn section<'a>(
     }
 }
 
-/// A value's text, whatever string shape the client stored it in.
-///
-/// Unlike `bytes_str` above, this resolves through `Shared`/`Ref` first and
-/// understands `StrUcs2`. The two are near-duplicates that arrived from
-/// opposite sides of a merge; see the ledger item about folding them together.
+/// A value's text, whatever string shape the client stored it in, resolved
+/// through `Shared`/`Ref` first.
 pub(crate) fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
@@ -337,6 +344,18 @@ mod tests {
         assert_eq!(text(&Value::Str("Local".into()), &sh).as_deref(), Some("Local"));
         assert_eq!(text(&Value::StrUcs2("Local".into()), &sh).as_deref(), Some("Local"));
         assert_eq!(text(&Value::Int(3), &sh), None);
+    }
+
+    #[test]
+    fn key_is_matches_every_key_shape_including_the_string_table_token() {
+        // The token arm is what real files actually use for the tab name key;
+        // the other three come from the two predicates this replaced.
+        assert!(key_is(&Value::StrTable(52), "name"));
+        assert!(key_is(&b("name"), "name"));
+        assert!(key_is(&Value::Str("name".into()), "name"));
+        assert!(key_is(&Value::StrUcs2("name".into()), "name"));
+        assert!(!key_is(&Value::StrTable(51), "name"));
+        assert!(!key_is(&b("groups"), "name"));
     }
 
     #[test]
