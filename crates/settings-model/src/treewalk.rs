@@ -198,14 +198,6 @@ pub(crate) fn as_list<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Vec<
     }
 }
 
-pub(crate) fn bytes_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Str(s) => Some(s.clone()),
-        _ => None,
-    }
-}
-
 pub(crate) fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&'a mut Entries> {
     let (_, v) = dict.iter_mut().find(|(k, _)| is_bytes(k, name))?;
     dict_inner_mut(v)
@@ -260,11 +252,8 @@ pub(crate) fn section<'a>(
     }
 }
 
-/// A value's text, whatever string shape the client stored it in.
-///
-/// Unlike `bytes_str` above, this resolves through `Shared`/`Ref` first and
-/// understands `StrUcs2`. The two are near-duplicates that arrived from
-/// opposite sides of a merge; see the ledger item about folding them together.
+/// A value's text, whatever string shape the client stored it in, resolved
+/// through `Shared`/`Ref` first.
 pub(crate) fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
