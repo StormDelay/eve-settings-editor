@@ -146,57 +146,7 @@ Workflow:
   behave identically; (6) confirm the per-column width field is editable with
   a preset open. _Added 2026-07-27._ _Done 2026-07-28 (live plan P1, P2, P4, P6, P7, P8 in Session A; P3 in Session B — an Everything preset poured onto EVE's own virgin files came up fully configured). P5 could not be run: nothing can mint an overview container from nothing, tracked separately above._
 
-- [ ] **Settings-presets follow-ups (deferred to the final whole-branch
-  review, all ship-as-debt).** Preset library (`presets.rs`): (1)
-  `import_from` isn't atomic across its two file writes, so a mid-write I/O
-  failure can leave a half-populated folder — inert today, since `list()`
-  requires both documents before a folder counts as a preset (the same
-  accepted risk `create()` already carries); (2) `bytes_field` matches a bare
-  `Value::Bytes` only, so a `Shared`/`Ref`-wrapped container field is rejected
-  rather than resolved — fails closed, and the `treewalk` helpers that would
-  resolve it are `pub(crate)` to `settings-model`, unreachable from the app
-  crate; (3) the import dedup suffix (`" (N)"`) is untested right at the
-  100-character name limit — `preset_path` re-validates on the way in, so it
-  errors rather than panics, just untested. Batch-apply rework (`ops.rs`): (4)
-  letting a preset act as a batch source made `setup_apply` call
-  `setup_preview` AND `resolve_source` again, so a preview now walks
-  `discover()` 3 times (was 1) and an apply 5 (was 2) — fix is to have
-  `setup_preview` hand its `SourceSides` to `setup_apply`, deliberately left
-  out of the regression-fix commit to keep it reviewable; (5) ~~`SourceSides.char_path` is `Option<PathBuf>` but populated in both
-  branches~~ — **done 2026-07-29**: it is a plain `PathBuf`, which deletes the dead
-  `None` arm and the dead `if let Some`. The account side stays optional (a
-  character source with no paired account has none) and its refusal message is now
-  worded for a user rather than a developer, closing (8) with it; (6) a
-  character-source `Everything` copy still full-copies raw bytes with no
-  decode check — pre-existing, and validating would be the behaviour drift
-  this slice deliberately avoided; (7) **both `Everything`-refusal tests carry a
-  vacuous "target untouched" assertion.** `everything_from_a_pruned_preset_is_refused_by_setup_apply`
-  and its empty-side sibling both assert the target file's bytes are unchanged,
-  but neither writes an `accounts.json`, so `Aspect::Everything` (which writes
-  account-side) makes `plan_setup` exclude the target as unpaired and no write is
-  ever planned — the assertion would pass with the guard removed, and only the
-  `unwrap_err()` actually catches a regression. The guard itself IS proven
-  load-bearing (neutralising it makes `setup_apply` return `Ok`), so this is a
-  false impression of coverage rather than a hole. Fix is four lines lifted from
-  `character_source_account_file_comes_from_its_own_profile_not_another_ones`:
-  pair char 702 to an account in an `AccountsStore`, write its `core_user_*.dat`,
-  and write `accounts.json` — which also makes the test exercise the account
-  side, the side an empty full preset actually wipes. The same pass should assert
-  the error MESSAGE, not just `err.code == "source"`, which several guards share;
-  (8) `read_side`'s unreachable
-  `None` arm returns a developer-ese message ("no file for this side") that
-  would reach a user toast if it ever became reachable.
-  Batch view (`BatchView.svelte`): (9) ~~the test pinning that a preset's `dir`
-  reaches `setup_apply` byte-for-byte uses a whitespace-free fixture~~ — **done
-  2026-07-29**: the fixture carries a leading and a trailing space, and a
-  temporary `.trim()` was confirmed to fail it; (10) ~~`folder` can flip from
-  `null` to a real value when `api.discover()` resolves, firing one extra reset
-  of the aspect/target selection~~ — **done 2026-07-29**, and it was NOT inert:
-  the source seeds from the open file synchronously, so the aspect checkboxes
-  render before `discover()` lands and anything ticked in that window was
-  cleared. The effect watches `folderPick` now; a real folder change still
-  resets, because `pickFolder` nulls `sourcePath` too. _Added 2026-07-27._
-  **(7) is now RESOLVED — closed by the 2026-07-29 backend debt sweep,** exactly
+ **(7) is now RESOLVED — closed by the 2026-07-29 backend debt sweep,** exactly
   as this entry prescribed: both tests pair their character to an account with a
   real file, assert the account side is untouched too, and the pruned one gained
   the message assertion its sibling already had. Verified load-bearing by
@@ -660,6 +610,36 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Settings-presets follow-ups — all ten closed.** Nine were fixed across
+  the 2026-07-29/30 sweeps ((5)(7)(8) in the backend batch, (9)(10) in the
+  frontend one) and four here on 2026-07-30:
+  - **(1) `import_from` wasn't atomic across its two writes.** The writes moved
+    into `write_sides`, which removes the folder if any of them fails. A half
+    folder was already invisible to `list()` (it needs both documents), but
+    invisible junk accumulates and the next import of the same name would suffix
+    itself around it. Tested against `write_sides` directly — `import_from`
+    cannot be steered into that state from outside, because anything pre-placed
+    at the target path makes the dedup loop skip past it.
+  - **(2) `bytes_field` matched a bare `Bytes` only**, so a canonically-shared
+    bundle (two identical sides dedup to `Shared` + `Ref`) was rejected as
+    "missing its account side". Import inlines the document first.
+    `blue_marshal::inline` is public, which made this a one-liner rather than the
+    `treewalk` plumbing the entry expected. Verified the test fails without it.
+  - **(3) the dedup suffix at the 100-character limit** now has a test. It stays
+    an error: `" (2)"` pushes a legal 100-char name to 104 and `preset_path`
+    re-validates. Truncating a user's name to make room is its own surprise for a
+    case this narrow.
+  - **(4) an apply walked `discover()` five times.** `setup_apply` ran the whole
+    preview and then resolved the source again; an internal `preview_with_sides`
+    hands the `SourceSides` over, so it is three. The public `setup_preview`
+    keeps its signature.
+
+  **(6) is closed with no change:** a character-source `Everything` copy still
+  full-copies raw bytes without decoding them first. That is the point — a full
+  copy of a file the editor cannot model should still copy, and adding a decode
+  gate is the behaviour drift the slice deliberately avoided. _Added 2026-07-27;
+  done 2026-07-30._
 
 - [x] **Overview filter-presets slice 2a follow-ups — all six closed.** (2) the
   `create_preset` guard order was fixed by the 2026-07-29 backend sweep. Done
