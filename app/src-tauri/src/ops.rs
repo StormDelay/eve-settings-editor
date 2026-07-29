@@ -2824,6 +2824,88 @@ mod tests {
         assert!(hud_layout(&state).is_err());
     }
 
+    /// char -> ui -> neocomButtonRawData `(ts, List)` with two `utillib.KeyVal`
+    /// buttons, plus an Original to reset to. Mirrors `neocom.rs`'s own fixture.
+    fn neocom_char_bytes() -> Vec<u8> {
+        let ts = || Value::Long(vec![0u8; 8]);
+        let button = |id: &str, btn_type: i64, icon: &str| Value::Instance {
+            class: Box::new(b("utillib.KeyVal")),
+            state: Box::new(Value::Dict(vec![
+                (b("btnType"), Value::Int(btn_type)),
+                (b("children"), Value::None),
+                (b("iconPath"), b(icon)),
+                (b("id"), b(id)),
+            ])),
+        };
+        let doc = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![
+                (
+                    b("neocomButtonRawData"),
+                    Value::Tuple(vec![
+                        ts(),
+                        Value::List(vec![button("chat", 10, "chat.png"), button("wallet", 1, "wallet.png")]),
+                    ]),
+                ),
+                (
+                    b("neocomButtonRawDataOriginal"),
+                    Value::Tuple(vec![ts(), Value::Tuple(vec![button("chat", 10, "chat.png")])]),
+                ),
+            ]),
+        )]);
+        encode(&doc).expect("encode neocom fixture")
+    }
+
+    #[test]
+    fn neocom_without_a_character_file_is_an_error() {
+        let state = AppState::new();
+        assert_eq!(neocom_bar(&state).unwrap_err().code, "no_document");
+        assert_eq!(neocom_reorder(&state, vec![0]).unwrap_err().code, "no_document");
+        assert_eq!(neocom_remove(&state, 0).unwrap_err().code, "no_document");
+        assert_eq!(neocom_add(&state, "chat", 1, "chat.png").unwrap_err().code, "no_document");
+        assert_eq!(neocom_reset(&state).unwrap_err().code, "no_document");
+    }
+
+    #[test]
+    fn neocom_edits_refuse_a_read_only_document() {
+        // A valid stream the encoder re-emits differently (Int 1 as INT8) loads
+        // ReadOnly — the same fixture document.rs uses. What the file HOLDS is
+        // irrelevant: the guard fires before the edit runs.
+        let state = AppState::new();
+        let path = temp_file("neocom-readonly", &[0x7E, 0, 0, 0, 0, 0x06, 0x01]);
+        open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
+        assert_eq!(neocom_reorder(&state, vec![0]).unwrap_err().code, "read_only");
+        assert_eq!(neocom_remove(&state, 0).unwrap_err().code, "read_only");
+        assert_eq!(neocom_add(&state, "chat", 1, "chat.png").unwrap_err().code, "read_only");
+        assert_eq!(neocom_reset(&state).unwrap_err().code, "read_only");
+    }
+
+    #[test]
+    fn neocom_reorder_and_add_land_through_the_command_layer() {
+        let state = AppState::new();
+        let path = temp_file("neocom-happy", &neocom_char_bytes());
+        open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
+
+        let bar = neocom_bar(&state).expect("project");
+        assert_eq!(bar.buttons.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["chat", "wallet"]);
+        assert_eq!(bar.original.len(), 1, "Original feeds the addable set");
+
+        let bar = neocom_reorder(&state, vec![1, 0]).expect("reorder");
+        assert_eq!(bar.buttons.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["wallet", "chat"]);
+
+        let bar = neocom_add(&state, "market", 3, "market.png").expect("add");
+        assert_eq!(bar.buttons.last().map(|b| b.id.as_str()), Some("market"));
+
+        let bar = neocom_reset(&state).expect("reset");
+        assert_eq!(bar.buttons.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["chat"]);
+
+        // And the document still round-trips after the reshare each edit runs.
+        let guard = state.char.lock().unwrap();
+        let doc = guard.as_ref().expect("open");
+        let bytes = encode(&doc.value).expect("encode");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value);
+    }
+
     /// A user file with one preset and one tab — enough for every pack section
     /// the command layer touches. Mirrors `user_doc()` in `overview_pack.rs`.
     fn pack_user_fixture() -> Value {
