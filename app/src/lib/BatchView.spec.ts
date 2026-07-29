@@ -306,10 +306,10 @@ test("with a preset as the source, the open character is still a target", async 
   // character you have open could not be written to for the rest of the session.
   calls.stub("settings_preset_list", [
     {
-      name: "Layout only",
-      dir: `${DIR}/presets/Layout only`,
-      char_path: `${DIR}/presets/Layout only/core_char.dat`,
-      user_path: `${DIR}/presets/Layout only/core_user.dat`,
+      name: " Layout only ",
+      dir: `${DIR}/presets/ Layout only `,
+      char_path: `${DIR}/presets/ Layout only /core_char.dat`,
+      user_path: `${DIR}/presets/ Layout only /core_user.dat`,
       modified_unix: 0,
       aspects: ["layout"],
       full: false,
@@ -331,12 +331,17 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
   // settings_preset_list is unstubbed by default (see `mount`'s comment): the
   // preset value is a lazily-evaluated derived that no other test ever reads.
   // This test is the one place it matters, so it stubs it itself.
+  //
+  // The name carries a leading AND trailing space on purpose. The claim here is
+  // byte-for-byte passthrough, and whitespace is the only thing a stray .trim()
+  // would change -- a fixture without it catches a case change or a swapped
+  // field, but that one specifically slips past.
   calls.stub("settings_preset_list", [
     {
-      name: "Layout only",
-      dir: `${DIR}/presets/Layout only`,
-      char_path: `${DIR}/presets/Layout only/core_char.dat`,
-      user_path: `${DIR}/presets/Layout only/core_user.dat`,
+      name: " Layout only ",
+      dir: `${DIR}/presets/ Layout only `,
+      char_path: `${DIR}/presets/ Layout only /core_char.dat`,
+      user_path: `${DIR}/presets/ Layout only /core_user.dat`,
       modified_unix: 0,
       aspects: ["layout"],
       full: false,
@@ -361,7 +366,7 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
   const presetSelect = document.querySelector("#srcpreset") as HTMLSelectElement;
   expect([...presetSelect.options].some((o) => o.textContent?.includes("Broken"))).toBe(false);
 
-  await fireEvent.change(presetSelect, { target: { value: `${DIR}/presets/Layout only` } });
+  await fireEvent.change(presetSelect, { target: { value: `${DIR}/presets/ Layout only ` } });
 
   // This preset holds only Layout, so Overview must not be offered.
   expect(() => aspect("Overview (columns, tabs, presets)")).toThrow();
@@ -378,7 +383,7 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
   // Sent byte-for-byte as returned: the backend checks this path case-sensitively.
   expect(sent.source).toEqual({
     kind: "preset",
-    dir: `${DIR}/presets/Layout only`,
+    dir: `${DIR}/presets/ Layout only `,
     anchor_dir: DIR,
   });
 });
