@@ -252,6 +252,28 @@ test("changing the source clears the aspects and targets already picked", async 
   expect(stillTicked).toEqual([]);
 });
 
+test("the account warning says a layout copy can reset fields to EVE's defaults", async () => {
+  // A Layout copy is the only one that REMOVES anything: a HUD field the source
+  // leaves at EVE's default is deleted from the target so it falls back to the
+  // same default. Nothing on screen said so, and "changed" does not cover it.
+  calls.stub("setup_preview", {
+    ...PLAN,
+    account_writes: [
+      { user_id: 80000001, path: `${DIR}/core_user_80000001.dat`, full_copy: false, collateral_char_ids: [] },
+    ],
+  } as never);
+  await mount();
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+  expect(await screen.findByText(/reset to that default/i)).toBeTruthy();
+
+  // Autofill only ever overwrites, so the clause must not claim otherwise.
+  await fireEvent.click(aspect("Window layout"));
+  await fireEvent.click(aspect("Autofill (remembered text)"));
+  await waitFor(() => expect(screen.queryByText(/reset to that default/i)).toBeNull());
+  expect(screen.getByText(/Autofill \(remembered text\) changed/)).toBeTruthy();
+});
+
 test("warns when a target is the file currently open", async () => {
   // 90000001 is the open document. Point the source elsewhere so it becomes a
   // selectable target, then select it: the apply would write behind the copy on
