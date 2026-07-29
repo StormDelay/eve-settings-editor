@@ -100,6 +100,16 @@ wrong later.
   window 0 cannot take them — a tab that exists but appears in no window is
   invisible in-game. An account with no per-window mapping at all is now told
   that, instead of "keep at least one window".
+- **Importing a preset file whose two sides are identical works.** Such a file
+  stores the second side as a reference to the first — valid, and what a
+  canonical encoder produces — and the importer rejected it as "missing its
+  account side".
+- **A preset import that fails partway leaves nothing behind.** The two
+  documents are two writes; a failure between them left a folder holding one of
+  them. Invisible to the library either way, but it is gone now rather than
+  accumulating.
+- **A batch apply scans the settings folders three times instead of five.** The
+  preview already knew where the source was; the apply was re-deriving it.
 - The new-tab selection diffs the index set instead of taking the highest one, so
   it no longer assumes how the backend allocates indices; the HUD panel follows
   `app.css`'s palette instead of its own hardcoded greys; and the overview
