@@ -2488,6 +2488,17 @@ mod tests {
         let app_dir = base.join("appdata");
         std::fs::create_dir_all(&app_dir).unwrap();
 
+        // Pair 701 to an account and give that account a file. Without this the
+        // target is UNPAIRED, so `Aspect::Everything` (which writes the account
+        // side) makes `plan_setup` exclude it and no write is ever planned --
+        // "the target is untouched" would then hold with the guard deleted.
+        let account_bytes =
+            encode(&Value::Dict(vec![(bb("ui"), Value::Dict(vec![(bb("marker"), bb("ACCOUNT_UNTOUCHED"))]))])).unwrap();
+        std::fs::write(prof.join("core_user_970.dat"), &account_bytes).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(970, accounts::Account { alias: None, characters: vec![701] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
         let (cdoc, udoc) = (pruned_preset_char_side(), pruned_preset_user_side());
         crate::presets::create(
             &app_dir,
@@ -2507,9 +2518,13 @@ mod tests {
         let tgt = vec![prof.join("core_char_701.dat").to_string_lossy().into_owned()];
         let err = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Everything], false).unwrap_err();
         assert_eq!(err.code, "source");
+        assert!(err.message.contains("only part"), "must be the pruned-preset guard's message, got: {}", err.message);
+        assert!(!err.message.contains("empty"), "must not be mistaken for the empty-document guard");
 
         let after = std::fs::read(prof.join("core_char_701.dat")).unwrap();
         assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
+        let account_after = std::fs::read(prof.join("core_user_970.dat")).unwrap();
+        assert_eq!(account_after, account_bytes, "the account side must be untouched too");
     }
 
     #[test]
@@ -2538,6 +2553,17 @@ mod tests {
         let app_dir = base.join("appdata");
         std::fs::create_dir_all(&app_dir).unwrap();
 
+        // Pair 702 to an account, for the reason given in the pruned-preset
+        // sibling above: an unpaired target is excluded from an Everything plan,
+        // which would make the untouched-target assertion vacuous. It also puts
+        // a real file on the account side -- the side an empty full preset wipes.
+        let account_bytes =
+            encode(&Value::Dict(vec![(bb("ui"), Value::Dict(vec![(bb("marker"), bb("ACCOUNT_UNTOUCHED"))]))])).unwrap();
+        std::fs::write(prof.join("core_user_971.dat"), &account_bytes).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(971, accounts::Account { alias: None, characters: vec![702] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
         // Hand-build the preset folder directly (bypassing `presets::create`,
         // which now refuses this shape itself) so this test pins the
         // independent ops.rs-side guard rather than only the belt-and-braces one.
@@ -2561,6 +2587,8 @@ mod tests {
 
         let after = std::fs::read(prof.join("core_char_702.dat")).unwrap();
         assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
+        let account_after = std::fs::read(prof.join("core_user_971.dat")).unwrap();
+        assert_eq!(account_after, account_bytes, "the account side must be untouched too");
     }
 
     #[test]
