@@ -69,6 +69,23 @@ pub(crate) fn is_bytes(v: &Value, name: &[u8]) -> bool {
     matches!(v, Value::Bytes(b) if b.as_slice() == name)
 }
 
+/// Does this dict key name `name`, in whichever string shape it was stored?
+/// Real overview files key tab fields with `StrTable`, but the read side
+/// (`overview.rs`) and the authoring side (`overview_tabs.rs`) had grown one
+/// predicate each, and the two disagreed about which of the OTHER shapes count:
+/// one took `Bytes` but not `StrUcs2`, the other the reverse. Neither shape
+/// occurs on a real file, so the fold is free — this accepts all of them.
+pub(crate) fn key_is(k: &Value, name: &str) -> bool {
+    match k {
+        Value::Str(s) | Value::StrUcs2(s) => s == name,
+        Value::Bytes(b) => b.as_slice() == name.as_bytes(),
+        Value::StrTable(i) => {
+            blue_marshal::string_table::STRING_TABLE.get(*i as usize) == Some(&name)
+        }
+        _ => false,
+    }
+}
+
 /// Drop ALL Shared/Ref sharing from a tree in place (inline every Shared to its
 /// value, resolve every Ref). Used before a structural list edit so replacing a
 /// list can never destroy a Shared definition that a Ref elsewhere still needs.

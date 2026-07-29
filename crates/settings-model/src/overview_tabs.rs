@@ -8,7 +8,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{inline_all, Entries};
+use crate::treewalk::{inline_all, key_is, Entries};
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -211,7 +211,7 @@ fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
 /// (unicode-safe `StrUcs2`) if the tab has none. The name KEY may itself be a
 /// string-table token (`StrTable(52)`); we match it the same way the reader does.
 fn set_name(fields: &mut Entries, name: &str) {
-    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| key_is_name(k)) {
+    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| key_is(k, "name")) {
         *val = match val {
             Value::Bytes(_) => Value::Bytes(name.as_bytes().to_vec()),
             Value::Str(_) => Value::Str(name.to_string()),
@@ -224,15 +224,6 @@ fn set_name(fields: &mut Entries, name: &str) {
 
 /// True if a dict key is the tab-name key, whether stored as `Str("name")`,
 /// `Bytes("name")`, or the string-table token `StrTable(52)` real files use.
-fn key_is_name(k: &Value) -> bool {
-    match k {
-        Value::Str(s) => s == "name",
-        Value::Bytes(b) => b.as_slice() == b"name",
-        Value::StrTable(52) => true,
-        _ => false,
-    }
-}
-
 /// How many overview windows the account's `tabsByWindowInstanceID` maps tabs to
 /// (0 when the mapping is absent — a windowless account). Reading it never
 /// fabricates the mapping.
@@ -382,6 +373,13 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     // empty mapping on a windowless account even though the edit is refused.
     if window_count(ov) == 0 {
         return Err(OverviewTabError::NoWindowMapping);
+    }
+    // Without this, a nonexistent index is simply inserted into the destination
+    // strip and the window then points at a tab that does not exist. The UI only
+    // ever moves a tab it drew, so this matches `delete_tab`'s guard rather than
+    // fixing an observed bug.
+    if !tabs_mut(ov).iter().any(|(k, _)| as_int(k) == Some(tab_idx)) {
+        return Err(OverviewTabError::UnknownTab { index: tab_idx });
     }
     // Validate the destination window exists BEFORE mutating the source strip,
     // so an invalid to_window can't remove the tab from both windows.
@@ -805,6 +803,13 @@ mod tests {
         let mut v = user_two_windows();
         assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
         assert_eq!(window_indices(&v, 0), vec![0], "source strip unchanged when destination is invalid");
+    }
+
+    #[test]
+    fn move_of_a_tab_that_does_not_exist_errors() {
+        let mut v = user_two_windows();
+        assert!(matches!(move_tab(&mut v, 9, 0, 1, 0), Err(OverviewTabError::UnknownTab { index: 9 })));
+        assert_eq!(window_indices(&v, 1), vec![1], "no phantom index in the destination strip");
     }
 
     #[test]

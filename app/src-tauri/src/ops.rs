@@ -2761,11 +2761,12 @@ mod tests {
         // fixture below must not share a name with `pack_user_fixture()`.
         let before = overview_columns(&state).unwrap();
         assert_eq!(before.presets[0].name, "Friendly");
-        // `pack_user_fixture`'s tab keys its "name" field as Bytes, which the
-        // projection's `name` lookup does not match (only Str/StrUcs2/StrTable) --
-        // so it falls back to "Tab {index}". Real files key it StrTable(52); this
-        // fixture quirk is pre-existing and out of scope here.
-        assert_eq!(before.tabs[0].name, "Tab 0");
+        // `pack_user_fixture`'s tab keys its "name" field as Bytes. That used to
+        // fall back to "Tab {index}", because the read side's name predicate
+        // took Str/StrUcs2/StrTable and the authoring side's took Bytes; folding
+        // the two together means either shape now reads. Real files key it
+        // StrTable(52), so this only affects fixtures.
+        assert_eq!(before.tabs[0].name, "Fleet");
 
         let differing = dir.join("differing.yaml");
         fs::write(&differing, DIFFERING_PACK).unwrap();
