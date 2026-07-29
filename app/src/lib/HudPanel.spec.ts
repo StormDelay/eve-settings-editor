@@ -131,6 +131,23 @@ describe("what the panel refuses to edit", () => {
     expect(input("Fighter UI", "x").disabled).toBe(false);
     expect(input("Notification badge", "x").disabled).toBe(true);
   });
+
+  test("a read-only ACCOUNT file disables only the rows that write it", () => {
+    // The panel's `readOnly` is the character document's flag; four rows write
+    // the account file instead, and were left clickable when that file was the
+    // read-only one — the refusal then arrived as a backend dialog.
+    mount(hud(), { accountReadOnly: true });
+    expect(input("Neocom", "Width").disabled).toBe(true);
+    expect(input("Fighter UI", "Detached").disabled).toBe(true);
+    expect(input("Fighter UI", "x").disabled).toBe(false);
+    expect(input("Ship HUD", "Offset from centre").disabled).toBe(false);
+  });
+
+  test("a fighter axis the file cannot hold is disabled without taking its sibling with it", () => {
+    mount(hud(entry("fighter_y", "int", null, { set: UNAVAILABLE })));
+    expect(input("Fighter UI", "y").disabled).toBe(true);
+    expect(input("Fighter UI", "x").disabled).toBe(false);
+  });
 });
 
 describe("what the panel shows", () => {

@@ -26,6 +26,11 @@ All notable changes to this project are documented here. The format follows
   characters actually match.
 
 ### Fixed
+- **A read-only account file now greys out the HUD rows that write it.** Four of
+  the HUD panel's fields (the neocom width and the fighter-UI toggles) live in
+  the account file, but only the character file's read-only state disabled
+  anything — so those four stayed clickable and refused with an error dialog
+  instead of looking unavailable.
 - **An unnamed character can be paired from the Autofill view.** The "link this
   character to an account" prompt only appeared once the character's name had
   been fetched, so with names unresolved — offline, or never refreshed — the
@@ -88,6 +93,19 @@ wrong later.
 - Filled `plan_setup`'s untested exclusion branches and one `setup_apply` error
   branch, and dropped an `Option` that was never `None` (`SourceSides.char_path`)
   along with the dead arm it kept alive.
+- **A HUD write no longer re-shares the whole document.** Only minting an absent
+  key de-shares it; overwriting a value that is already there sets one scalar in
+  place, and now says so, so the walk runs on the rare path instead of every edit.
+- **Removing an overview window refuses rather than dropping its tabs** when
+  window 0 cannot take them — a tab that exists but appears in no window is
+  invisible in-game. An account with no per-window mapping at all is now told
+  that, instead of "keep at least one window".
+- The new-tab selection diffs the index set instead of taking the highest one, so
+  it no longer assumes how the backend allocates indices; the HUD panel follows
+  `app.css`'s palette instead of its own hardcoded greys; and the overview
+  authoring tests gained the cases the ledger listed (a no-op rename, the
+  case-insensitive delete neighbour, `set_tab_preset`'s insert branch,
+  `delete_tab`'s unknown-tab refusal, badge geometry, a zero neocom width).
 
 ## [0.22.0] - 2026-07-28
 
