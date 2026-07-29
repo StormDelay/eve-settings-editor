@@ -216,8 +216,12 @@ pub fn plan_setup(
     let src_res = source_char.and_then(|c| resolutions.get(&c).copied());
 
     let mut included: Vec<u64> = Vec::new();
+    let mut seen: HashSet<u64> = HashSet::new();
     for &t in target_chars {
-        if Some(t) == source_char {
+        // A repeated id would plan the same file twice — two writes and two
+        // backups of one target. The UI passes a set, so this is a guard on the
+        // command boundary rather than a fix for anything observed.
+        if Some(t) == source_char || !seen.insert(t) {
             continue;
         }
         if !char_paths.contains_key(&t) {
@@ -330,7 +334,9 @@ pub enum BatchSource {
 /// For a preset these are its own files; for a character, its file and its
 /// paired account file.
 struct SourceSides {
-    char_path: Option<PathBuf>,
+    /// Always present: a character source is its own file and a preset source
+    /// is refused unless both of its files exist.
+    char_path: PathBuf,
     user_path: Option<PathBuf>,
     char_id: Option<u64>,
     anchor: Option<PathBuf>,
@@ -407,7 +413,7 @@ fn resolve_source(
                 users.get(&uid).cloned()
             });
             Ok(SourceSides {
-                char_path: Some(PathBuf::from(path)),
+                char_path: PathBuf::from(path),
                 user_path,
                 char_id: Some(id),
                 anchor: Some(profile_dir),
@@ -455,7 +461,7 @@ fn resolve_source(
                 }
             }
             Ok(SourceSides {
-                char_path: Some(c),
+                char_path: c,
                 user_path: Some(u),
                 char_id: None,
                 anchor: if anchor_dir.is_empty() { None } else { Some(PathBuf::from(anchor_dir)) },
@@ -509,10 +515,8 @@ pub fn setup_preview(
     // Drop no-op splice writes: a splice aspect whose categories are all absent
     // from the source would back up and rewrite every target for nothing.
     if !w.char_full_copy && !plan.char_writes.is_empty() {
-        if let Some(p) = sides.char_path.as_deref() {
-            if source_side_empty(p, &w.char_categories) {
-                plan.char_writes.clear();
-            }
+        if source_side_empty(&sides.char_path, &w.char_categories) {
+            plan.char_writes.clear();
         }
     }
     if !w.account_full_copy && !plan.account_writes.is_empty() {
@@ -541,10 +545,14 @@ pub fn setup_apply(
         .map_err(|e| ErrDto::new("source", e))?;
     let w = aspect_writes(aspects);
 
-    let read_side = |p: Option<&Path>| -> Result<Vec<u8>, ErrDto> {
+    // Only the account side is optional: a character source with no paired
+    // account has none. plan_setup already refuses that combination with a
+    // source error, so this arm is a backstop -- worded for a user anyway,
+    // since a developer-ese string in a toast helps nobody.
+    let read_user_side = |p: Option<&Path>| -> Result<Vec<u8>, ErrDto> {
         match p {
             Some(p) => fs::read(p).map_err(|e| ErrDto::new("io", e.to_string())),
-            None => Err(ErrDto::new("source", "no file for this side")),
+            None => Err(ErrDto::new("source", "The source has no account file to copy from.")),
         }
     };
     // `cats.is_empty()` alone covers the deliberate empty-Vec case (a
@@ -561,9 +569,9 @@ pub fn setup_apply(
         Ok(extract_categories(&v, cats))
     };
 
-    let src_char_bytes = read_side(sides.char_path.as_deref())?;
+    let src_char_bytes = fs::read(&sides.char_path).map_err(|e| ErrDto::new("io", e.to_string()))?;
     let char_extracted = extract_side(&src_char_bytes, &w.char_categories)?;
-    let user_bytes = if w.writes_account() { read_side(sides.user_path.as_deref())? } else { Vec::new() };
+    let user_bytes = if w.writes_account() { read_user_side(sides.user_path.as_deref())? } else { Vec::new() };
     let account_extracted = extract_side(&user_bytes, &w.account_categories)?;
 
     let mut results = Vec::new();
@@ -2193,6 +2201,58 @@ mod tests {
     }
 
     #[test]
+    fn a_source_whose_account_file_is_missing_is_a_source_error() {
+        // Char 3 is paired to account 20, but this folder holds no file for it.
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[10], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        assert!(
+            plan.source_error.as_deref().unwrap_or("").contains("account file was not found"),
+            "got: {:?}",
+            plan.source_error
+        );
+        assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty());
+    }
+
+    #[test]
+    fn a_target_whose_account_file_is_missing_is_excluded() {
+        // Target 1 is paired to account 10, whose file is not in this folder.
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        assert_eq!(plan.excluded.len(), 1);
+        assert!(plan.excluded[0].reason.contains("Account file not found"), "got: {}", plan.excluded[0].reason);
+        assert!(plan.char_writes.is_empty(), "an excluded target gets no char write either");
+    }
+
+    #[test]
+    fn a_target_with_no_character_file_in_the_folder_is_excluded() {
+        let cp = paths(&[3], "char"); // char 1 has no file here
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        assert_eq!(plan.excluded.len(), 1);
+        assert!(plan.excluded[0].reason.contains("Character file not found"), "got: {}", plan.excluded[0].reason);
+    }
+
+    #[test]
+    fn an_empty_target_list_plans_nothing_and_is_not_an_error() {
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[], &[Aspect::Overview]);
+        assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty() && plan.excluded.is_empty());
+        assert!(plan.source_error.is_none(), "nothing to do is not a source problem");
+    }
+
+    #[test]
+    fn a_repeated_target_is_planned_once() {
+        let cp = paths(&[1, 3], "char");
+        let up = paths(&[10, 20], "user");
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 1], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 1, "one write, not two — each write backs the target up");
+        assert_eq!(plan.account_writes.len(), 1);
+    }
+
+    #[test]
     fn resolution_mismatch_flagged_for_layout_when_screens_differ() {
         let cp = paths(&[1, 3], "char");
         let up = paths(&[10, 20], "user");
@@ -2589,6 +2649,38 @@ mod tests {
         assert_eq!(after, original_bytes, "target must be untouched when Everything is refused");
         let account_after = std::fs::read(prof.join("core_user_971.dat")).unwrap();
         assert_eq!(account_after, account_bytes, "the account side must be untouched too");
+    }
+
+    #[test]
+    fn setup_apply_refuses_a_plan_that_carries_a_source_error() {
+        // Overview writes account-side and the source character is paired to
+        // nothing, so plan_setup reports a source error. setup_apply must
+        // surface that as an Err rather than quietly applying the char side.
+        let base = std::env::temp_dir().join(format!("app-apply-source-error-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+
+        let original = encode(&Value::Dict(vec![])).unwrap();
+        std::fs::write(prof.join("core_char_810.dat"), &original).unwrap();
+        std::fs::write(prof.join("core_char_811.dat"), &original).unwrap();
+
+        // No accounts.json at all: neither character is paired.
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        let roots = vec![base.join("root")];
+        let source =
+            BatchSource::Character { path: prof.join("core_char_810.dat").to_string_lossy().into_owned() };
+        let tgt = vec![prof.join("core_char_811.dat").to_string_lossy().into_owned()];
+        let err = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Overview], false).unwrap_err();
+        assert_eq!(err.code, "source");
+        assert!(err.message.contains("no paired account"), "got: {}", err.message);
+        assert_eq!(
+            std::fs::read(prof.join("core_char_811.dat")).unwrap(),
+            original,
+            "a refused apply writes nothing"
+        );
     }
 
     #[test]
