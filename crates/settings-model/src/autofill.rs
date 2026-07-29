@@ -9,8 +9,8 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::treewalk::{
-    as_dict, as_list, bytes_str, child_dict_mut, collect_shared, effective, find_child, inline_all,
-    is_bytes, list_inner_mut, Entries, SharedTable,
+    as_dict, as_list, child_dict_mut, collect_shared, effective, find_child, inline_all,
+    is_bytes, list_inner_mut, text, Entries, SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -27,7 +27,7 @@ pub fn project_edit_history(user: &Value) -> Vec<RememberedList> {
     let Some(eh) = find_child(ui, b"editHistory", &sh).and_then(|v| as_dict(v, &sh)) else { return vec![] };
     eh.iter()
         .filter_map(|(k, v)| {
-            let widget = bytes_str(effective(k, &sh))?;
+            let widget = text(k, &sh)?;
             let entries = as_list(v, &sh)?.iter().map(|e| entry_str(effective(e, &sh))).collect();
             Some(RememberedList { widget, entries })
         })
