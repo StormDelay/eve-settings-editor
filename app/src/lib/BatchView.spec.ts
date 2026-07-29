@@ -122,11 +122,16 @@ describe("which characters can be written", () => {
     expect(targetBox(90000002).disabled).toBe(false);
   });
 
-  test("a character-scoped aspect leaves an unpaired character available", async () => {
+  test("a layout-only selection warns that the account file is written", async () => {
+    // Layout carries the account-side HUD fields now, so it must disable
+    // unpaired targets the way every other account aspect does.
     await mount();
-    await fireEvent.click(aspect("Window layout"));
-    await waitFor(() => expect(aspect("Window layout").checked).toBe(true));
     expect(targetBox(90000003).disabled).toBe(false);
+
+    await fireEvent.click(aspect("Window layout"));
+    await waitFor(() => expect(targetBox(90000003).disabled).toBe(true));
+    // A paired one stays available.
+    expect(targetBox(90000002).disabled).toBe(false);
   });
 
   test("a disabled row hides its tick but keeps the selection for later", async () => {
@@ -245,6 +250,28 @@ test("changing the source clears the aspects and targets already picked", async 
     (i) => (i as HTMLInputElement).checked,
   );
   expect(stillTicked).toEqual([]);
+});
+
+test("the account warning says a layout copy can reset fields to EVE's defaults", async () => {
+  // A Layout copy is the only one that REMOVES anything: a HUD field the source
+  // leaves at EVE's default is deleted from the target so it falls back to the
+  // same default. Nothing on screen said so, and "changed" does not cover it.
+  calls.stub("setup_preview", {
+    ...PLAN,
+    account_writes: [
+      { user_id: 80000001, path: `${DIR}/core_user_80000001.dat`, full_copy: false, collateral_char_ids: [] },
+    ],
+  } as never);
+  await mount();
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+  expect(await screen.findByText(/reset to that default/i)).toBeTruthy();
+
+  // Autofill only ever overwrites, so the clause must not claim otherwise.
+  await fireEvent.click(aspect("Window layout"));
+  await fireEvent.click(aspect("Autofill (remembered text)"));
+  await waitFor(() => expect(screen.queryByText(/reset to that default/i)).toBeNull());
+  expect(screen.getByText(/Autofill \(remembered text\) changed/)).toBeTruthy();
 });
 
 test("warns when a target is the file currently open", async () => {

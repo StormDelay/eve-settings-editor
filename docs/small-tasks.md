@@ -72,25 +72,6 @@ Workflow:
   the default state lists and orders, so the shape is derivable, but it is a
   design call, not a bug fix. _Added 2026-07-27._
 
-- [ ] **Decide what the Layout aspect should mean, then make it carry that.**
-  `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
-  fields span three (`hud.rs:72–101`): `windows` has `shipuialignleftoffset` and
-  `neocomWidth`, `ui` has `fightersDetachedPosition` / `shipuialigntop` /
-  `detachFighterUI` / `displayFighterUI`, and `notifications` has
-  `notification_badge_offset`. So a Layout copy or preset moves the ship-HUD
-  offset and neocom width and leaves the fighter UI and badge behind — half
-  applied, which is more confusing than carrying none. Confirmed on live files:
-  after an A1 → A2 Layout copy, `shipuialignleftoffset` matched at `0.0` while
-  `fightersDetachedPosition` stayed at A2's own `(326, 54)` against A1's `(0, 0)`.
-  Presets share the key sets (`presets.rs:113`), so both surfaces are affected.
-
-  Either pull the other seven in, or split a HUD aspect out. Both change what a
-  batch apply writes to other characters' files, so this wants its own branch and
-  a live smoke — it is the only remaining live-session finding that is a
-  behaviour change rather than a correction. **The misleading half is already
-  fixed**: the aspect's label now names the ship HUD it carries and the fighter
-  panel and badge it does not (2026-07-28). _Added 2026-07-27._
-
 - [ ] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
   `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
@@ -111,8 +92,10 @@ Workflow:
   palette is therefore dropped from a pack export with no warning. Offer the
   palette as swatches, with free-form as a labelled escape hatch that says the
   colour will not survive an export. Blocked on the palette being complete —
-  `PALETTE` has 5 of the 8 names (missing `black`, `green`, `purple`), see the
-  live verification plan item 26b. _Added 2026-07-27._
+  `PALETTE` has 6 of the 8 names, missing `green` and `purple` (`black` was
+  harvested 2026-07-28); see the live verification plan item 26b and
+  `overview_pack.rs:274`, which records why a sampled hex cannot be inverted into
+  the exact floats `color_name` needs. _Added 2026-07-27._
 
 - [ ] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
@@ -690,14 +673,42 @@ rectangle per open stack, coherent move/resize, and membership editing
 capture experiment. Membership editing depends on the codec foundation above.
 _Added 2026-07-17; designed 2026-07-18._
 
-**Resize layout windows from any corner — independent, ship anytime.** In the
-layout canvas a selected window resizes only from the bottom-right handle today;
-add handles on all four corners (edges optional). No codec dependency — its
-resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
-
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Decide what the Layout aspect should mean, then make it carry that.**
+  `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
+  fields span three (`hud.rs:72–101`): `windows` has `shipuialignleftoffset` and
+  `neocomWidth`, `ui` has `fightersDetachedPosition` / `shipuialigntop` /
+  `detachFighterUI` / `displayFighterUI`, and `notifications` has
+  `notification_badge_offset`. So a Layout copy or preset moves the ship-HUD
+  offset and neocom width and leaves the fighter UI and badge behind — half
+  applied, which is more confusing than carrying none. Confirmed on live files:
+  after an A1 → A2 Layout copy, `shipuialignleftoffset` matched at `0.0` while
+  `fightersDetachedPosition` stayed at A2's own `(326, 54)` against A1's `(0, 0)`.
+  Presets share the key sets (`presets.rs:113`), so both surfaces are affected.
+
+  **This entry's own count was wrong.** It read `neocomWidth` as a sibling of
+  `shipuialignleftoffset` because both sit under a key called `windows` — but
+  the two are in different *files*: `shipuialignleftoffset` is in the character
+  file's `windows`, `neocomWidth` is in the account file's `windows`, and the
+  aspect only ever wrote the character side. So the copy it shipped with carried
+  **one** of nine, not the two claimed above — the A1 → A2 confirmation above
+  happened to demonstrate the one field that actually travelled.
+
+  **Decided: pull all nine in**, rather than split a HUD aspect out — "Window
+  layout" now covers the whole HUD editor's field set, so a copy leaves nothing
+  for the two screens to disagree on. What it cost: the aspect now writes the
+  account file, so a copy reaches **every character on the target's account**,
+  not only the one targeted (the preview names them, matching Overview and
+  Autofill's existing account-wide writes), and a character with no paired
+  account can no longer receive one — it needs pairing in the Accounts view
+  first. Where the source stores no value for a HUD field (EVE's own default),
+  the target's own value is now removed rather than left in place, which is
+  what makes the two characters actually match instead of merging. **The live
+  smoke this entry called for has not been run** — nothing here is verified
+  against a running client yet. _Added 2026-07-27; done 2026-07-28._
 
 - [x] **The keybinds "taken by" note overflows its row.** Ellipsised rather than
   wrapped, with the full command name on the `title`. The combo column is a fixed
@@ -964,6 +975,14 @@ resize handles are what the coherent stack resize reuses. _Added 2026-07-15._
   measurement this item used to carry now lives in `windowLabels.ts`'s own
   comment above `isClutter`) into a one-click fix per window. _Added 2026-07-26;
   done 2026-07-26 (layout names-and-noise)._
+
+### 0.10.0
+
+- [x] **Resize layout windows from any corner.** All four corner handles, not
+  just the bottom-right (`LayoutView.svelte`'s `.resize.tl/.tr/.bl/.br` and
+  `layout.ts`'s `Corner`/`resizeRect`), and the coherent stack resize reuses
+  them as planned. _Added 2026-07-15; shipped 2026-07-18 (`9998e40`), noticed
+  still listed as pending 2026-07-28._
 
 ### 0.6.0
 
