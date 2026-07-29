@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 
-use crate::decode::MAX_DEPTH;
 use crate::encode::encode;
 use crate::value::Value;
 
@@ -68,42 +67,64 @@ fn collect(v: &Value, out: &mut HashMap<u32, Value>) {
 }
 
 fn resolve(v: &Value, table: &HashMap<u32, Value>) -> Value {
-    resolve_at(v, table, 0)
+    resolve_in(v, table, &mut Vec::new())
 }
 
-/// `hops` counts CONSECUTIVE indirection steps (`Shared`/`Ref`), not container
-/// nesting — descending into a child resets it. Container depth is already
-/// bounded to [`MAX_DEPTH`] by decode and encode; an indirection chain is not,
-/// and a hand-built self-referential `Ref` (the shape `encode`'s `cyclic` test
-/// rejects) would otherwise recurse until the stack died. At the bound the
-/// `Ref` is left unresolved, so the tree fails a later `encode` with
-/// `RefBeforeStore` instead of aborting the process — the same fail-safe
-/// `treewalk::effective` takes.
-fn resolve_at(v: &Value, table: &HashMap<u32, Value>, hops: usize) -> Value {
-    if hops >= MAX_DEPTH {
-        return v.clone();
-    }
+/// `open` holds the slots currently being resolved further up the recursion, so
+/// a slot whose value leads back to itself is left as a bare `Ref` instead of
+/// recursing until the stack dies. The `Ref` then fails a later `encode` with
+/// `RefBeforeStore` — an error the caller can report, unlike an abort. Same
+/// fail-safe direction `treewalk::effective` takes.
+///
+/// This replaced a bound on CONSECUTIVE indirection hops, which only caught a
+/// chain of `Ref`s pointing straight at each other. A cycle that runs through a
+/// container — `Shared { 1, List([Ref(1)]) }` — reset the counter on the way
+/// into the list and still overflowed the stack (verified before this change).
+/// Tracking the open slots catches a cycle wherever it closes, and never
+/// false-trips on a legitimately long chain, because each hop consumes a
+/// distinct slot from a finite table.
+///
+/// Reachable only by hand: `decode` rejects cycles and no edit path builds one.
+fn resolve_in(v: &Value, table: &HashMap<u32, Value>, open: &mut Vec<u32>) -> Value {
     match v {
-        Value::Shared { value, .. } => resolve_at(value, table, hops + 1),
+        // The store counts as open too: a `Ref` back to this slot from inside
+        // the value it stores is the same cycle seen from the definition side.
+        Value::Shared { slot, value } => {
+            open.push(*slot);
+            let out = resolve_in(value, table, open);
+            open.pop();
+            out
+        }
         Value::Ref(slot) => match table.get(slot) {
-            Some(t) => resolve_at(t, table, hops + 1),
+            Some(_) if open.contains(slot) => v.clone(),
+            Some(t) => {
+                open.push(*slot);
+                let out = resolve_in(t, table, open);
+                open.pop();
+                out
+            }
             None => v.clone(),
         },
-        Value::Tuple(xs) => Value::Tuple(xs.iter().map(|c| resolve(c, table)).collect()),
-        Value::List(xs) => Value::List(xs.iter().map(|c| resolve(c, table)).collect()),
-        Value::Dict(es) => {
-            Value::Dict(es.iter().map(|(k, val)| (resolve(k, table), resolve(val, table))).collect())
-        }
+        Value::Tuple(xs) => Value::Tuple(xs.iter().map(|c| resolve_in(c, table, open)).collect()),
+        Value::List(xs) => Value::List(xs.iter().map(|c| resolve_in(c, table, open)).collect()),
+        Value::Dict(es) => Value::Dict(
+            es.iter()
+                .map(|(k, val)| (resolve_in(k, table, open), resolve_in(val, table, open)))
+                .collect(),
+        ),
         // Own scope: the embedded stream inlines independently of the outer table.
         Value::Stream(inner) => Value::Stream(Box::new(inline(inner))),
         Value::Instance { class, state } => Value::Instance {
-            class: Box::new(resolve(class, table)),
-            state: Box::new(resolve(state, table)),
+            class: Box::new(resolve_in(class, table, open)),
+            state: Box::new(resolve_in(state, table, open)),
         },
         Value::Reduce { ctor, items, pairs } => Value::Reduce {
-            ctor: Box::new(resolve(ctor, table)),
-            items: items.iter().map(|c| resolve(c, table)).collect(),
-            pairs: pairs.iter().map(|(k, val)| (resolve(k, table), resolve(val, table))).collect(),
+            ctor: Box::new(resolve_in(ctor, table, open)),
+            items: items.iter().map(|c| resolve_in(c, table, open)).collect(),
+            pairs: pairs
+                .iter()
+                .map(|(k, val)| (resolve_in(k, table, open), resolve_in(val, table, open)))
+                .collect(),
         },
         scalar => scalar.clone(),
     }
@@ -355,6 +376,20 @@ mod tests {
         let t = Value::Shared { slot: 1, value: Box::new(Value::Ref(1)) };
         assert_eq!(inline(&t), Value::Ref(1));
         assert!(encode(&reshare(&t)).is_err(), "the unresolved Ref must not silently encode");
+    }
+
+    #[test]
+    fn a_cycle_that_runs_through_a_container_also_gives_up() {
+        // The hop counter this replaced reset on the way into the list, so this
+        // shape overflowed the stack even with the bound in place. Slot 1 stores
+        // a list holding a Ref back to slot 1.
+        let t = Value::Shared { slot: 1, value: Box::new(Value::List(vec![Value::Ref(1), b("aa")])) };
+        assert_eq!(
+            inline(&t),
+            Value::List(vec![Value::Ref(1), b("aa")]),
+            "the cycle-closing Ref is left alone; its sibling still resolves"
+        );
+        assert!(encode(&inline(&t)).is_err(), "and the unresolved Ref refuses to encode");
     }
 
     #[test]
