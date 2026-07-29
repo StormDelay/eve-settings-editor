@@ -337,6 +337,20 @@ pub struct PackReport {
     pub warnings: Vec<String>,
 }
 
+impl PackReport {
+    /// The same report for the other direction: `applied` names the sections
+    /// WRITTEN OUT. One struct so the UI renders one shape, but an export used
+    /// to hand-assemble it at the call site, where "applied" read as a claim
+    /// about the account rather than about the file. `read_pack` returns its
+    /// warnings bare, because a read has nothing to report as applied.
+    pub fn exported(pack: &Pack, warnings: Vec<String>) -> Self {
+        PackReport {
+            applied: pack.sections.iter().map(|(name, _)| name.clone()).collect(),
+            warnings,
+        }
+    }
+}
+
 /// Wrap a value in the `(timestamp, value)` shape EVE uses, minting a zero
 /// timestamp like the rest of the crate. Reuses the existing wrapper when the
 /// key is already present so an existing timestamp survives.
