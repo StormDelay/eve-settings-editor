@@ -154,16 +154,12 @@ fn bar_list_mut(v: &mut Value) -> Result<&mut Vec<Value>, NeocomError> {
     } else {
         raw
     };
+    // The live bar is a List on every corpus file, and `reset` below writes one
+    // whatever Original was stored as — so a Tuple-stored bar is a shape nothing
+    // produces. Refuse it rather than rewriting it into a List: a silent reshape
+    // of a file we do not understand is worse than an error.
     match payload {
         Value::List(l) => Ok(l),
-        // A Tuple-stored bar is not a shape the corpus has, but the reset path
-        // below guarantees a List, so normalize rather than fail.
-        Value::Tuple(t) => {
-            let items = std::mem::take(t);
-            *payload = Value::List(items);
-            let Value::List(l) = payload else { unreachable!() };
-            Ok(l)
-        }
         _ => Err(NeocomError::NoBar),
     }
 }
