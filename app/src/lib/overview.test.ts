@@ -114,8 +114,11 @@ check(
   "sharedWith returns empty when the character has no known account",
   sharedWith(null, 123, roster, String).length === 0,
 );
+// 999 is unassigned, not a member of account 456, so this is the no-op-filter
+// case: nobody is excluded. Real exclusion is the first sharedWith check above,
+// which is what the name of this one used to claim.
 check(
-  "sharedWith excludes only the current character",
+  "sharedWith excludes nobody when the current character is not on the account",
   sharedWith(456, 999, roster, (id) => (id === 123 ? "A" : id === 124 ? "B" : String(id))).join(",") === "A,B",
 );
 
