@@ -13,7 +13,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{as_dict, bytes_str, child_dict_mut, collect_shared, effective, find_child, inline_all, is_bytes, SharedTable, Entries};
+use crate::treewalk::{as_dict, child_dict_mut, collect_shared, effective, find_child, inline_all, is_bytes, text, SharedTable, Entries};
 
 /// Modifier virtual-key codes, in the canonical order EVE writes them.
 pub const MOD_CTRL: i64 = 17;
@@ -54,7 +54,7 @@ pub fn project_keybinds(user: Option<&Value>) -> Keybinds {
     let entries: Vec<KeybindEntry> = table
         .iter()
         .filter_map(|(k, v)| {
-            let command = bytes_str(effective(k, &sh))?;
+            let command = text(k, &sh)?;
             let (keys, malformed) = read_binding(effective(v, &sh), &sh);
             Some(KeybindEntry { command, keys, malformed })
         })
