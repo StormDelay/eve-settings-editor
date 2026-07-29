@@ -150,7 +150,19 @@ Three call sites *inspect* the result rather than forwarding it to
 The char-side ship offset gets match semantics for free: a wholesale `windows`
 splice replaces the target's subtree, so a key the source lacks disappears with it.
 
-### 4.4 An empty-root source side contributes nothing
+### 4.4 A source that predates this change contributes no removals
+
+> **Corrected 2026-07-29.** As first written, this section said an empty-root
+> source document was the whole guard, and claimed that made an old Layout
+> preset "keep applying char-only". **That was wrong, and it was a data-loss
+> bug.** The empty-root rule only ever protected the **account** side. An old
+> preset's `char.dat` is *not* an empty root — it holds `windows` and
+> `ui → neocomButtonRawData` — so it sailed through the guard, and its missing
+> `fightersDetachedPosition` and `notification_badge_offset` were read as "the
+> source is at EVE's default" and **deleted from the target**. Any user with a
+> Layout preset saved before this branch would silently have lost that
+> character's fighter-panel and badge positions. The two sides need two
+> different discriminators, below.
 
 Layout presets created before this change carry a `user.dat` of `{}` —
 `is_empty_root`'s own doc comment names "a Layout-only preset's `user.dat`" as
@@ -158,14 +170,47 @@ exactly that shape. Under §4.3 alone, applying one would **delete** the target'
 neocom width and fighter toggles: actively worse than the half-apply being fixed,
 and on files the user never re-captured.
 
-So an empty-root source document yields no splices **and no removals**. An old
-preset keeps applying char-only, faithful to what it captured.
+**Account side — empty root.** An empty-root source document yields no splices
+**and no removals**. The check belongs in `extract_categories` itself — an empty
+root source returns an empty result — so it holds for every caller rather than
+for whichever call site remembered it. It is `root.is_empty()` on the dict the
+function has already destructured, so `presets::is_empty_root` stays where it is
+and keeps serving the `Everything` refusal it was written for.
 
-The check belongs in `extract_categories` itself — an empty root source returns an
-empty result — so it holds for every caller rather than for whichever call site
-remembered it. It is `root.is_empty()` on the dict the function has already
-destructured, so `presets::is_empty_root` stays where it is and keeps serving the
-`Everything` refusal it was written for.
+**Char side — the `notifications` root key.** An old preset's `char.dat` is
+never empty, so the same rule cannot cover it. It gets a shape signal of the
+same kind §4.5 uses on the account side: a Layout preset created *after* this
+change always has a `notifications` root key in its `char.dat`, because
+`presets::prune` builds that parent for the `HudBadge` category whether or not
+the source stores the key (§4.5's mechanism, on the char side). A preset created
+*before* never has one. So **a source document that lacks the `notifications`
+root key predates the HUD-carrying Layout aspect, and none of the char-side leaf
+HUD categories may produce removals from it.**
+
+Both rules live in `batch.rs`: the empty-root early return, and a named
+`absence_means_eve_default(root, cat)` that the one `(cat, None)` branch calls.
+Its doc comment carries the reasoning, the misfire argument and the hazard;
+this section is the summary, not the reference.
+
+Why it cannot misfire on a real character file: EVE writes a root
+`notifications` section into every character file — all 6502 in the corpus carry
+it, verified through `extract_categories` itself by
+`tests/hud_corpus.rs::a_real_char_file_is_never_read_as_a_pre_hud_preset`. A
+real character source therefore keeps full removal semantics; only an old
+preset is exempted.
+
+With both rules in place, an old preset really does keep applying char-only —
+its `windows` subtree and neocom buttons still land — faithful to what it
+captured.
+
+The signal is fragile in exactly one way: drop `HudBadge` from `Aspect::Layout`'s
+category list and `prune` stops building the `notifications` parent, so every
+newly created preset starts looking like an old one and the char-side HUD
+quietly stops copying. `presets.rs`'s
+`a_new_layout_preset_carries_the_notifications_shape_signal` fails loudly if
+that happens. A source that is *itself* old-shaped (an old preset's `char.dat`
+re-opened in the char slot and cut into a new preset) yields another old-shaped
+preset; that direction removes nothing, so it is left alone.
 
 ### 4.5 What makes §4.4 a reliable discriminator
 
@@ -188,6 +233,22 @@ This is the one place where the design depends on a shape rather than a value, s
 it is pinned directly: a test creates a Layout preset from a character storing no
 HUD keys and asserts the user side is not an empty root.
 
+**Amended 2026-07-29.** The same mechanism now carries the char side too:
+`prune` builds `ui` and `notifications` parents for `HudFighterPos` and
+`HudBadge`, and the `notifications` one is §4.4's char-side discriminator. So
+this section's "one line in `prune`" is load-bearing twice over, and it is
+pinned twice — `a_new_layout_preset_carries_the_notifications_shape_signal` for
+the char side, `a_freshly_created_layout_preset_removes_account_hud_keys_an_old_preset_would_leave_alone`
+for the account side.
+
+Note the asymmetry that keeps the two rules apart: a real account file has no
+`notifications` section at all, so the char-side rule must never be extended to
+account categories — it would disable every account-side removal. And a source
+document that is already old-shaped produces an old-shaped preset rather than
+"repairing" itself, because `prune`'s parents come from what
+`extract_categories` actually returns. That degrades safely (no removals) and is
+deliberate.
+
 ### 4.6 UI
 
 - `BatchView.svelte:70` — the label drops "— not the fighter panel or badge" and
@@ -195,9 +256,20 @@ HUD keys and asserts the user side is not an empty root.
   collateral-character warning.
 - `PresetGroup.svelte:19-25` — drops its `note` caveat and sets
   `needsUser: true`.
-- No new guard on preset creation: `presets.rs:161-166` already refuses an aspect
-  whose side is not open ("rather than writing an empty document that claims to
-  hold it"), and that now covers Layout.
+- ~~No new guard on preset creation: `presets.rs:161-166` already refuses an
+  aspect whose side is not open ("rather than writing an empty document that
+  claims to hold it"), and that now covers Layout.~~ **Corrected 2026-07-29:**
+  that guard accepted a side whose open document is an *empty root*, and the
+  editor can open a preset's own `user.dat` as the account slot — an old Layout
+  preset's is exactly `{}`. A newly created preset could therefore come out with
+  a `{}` account side and be misread as an old one by §4.4. It fails safe (the
+  copy half-applies; nothing is deleted), but `create` now treats an empty-root
+  open document as "not open" for a side the chosen aspects write, with the same
+  refusal message. The `Everything` empty-side refusal is checked first so it
+  keeps its own, more specific message.
+- The account-write warning names the removal: a Layout copy's account write
+  says the fields the source leaves at EVE's default are reset on the target,
+  not left alone. Only for Layout — every other aspect just overwrites.
 
 ### 4.7 Verified unchanged
 
@@ -250,6 +322,26 @@ Rust:
 10. `prune` on a source with no HUD keys still returns `(cat, None)` entries, so
     the parent dicts get built (§4.5's mechanism, tested separately from its
     effect in test 6).
+
+Added 2026-07-29 with §4.4's correction:
+
+10a. An old-shaped Layout preset `char.dat` (`windows` + `ui →
+     neocomButtonRawData`, no `notifications`) applied to a target that stores
+     the fighter position and badge offset leaves **both** intact, while its
+     `windows` and neocom buttons still land.
+10b. A char source that *does* carry `notifications` still removes — the other
+     half of the discriminator, or the guard could be "fixed" into never
+     removing anything.
+10c. Every real corpus character file carries the `notifications` root key,
+     asserted through `extract_categories` on real bytes, so the rule cannot
+     misfire on a real source.
+10d. A newly created Layout preset's `char.dat` carries the `notifications` root
+     key — the hazard pin for dropping `HudBadge` from the aspect.
+10e. `create` refuses a side whose open document is an empty root (§4.6).
+10f. Test 2 (`a_layout_copy_leaves_every_hud_field_equal`) asserts every one of
+     the nine fields is non-`None` on both sides and differs before the copy.
+     Without that it passed with all four new char-side fields `None` on both
+     sides — vacuous for exactly the fields it exists to add.
 
 Frontend:
 
