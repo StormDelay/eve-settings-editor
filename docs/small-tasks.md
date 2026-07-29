@@ -107,12 +107,16 @@ Workflow:
   (no-document / read-only / happy path), unlike the sibling `stack_*` and
   `hud_layout` cases — the thing genuinely untested there is the Tauri
   camelCase↔snake_case argument binding, which only the live smoke exercises;
-  (4) `NeocomButtons.spec.ts`'s read-only test samples 3 of 5 interactive
-  controls; (5) the corpus gate (`neocom_corpus.rs`) never inspects
+  (4) ~~`NeocomButtons.spec.ts`'s read-only test samples 3 of 5 interactive
+  controls~~ — **done 2026-07-29**: it checks all five; (5) the corpus gate (`neocom_corpus.rs`) never inspects
   `bar.original` (which feeds the addable set on every real character) and
-  never asserts the projected button count equals the raw list length; (6) a
-  failed add clears the dropdown selection before the command runs, so an
-  error loses the user's choice; (7) the panel shows raw ids (`job_board`,
+  never asserts the projected button count equals the raw list length; (6) ~~a
+  failed add clears the dropdown selection before the command runs~~ — **done
+  2026-07-29**: the add no longer clears it; landing on the bar does, since a
+  button on the bar is no longer addable, so a failure leaves the pick alone.
+  Note for the next test in that file: a bare `.click()` leaves the DOM
+  unflushed and made the first version of the assertion vacuous — `fireEvent`
+  is what makes it real; (7) the panel shows raw ids (`job_board`,
   `map_beta`, `airCareerProgram`) rather than friendly labels — the same debt
   as the open `container_label` item, worth solving once for both; (8)
   icon-path casing varies across catalog entries, faithfully reflecting the
@@ -182,14 +186,16 @@ Workflow:
   (8) `read_side`'s unreachable
   `None` arm returns a developer-ese message ("no file for this side") that
   would reach a user toast if it ever became reachable.
-  Batch view (`BatchView.svelte`): (9) the test pinning that a preset's `dir`
-  reaches `setup_apply` byte-for-byte uses a fixture with no leading or
-  trailing whitespace, so a stray `.trim()` specifically would slip past it
-  (a case change or a field swap would not); (10) `folder` can flip from
-  `null` to a real value when `api.discover()` resolves, firing one extra
-  reset of the aspect/target selection during a window where nothing is
-  selectable yet — inert, but it means the reset effect now has a trigger no
-  user action caused. _Added 2026-07-27._
+  Batch view (`BatchView.svelte`): (9) ~~the test pinning that a preset's `dir`
+  reaches `setup_apply` byte-for-byte uses a whitespace-free fixture~~ — **done
+  2026-07-29**: the fixture carries a leading and a trailing space, and a
+  temporary `.trim()` was confirmed to fail it; (10) ~~`folder` can flip from
+  `null` to a real value when `api.discover()` resolves, firing one extra reset
+  of the aspect/target selection~~ — **done 2026-07-29**, and it was NOT inert:
+  the source seeds from the open file synchronously, so the aspect checkboxes
+  render before `discover()` lands and anything ticked in that window was
+  cleared. The effect watches `folderPick` now; a real folder change still
+  resets, because `pickFolder` nulls `sourcePath` too. _Added 2026-07-27._
   **(7) is now RESOLVED — closed by the 2026-07-29 backend debt sweep,** exactly
   as this entry prescribed: both tests pair their character to an account with a
   real file, assert the account side is untouched too, and the pruned one gained
@@ -427,12 +433,18 @@ Workflow:
   pass the `slots.user === null` guard and issue one redundant, idempotent
   `api.open("user", <same path>)` — self-heals to the correct state, not a loop;
   add an "in-flight" flag only if the double backend open ever shows as noise;
-  (2) `overview.test.ts`'s "excludes only the current character" `sharedWith` case
-  uses `currentCharId=999` (a non-member), so it's really a no-op-filter check —
-  the genuine exclusion is already covered by the first case; rename or drop it;
-  (3) `AutofillView`'s generic "Open a character…" hint is unreachable for an
-  anomalous `id==None` char (the Overview/Autofill tabs don't render when
-  `openCharId===null` and unpaired) — dead-but-harmless copy; (4) a profile
+  (2) ~~`overview.test.ts`'s "excludes only the current character" `sharedWith`
+  case is really a no-op-filter check~~ — **done 2026-07-29**: renamed to what it
+  actually pins, that a character who is not on the account excludes nobody;
+  (3) ~~`AutofillView`'s generic "Open a character…" hint is unreachable~~ —
+  **done 2026-07-29, and this entry was wrong.** The hint was reachable, and its
+  advice was false when it showed: the pairing prompt above it was gated on
+  `charName`, which stays null until the ESI name lookup resolves — so any open,
+  unpaired character with no resolved name (offline, or names never refreshed)
+  was told to "open a character" while one was open. It keys off a `charOpen`
+  prop now, the signal `OverviewView` already takes, and falls back to "this
+  character" when the name is unknown. New `AutofillView.spec.ts` covers all
+  three states; (4) a profile
   containing only account files (no local char file) now renders no sidebar header
   at all (`Sidebar.svelte` wraps each profile in `{#if chars.length > 0}`) — matches
   the model (reach via Open file…), but no "nothing here" hint fires in the
