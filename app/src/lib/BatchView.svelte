@@ -94,15 +94,11 @@
   );
 
   let allowOtherFolders = $state(false);
-  const candidates = $derived(
+  // The source dropdown lists every character in the folder (the current source
+  // included), ordered like the sidebar.
+  const charsInScope = $derived(
     chars
-      // A character cannot be its own copy target — but ONLY when it is the
-      // source. `sourcePath` is seeded from the open file and never cleared on
-      // switching to a preset source, so filtering on it directly kept the open
-      // character out of the list for the rest of the session.
-      .filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path))
       .filter((c) => allowOtherFolders || c.dir === folder)
-      .slice()
       .sort((a, b) =>
         byResolvedName(
           { kind: "char", id: a.id, file_name: a.file_name },
@@ -110,18 +106,12 @@
         ),
       ),
   );
-  // The source dropdown lists every character in the folder (the current source
-  // included), ordered like the sidebar.
-  const sourceOptions = $derived(
-    chars
-      .filter((c) => allowOtherFolders || c.dir === folder)
-      .slice()
-      .sort((a, b) =>
-        byResolvedName(
-          { kind: "char", id: a.id, file_name: a.file_name },
-          { kind: "char", id: b.id, file_name: b.file_name },
-        ),
-      ),
+  const candidates = $derived(
+    // A character cannot be its own copy target — but ONLY when it is the
+    // source. `sourcePath` is seeded from the open file and never cleared on
+    // switching to a preset source, so filtering on it directly kept the open
+    // character out of the list for the rest of the session.
+    charsInScope.filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path)),
   );
   let selectedTargets = $state<Set<string>>(new Set());
   function toggleTarget(path: string) {
@@ -246,7 +236,7 @@
       <label for="src">Source character</label>
       <select id="src" bind:value={sourcePath}>
         <option value={null} disabled>Choose a character…</option>
-        {#each sourceOptions as c}
+        {#each charsInScope as c}
           <option value={c.path}>{nameOfChar(c.id, c.file_name)} — {c.file_name}</option>
         {/each}
       </select>

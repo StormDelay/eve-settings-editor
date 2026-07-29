@@ -37,4 +37,12 @@ describe("which aspects the create form offers", () => {
     const { aspect } = await renderPresets({ userOpen: true });
     await waitFor(() => expect(aspect("Window layout").disabled).toBe(false));
   });
+
+  // The export confirm guards sharing a full preset; capture is where the user
+  // picks Everything, so the note has to be here too — not a copy assertion so
+  // much as a "this disclosure still exists" one.
+  test("the form says what Everything captures", async () => {
+    await renderPresets();
+    await waitFor(() => expect(screen.getByText(/autofill history/i)).toBeTruthy());
+  });
 });
