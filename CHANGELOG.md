@@ -46,10 +46,11 @@ wrong later.
   preset copy from a source that does not exist now says so instead of blaming
   the target name.
 - **`reshare`'s `inline` no longer recurses without a bound.** A self-referential
-  `Ref` killed the process; it now gives up at the same `MAX_DEPTH` encode and
-  decode use, leaving the `Ref` for `encode` to reject. The bound counts
-  indirection hops, not container nesting, so a real file's many-level sharing
-  still inlines completely.
+  `Ref` killed the process; it now gives up and leaves the `Ref` for `encode` to
+  reject. The walk tracks the slots currently open rather than counting hops, so
+  it catches a cycle wherever it closes — including one that runs through a list
+  or dict, which a hop count reset on the way in and missed — while a real file's
+  many-level sharing still inlines completely.
 - **Two `Everything`-refusal tests were asserting nothing.** Both checked that a
   refused apply left the target untouched, but neither paired the target to an
   account — so nothing was ever going to be written to it either way. Both now
@@ -57,6 +58,22 @@ wrong later.
 - **Deleted:** `USER_SETTINGS` (an identity map of `OVERVIEW_BOOLS`, kept for a
   mapping the live smoke proved unnecessary), the unreachable Tuple-normalize
   branch in the neocom bar reader, and three crate-root re-exports used nowhere.
+- **A malformed overview pack now says which section is wrong.** A pack whose
+  `shipLabelOrder` is not a list was rejected with "this YAML file contains no
+  overview pack sections" — untrue, and no help in fixing it. It now names the
+  section and the shape it should have. *(The one user-visible item in this
+  sweep.)*
+- **An embedded stream inlines in its own slot scope.** `treewalk::inline_all`
+  resolved a whole document against one flat slot table, so an embedded
+  `Stream` — an independent marshal blob whose slots restart at 1 — could
+  shadow the outer definitions. It now shares the codec's own inliner. No corpus
+  file contains a stream.
+- **A repeated target in a batch apply is planned once.** The same id twice
+  meant the same file written, and backed up, twice. The UI passes a set, so
+  this guards the command boundary.
+- Filled `plan_setup`'s untested exclusion branches and one `setup_apply` error
+  branch, and dropped an `Option` that was never `None` (`SourceSides.char_path`)
+  along with the dead arm it kept alive.
 
 ## [0.22.0] - 2026-07-28
 
