@@ -45,17 +45,6 @@ Workflow:
   Cross-check any ambiguous row by binding it in-game and reading which id moves
   in `customCmds`. _Added 2026-07-27._
 
-- [ ] **Creating an `Everything` preset says nothing about what it captures.**
-  The privacy confirmation lives on *export* (`PresetGroup.svelte:96`: "carries
-  everything the editor does not model, including your autofill history —
-  station names, searches and typed text"), which is the right place to guard
-  sharing. But the capture happens at create time, and that is where the user
-  chooses `Everything` — with no indication that it snapshots typed history into
-  a folder they may later export, or hand over when someone asks for "your
-  layout preset". A one-line note next to the `Everything` option at create
-  time, not a blocking prompt: the export gate stays where it is. _Added
-  2026-07-27._
-
 - [ ] **Nothing can create an `overview` container from nothing.** A document
   with no `overview` key — a pruned preset, or a genuinely fresh account — is a
   dead end: `overview_tabs::overview_mut` requires the key and returns
@@ -192,13 +181,6 @@ Workflow:
   reset of the aspect/target selection during a window where nothing is
   selectable yet — inert, but it means the reset effect now has a trigger no
   user action caused. _Added 2026-07-27._
-
-- [ ] **"Presets" now means two things in the UI.** The sidebar's new Presets
-  group (saved settings bundles) and the Overview view's presets (EVE's own
-  overview filter presets, which is CCP's own term and cannot be renamed) now
-  share a word. Context disambiguates today; if it confuses anyone, rename the
-  sidebar group to "Templates" — a label-only change, since every command and
-  type is already prefixed `settings_preset_*`. _Added 2026-07-27._
 
 - [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
   near-duplicate string readers that arrived from opposite sides of a merge:
@@ -595,11 +577,6 @@ Workflow:
   `derive()` smarter (pick a more meaningful segment, or fold in more context
   than the last one). _Added 2026-07-18._
 
-- [ ] **Extract the batch view's shared candidate filter+sort helper.**
-  `BatchView.svelte`'s `sourceOptions` and `candidates` deriveds repeat the same
-  `filter(folder-scope) → sort(byResolvedName)` chain; extract one `charsInScope`
-  derived and build both from it. Cosmetic. _Added 2026-07-18 (M5 review, minor M2)._
-
 - [ ] **Fill batch-apply edge-case tests.** `plan_setup`'s "account file missing
   from `user_paths`" exclusion branches (source and target), empty/duplicate
   `target_chars`, and the all-targets-on-the-source-account case, plus
@@ -676,6 +653,38 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Creating an `Everything` preset says nothing about what it captures.**
+  The privacy confirmation lived on *export* only (`PresetGroup.svelte`: "carries
+  everything the editor does not model, including your autofill history — station
+  names, searches and typed text"), which is the right place to guard sharing —
+  but the snapshot is taken at create time, and that is where the user picks
+  `Everything`. The create form now carries the same sentence as a plain note
+  under the checkbox list, not a blocking prompt; the export gate is unchanged.
+  It sits after the `{#each ASPECTS}` loop, which puts it under `Everything`
+  because that aspect is last in the list — noted in a comment there, since a
+  reorder would move it. Pinned by `PresetGroup.spec.ts`'s "the form says what
+  Everything captures", which is a *disclosure still exists* test rather than a
+  copy assertion (verified to fail with the note removed). _Added 2026-07-27;
+  done 2026-07-29._
+
+- [x] **"Presets" now means two things in the UI.** Closed with **no rename**.
+  The suggested fix was to relabel the sidebar group to "Templates" if the word
+  ever confused anyone; nobody has hit it, and the cost is real — `.evepreset`,
+  every `settings_preset_*` command and type, the docs and the changelog all say
+  preset, so the UI would be the only place using a different word. The two
+  meanings are also well separated in practice: the sidebar group is the only
+  named group in a list whose other entries are profile folders, and EVE's own
+  filter presets live inside the Overview view's Filters tab. Reopen if a user
+  actually confuses them. _Added 2026-07-27; closed 2026-07-29._
+
+- [x] **Extract the batch view's shared candidate filter+sort helper.** One
+  `charsInScope` derived now does the folder-scope filter and the
+  `byResolvedName` sort; the source dropdown uses it directly (`sourceOptions`
+  is gone) and `candidates` is that list minus the source character. The
+  redundant `.slice()` before each sort went too — `filter` already returns a
+  fresh array, so there was nothing to protect. _Added 2026-07-18 (M5 review,
+  minor M2); done 2026-07-29._
 
 - [x] **Decide what the Layout aspect should mean, then make it carry that.**
   `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
