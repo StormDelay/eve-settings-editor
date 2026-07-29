@@ -499,10 +499,12 @@ pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), Ov
     inline_all(v);
     let ov = overview_mut(v)?;
     // Read the mapping WITHOUT fabricating it (a windowless account has none).
+    // No mapping is not "you are down to your last window" — it is an account
+    // that never had per-window tabs, which is what NoWindowMapping says.
     let groups = ov.iter_mut()
         .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
         .and_then(|(_, wv)| list_inner_mut(wv))
-        .ok_or(OverviewTabError::LastWindow)?;
+        .ok_or(OverviewTabError::NoWindowMapping)?;
     let count = groups.len();
     if count <= 1 {
         return Err(OverviewTabError::LastWindow);
@@ -514,9 +516,15 @@ pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), Ov
         return Err(OverviewTabError::NotLastWindow { index: window_idx });
     }
     let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
-    if let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) {
-        w0.extend(removed);
-    }
+    // Rehome the tabs before dropping the window. If window 0 is not a list
+    // there is nowhere to put them, and continuing would delete them from every
+    // window at once — a tab that exists in `tabsettings_new` but appears in no
+    // window is invisible in-game. Refuse instead of silently dropping, which is
+    // what the `if let Some` this replaced did.
+    let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) else {
+        return Err(OverviewTabError::UnknownWindow { index: 0 });
+    };
+    w0.extend(removed);
     groups.remove(window_idx);
     Ok(())
 }
@@ -879,6 +887,40 @@ mod tests {
     }
 
     #[test]
+    fn remove_a_window_from_an_account_that_has_no_mapping_says_so() {
+        // Not "keep at least one window" — this account never had per-window
+        // tabs at all, which is a different thing to tell a user.
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), Value::Dict(vec![]))])])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        assert!(matches!(remove_overview_window(&mut v, 1), Err(OverviewTabError::NoWindowMapping)));
+    }
+
+    #[test]
+    fn remove_refuses_when_window_zero_cannot_take_the_tabs() {
+        // Window 0 holding a non-list is a shape no real file has, but the tabs
+        // of the removed window have to go SOMEWHERE — dropping them would hide
+        // them from every window while they still exist in tabsettings_new.
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(0), Value::Dict(vec![]))])])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::Tuple(vec![ts(), Value::List(vec![
+                 Value::Int(5),                          // window 0: not a list
+                 Value::List(vec![Value::Int(0)]),       // window 1: holds tab 0
+             ])])),
+        ]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)]);
+        assert!(matches!(
+            remove_overview_window(&mut v, 1),
+            Err(OverviewTabError::UnknownWindow { index: 0 })
+        ));
+        assert_eq!(window_indices(&v, 1), vec![0], "the window and its tab are still there");
+    }
+
+    #[test]
     fn remove_unknown_window_errors() {
         let mut v = user_two_windows(); // two windows, indices 0 and 1
         assert!(matches!(remove_overview_window(&mut v, 2), Err(OverviewTabError::UnknownWindow { index: 2 })));
@@ -990,6 +1032,23 @@ mod tests {
         for bad in ["no window layout", "missing", "damaged", "corrupt", "invalid"] {
             assert!(!msg.to_lowercase().contains(bad), "message still reads as damage ({bad}): {msg}");
         }
+    }
+
+    #[test]
+    fn set_tab_preset_adds_the_field_when_the_tab_has_none() {
+        // Every real tab carries `overview`, so this is the insert half of the
+        // find-or-push — untested until now, and the half that decides the key
+        // ENCODING for a tab that has never had one.
+        let mut v = user_with_tabs();
+        {
+            let Value::Dict(root) = &mut v else { panic!() };
+            let (_, ov) = root.iter_mut().find(|(k, _)| is_b(k, b"overview")).unwrap();
+            let tabs = tabs_mut(dict_inner_mut(ov).unwrap());
+            let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(0)).unwrap();
+            dict_inner_mut(tab).unwrap().retain(|(k, _)| !is_b(k, b"overview"));
+        }
+        set_tab_preset(&mut v, 0, "combat").unwrap();
+        assert_eq!(tab_preset(&v, 0), "combat");
     }
 
     #[test]
