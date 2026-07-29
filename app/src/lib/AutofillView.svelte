@@ -3,8 +3,11 @@
   import { labelFor } from "./autofill";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
 
-  let { userOpen, userId = null, onUserDirty, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
+  let { userOpen, userId = null, onUserDirty, charOpen = false, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+      /** A character file is open. Separate from `charName`, which stays null
+       * until the ESI name lookup resolves — offline, it never does. */
+      charOpen?: boolean;
       charName?: string | null; sharedLabel?: string; onShowAccounts?: () => void } = $props();
 
   let lists = $state<RememberedList[] | null>(null);
@@ -74,9 +77,13 @@
 </script>
 
 {#if !userOpen}
-  {#if charName}
+  {#if charOpen}
+    <!-- Keyed off the file being open, not off knowing whose it is: this used
+         to test `charName`, so a character whose name had not resolved (an
+         unnamed file, or any character at all with no ESI lookup) was told to
+         "open a character" while one was already open. -->
     <div class="hint pair">
-      <p>Link <strong>{charName}</strong> to an account to edit shared settings.</p>
+      <p>Link <strong>{charName ?? "this character"}</strong> to an account to edit shared settings.</p>
       <button onclick={onShowAccounts}>Pair…</button>
     </div>
   {:else}

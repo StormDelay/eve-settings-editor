@@ -37,9 +37,15 @@
   function doAdd() {
     const pick = addable.find((a) => a.id === addChoice);
     if (!pick) return;
-    addChoice = "";
     onAdd(pick.id, pick.btnType, pick.iconPath);
   }
+  // Clearing the pick inside `doAdd` threw it away before the command had run,
+  // so a failed add lost the user's choice and they had to find it again. The
+  // add itself is what clears it: a button that landed is no longer addable. A
+  // failure leaves the bar — and so the dropdown — exactly as it was.
+  $effect(() => {
+    if (addChoice !== "" && !addable.some((a) => a.id === addChoice)) addChoice = "";
+  });
 
   // The Tauri dialog, not the bare browser confirm() — titled and iconed like
   // every other destructive prompt in this app (OverviewView's deleteTab,
