@@ -320,20 +320,6 @@ const LIST_SECTIONS: [(&str, &[u8]); 6] = [
     ("overviewColumns", b"overviewColumns"),
 ];
 
-/// The `userSettings` names this build understands, paired with the file key.
-/// Packs also carry names with no key on current files (`applyOnlyToShips`, an
-/// older single toggle that became `applyToStructures`/`applyToOtherObjects`);
-/// those are IGNORED rather than minted, and `set_overview_bool`'s allow-list is
-/// the backstop.
-const USER_SETTINGS: [(&str, &str); 6] = [
-    ("applyToStructures", "applyToStructures"),
-    ("applyToOtherObjects", "applyToOtherObjects"),
-    ("useSmallColorTags", "useSmallColorTags"),
-    ("useSmallText", "useSmallText"),
-    ("overviewBroadcastsToTop", "overviewBroadcastsToTop"),
-    ("hideCorpTicker", "hideCorpTicker"),
-];
-
 /// What an import did, for the UI's summary line.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PackReport {
@@ -483,14 +469,17 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
         report.applied.push("shipLabels".to_string());
     }
 
+    // A pack's `userSettings` name IS the file key — every name EVE writes is
+    // one of `OVERVIEW_BOOLS`. Packs also carry names with no key on current
+    // files (`applyOnlyToShips`, an older single toggle that became
+    // `applyToStructures`/`applyToOtherObjects`, confirmed absent in-game
+    // 2026-07-27); those are ignored rather than minted, and
+    // `set_overview_bool`'s allow-list is the backstop.
     if let Some(node) = pack.get("userSettings") {
         for (k, val) in pairs(node) {
             let (Some(name), Node::Bool(on)) = (as_str(k), val) else { continue };
-            match USER_SETTINGS.iter().find(|(pack_name, _)| *pack_name == name) {
-                Some((_, file_key)) => {
-                    debug_assert!(OVERVIEW_BOOLS.contains(file_key));
-                    writes.push((file_key.as_bytes(), Value::Bool(*on)));
-                }
+            match OVERVIEW_BOOLS.iter().copied().find(|key| *key == name) {
+                Some(file_key) => writes.push((file_key.as_bytes(), Value::Bool(*on))),
                 None => report.warnings.push(format!("ignored unknown setting '{name}'")),
             }
         }
@@ -840,12 +829,12 @@ pub fn read_pack(v: &Value) -> (Pack, Vec<String>) {
     }
 
     // userSettings
-    let settings: Vec<Node> = USER_SETTINGS
+    let settings: Vec<Node> = OVERVIEW_BOOLS
         .iter()
-        .filter_map(|(pack_name, file_key)| {
-            let raw = find(ov, file_key.as_bytes(), &sh)?;
+        .filter_map(|key| {
+            let raw = find(ov, key.as_bytes(), &sh)?;
             let Value::Bool(on) = unwrapped(raw, &sh) else { return None };
-            Some(Node::Seq(vec![Node::Str(pack_name.to_string()), Node::Bool(*on)]))
+            Some(Node::Seq(vec![Node::Str((*key).to_string()), Node::Bool(*on)]))
         })
         .collect();
     if !settings.is_empty() {
