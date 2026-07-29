@@ -8,7 +8,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{inline_all, Entries};
+use crate::treewalk::{inline_all, key_is, Entries};
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -211,7 +211,7 @@ fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
 /// (unicode-safe `StrUcs2`) if the tab has none. The name KEY may itself be a
 /// string-table token (`StrTable(52)`); we match it the same way the reader does.
 fn set_name(fields: &mut Entries, name: &str) {
-    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| key_is_name(k)) {
+    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| key_is(k, "name")) {
         *val = match val {
             Value::Bytes(_) => Value::Bytes(name.as_bytes().to_vec()),
             Value::Str(_) => Value::Str(name.to_string()),
@@ -220,17 +220,6 @@ fn set_name(fields: &mut Entries, name: &str) {
         return;
     }
     fields.push((Value::Str("name".into()), Value::StrUcs2(name.to_string())));
-}
-
-/// True if a dict key is the tab-name key, whether stored as `Str("name")`,
-/// `Bytes("name")`, or the string-table token `StrTable(52)` real files use.
-fn key_is_name(k: &Value) -> bool {
-    match k {
-        Value::Str(s) => s == "name",
-        Value::Bytes(b) => b.as_slice() == b"name",
-        Value::StrTable(52) => true,
-        _ => false,
-    }
 }
 
 /// How many overview windows the account's `tabsByWindowInstanceID` maps tabs to
