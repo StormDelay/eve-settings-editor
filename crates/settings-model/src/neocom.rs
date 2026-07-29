@@ -156,14 +156,10 @@ fn bar_list_mut(v: &mut Value) -> Result<&mut Vec<Value>, NeocomError> {
     };
     match payload {
         Value::List(l) => Ok(l),
-        // A Tuple-stored bar is not a shape the corpus has, but the reset path
-        // below guarantees a List, so normalize rather than fail.
-        Value::Tuple(t) => {
-            let items = std::mem::take(t);
-            *payload = Value::List(items);
-            let Value::List(l) = payload else { unreachable!() };
-            Ok(l)
-        }
+        // A Tuple payload used to be rewritten into a List here. No corpus file
+        // stores the bar that way, `reset` always writes a List, and the branch
+        // also caught a (timestamp, payload) wrapper of an unexpected LENGTH —
+        // silently flattening the wrapper itself. Refusing is the safer failure.
         _ => Err(NeocomError::NoBar),
     }
 }
