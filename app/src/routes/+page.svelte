@@ -535,6 +535,7 @@
           <AutofillView
             userOpen={slots.user?.status === "opened"}
             userId={openUserId}
+            charOpen={slots.char?.status === "opened"}
             charName={openCharName}
             sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
