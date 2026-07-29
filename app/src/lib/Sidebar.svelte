@@ -55,6 +55,17 @@
       .sort((a, b) => Number(b.primary) - Number(a.primary));
   });
 
+  // Mirrors the per-row filter below: a profile with no character file renders
+  // no header at all (its account files are reachable via "Open file..."), so
+  // when EVERY profile is in that state the sidebar came up blank with nothing
+  // saying why. The filter lives in the template because each row needs its own
+  // sorted list; this only needs to know whether any row will draw.
+  const anyCharVisible = $derived(
+    profiles.some((p) =>
+      p.files.some((f) => f.kind === "char" && (!hideNonStandard || isStandardName(f.file_name))),
+    ),
+  );
+
   const charIds = (ps: Profile[]) =>
     ps
       .flatMap((p) => p.files)
@@ -127,6 +138,12 @@
   {#if error}<p class="error">{error}</p>{/if}
   {#if profiles.length === 0}
     <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
+  {:else if !anyCharVisible}
+    <p class="hint">
+      {hideNonStandard
+        ? "No character files with EVE's own names in these profiles. Untick “Hide non-standard files”, or use “Open file…”."
+        : "These profiles hold no character files. Use “Open file…” to open an account file directly."}
+    </p>
   {/if}
   <PresetGroup {onOpenPreset} {charOpen} {userOpen} {openPresetName} />
   {#each rows as { p, label, primary } (p.dir)}
