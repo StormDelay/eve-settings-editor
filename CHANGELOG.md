@@ -25,6 +25,20 @@ All notable changes to this project are documented here. The format follows
   default rather than keeping its own value, which is what makes the two
   characters actually match.
 
+### Fixed
+- **An unnamed character can be paired from the Autofill view.** The "link this
+  character to an account" prompt only appeared once the character's name had
+  been fetched, so with names unresolved — offline, or never refreshed — the
+  view told you to open a character while one was already open. It now offers
+  pairing for whatever character is open and says "this character" when the name
+  is unknown.
+- **A failed neocom add keeps your choice.** The dropdown was cleared before the
+  command ran, so an error left you hunting for the button again.
+- **A batch selection made in the first moment after opening the view survives.**
+  The aspect checkboxes render as soon as a source is known, but the profile
+  folder arrives a beat later, and its arrival was wiping anything already
+  ticked.
+
 ### Internal
 A backend sweep of small-tasks-ledger debt. Nothing here changes what the editor
 reads or writes on any real settings file; each item removes a way for it to go
