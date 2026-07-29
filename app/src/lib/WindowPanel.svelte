@@ -123,9 +123,15 @@
 
   const COORDS = ["x", "y", "w", "h"] as const;
 
+  // Resync the field with the model on every commit — see HudPanel's copy of
+  // this note. Svelte patches `value` only when the expression changes, so a
+  // rejected edit (blank, "abc", or one the backend refuses) used to leave the
+  // typed text on screen next to geometry that never moved.
   const numberEdit = (w: WindowRect, field: "x" | "y" | "w" | "h") => (e: Event) => {
-    const v = parseInt((e.target as HTMLInputElement).value, 10);
+    const el = e.target as HTMLInputElement;
+    const v = parseInt(el.value, 10);
     if (!Number.isNaN(v)) onGeom(w, field, v);
+    el.value = String(w.geom![field]);
   };
 
   // Bring a row into view when it becomes selected — a canvas click can select
