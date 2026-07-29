@@ -405,8 +405,14 @@ pub fn export_to(app_data: &Path, name: &str, out: &Path) -> Result<(), String> 
 /// under, which may be suffixed if the original was taken.
 pub fn import_from(app_data: &Path, file: &Path) -> Result<String, String> {
     let raw = std::fs::read(file).map_err(|e| e.to_string())?;
-    let decoded = blue_marshal::decode(&raw)
-        .map_err(|_| "That file is not a preset file.".to_string())?;
+    // `inline` first: our own exporter writes plain values, but a preset file is
+    // an untrusted document, and a canonically-shared one (two identical sides,
+    // say) carries the second as a `Ref`. `bytes_field` matches bare `Bytes`, so
+    // without this such a file was rejected as "missing its account side" —
+    // failing closed on a shape that is perfectly valid marshal.
+    let decoded = blue_marshal::inline(
+        &blue_marshal::decode(&raw).map_err(|_| "That file is not a preset file.".to_string())?,
+    );
     let Value::Dict(root) = &decoded else {
         return Err("That file is not a preset file.".into());
     };
@@ -444,12 +450,30 @@ pub fn import_from(app_data: &Path, file: &Path) -> Result<String, String> {
     }
     let dir = preset_path(app_data, &name).map_err(|e| e.0)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating the preset failed: {e}"))?;
-    std::fs::write(dir.join(CHAR_FILE), char_bytes).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(USER_FILE), user_bytes).map_err(|e| e.to_string())?;
-    if full {
-        std::fs::write(dir.join(MARKER_FILE), br#"{"full":true}"#).map_err(|e| e.to_string())?;
-    }
+    write_sides(&dir, char_bytes, user_bytes, full)?;
     Ok(name)
+}
+
+/// Write both documents (and the full marker) into an imported preset's folder,
+/// removing the folder if any write fails.
+///
+/// The two sides are two writes, so an I/O failure between them leaves a folder
+/// holding one document. `list()` needs both before a folder counts as a preset,
+/// so a half one stays invisible rather than half-usable — but invisible junk
+/// still accumulates in the library directory, and the next import of the same
+/// name would suffix itself around it.
+fn write_sides(dir: &Path, char_bytes: &[u8], user_bytes: &[u8], full: bool) -> Result<(), String> {
+    let write = |file: &str, bytes: &[u8]| -> Result<(), String> {
+        std::fs::write(dir.join(file), bytes).map_err(|e| e.to_string())
+    };
+    let written = write(CHAR_FILE, char_bytes)
+        .and_then(|_| write(USER_FILE, user_bytes))
+        .and_then(|_| if full { write(MARKER_FILE, br#"{"full":true}"#) } else { Ok(()) });
+    if let Err(e) = written {
+        let _ = std::fs::remove_dir_all(dir);
+        return Err(e);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -971,6 +995,70 @@ mod tests {
         let landed = import_from(&data, &bundle).unwrap();
         assert_eq!(landed, "Same (2)");
         assert!(preset_path(&data, "Same (2)").unwrap().is_dir());
+    }
+
+    #[test]
+    fn a_failed_side_write_leaves_no_half_folder_behind() {
+        // `write_sides` is exercised directly because `import_from` cannot be
+        // steered into this state from outside: anything pre-placed at the target
+        // path makes the dedup loop skip past it. A DIRECTORY where
+        // core_user.dat belongs is a write no fs::write can complete, and the
+        // character side has already landed by then.
+        let data = temp_data("half-folder");
+        let dir = data.join("Half");
+        std::fs::create_dir_all(dir.join(USER_FILE)).unwrap();
+        assert!(write_sides(&dir, b"char", b"user", false).is_err(), "the second write must fail");
+        assert!(!dir.exists(), "the half-written folder is removed, not left behind");
+    }
+
+    #[test]
+    fn import_reads_a_preset_file_whose_sides_are_shared() {
+        // Two identical sides dedup to Shared + Ref under the canonical
+        // encoder. Nothing we write looks like this, but it is valid marshal a
+        // third-party tool could produce, and it used to be rejected as
+        // "missing its account side".
+        fn has_ref(v: &Value) -> bool {
+            match v {
+                Value::Ref(_) => true,
+                Value::Dict(es) => es.iter().any(|(k, val)| has_ref(k) || has_ref(val)),
+                _ => false,
+            }
+        }
+        let data = temp_data("import-shared");
+        let side = blue_marshal::encode(&Value::Dict(vec![(b("windows"), Value::Dict(vec![]))])).unwrap();
+        let bundle = blue_marshal::reshare(&Value::Dict(vec![
+            (b("preset"), b("Shared sides")),
+            (b("char"), Value::Bytes(side.clone())),
+            (b("user"), Value::Bytes(side)),
+            (b("full"), Value::Bool(false)),
+        ]));
+        assert!(has_ref(&bundle), "fixture must really carry a Ref, or it proves nothing");
+        let p = data.join("shared.evepreset");
+        std::fs::write(&p, blue_marshal::encode(&bundle).unwrap()).unwrap();
+
+        assert_eq!(import_from(&data, &p).unwrap(), "Shared sides");
+        let dir = preset_path(&data, "Shared sides").unwrap();
+        assert!(dir.join(CHAR_FILE).is_file() && dir.join(USER_FILE).is_file());
+    }
+
+    #[test]
+    fn import_of_a_max_length_name_that_is_taken_refuses_rather_than_overruns() {
+        // A 100-character name is legal, but " (2)" pushes the deduped one to
+        // 104 — `preset_path` re-validates, so this errors instead of writing a
+        // folder whose name the app would then refuse to open. The message is
+        // about length, which reads oddly for an import; deliberately left as
+        // is. Truncating the base to make room is more machinery than a case
+        // this narrow earns, and silently shortening a user's name is its own
+        // surprise.
+        let data = temp_data("dupe-at-limit");
+        let long = "n".repeat(100);
+        make(&data, &long, &[Aspect::Layout]);
+        let bundle = data.join("long.evepreset");
+        export_to(&data, &long, &bundle).unwrap();
+        let err = import_from(&data, &bundle).unwrap_err();
+        assert!(err.contains("100 characters"), "got: {err}");
+        // And nothing half-written: the original is untouched and alone.
+        assert_eq!(list(&data).len(), 1, "no second folder appeared");
     }
 
     #[test]
