@@ -176,6 +176,10 @@
           {a.label}
         </label>
       {/each}
+      <!-- Sits under the Everything checkbox, which is last in ASPECTS. The
+           export confirm guards SHARING a full preset; this guards choosing to
+           capture one, which is the moment the history gets snapshotted. -->
+      <p class="hint">Everything copies both settings files whole, including your autofill history — station names, searches and typed text.</p>
       <div class="actions">
         <button type="submit" disabled={busy || !newName.trim() || picked.size === 0}>Save</button>
         <button type="button" onclick={() => (creating = false)}>Cancel</button>
