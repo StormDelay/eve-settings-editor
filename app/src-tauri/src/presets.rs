@@ -450,12 +450,30 @@ pub fn import_from(app_data: &Path, file: &Path) -> Result<String, String> {
     }
     let dir = preset_path(app_data, &name).map_err(|e| e.0)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating the preset failed: {e}"))?;
-    std::fs::write(dir.join(CHAR_FILE), char_bytes).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(USER_FILE), user_bytes).map_err(|e| e.to_string())?;
-    if full {
-        std::fs::write(dir.join(MARKER_FILE), br#"{"full":true}"#).map_err(|e| e.to_string())?;
-    }
+    write_sides(&dir, char_bytes, user_bytes, full)?;
     Ok(name)
+}
+
+/// Write both documents (and the full marker) into an imported preset's folder,
+/// removing the folder if any write fails.
+///
+/// The two sides are two writes, so an I/O failure between them leaves a folder
+/// holding one document. `list()` needs both before a folder counts as a preset,
+/// so a half one stays invisible rather than half-usable — but invisible junk
+/// still accumulates in the library directory, and the next import of the same
+/// name would suffix itself around it.
+fn write_sides(dir: &Path, char_bytes: &[u8], user_bytes: &[u8], full: bool) -> Result<(), String> {
+    let write = |file: &str, bytes: &[u8]| -> Result<(), String> {
+        std::fs::write(dir.join(file), bytes).map_err(|e| e.to_string())
+    };
+    let written = write(CHAR_FILE, char_bytes)
+        .and_then(|_| write(USER_FILE, user_bytes))
+        .and_then(|_| if full { write(MARKER_FILE, br#"{"full":true}"#) } else { Ok(()) });
+    if let Err(e) = written {
+        let _ = std::fs::remove_dir_all(dir);
+        return Err(e);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -977,6 +995,20 @@ mod tests {
         let landed = import_from(&data, &bundle).unwrap();
         assert_eq!(landed, "Same (2)");
         assert!(preset_path(&data, "Same (2)").unwrap().is_dir());
+    }
+
+    #[test]
+    fn a_failed_side_write_leaves_no_half_folder_behind() {
+        // `write_sides` is exercised directly because `import_from` cannot be
+        // steered into this state from outside: anything pre-placed at the target
+        // path makes the dedup loop skip past it. A DIRECTORY where
+        // core_user.dat belongs is a write no fs::write can complete, and the
+        // character side has already landed by then.
+        let data = temp_data("half-folder");
+        let dir = data.join("Half");
+        std::fs::create_dir_all(dir.join(USER_FILE)).unwrap();
+        assert!(write_sides(&dir, b"char", b"user", false).is_err(), "the second write must fail");
+        assert!(!dir.exists(), "the half-written folder is removed, not left behind");
     }
 
     #[test]
