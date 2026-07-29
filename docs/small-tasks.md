@@ -348,37 +348,6 @@ Workflow:
   pack whole-branch review)._
   **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
-- [ ] **Overview-pack follow-ups (whole-branch review, all ship-as-debt).**
-  Non-blocking minors from the import/export packs branch: (1) ~~`PackError::NotAPack`
-  is reused for "`shipLabelOrder` is not a sequence"~~ — **done 2026-07-29**: it has
-  its own `BadSection { name }` variant, which names the section and the shape it
-  should have; (2) a pack carrying only one of the two ship-label
-  sections applies neither, silently (real packs always carry both); (3)
-  `USER_SETTINGS` in `overview_pack.rs` is an exact identity map of `OVERVIEW_BOOLS`
-  and exists only to be policed by a `debug_assert!` — collapse it unless the live
-  smoke shows `applyOnlyToShips` really needs a mapping table; (4) `SECTIONS`,
-  `color_rgba` and `color_name` are re-exported at the crate root but used nowhere
-  outside `overview_pack.rs`; (5) `read_pack` returns `(Pack, Vec<String>)` while
-  `apply_pack` returns a `PackReport` — two shapes for the same "warnings" concept,
-  and `ops::pack_export` hand-assembles a `PackReport` whose `applied` field really
-  means "exported"; (6) a pre-existing cross-secondary duplicate index in
-  `tabsByWindowInstanceID` survives an import — the fix only stops window 0 from
-  also claiming it (no corpus account has this corruption); (7) preset field values
-  go through `ints()` unconditionally, so an unrecognised preset field would become
-  `[]` rather than being dropped or reported (no corpus preset has one). _Added
-  2026-07-26._
-  **(3) and (4) are now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
-  `USER_SETTINGS` is deleted (the live smoke settled `applyOnlyToShips` — no such
-  key on current clients — so the mapping table it was held open for was never
-  going to be needed), and both sides now read `OVERVIEW_BOOLS` directly, which
-  also stops the pack reader drifting from `set_overview_bool`'s allow-list. The
-  three unused re-exports are gone from `lib.rs`. Items (1), (2), (5), (6) and (7)
-  remain open.
-
- **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
-  `create_preset` resolves the source blob before checking the target name, so a
-  typo'd source no longer reports "that name is taken". The rest remain open.
-
 - [ ] **Per-environment canvas views (in space / NPC station / player structure).**
   A player's screen differs by environment, and the canvas currently mixes all of
   them into one picture — which is part of why it shows far more windows than are
@@ -490,15 +459,23 @@ Workflow:
   `ops::tab_create` projects the overview twice (once for the preset copy, once in
   `edit_user_tabs`) — harmless on tiny trees; (4) ~~the UI's new-tab selection uses
   `Math.max(...tabs.index)`~~ — **done 2026-07-29**: it diffs the index set
-  against the one it had, so it no longer assumes `max+1` allocation; (5) can't create a tab in an empty (zero-tab) overview
-  window (the New-tab target derives from the selected tab's window); (6) ~~a few
+  against the one it had, so it no longer assumes `max+1` allocation; (5) ~~can't create a tab in an empty (zero-tab) overview
+  window~~ — **closed 2026-07-30 with no change.** The window is not hidden (its
+  optgroup still renders, empty), and the way back is the "Move to window…"
+  control, which lists every window including the empty one: create the tab
+  anywhere and move it. Wiring a second target picker into the New button for a
+  state only reachable by moving a window's last tab out is more UI than the case
+  earns; (6) ~~a few
   trivial untested branches~~ — **done 2026-07-29**: `delete_tab`'s own
   `UnknownTab` path (with two tabs present, so `LastTab` cannot be what refuses
   it), `move_tab`'s (closed by the backend sweep), and that a created tab
   inherits its sibling's preset, next to the bracket and colour assertions; (7) the tab-management **UI/UX is rough**
   (flagged during the live smoke) — defer the polish/rework to the later
   overview-depth slices (filter presets / colors / add-remove windows), which will
-  touch this same Overview view anyway. **(Item (3) tab_create double-project is
+  touch this same Overview view anyway. **Note 2026-07-30: all three of those
+  slices have since shipped**, so this is no longer waiting on anything — it needs
+  a fresh look at the view as it stands now, and re-filing as its own entry with
+  whatever is actually still rough. **(Item (3) tab_create double-project is
   now RESOLVED — the tab-fix branch made create clone by index with no preset
   lookup.)** _Added 2026-07-19._
   **(1) and (2) are now RESOLVED — closed by the 2026-07-29 backend debt sweep.**
@@ -586,6 +563,34 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Overview-pack follow-ups — all seven closed.** (1)(3)(4) were done in the
+  2026-07-29 sweeps: `BadSection { name }` replaced the reused `NotAPack`,
+  `USER_SETTINGS` is gone (the live smoke settled `applyOnlyToShips` — no such key
+  on current clients), and the three unused crate-root re-exports with it. Done
+  2026-07-30:
+  - **(2) half a ship-label pair applied nothing, silently.** The labels are
+    rebuilt from the order list plus the name-keyed bodies, so a pack carrying one
+    without the other can do nothing at all — it now says so.
+  - **(7) a preset field that is not a list of numbers was written as `[]`.**
+    `ints()` returns an empty vec for any other shape, so the account read "this
+    setting is empty" from a pack that never said that. Such a field is reported
+    and skipped now, leaving the account's own value alone; an empty list still
+    means an empty list.
+  - **(5) the export's report is `PackReport::exported`** rather than hand-built
+    at the call site, where `applied` read as a claim about the account instead of
+    about the file just written. `read_pack` keeps returning its warnings bare,
+    documented: a read has nothing to report as applied.
+
+  **(6) is closed with no change:** a pre-existing cross-secondary duplicate index
+  in `tabsByWindowInstanceID` surviving an import. No corpus account has that
+  corruption, the key is not expressible in a pack at all (confirmed 2026-07-28 —
+  EVE's own importer deletes it), and repairing damage a pack cannot describe is
+  not the importer's job. _Added 2026-07-26; done 2026-07-30._
+
+  (A paragraph about `create_preset`'s guard order had been appended to this
+  bundle by mistake; it belongs to the slice-2a entry above, which already records
+  it, and was dropped here rather than duplicated.)
 
 - [x] **Profile the reshare (deduplication) pass.** Measured 2026-07-30 on the
   largest real account files (~390 KB), release build: decode 3 ms, inline 3 ms,
