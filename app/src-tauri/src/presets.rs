@@ -405,8 +405,14 @@ pub fn export_to(app_data: &Path, name: &str, out: &Path) -> Result<(), String> 
 /// under, which may be suffixed if the original was taken.
 pub fn import_from(app_data: &Path, file: &Path) -> Result<String, String> {
     let raw = std::fs::read(file).map_err(|e| e.to_string())?;
-    let decoded = blue_marshal::decode(&raw)
-        .map_err(|_| "That file is not a preset file.".to_string())?;
+    // `inline` first: our own exporter writes plain values, but a preset file is
+    // an untrusted document, and a canonically-shared one (two identical sides,
+    // say) carries the second as a `Ref`. `bytes_field` matches bare `Bytes`, so
+    // without this such a file was rejected as "missing its account side" —
+    // failing closed on a shape that is perfectly valid marshal.
+    let decoded = blue_marshal::inline(
+        &blue_marshal::decode(&raw).map_err(|_| "That file is not a preset file.".to_string())?,
+    );
     let Value::Dict(root) = &decoded else {
         return Err("That file is not a preset file.".into());
     };
@@ -971,6 +977,56 @@ mod tests {
         let landed = import_from(&data, &bundle).unwrap();
         assert_eq!(landed, "Same (2)");
         assert!(preset_path(&data, "Same (2)").unwrap().is_dir());
+    }
+
+    #[test]
+    fn import_reads_a_preset_file_whose_sides_are_shared() {
+        // Two identical sides dedup to Shared + Ref under the canonical
+        // encoder. Nothing we write looks like this, but it is valid marshal a
+        // third-party tool could produce, and it used to be rejected as
+        // "missing its account side".
+        fn has_ref(v: &Value) -> bool {
+            match v {
+                Value::Ref(_) => true,
+                Value::Dict(es) => es.iter().any(|(k, val)| has_ref(k) || has_ref(val)),
+                _ => false,
+            }
+        }
+        let data = temp_data("import-shared");
+        let side = blue_marshal::encode(&Value::Dict(vec![(b("windows"), Value::Dict(vec![]))])).unwrap();
+        let bundle = blue_marshal::reshare(&Value::Dict(vec![
+            (b("preset"), b("Shared sides")),
+            (b("char"), Value::Bytes(side.clone())),
+            (b("user"), Value::Bytes(side)),
+            (b("full"), Value::Bool(false)),
+        ]));
+        assert!(has_ref(&bundle), "fixture must really carry a Ref, or it proves nothing");
+        let p = data.join("shared.evepreset");
+        std::fs::write(&p, blue_marshal::encode(&bundle).unwrap()).unwrap();
+
+        assert_eq!(import_from(&data, &p).unwrap(), "Shared sides");
+        let dir = preset_path(&data, "Shared sides").unwrap();
+        assert!(dir.join(CHAR_FILE).is_file() && dir.join(USER_FILE).is_file());
+    }
+
+    #[test]
+    fn import_of_a_max_length_name_that_is_taken_refuses_rather_than_overruns() {
+        // A 100-character name is legal, but " (2)" pushes the deduped one to
+        // 104 — `preset_path` re-validates, so this errors instead of writing a
+        // folder whose name the app would then refuse to open. The message is
+        // about length, which reads oddly for an import; deliberately left as
+        // is. Truncating the base to make room is more machinery than a case
+        // this narrow earns, and silently shortening a user's name is its own
+        // surprise.
+        let data = temp_data("dupe-at-limit");
+        let long = "n".repeat(100);
+        make(&data, &long, &[Aspect::Layout]);
+        let bundle = data.join("long.evepreset");
+        export_to(&data, &long, &bundle).unwrap();
+        let err = import_from(&data, &bundle).unwrap_err();
+        assert!(err.contains("100 characters"), "got: {err}");
+        // And nothing half-written: the original is untouched and alone.
+        assert_eq!(list(&data).len(), 1, "no second folder appeared");
     }
 
     #[test]
