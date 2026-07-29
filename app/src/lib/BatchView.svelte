@@ -67,7 +67,7 @@
 
   // Aspects. "Everything" is exclusive.
   const ASPECTS: { key: Aspect; label: string; account: boolean }[] = [
-    { key: "layout", label: "Window layout (positions, neocom, ship HUD — not the fighter panel or badge)", account: false },
+    { key: "layout", label: "Window layout (positions, neocom, ship HUD, fighter panel, badge)", account: true },
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
     { key: "keybinds", label: "Keybindings", account: true },
@@ -163,6 +163,10 @@
   const changedAspectNames = $derived(
     ASPECTS.filter((a) => a.account && a.key !== "everything" && selected.has(a.key)).map((a) => a.label),
   );
+  // Window layout is the only aspect that can REMOVE a value: a HUD field the
+  // source leaves at EVE's default is deleted from the target so it falls back
+  // to that same default. Every other aspect only ever overwrites.
+  const resetsToDefaults = $derived(selected.has("layout"));
 
   const nameOfChar = (id: number | null, fileName: string) =>
     id == null ? fileName : (resolvedName("char", id) ?? `char ${id}`);
@@ -310,7 +314,7 @@
               further, or your next save will collide with what this wrote.</p>
           {/if}
           {#each plan.account_writes as w}
-            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
+            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}
           {#each plan.excluded as ex}
             <p class="muted">Excluded {nameOfChar(ex.char_id, `char ${ex.char_id}`)} — {ex.reason}</p>
