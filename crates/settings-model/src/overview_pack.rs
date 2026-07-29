@@ -337,6 +337,20 @@ pub struct PackReport {
     pub warnings: Vec<String>,
 }
 
+impl PackReport {
+    /// The same report for the other direction: `applied` names the sections
+    /// WRITTEN OUT. One struct so the UI renders one shape, but an export used
+    /// to hand-assemble it at the call site, where "applied" read as a claim
+    /// about the account rather than about the file. `read_pack` returns its
+    /// warnings bare, because a read has nothing to report as applied.
+    pub fn exported(pack: &Pack, warnings: Vec<String>) -> Self {
+        PackReport {
+            applied: pack.sections.iter().map(|(name, _)| name.clone()).collect(),
+            warnings,
+        }
+    }
+}
+
 /// Wrap a value in the `(timestamp, value)` shape EVE uses, minting a zero
 /// timestamp like the rest of the crate. Reuses the existing wrapper when the
 /// key is already present so an existing timestamp survives.
@@ -477,6 +491,14 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
         }
         writes.push((b"shipLabels", Value::List(list)));
         report.applied.push("shipLabels".to_string());
+    } else if pack.get("shipLabelOrder").is_some() || pack.get("shipLabels").is_some() {
+        // The labels are rebuilt from the order list plus the name-keyed bodies,
+        // so one without the other applies nothing. Real packs always carry both;
+        // a half one used to be dropped in silence.
+        report.warnings.push(
+            "ignored the ship labels: rebuilding them needs both 'shipLabelOrder' and 'shipLabels'"
+                .to_string(),
+        );
     }
 
     // A pack's `userSettings` name IS the file key — every name EVE writes is
@@ -514,7 +536,27 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
                 let fields: Entries = pairs(body)
                     .into_iter()
                     .filter_map(|(k, val)| {
-                        let key = Value::Bytes(as_str(k)?.as_bytes().to_vec());
+                        let field = as_str(k)?;
+                        // Every preset field the format has is a list of ints, and
+                        // `ints` silently returns an empty vec for anything else —
+                        // so a field of another shape used to be WRITTEN as an
+                        // empty list, telling the client "this setting is empty"
+                        // from a pack that never said so. Report it and leave the
+                        // account's own value alone. An empty list stays an empty
+                        // list: that is a real instruction.
+                        let Node::Seq(items) = val else {
+                            report.warnings.push(format!(
+                                "ignored preset field '{field}' of '{name}': expected a list of numbers"
+                            ));
+                            return None;
+                        };
+                        if items.iter().any(|i| !matches!(i, Node::Int(_))) {
+                            report.warnings.push(format!(
+                                "ignored preset field '{field}' of '{name}': not every entry is a number"
+                            ));
+                            return None;
+                        }
+                        let key = Value::Bytes(field.as_bytes().to_vec());
                         Some((key, Value::List(ints(val).into_iter().map(Value::Int).collect())))
                     })
                     .collect();
@@ -1320,6 +1362,60 @@ userSettings:
     /// This used to assert the opposite on the strength of a comment, with a
     /// fixture that seeded a bare list, so it passed while every real import
     /// stripped the wrapper off both column keys.
+    #[test]
+    fn half_a_ship_label_pair_is_reported_not_swallowed() {
+        // The labels are rebuilt from the order list plus the name-keyed bodies,
+        // so a pack carrying one without the other can apply nothing at all.
+        let mut doc = user_doc();
+        let pack = parse_pack("shipLabels:
+- - hull
+  - - - state
+      - 1
+").unwrap();
+        let report = apply_pack(&mut doc, &pack).unwrap();
+        assert!(!report.applied.iter().any(|s| s == "shipLabels"), "nothing was applied");
+        assert!(
+            report.warnings.iter().any(|w| w.contains("shipLabelOrder") && w.contains("shipLabels")),
+            "the user is told why: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn a_preset_field_that_is_not_a_list_is_reported_not_emptied() {
+        // `ints` returns an empty vec for anything that is not a list of ints, so
+        // this field used to be WRITTEN as [] — the account then reads "empty"
+        // from a pack that never said so.
+        let mut doc = user_doc();
+        // The published shape: a preset body is a sequence of [key, value]
+        // pairs. `groups` here is a bare number where a list belongs.
+        let pack = parse_pack("presets:
+- - Friendly
+  - - - groups
+      - 25
+").unwrap();
+        let report = apply_pack(&mut doc, &pack).unwrap();
+        assert!(
+            report.warnings.iter().any(|w| w.contains("groups") && w.contains("Friendly")),
+            "the dropped field is named: {:?}",
+            report.warnings
+        );
+        // The preset was still written (the pack defines it) — but with no
+        // `groups` key, rather than an empty one.
+        let Value::Dict(root) = &doc else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, p) = ovd.iter().find(|(k, _)| is_b(k, b"overviewProfilePresets")).unwrap();
+        let Value::Tuple(items) = p else { panic!() };
+        let Value::Dict(pd) = &items[1] else { panic!() };
+        let (_, friendly) = pd.iter().find(|(k, _)| is_b(k, b"Friendly")).unwrap();
+        let Value::Dict(fields) = friendly else { panic!() };
+        assert!(
+            !fields.iter().any(|(k, _)| is_b(k, b"groups")),
+            "the malformed field is absent, not present-and-empty: {fields:?}"
+        );
+    }
+
     #[test]
     fn apply_pack_wraps_every_list_section() {
         let mut doc = user_doc();
