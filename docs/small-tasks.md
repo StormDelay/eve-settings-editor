@@ -100,10 +100,10 @@ Workflow:
   Non-blocking minors from the layout-depth milestone's final slice (the neocom
   button editor): (1) `reorder` reassembles the bar via `clone()` rather than a
   true move — bars are ≤24 tiny entries, so this buys nothing measurable; (2)
-  the `Tuple`-payload normalize branch in `neocom.rs`'s `bar_list_mut` is
-  unreachable defensive code that silently rewrites shape instead of erroring —
-  the next person in that function should delete it and let the `_ =>
-  Err(NoBar)` arm handle it; (3) no `ops.rs`-level tests for the new wiring
+~~the `Tuple`-payload normalize branch in `neocom.rs`'s `bar_list_mut`~~ —
+  **done 2026-07-29**: deleted, so `_ => Err(NoBar)` handles it. It also caught a
+  `(timestamp, payload)` wrapper of an unexpected LENGTH and flattened the
+  wrapper itself, which is worse than refusing; (3) no `ops.rs`-level tests for the new wiring
   (no-document / read-only / happy path), unlike the sibling `stack_*` and
   `hud_layout` cases — the thing genuinely untested there is the Tauri
   camelCase↔snake_case argument binding, which only the live smoke exercises;
@@ -173,6 +173,15 @@ Workflow:
   (8) `read_side`'s unreachable
   `None` arm returns a developer-ese message ("no file for this side") that
   would reach a user toast if it ever became reachable.
+  **(5), (7) and (8) are now RESOLVED — done 2026-07-29:** `SourceSides.char_path`
+  is a plain `PathBuf` (it was populated in both `resolve_source` branches), which
+  deletes the dead `None` arm and the dead `if let Some`; the account side stays
+  optional and its refusal message is now worded for a user. Both `Everything`-refusal
+  tests now pair their target to an account with a real `core_user_*.dat`, so the
+  "target untouched" assertions are load-bearing — with both source guards
+  neutralised they fail, where before they passed — and each also asserts the
+  account file is untouched, plus the pruned-preset guard's MESSAGE rather than only
+  its shared `code`.
   Batch view (`BatchView.svelte`): (9) the test pinning that a preset's `dir`
   reaches `setup_apply` byte-for-byte uses a fixture with no leading or
   trailing whitespace, so a stray `.trim()` specifically would slip past it
@@ -181,17 +190,6 @@ Workflow:
   reset of the aspect/target selection during a window where nothing is
   selectable yet — inert, but it means the reset effect now has a trigger no
   user action caused. _Added 2026-07-27._
-
-- [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
-  near-duplicate string readers that arrived from opposite sides of a merge:
-  `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
-  `&Value` and handles `Bytes`/`Str`; `text` (from the names-and-noise slice)
-  resolves through `Shared`/`Ref` via `effective` first and also handles
-  `StrUcs2`. `text` is the strictly more capable of the two, so the fold is
-  probably "delete `bytes_str`, pass a `SharedTable` at its call sites" — but
-  check each call site first, since a caller that deliberately does NOT want
-  `Ref` resolution would change behaviour. Kept both at merge time rather than
-  refactoring two live APIs inside a conflict resolution. _Added 2026-07-26._
 
 - [ ] **Run the names-and-noise live in-game smoke — deliberately deferred past
   the merge.** The slice merged on a green CI and a clean whole-branch review, but
@@ -380,8 +378,14 @@ Workflow:
   `tabsByWindowInstanceID` survives an import — the fix only stops window 0 from
   also claiming it (no corpus account has this corruption); (7) preset field values
   go through `ints()` unconditionally, so an unrecognised preset field would become
-  `[]` rather than being dropped or reported (no corpus preset has one). _Added
-  2026-07-26._
+  `[]` rather than being dropped or reported (no corpus preset has one).
+  **(1), (3) and (4) are now RESOLVED — done 2026-07-29:** the bad-shape failure
+  has its own `PackError::BadSection { name }` naming the section; `USER_SETTINGS`
+  is gone (the live smoke settled its open question — `applyOnlyToShips` has no key
+  on current clients, so no pack name needs mapping to a different file key, and
+  both sides read `OVERVIEW_BOOLS` directly); `SECTIONS`, `color_rgba` and
+  `color_name` are no longer re-exported at the crate root. Items (2), (5), (6) and
+  (7) remain open. _Added 2026-07-26._
 
 - [ ] **Overview filter-presets slice 2a follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the slice-2a (preset management +
@@ -538,7 +542,11 @@ Workflow:
   overview-depth slices (filter presets / colors / add-remove windows), which will
   touch this same Overview view anyway. **(Item (3) tab_create double-project is
   now RESOLVED — the tab-fix branch made create clone by index with no preset
-  lookup.)** _Added 2026-07-19._
+  lookup.)** **(1) and (2) are now RESOLVED — done 2026-07-29:** `move_tab` has an
+  `UnknownTab` guard matching `delete_tab`, so a nonexistent index can no longer be
+  inserted into a window strip; and the two name-key predicates are one
+  `treewalk::key_is` taking every string shape either of them took. Items (4), (5),
+  (6) and (7) remain open. _Added 2026-07-19._
 
 - [ ] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
   review).** (a) **Per-window placement on a windowless account:** creating a tab
@@ -576,33 +584,6 @@ Workflow:
   by expanding `CURATED` to cover the common real widget paths and/or making
   `derive()` smarter (pick a more meaningful segment, or fold in more context
   than the last one). _Added 2026-07-18._
-
-- [ ] **Fill batch-apply edge-case tests.** `plan_setup`'s "account file missing
-  from `user_paths`" exclusion branches (source and target), empty/duplicate
-  `target_chars`, and the all-targets-on-the-source-account case, plus
-  `setup_apply`'s own error branches (`source_error` → `Err`, missing source
-  account file), have no unit test — all simple branches, cheap insurance for a
-  file-writing feature. _Added 2026-07-18 (M5 review, minor M4)._
-
-- [ ] **Make `treewalk::inline_all` Stream-scope-safe (or route it through
-  `blue_marshal::inline`).** `treewalk::inline_all`/`collect_shared`/`inline_shares`
-  resolve `Ref`s against one flat slot table that spans embedded `Value::Stream`
-  boundaries, but an embedded stream is an independent marshal blob whose slots
-  restart at 1 — so a stream with internal sharing would collide/corrupt. The
-  codec re-share milestone fixed exactly this in the new `blue_marshal::inline`
-  (Stream is a hard scope boundary) but left `treewalk::inline_all` — which the
-  structural editors call *before* reshare — unfixed. Pre-existing and unreachable
-  today (STREAM opcode count is 0 across the whole corpus), but it's an
-  inconsistency: route `inline_all` through `blue_marshal::inline`, or mirror the
-  per-stream scoping. _Added 2026-07-18 (codec re-share final review, minor M-1)._
-
-- [ ] **Add a cycle/depth guard to `blue_marshal::inline`'s `resolve`.** `resolve`
-  recurses `Ref → table lookup → resolve` with no bound; a hand-built
-  self-referential `Ref` (the shape `encode`'s `cyclic` test rejects) would
-  stack-overflow rather than error. Unreachable via `decode` (rejects cycles) or
-  the edit paths, but it's *less* guarded than the pre-existing
-  `treewalk::effective` (bounded `0..64`) — add a `MAX_DEPTH` bound mirroring
-  encode/decode. _Added 2026-07-18 (codec re-share final review, minor M-2)._
 
 ## Promoted to milestones
 
@@ -653,6 +634,40 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Both
+  `bytes_str` call sites already wrapped their argument in `effective()` — which
+  is exactly what `text` does internally — so the fold was a straight deletion
+  with no call-site behaviour to weigh. They read the same keys as before, plus
+  any the client stored as `StrUcs2`, which `bytes_str` dropped. _Added
+  2026-07-26; done 2026-07-29._
+
+- [x] **Make `treewalk::inline_all` Stream-scope-safe.** Routed through
+  `blue_marshal::inline`, which has treated an embedded `Value::Stream` as a hard
+  slot-scope boundary since the codec re-share milestone; the local
+  `inline_shares` walk is deleted. A test builds an outer slot 1 and a stream
+  carrying its own slot 1 and pins that each resolves in its own scope — it fails
+  against the old flat-table walk (checked). Still unreachable on real data: no
+  corpus file contains a STREAM opcode. _Added 2026-07-18; done 2026-07-29._
+
+- [x] **Add a cycle guard to `blue_marshal::inline`'s `resolve`.** Carries the
+  slots open further up the recursion rather than a depth bound — a plain
+  `MAX_DEPTH` would have to be generous enough for legitimately deep nesting and
+  would then be a guess in both directions, where the open-slot set is exact. A
+  cycle-closing `Ref` is left in place, which `encode` then refuses with
+  `RefBeforeStore`: an error instead of a dead stack. `Shared` pushes its own
+  slot too, so the definition side of a self-reference is caught as well.
+  _Added 2026-07-18; done 2026-07-29._
+
+- [x] **Fill batch-apply edge-case tests.** Covered: a source whose account file
+  is missing from the folder, a target whose account file is missing, a target
+  with no character file, an empty target list, and `setup_apply` refusing a plan
+  that carries a source error (with the target proven unwritten). The
+  all-targets-on-the-source-account case named in the entry was already covered by
+  `target_on_source_account_skips_the_account_write`. Writing them turned up one
+  real hole, now fixed: a repeated id in `target_chars` planned the same file
+  twice — two writes and two backups of one target. _Added 2026-07-18; done
+  2026-07-29._
 
 - [x] **Creating an `Everything` preset says nothing about what it captures.**
   The privacy confirmation lived on *export* only (`PresetGroup.svelte`: "carries

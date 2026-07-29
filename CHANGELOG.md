@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **A malformed overview pack now says which section is wrong.** A pack whose
+  `shipLabelOrder` is not a list was rejected with "this YAML file contains no
+  overview pack sections" — untrue, and no help in fixing it. It now names the
+  section and the shape it should have.
 - **Saving an `Everything` preset now says what it captures.** The warning that
   a full preset carries your autofill history — station names, searches and
   typed text — only appeared when you exported one to share it. It now also
