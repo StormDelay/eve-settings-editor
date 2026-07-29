@@ -117,6 +117,13 @@ Workflow:
   as the open `container_label` item, worth solving once for both; (8)
   icon-path casing varies across catalog entries, faithfully reflecting the
   client's own data. _Added 2026-07-27._
+  **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:** the
+  Tuple-payload branch is gone and `_ => Err(NoBar)` handles the shape. Worth
+  recording *why* it was unreachable, since the comment defending it read as a
+  reason to keep it: the corpus stores the live bar as a `List`, and `reset`
+  writes a `List` whatever Original was stored as — so the arm only ever fired
+  on a file we do not understand, and its answer was to rewrite it. The rest
+  remain open.
 
 - [x] **Run the settings-presets live in-game smoke.** Nothing in the feature
   has been verified against a running EVE client. From the spec's §12: (1)
@@ -181,17 +188,13 @@ Workflow:
   reset of the aspect/target selection during a window where nothing is
   selectable yet — inert, but it means the reset effect now has a trigger no
   user action caused. _Added 2026-07-27._
-
-- [ ] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
-  near-duplicate string readers that arrived from opposite sides of a merge:
-  `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
-  `&Value` and handles `Bytes`/`Str`; `text` (from the names-and-noise slice)
-  resolves through `Shared`/`Ref` via `effective` first and also handles
-  `StrUcs2`. `text` is the strictly more capable of the two, so the fold is
-  probably "delete `bytes_str`, pass a `SharedTable` at its call sites" — but
-  check each call site first, since a caller that deliberately does NOT want
-  `Ref` resolution would change behaviour. Kept both at merge time rather than
-  refactoring two live APIs inside a conflict resolution. _Added 2026-07-26._
+  **(7) is now RESOLVED — closed by the 2026-07-29 backend debt sweep,** exactly
+  as this entry prescribed: both tests pair their character to an account with a
+  real file, assert the account side is untouched too, and the pruned one gained
+  the message assertion its sibling already had. Verified load-bearing by
+  neutralising each guard in turn — the target loses its `UNTOUCHED` marker and
+  both byte assertions fail, where before they passed. Items (1)-(6) and (8)-(10)
+  remain open.
 
 - [ ] **Run the names-and-noise live in-game smoke — deliberately deferred past
   the merge.** The slice merged on a green CI and a clean whole-branch review, but
@@ -382,6 +385,13 @@ Workflow:
   go through `ints()` unconditionally, so an unrecognised preset field would become
   `[]` rather than being dropped or reported (no corpus preset has one). _Added
   2026-07-26._
+  **(3) and (4) are now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
+  `USER_SETTINGS` is deleted (the live smoke settled `applyOnlyToShips` — no such
+  key on current clients — so the mapping table it was held open for was never
+  going to be needed), and both sides now read `OVERVIEW_BOOLS` directly, which
+  also stops the pack reader drifting from `set_overview_bool`'s allow-list. The
+  three unused re-exports are gone from `lib.rs`. Items (1), (2), (5), (6) and (7)
+  remain open.
 
 - [ ] **Overview filter-presets slice 2a follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the slice-2a (preset management +
@@ -404,6 +414,9 @@ Workflow:
   `overview.rs` `preset_key_name` and `overview_presets.rs` `as_str` are
   byte-identical key→String converters in the read vs authoring modules —
   deliberately separate, not worth coupling. _Added 2026-07-20._
+  **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
+  `create_preset` resolves the source blob before checking the target name, so a
+  typo'd source no longer reports "that name is taken". The rest remain open.
 
 - [ ] **Character-centric entry-point follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the character-centric rework final
@@ -539,6 +552,16 @@ Workflow:
   touch this same Overview view anyway. **(Item (3) tab_create double-project is
   now RESOLVED — the tab-fix branch made create clone by index with no preset
   lookup.)** _Added 2026-07-19._
+  **(1) and (2) are now RESOLVED — closed by the 2026-07-29 backend debt sweep.**
+  `move_tab` refuses an index no tab has, via a new non-fabricating `has_tab`
+  rather than `tabs_mut` — a guard that refuses an edit must not leave a minted
+  `tabsettings_new` behind, which is also what lets it sit ahead of the
+  `NoWindowMapping` guard. The two name predicates are one `treewalk::key_is`
+  covering all four key shapes; the union is what each was missing an arm of, and
+  the missing arms turned out to matter — a fixture keying the tab name as
+  `Bytes` had been reading back as "Tab 0", with an `ops.rs` assertion pinning
+  that as expected. Real files key it `StrTable(52)`, so no character was
+  affected. Items (4)-(7) remain open ((5) and (7) are UI work).
 
 - [ ] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
   review).** (a) **Per-window placement on a windowless account:** creating a tab
@@ -595,14 +618,6 @@ Workflow:
   today (STREAM opcode count is 0 across the whole corpus), but it's an
   inconsistency: route `inline_all` through `blue_marshal::inline`, or mirror the
   per-stream scoping. _Added 2026-07-18 (codec re-share final review, minor M-1)._
-
-- [ ] **Add a cycle/depth guard to `blue_marshal::inline`'s `resolve`.** `resolve`
-  recurses `Ref → table lookup → resolve` with no bound; a hand-built
-  self-referential `Ref` (the shape `encode`'s `cyclic` test rejects) would
-  stack-overflow rather than error. Unreachable via `decode` (rejects cycles) or
-  the edit paths, but it's *less* guarded than the pre-existing
-  `treewalk::effective` (bounded `0..64`) — add a `MAX_DEPTH` bound mirroring
-  encode/decode. _Added 2026-07-18 (codec re-share final review, minor M-2)._
 
 ## Promoted to milestones
 
@@ -685,6 +700,35 @@ _Added 2026-07-17; designed 2026-07-18._
   redundant `.slice()` before each sort went too — `filter` already returns a
   fresh array, so there was nothing to protect. _Added 2026-07-18 (M5 review,
   minor M2); done 2026-07-29._
+
+- [x] **Fold `treewalk::text` and `treewalk::bytes_str` together.** Two
+  near-duplicate string readers that arrived from opposite sides of a merge:
+  `bytes_str` (from the keybindings slice's helper consolidation) takes a raw
+  `&Value` and handles `Bytes`/`Str`; `text` (from the names-and-noise slice)
+  resolves through `Shared`/`Ref` via `effective` first and also handles
+  `StrUcs2`. `text` is the strictly more capable of the two, so the fold is
+  probably "delete `bytes_str`, pass a `SharedTable` at its call sites" — but
+  check each call site first, since a caller that deliberately does NOT want
+  `Ref` resolution would change behaviour. Kept both at merge time rather than
+  refactoring two live APIs inside a conflict resolution. _Added 2026-07-26._
+  _Done 2026-07-29: both call sites (autofill's widget keys, keybinds' command
+  keys) already resolved through `effective` before calling `bytes_str`, so
+  neither wanted to skip `Ref` resolution and the fold was the whole change._
+
+- [x] **Add a cycle/depth guard to `blue_marshal::inline`'s `resolve`.** `resolve`
+  recurses `Ref → table lookup → resolve` with no bound; a hand-built
+  self-referential `Ref` (the shape `encode`'s `cyclic` test rejects) would
+  stack-overflow rather than error. Unreachable via `decode` (rejects cycles) or
+  the edit paths, but it's *less* guarded than the pre-existing
+  `treewalk::effective` (bounded `0..64`) — add a `MAX_DEPTH` bound mirroring
+  encode/decode. _Added 2026-07-18 (codec re-share final review, minor M-2)._
+  _Done 2026-07-29._ The counter tracks **consecutive `Shared`/`Ref` hops and
+  resets on descent into a child**, deliberately not container depth: encode and
+  decode already bound that, and a real file carries a `Shared` at many nesting
+  levels at once, so a single counter spanning both would false-trip and leave a
+  valid tree half-inlined — which encode would then reject. Both halves have a
+  test. At the bound the `Ref` is left in place, so the failure is
+  `RefBeforeStore` at encode rather than a process abort.
 
 - [x] **Decide what the Layout aspect should mean, then make it carry that.**
   `Category::Layout => &[b"windows"]` copies that section, but the nine HUD

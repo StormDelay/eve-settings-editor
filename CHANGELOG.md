@@ -25,6 +25,39 @@ All notable changes to this project are documented here. The format follows
   default rather than keeping its own value, which is what makes the two
   characters actually match.
 
+### Internal
+A backend sweep of small-tasks-ledger debt. Nothing here changes what the editor
+reads or writes on any real settings file; each item removes a way for it to go
+wrong later.
+- **One name-key predicate instead of two that each missed an arm.** The
+  overview projection matched `Str`/`StrUcs2`/`StrTable` but not `Bytes`; the tab
+  writer matched `Bytes`/`Str`/`StrTable` but not `StrUcs2` — reader and writer
+  of the same tab name, disagreeing about what a key looks like. Now
+  `treewalk::key_is`, covering all four. Real files key it `StrTable(52)`, so no
+  character's tab was ever mislabelled; a fixture that keyed it `Bytes` was, and
+  a test had been pinning that as expected.
+- **`treewalk::bytes_str` folded into `text`**, the strictly more capable of the
+  two near-duplicate string readers.
+- **A tab index no tab has can no longer be moved.** `move_tab` validated the
+  destination window but not the tab, so a stale index planted a phantom entry in
+  the destination strip. The existence check reads without minting
+  `tabsettings_new`, so a refused move still leaves nothing behind.
+- **A Tuple-stored neocom bar is refused rather than reshaped in place**, and a
+  preset copy from a source that does not exist now says so instead of blaming
+  the target name.
+- **`reshare`'s `inline` no longer recurses without a bound.** A self-referential
+  `Ref` killed the process; it now gives up at the same `MAX_DEPTH` encode and
+  decode use, leaving the `Ref` for `encode` to reject. The bound counts
+  indirection hops, not container nesting, so a real file's many-level sharing
+  still inlines completely.
+- **Two `Everything`-refusal tests were asserting nothing.** Both checked that a
+  refused apply left the target untouched, but neither paired the target to an
+  account — so nothing was ever going to be written to it either way. Both now
+  pair it, cover the account side, and fail when the guard is neutralised.
+- **Deleted:** `USER_SETTINGS` (an identity map of `OVERVIEW_BOOLS`, kept for a
+  mapping the live smoke proved unnecessary), the unreachable Tuple-normalize
+  branch in the neocom bar reader, and three crate-root re-exports used nowhere.
+
 ## [0.22.0] - 2026-07-28
 
 Everything the live-verification sessions turned up. The two changes that write
