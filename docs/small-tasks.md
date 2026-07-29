@@ -334,9 +334,21 @@ Workflow:
   debt sweep:** `section()` (folded into `treewalk`, along with `hex()`) now
   pushes `Step::SharedInner` for a `Shared`-wrapped root; `locate()`'s scalar text
   is carried on `Located::Writable` and used by `probe` instead of being
-  discarded; `mint` now has one `NoSection` guard via `section_dict_mut`. Items
-  (1), (2), (7), (8) and (9) remain open. _Added 2026-07-25; partially done
-  2026-07-26 (layout names-and-noise)._
+  discarded; `mint` now has one `NoSection` guard via `section_dict_mut`.
+  **(1), (2), (7) and (9) are now RESOLVED — done 2026-07-29:** `set_hud_value`
+  returns whether it minted and `set_hud_field` reshares only then; the
+  account-scoped rows take the ACCOUNT document's read-only flag, threaded from
+  the page beside the character one (verified: the new test fails without the
+  predicate); seven hardcoded greys in `HudPanel` became the `app.css` variables
+  they approximated, with the two ambers left literal on purpose because they
+  match `LayoutView`'s equally literal selected-furniture colour and the pair has
+  to move together; and the four test gaps are covered — badge geometry, a
+  zero neocom width, an unavailable fighter axis that leaves its sibling alone,
+  and a `hudEntry` helper that can now build the real `insert` wire shape.
+  **Only (8) remains** — a rejected number-input edit staying visually desynced,
+  which is the same pattern `WindowPanel` has and wants fixing in both at once.
+  _Added 2026-07-25; partially done 2026-07-26 (layout names-and-noise) and
+  2026-07-29._
 
 - [x] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
@@ -401,28 +413,7 @@ Workflow:
   three unused re-exports are gone from `lib.rs`. Items (1), (2), (5), (6) and (7)
   remain open.
 
-- [ ] **Overview filter-presets slice 2a follow-ups (whole-branch review, all
-  ship-as-debt).** Non-blocking minors from the slice-2a (preset management +
-  tab→preset mapping) final review: (1) `overview.rs` `preset_key_name`'s
-  `Str`/`StrUcs2` branches are dead on real files (preset keys are always `Bytes`)
-  — plan-mandated defensive parity, mirrors the existing `str_field_r`; (2)
-  `overview_presets.rs` `create_preset` checks `PresetExists` before
-  `UnknownPreset`, so a typo'd source + already-taken target reports the wrong one
-  — inert because the UI feeds `from` from a live preset list; (3)
-  `set_tab_preset`'s insert-when-`overview`-absent branch is untested (real tabs
-  always carry the field); (4) `rename_preset` writes an identical-bytes value
-  before the `old == new` early return, and there's no dedicated `old == new`
-  test (the frontend guards `name === old` so it's never reached); (5) the
-  `overview_presets` `user_with_presets` fixture uses `alpha`/`beta`, which don't
-  exercise the `to_lowercase` tie-break at `delete_preset`'s neighbour call site
-  (parity with the projection sort holds by construction; Task-1 covers the
-  case-insensitive sort); (6) `overview_presets_realshape.rs` uses `Value::Int(1)`
-  as the `(ts, dict)` timestamp vs the sibling test's `Long` helper — functionally
-  irrelevant (the wrapper is unwrapped by position). Also noted (no action):
-  `overview.rs` `preset_key_name` and `overview_presets.rs` `as_str` are
-  byte-identical key→String converters in the read vs authoring modules —
-  deliberately separate, not worth coupling. _Added 2026-07-20._
-  **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
+ **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:**
   `create_preset` resolves the source blob before checking the target name, so a
   typo'd source no longer reports "that name is taken". The rest remain open.
 
@@ -541,8 +532,13 @@ Workflow:
   **(2) and (3) are now RESOLVED — closed by the layout-names-and-noise debt
   sweep:** `remove_overview_window`'s `UnknownWindow` guard now has a test, and
   the cascade offset is `overview_tabs.rs`'s named `OVERVIEW_WINDOW_OFFSET: i64 =
-  40`. Items (1), (4) and (5) remain open. _Added 2026-07-20; partially done
-  2026-07-26 (layout names-and-noise)._
+  40`. **(1) and (5) are now RESOLVED — done 2026-07-29:** a window 0 that cannot
+  take the removed window's tabs is refused rather than silently dropping them (a
+  tab present in `tabsettings_new` but in no window is invisible in-game), and an
+  account with no mapping at all now gets `NoWindowMapping` instead of "keep at
+  least one window", which described a different situation. **Only (4) remains,**
+  and it is still conditional on a third cross-file op appearing. _Added
+  2026-07-20; partially done 2026-07-26 (layout names-and-noise) and 2026-07-29._
 
 - [ ] **Overview tab-management follow-ups (deferred from the milestone's final
   review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
@@ -554,13 +550,14 @@ Workflow:
   `overview::key_is` matches `StrUcs2` but not `Bytes` (neither form occurs on real
   files, which use `StrTable(52)`); unify them into one shared predicate; (3)
   `ops::tab_create` projects the overview twice (once for the preset copy, once in
-  `edit_user_tabs`) — harmless on tiny trees; (4) the UI's new-tab selection uses
-  `Math.max(...tabs.index)` (`OverviewView.svelte`), coupling it to the backend's
-  `max+1` allocation — sound today, but a before/after index set-diff would be
-  allocation-agnostic; (5) can't create a tab in an empty (zero-tab) overview
-  window (the New-tab target derives from the selected tab's window); (6) a few
-  trivial untested branches (`delete_tab`/`move_tab` own `UnknownTab` paths, the
-  `create_tab` preset-value assertion); (7) the tab-management **UI/UX is rough**
+  `edit_user_tabs`) — harmless on tiny trees; (4) ~~the UI's new-tab selection uses
+  `Math.max(...tabs.index)`~~ — **done 2026-07-29**: it diffs the index set
+  against the one it had, so it no longer assumes `max+1` allocation; (5) can't create a tab in an empty (zero-tab) overview
+  window (the New-tab target derives from the selected tab's window); (6) ~~a few
+  trivial untested branches~~ — **done 2026-07-29**: `delete_tab`'s own
+  `UnknownTab` path (with two tabs present, so `LastTab` cannot be what refuses
+  it), `move_tab`'s (closed by the backend sweep), and that a created tab
+  inherits its sibling's preset, next to the bracket and colour assertions; (7) the tab-management **UI/UX is rough**
   (flagged during the live smoke) — defer the polish/rework to the later
   overview-depth slices (filter presets / colors / add-remove windows), which will
   touch this same Overview view anyway. **(Item (3) tab_create double-project is
@@ -663,6 +660,21 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Overview filter-presets slice 2a follow-ups — all six closed.** (2) the
+  `create_preset` guard order was fixed by the 2026-07-29 backend sweep. Done
+  2026-07-29 here: (3) `set_tab_preset`'s insert branch — a tab carrying no
+  `overview` field — has a test, which is the half that decides the key encoding
+  for a tab that never had one; (4) `rename_preset` no longer rewrites the key on
+  a rename to the same name (it still validates that the preset exists, but
+  writing identical bytes would turn a key the file stored as `Str` into `Bytes`);
+  (5) the delete-neighbour test uses `alpha`/`Beta`/`gamma`, which a raw byte sort
+  and the case-insensitive one disagree about, where `alpha`/`beta` sorted the
+  same either way; (6) the realshape fixture wraps its sections with a `Long`
+  timestamp like every real file. **(1) is closed with no change:**
+  `preset_key_name`'s `Str`/`StrUcs2` arms are dead on real files by design —
+  plan-mandated parity with `str_field_r`, and deleting them would make the reader
+  narrower than its sibling for no gain. _Added 2026-07-20; done 2026-07-29._
 
 - [x] **Make `treewalk::inline_all` Stream-scope-safe.** Routed through
   `blue_marshal::inline`, which has treated an embedded `Value::Stream` as a hard
