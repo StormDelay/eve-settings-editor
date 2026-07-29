@@ -84,6 +84,11 @@ pub enum PackError {
     /// A mapping with no section this build recognises — the user picked the
     /// wrong file. Reported rather than silently applying nothing.
     NotAPack,
+    /// A recognised section carrying the wrong YAML shape (a mapping where a
+    /// list belongs). Distinct from `NotAPack`, which claims the file holds no
+    /// pack sections at all — false, and confusing, for a real pack with one
+    /// malformed section.
+    BadSection { name: String },
     /// The document has no `overview` container to write into.
     NoOverview,
 }
@@ -94,6 +99,9 @@ impl std::fmt::Display for PackError {
             PackError::Yaml { message } => write!(f, "This file is not valid YAML: {message}"),
             PackError::NotAMapping => write!(f, "This file is not an overview pack."),
             PackError::NotAPack => write!(f, "This YAML file contains no overview pack sections."),
+            PackError::BadSection { name } => {
+                write!(f, "This pack's '{name}' section is not a list, so it cannot be applied.")
+            }
             PackError::NoOverview => write!(f, "This file has no overview settings."),
         }
     }
@@ -452,7 +460,9 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     // stores them; `state` stays an int.
     if let (Some(order), Some(labels)) = (pack.get("shipLabelOrder"), pack.get("shipLabels")) {
         let bodies = pairs(labels);
-        let Node::Seq(order_items) = order else { return Err(PackError::NotAPack) };
+        let Node::Seq(order_items) = order else {
+            return Err(PackError::BadSection { name: "shipLabelOrder".into() });
+        };
         let mut list = Vec::new();
         for want in order_items {
             let Some((_, body)) = bodies.iter().find(|(k, _)| *k == want) else { continue };
@@ -1475,7 +1485,9 @@ userSettings:
         let pack = parse_pack("shipLabelOrder: true\nshipLabels: []\n").unwrap();
 
         let err = apply_pack(&mut doc, &pack).unwrap_err();
-        assert!(matches!(err, PackError::NotAPack), "got {err:?}");
+        // Names the section rather than claiming the file holds no pack at all.
+        assert!(matches!(&err, PackError::BadSection { name } if name == "shipLabelOrder"), "got {err:?}");
+        assert!(err.to_string().contains("shipLabelOrder"), "the message names it too: {err}");
         assert_eq!(doc, before, "a build-phase failure must leave the document untouched");
     }
 
