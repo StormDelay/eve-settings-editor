@@ -158,9 +158,11 @@ Workflow:
   `setup_preview` AND `resolve_source` again, so a preview now walks
   `discover()` 3 times (was 1) and an apply 5 (was 2) — fix is to have
   `setup_preview` hand its `SourceSides` to `setup_apply`, deliberately left
-  out of the regression-fix commit to keep it reviewable; (5)
-  `SourceSides.char_path` is `Option<PathBuf>` but populated in both branches,
-  leaving `read_side`'s `None` arm and one `if let Some` dead; (6) a
+  out of the regression-fix commit to keep it reviewable; (5) ~~`SourceSides.char_path` is `Option<PathBuf>` but populated in both
+  branches~~ — **done 2026-07-29**: it is a plain `PathBuf`, which deletes the dead
+  `None` arm and the dead `if let Some`. The account side stays optional (a
+  character source with no paired account has none) and its refusal message is now
+  worded for a user rather than a developer, closing (8) with it; (6) a
   character-source `Everything` copy still full-copies raw bytes with no
   decode check — pre-existing, and validating would be the behaviour drift
   this slice deliberately avoided; (7) **both `Everything`-refusal tests carry a
@@ -367,10 +369,10 @@ Workflow:
   **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
 - [ ] **Overview-pack follow-ups (whole-branch review, all ship-as-debt).**
-  Non-blocking minors from the import/export packs branch: (1) `PackError::NotAPack`
-  is reused for "`shipLabelOrder` is not a sequence", so that failure tells the user
-  "this YAML contains no overview pack sections", which is false — it wants its own
-  variant or a reworded message; (2) a pack carrying only one of the two ship-label
+  Non-blocking minors from the import/export packs branch: (1) ~~`PackError::NotAPack`
+  is reused for "`shipLabelOrder` is not a sequence"~~ — **done 2026-07-29**: it has
+  its own `BadSection { name }` variant, which names the section and the shape it
+  should have; (2) a pack carrying only one of the two ship-label
   sections applies neither, silently (real packs always carry both); (3)
   `USER_SETTINGS` in `overview_pack.rs` is an exact identity map of `OVERVIEW_BOOLS`
   and exists only to be policed by a `debug_assert!` — collapse it unless the live
@@ -600,25 +602,6 @@ Workflow:
   `derive()` smarter (pick a more meaningful segment, or fold in more context
   than the last one). _Added 2026-07-18._
 
-- [ ] **Fill batch-apply edge-case tests.** `plan_setup`'s "account file missing
-  from `user_paths`" exclusion branches (source and target), empty/duplicate
-  `target_chars`, and the all-targets-on-the-source-account case, plus
-  `setup_apply`'s own error branches (`source_error` → `Err`, missing source
-  account file), have no unit test — all simple branches, cheap insurance for a
-  file-writing feature. _Added 2026-07-18 (M5 review, minor M4)._
-
-- [ ] **Make `treewalk::inline_all` Stream-scope-safe (or route it through
-  `blue_marshal::inline`).** `treewalk::inline_all`/`collect_shared`/`inline_shares`
-  resolve `Ref`s against one flat slot table that spans embedded `Value::Stream`
-  boundaries, but an embedded stream is an independent marshal blob whose slots
-  restart at 1 — so a stream with internal sharing would collide/corrupt. The
-  codec re-share milestone fixed exactly this in the new `blue_marshal::inline`
-  (Stream is a hard scope boundary) but left `treewalk::inline_all` — which the
-  structural editors call *before* reshare — unfixed. Pre-existing and unreachable
-  today (STREAM opcode count is 0 across the whole corpus), but it's an
-  inconsistency: route `inline_all` through `blue_marshal::inline`, or mirror the
-  per-stream scoping. _Added 2026-07-18 (codec re-share final review, minor M-1)._
-
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
@@ -668,6 +651,25 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Make `treewalk::inline_all` Stream-scope-safe.** Routed through
+  `blue_marshal::inline`, which has treated an embedded `Value::Stream` as a hard
+  slot-scope boundary since the codec re-share milestone; the local
+  `inline_shares` walk is deleted. A test builds an outer slot 1 and a stream
+  carrying its own slot 1 and pins that each resolves in its own scope — it fails
+  against the old flat-table walk (checked). Still unreachable on real data: no
+  corpus file contains a STREAM opcode. _Added 2026-07-18; done 2026-07-29._
+
+- [x] **Fill batch-apply edge-case tests.** Covered: a source whose account file
+  is missing from the folder, a target whose account file is missing, a target
+  with no character file, an empty target list, and `setup_apply` refusing a plan
+  that carries a source error (with the target proven unwritten). The
+  all-targets-on-the-source-account case named in the entry was already covered by
+  `target_on_source_account_skips_the_account_write`. Writing them turned up one
+  real hole, now fixed: a repeated id in `target_chars` planned the same file
+  twice — two writes and two backups of one target. The UI passes a set, so the
+  guard sits on the command boundary rather than fixing anything observed.
+  _Added 2026-07-18; done 2026-07-29._
 
 - [x] **Creating an `Everything` preset says nothing about what it captures.**
   The privacy confirmation lived on *export* only (`PresetGroup.svelte`: "carries
@@ -729,6 +731,17 @@ _Added 2026-07-17; designed 2026-07-18._
   valid tree half-inlined — which encode would then reject. Both halves have a
   test. At the bound the `Ref` is left in place, so the failure is
   `RefBeforeStore` at encode rather than a process abort.
+
+  **That reasoning had a hole, closed 2026-07-29 later the same day.** Resetting
+  on descent means the counter only ever caught a chain of `Shared`/`Ref` nodes
+  pointing straight at each other. A cycle closed THROUGH a container —
+  `Shared { 1, List([Ref(1)]) }` — reset the count every lap and still overflowed
+  the stack; verified by running it against the merged code, which aborted the
+  test binary with `STATUS_STACK_OVERFLOW`. The counter is now a set of the slots
+  currently open in the recursion, which catches a cycle wherever it closes and
+  cannot false-trip on a long legitimate chain (each hop consumes a distinct slot
+  from a finite table), so the concern the counter was shaped around is met
+  exactly rather than approximately. Both original tests still pass unchanged.
 
 - [x] **Decide what the Layout aspect should mean, then make it carry that.**
   `Category::Layout => &[b"windows"]` copies that section, but the nine HUD
