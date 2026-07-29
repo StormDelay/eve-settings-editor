@@ -688,6 +688,18 @@ mod tests {
         // else EVE's "reset all overview settings" throws on the malformed tab.
         assert!(tab_has_key(&v, 1, b"bracket"), "created tab clones the sibling's bracket");
         assert!(tab_has_key(&v, 1, b"color"), "created tab clones the sibling's color");
+        // And the sibling's PRESET: a tab whose `overview` field went missing or
+        // changed would show a different filter set than the tab it was made from.
+        assert_eq!(tab_preset(&v, 1), "P", "created tab inherits the sibling's preset");
+    }
+
+    #[test]
+    fn delete_of_a_tab_that_does_not_exist_errors() {
+        let mut v = user_with_tabs();
+        // Two tabs, so the LastTab guard cannot be what refuses this.
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap();
+        assert!(matches!(delete_tab(&mut v, 9), Err(OverviewTabError::UnknownTab { index: 9 })));
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "both tabs still there");
     }
 
     #[test]
