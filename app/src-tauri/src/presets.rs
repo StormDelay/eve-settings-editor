@@ -95,9 +95,12 @@ pub struct CreateInput<'a> {
     pub user_doc: Option<&'a Value>,
 }
 
-/// Whether a document holds anything under `cat`.
+/// Whether a document holds a VALUE under `cat`. An `absent_means_default`
+/// category the document lacks comes back as `(cat, None)` — a removal
+/// instruction, not something the document holds — so this cannot be an
+/// `.is_empty()` check.
 pub fn has_category(doc: &Value, cat: Category) -> bool {
-    !extract_categories(doc, &[cat]).is_empty()
+    extract_categories(doc, &[cat]).iter().any(|(_, v)| v.is_some())
 }
 
 /// Whether `doc` is an empty root dict — the shape a pruned side (e.g. a
@@ -134,9 +137,14 @@ fn parent_entries(cats: &[Category]) -> Vec<(Value, Value)> {
 
 /// A document holding only `cats` from `source`, and nothing else.
 ///
-/// Parents are built only for the categories the source ACTUALLY has, so no
-/// empty `ui` or `cmd` dict can survive — which also means nothing has to be
-/// removed after `apply_to_tree` has already resharded the tree.
+/// Parents are built for every category `extract_categories` reports back —
+/// which includes an `absent_means_default` category the source lacks,
+/// reported as `(cat, None)`. That is deliberate, not a gap: for those
+/// categories the built (non-empty) parent IS the signal that this document
+/// carries an explicit "use EVE's default" instruction, which is what keeps a
+/// newly created Layout preset's `user.dat` off the empty-root shape an older
+/// preset has. `Autofill` and `Keybinds` never report an absence, so this
+/// exception never puts an empty `ui` or `cmd` dict in their way.
 pub fn prune(source: &Value, cats: &[Category]) -> Value {
     let extracted = extract_categories(source, cats);
     let present: Vec<Category> = extracted.iter().map(|(c, _)| *c).collect();
@@ -159,21 +167,14 @@ pub fn create(
         return Err(format!("A preset called \u{201c}{name}\u{201d} already exists."));
     }
     let w = aspect_writes(aspects);
-    // Refuse an aspect whose side is not open, rather than writing an empty
-    // document that claims to hold it.
-    if w.writes_char() && docs.char_doc.is_none() {
-        return Err("That needs a character file open.".into());
-    }
-    if w.writes_account() && docs.user_doc.is_none() {
-        return Err("That needs the account file open \u{2014} pair the character first.".into());
-    }
-
     let full = w.char_full_copy || w.account_full_copy;
     // A "full" preset built on an empty side is not a complete copy of
     // anything — it is a document that, applied with Everything, would wipe
     // the target's whole file. Refuse it here so the bad preset is never
     // created; `resolve_source` in ops.rs carries the same guard for presets
-    // that predate this check or arrive via import.
+    // that predate this check or arrive via import. Checked BEFORE the
+    // open-side guard below so an Everything save still gets this message,
+    // which says what is actually wrong with it.
     if full {
         let empty = |d: Option<&Value>| d.map(is_empty_root).unwrap_or(true);
         if empty(docs.char_doc) || empty(docs.user_doc) {
@@ -183,6 +184,21 @@ pub fn create(
             );
         }
     }
+    // Refuse an aspect whose side is not open, rather than writing an empty
+    // document that claims to hold it. An OPEN document with an empty root
+    // counts as not open: the editor can open a preset's own files as the
+    // character/account slots, and a pre-HUD Layout preset's `user.dat` is
+    // exactly `{}`. Cutting a new preset from that would mint a `{}` account
+    // side, which `extract_categories` then reads back as an old preset — so a
+    // newly created preset would silently apply half of what it claims.
+    let unusable = |d: Option<&Value>| d.map(is_empty_root).unwrap_or(true);
+    if w.writes_char() && unusable(docs.char_doc) {
+        return Err("That needs a character file open.".into());
+    }
+    if w.writes_account() && unusable(docs.user_doc) {
+        return Err("That needs the account file open \u{2014} pair the character first.".into());
+    }
+
     let side = |doc: Option<&Value>, cats: &[Category]| match (full, doc) {
         (true, Some(d)) => d.clone(),
         (false, Some(d)) => prune(d, cats),
@@ -544,12 +560,22 @@ mod tests {
         d
     }
 
-    /// A char document with both char-side categories present.
+    /// A char document with both char-side categories present. It carries an
+    /// (empty) `notifications` section because every real character file does —
+    /// and because that root key is what tells a real source apart from a
+    /// pre-HUD Layout preset (see settings_model's `absence_means_eve_default`).
+    /// Without it this fixture would be old-shaped, and every prune test below
+    /// would stop exercising the parent-building path it was written for.
     fn char_doc() -> Value {
         let windows = Value::Dict(vec![(b("openWindows"), Value::Dict(vec![(b("market"), Value::Bool(true))]))]);
         let sizes = Value::Dict(vec![(b("NAME"), Value::Int(120))]);
         let ui = Value::Dict(vec![(b("SortHeadersSizes"), Value::Tuple(vec![ts(), sizes]))]);
-        Value::Dict(vec![(b("windows"), windows), (b("ui"), ui), (b("charStore"), Value::Int(7))])
+        Value::Dict(vec![
+            (b("windows"), windows),
+            (b("ui"), ui),
+            (b("notifications"), Value::Dict(vec![])),
+            (b("charStore"), Value::Int(7)),
+        ])
     }
 
     /// A user document with all three account-side categories present.
@@ -564,6 +590,21 @@ mod tests {
 
     fn read_doc(p: &Path) -> Value {
         decode(&std::fs::read(p).expect("preset file exists")).expect("preset file decodes")
+    }
+
+    /// A user document carrying all four account-side HUD keys the Layout
+    /// aspect writes: `ui/shipuialigntop`, `ui/detachFighterUI`,
+    /// `ui/displayFighterUI`, and `windows/neocomWidth`. Built beside
+    /// `user_doc()` rather than folding into it, since `user_doc()` — which
+    /// deliberately carries none of these — is what other tests depend on.
+    fn user_doc_with_account_hud() -> Value {
+        let ui = Value::Dict(vec![
+            (b("shipuialigntop"), Value::Bool(true)),
+            (b("detachFighterUI"), Value::Bool(false)),
+            (b("displayFighterUI"), Value::Bool(true)),
+        ]);
+        let windows = Value::Dict(vec![(b("neocomWidth"), Value::Int(240))]);
+        Value::Dict(vec![(b("ui"), ui), (b("windows"), windows)])
     }
 
     #[test]
@@ -590,7 +631,19 @@ mod tests {
     }
 
     #[test]
-    fn a_pruned_document_keeps_no_unrelated_root_keys() {
+    fn a_pruned_document_keeps_no_unrelated_data() {
+        // Was `a_pruned_document_keeps_no_unrelated_root_keys`, which pinned
+        // `root.len() == 1`. That's no longer the shape: HudFighterPos and
+        // HudBadge are `absent_means_default`, and `char_doc()` below has
+        // neither key, so `prune` now legitimately leaves empty `ui` and
+        // `notifications` parents behind — that non-empty-root shape is the
+        // deliberate "this preset explicitly captured EVE's default" signal
+        // spec §4.5 relies on (see `prune`'s doc comment), not a leak. What
+        // must still never happen is real, unrelated data landing in the
+        // preset — `charStore`, or `ui` carrying the source's
+        // `SortHeadersSizes` — so this asserts on root-key identity instead
+        // of count, and requires every allowed-but-unexpected key to be an
+        // empty dict rather than ignoring its content.
         let data = temp_data("no-siblings");
         let dir = create(
             &data,
@@ -601,9 +654,35 @@ mod tests {
         )
         .unwrap();
         let Value::Dict(root) = read_doc(&dir.join(CHAR_FILE)) else { panic!("root is a dict") };
-        // Exactly `windows` — not `charStore`, and no empty `ui` left behind.
-        assert_eq!(root.len(), 1, "root holds one key, got {root:?}");
-        assert_eq!(root[0].0, b("windows"));
+
+        let mut has_windows = false;
+        for (k, v) in &root {
+            let Value::Bytes(name) = k else { panic!("unexpected key shape: {k:?}") };
+            match name.as_slice() {
+                b"windows" => {
+                    has_windows = true;
+                    assert!(
+                        !matches!(v, Value::Dict(d) if d.is_empty()),
+                        "windows must carry the real category content, got {v:?}"
+                    );
+                }
+                // The only other keys a Layout prune may leave: the empty
+                // "EVE default" parents HudFighterPos/HudBadge build when the
+                // source lacks them. Real content here would be a leak, not
+                // the default signal.
+                b"ui" | b"notifications" => assert_eq!(
+                    *v,
+                    Value::Dict(Vec::new()),
+                    "{} must be the empty default-parent, not leaked data, got {v:?}",
+                    String::from_utf8_lossy(name)
+                ),
+                other => panic!(
+                    "unexpected root key {:?} — charStore or another unrelated key leaked",
+                    String::from_utf8_lossy(other)
+                ),
+            }
+        }
+        assert!(has_windows, "windows must be present");
     }
 
     #[test]
@@ -923,6 +1002,166 @@ mod tests {
         std::fs::write(&p, blue_marshal::encode(&bundle_value).unwrap()).unwrap();
         assert!(import_from(&data, &p).is_err());
         assert!(!preset_path(&data, "Bad").unwrap().exists(), "nothing written on failure");
+    }
+
+    #[test]
+    fn has_category_reports_values_not_absences() {
+        // extract_categories returns (cat, None) for a requested-but-absent leaf
+        // HUD key, so an `.is_empty()` reading here would answer "yes, it has
+        // one" for a document that has nothing.
+        let doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        assert!(!has_category(&doc, Category::HudShipTop), "an absent key is not a category the doc holds");
+
+        let with_key = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(b("shipuialigntop"), Value::Bool(true))]),
+        )]);
+        assert!(has_category(&with_key, Category::HudShipTop), "a present key is");
+    }
+
+    #[test]
+    fn prune_builds_a_parent_for_a_requested_but_absent_hud_key() {
+        // This is the mechanism behind a Layout preset never having an empty-root
+        // user.dat: `present` maps over the (cat, None) entries too, so
+        // parent_entries builds `ui` and `windows` for them. Filtering this to
+        // Some would silently reintroduce the old-preset ambiguity.
+        let source = Value::Dict(vec![(b("unrelated"), Value::Int(1))]);
+        let out = prune(&source, &[Category::HudShipTop, Category::HudNeocomWidth]);
+        assert!(!is_empty_root(&out), "a pruned Layout account side is never an empty root");
+        let Value::Dict(root) = &out else { panic!("root is a dict") };
+        for key in [b"ui".as_slice(), b"windows".as_slice()] {
+            assert!(
+                root.iter().any(|(k, _)| matches!(k, Value::Bytes(v) if v.as_slice() == key)),
+                "the parent for {} was built",
+                String::from_utf8_lossy(key)
+            );
+        }
+    }
+
+    #[test]
+    fn a_freshly_created_layout_preset_removes_account_hud_keys_an_old_preset_would_leave_alone() {
+        // The design distinguishes a Layout preset created BEFORE this branch
+        // (account side is an empty root `{}` — applying it must leave the
+        // target's HUD keys alone) from one created AFTER (account side is at
+        // minimum `{ui: {}, windows: {}}` — applying it removes HUD keys the
+        // source lacks). This exercises that discrimination end to end,
+        // through `presets::create`, rather than on hand-built documents.
+        let data = temp_data("layout-hud-e2e");
+        // user_doc() stores none of the four account-side HUD keys.
+        let dir = create(
+            &data,
+            "New layout",
+            &[Aspect::Layout],
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&user_doc()) },
+            false,
+        )
+        .unwrap();
+        let preset_user = read_doc(&dir.join(USER_FILE));
+        assert!(
+            !is_empty_root(&preset_user),
+            "a newly created Layout preset's user.dat is never an empty root"
+        );
+
+        let w = aspect_writes(&[Aspect::Layout]);
+        let hud_cats = [
+            Category::HudShipTop,
+            Category::HudFighterDetached,
+            Category::HudFighterShown,
+            Category::HudNeocomWidth,
+        ];
+
+        // New-preset path: the preset's account side reports each key as an
+        // explicit removal, so a target that has them loses them.
+        let extracted = extract_categories(&preset_user, &w.account_categories);
+        let mut target = user_doc_with_account_hud();
+        apply_to_tree(&mut target, &extracted);
+        for cat in hud_cats {
+            assert!(!has_category(&target, cat), "{cat:?} must be removed by a freshly created Layout preset");
+        }
+
+        // Old-preset path, as the contrast case: an empty-root account side
+        // (what every Layout preset's user.dat was before this branch)
+        // contributes neither values nor removals, so the same keys survive.
+        let old_extracted = extract_categories(&Value::Dict(vec![]), &w.account_categories);
+        let mut old_target = user_doc_with_account_hud();
+        apply_to_tree(&mut old_target, &old_extracted);
+        for cat in hud_cats {
+            assert!(has_category(&old_target, cat), "{cat:?} must survive an old preset's empty-root account side");
+        }
+    }
+
+    #[test]
+    fn a_new_layout_preset_carries_the_notifications_shape_signal() {
+        // HAZARD PIN. A Layout preset's char.dat is told apart from one saved
+        // before the aspect carried the HUD by a single shape: the presence of
+        // a root `notifications` key (settings_model's
+        // `absence_means_eve_default`). That key only gets built because
+        // `Aspect::Layout` lists `Category::HudBadge`, so `prune` creates its
+        // parent even when the source stores no badge offset.
+        //
+        // Remove HudBadge from that list and this test fails. If it did not,
+        // every newly created Layout preset would start looking like an old
+        // one, and the char-side HUD would silently stop copying — no error,
+        // no visible symptom, just half the fields moving again.
+        let data = temp_data("layout-shape-signal");
+        let dir = create(
+            &data,
+            "Signal",
+            &[Aspect::Layout],
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&user_doc()) },
+            false,
+        )
+        .unwrap();
+        let c = read_doc(&dir.join(CHAR_FILE));
+        let Value::Dict(root) = &c else { panic!("root is a dict") };
+        assert!(
+            root.iter().any(|(k, _)| matches!(k, Value::Bytes(v) if v.as_slice() == b"notifications")),
+            "a new Layout preset's char.dat must carry the `notifications` root key, or it reads as a pre-HUD preset"
+        );
+
+        // And the effect that key buys: char_doc() stores neither char-side HUD
+        // key, so applying this preset must still reset the target's to EVE's
+        // defaults rather than leaving them.
+        let w = aspect_writes(&[Aspect::Layout]);
+        let extracted = extract_categories(&c, &w.char_categories);
+        for cat in [Category::HudFighterPos, Category::HudBadge] {
+            assert!(
+                extracted.iter().any(|(c, v)| *c == cat && v.is_none()),
+                "{cat:?} must come back as an explicit removal"
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_but_empty_document_counts_as_a_side_that_is_not_open() {
+        // The editor can open a preset's own files as the char/account slots,
+        // and a pre-HUD Layout preset's user.dat is exactly `{}`. Saving a new
+        // preset from that slot would mint a `{}` account side, which
+        // `extract_categories` reads back as an old preset — so the new preset
+        // would silently apply only half of what it claims.
+        let data = temp_data("empty-open-side");
+        let empty = Value::Dict(vec![]);
+        let err = create(
+            &data,
+            "From an empty account slot",
+            &[Aspect::Layout],
+            CreateInput { char_doc: Some(&char_doc()), user_doc: Some(&empty) },
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("account file"), "got: {err}");
+        assert!(!preset_path(&data, "From an empty account slot").unwrap().exists(), "nothing written");
+
+        // Same on the character side.
+        let err = create(
+            &data,
+            "From an empty char slot",
+            &[Aspect::Layout],
+            CreateInput { char_doc: Some(&empty), user_doc: Some(&user_doc()) },
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("character file"), "got: {err}");
     }
 
     #[test]

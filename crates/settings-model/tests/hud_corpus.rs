@@ -5,11 +5,16 @@
 //! Only real files can catch that class, so this asserts each character-scoped
 //! anchor actually projects a value somewhere in the corpus.
 //!
+//! It also pins the one *shape* the batch copy reads rather than a value: that
+//! every real character file carries a root `notifications` section, which is
+//! what lets `batch.rs::absence_means_eve_default` tell a pre-HUD Layout preset
+//! apart from a character sitting at EVE's defaults.
+//!
 //! Skips silently when the corpus is not checked out.
 
 mod common;
 
-use settings_model::project_hud;
+use settings_model::{extract_categories, project_hud, Category};
 
 /// Enough sightings per field to mean "the section is right", not "one odd
 /// file". The synthetic corpus is curated — one deliberate fixture carrying an
@@ -57,4 +62,37 @@ fn every_character_hud_anchor_reads_from_a_real_file() {
             );
         }
     }
+}
+
+/// The char-side removal guard rests on a shape: a source document with no root
+/// `notifications` key is read as a Layout preset saved before the aspect
+/// carried the HUD, and its HUD absences stop deleting the target's values.
+/// That rule must never fire on a real character file, and the only reason it
+/// cannot is that EVE writes the section into every one of them.
+///
+/// Asserted through `extract_categories` itself rather than by re-implementing
+/// the key lookup: `HudBadge` comes back exactly when the guard accepts the
+/// document, so this tests the real predicate on real bytes.
+#[test]
+fn a_real_char_file_is_never_read_as_a_pre_hud_preset() {
+    let mut checked = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+    for f in common::char_files().filter(|f| !f.synthetic) {
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
+        checked += 1;
+        if extract_categories(&doc, &[Category::HudBadge]).is_empty() {
+            missing.push(f.name());
+        }
+    }
+    if !common::real_corpus_present() {
+        return; // gitignored personal data; nothing to assert here on CI
+    }
+    assert!(checked > 0, "the real corpus is present but held no character files");
+    assert!(
+        missing.is_empty(),
+        "{}/{checked} real character files have no root `notifications` section, so a copy \
+         FROM them would stop removing the target's HUD keys: {:?}",
+        missing.len(),
+        &missing[..missing.len().min(5)]
+    );
 }

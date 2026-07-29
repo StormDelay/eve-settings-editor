@@ -163,3 +163,56 @@ fn overview_widths_copy_between_chars_encodes_across_the_shared_boundary() {
     apply_to_tree(&mut target, &extracted);
     encode(&target).expect("post-copy widths encode (cross-boundary Ref inlined)");
 }
+
+/// Account root -> `windows` -> (ts, { neocomWidth: Int }). Real account
+/// sections are `(timestamp, dict)` tuples, not bare dicts.
+fn wrapped_user_doc_with_neocom_width(width: i64) -> Value {
+    let windows = Value::Dict(vec![(b("neocomWidth"), Value::Int(width))]);
+    Value::Dict(vec![(b("windows"), Value::Tuple(vec![ts(), windows]))])
+}
+
+/// Same wrapped shape, but the `windows` dict holds no `neocomWidth` key —
+/// the wrapper is still a `(ts, dict)` tuple, only the leaf is absent.
+fn wrapped_user_doc_without_neocom_width() -> Value {
+    let windows = Value::Dict(vec![]);
+    Value::Dict(vec![(b("windows"), Value::Tuple(vec![ts(), windows]))])
+}
+
+/// Reads `neocomWidth` back out through the same `(ts, dict)` wrapper by hand
+/// (not via the crate's private `dict_inner`), so a fixture or a splice that
+/// silently dropped the tuple wrapper fails this lookup rather than passing.
+fn neocom_width_of(doc: &Value) -> Option<i64> {
+    let Value::Dict(root) = doc else { return None };
+    let (_, windows) = root.iter().find(|(k, _)| *k == b("windows"))?;
+    let Value::Tuple(items) = windows else { return None };
+    let dict = items.iter().find_map(|v| match v {
+        Value::Dict(d) => Some(d),
+        _ => None,
+    })?;
+    let (_, v) = dict.iter().find(|(k, _)| *k == b("neocomWidth"))?;
+    match v {
+        Value::Int(i) => Some(*i),
+        _ => None,
+    }
+}
+
+#[test]
+fn the_hud_keys_survive_the_timestamped_wrapper_real_files_use() {
+    // Real sections are `(timestamp, dict)`, not bare dicts. descend_ref and
+    // descend_mut unwrap that via dict_inner; this pins that they do for the
+    // new leaf categories too, on both the read and the write side.
+    let source = wrapped_user_doc_with_neocom_width(72);
+    let mut target = wrapped_user_doc_with_neocom_width(37);
+    let extracted = extract_categories(&source, &[Category::HudNeocomWidth]);
+    apply_to_tree(&mut target, &extracted);
+    assert_eq!(neocom_width_of(&target), Some(72), "the source's width landed through the wrapper");
+}
+
+#[test]
+fn a_removal_reaches_through_the_timestamped_wrapper_too() {
+    let source = wrapped_user_doc_without_neocom_width();
+    let mut target = wrapped_user_doc_with_neocom_width(37);
+    let extracted = extract_categories(&source, &[Category::HudNeocomWidth]);
+    apply_to_tree(&mut target, &extracted);
+    assert_eq!(neocom_width_of(&target), None, "the target fell back to EVE's default");
+}

@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **"Window layout" now carries your whole screen, not half of it.** It moved
+  window positions, the neocom and the ship HUD offset, but left the fighter
+  panel, the notification badge and the neocom width behind — so a copy landed
+  a character somewhere between their own layout and the one you gave them.
+  All nine settings now travel together. Two consequences worth knowing: the
+  copy writes the account file, so **every character on the target's account**
+  gets the neocom width and fighter-UI toggles (the preview names them, as it
+  already did for Overview and Autofill), and a character with no paired
+  account can no longer receive a layout copy — pair it in the Accounts view
+  first. Where the source is at EVE's default, the target is reset to that
+  default rather than keeping its own value, which is what makes the two
+  characters actually match.
+
 ## [0.22.0] - 2026-07-28
 
 Everything the live-verification sessions turned up. The two changes that write
