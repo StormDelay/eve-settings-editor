@@ -4,11 +4,15 @@
   import NeocomButtons from "$lib/NeocomButtons.svelte";
 
   let {
-    hud, readOnly, onSet, sharedNames = [], selectedKind = null, onSelectKind,
+    hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
   }: {
     hud: Hud;
     readOnly: boolean;
+    /** The ACCOUNT document's read-only flag, which only the account-scoped
+     * rows care about. False when no account file is open — those rows are
+     * already `unavailable` then. */
+    accountReadOnly?: boolean;
     onSet: (name: string, text: string) => void;
     /** Other characters on this account, for the account-row legend. */
     sharedNames?: string[];
@@ -62,7 +66,11 @@
 
   const find = (name: string): HudEntry | undefined => hud.entries.find((e) => e.name === name);
   const shown = (name: string) => find(name)?.value ?? find(name)?.default ?? "";
-  const disabled = (e: HudEntry) => readOnly || e.set.how === "unavailable";
+  // `readOnly` is the CHARACTER document's flag. An account-scoped row writes
+  // the account file, so a read-only account left those four rows clickable and
+  // the backend's refusal arrived as a dialog — stricter to say so up front.
+  const disabled = (e: HudEntry) =>
+    readOnly || e.set.how === "unavailable" || (e.scope === "account" && accountReadOnly);
   const title = (e: HudEntry) =>
     e.set.how === "unavailable"
       ? "Not present in this file"

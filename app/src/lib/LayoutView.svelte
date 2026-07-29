@@ -17,6 +17,7 @@
     slot,
     runMutations,
     readOnly,
+    accountReadOnly = false,
     refreshToken,
     userOpen,
     selectedId = $bindable(null),
@@ -28,6 +29,9 @@
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
     readOnly: boolean;
+    /** The account document's read-only flag. Only the four account-scoped HUD
+     * rows write that file, so it is theirs alone to honour. */
+    accountReadOnly?: boolean;
     refreshToken: number;
     userOpen: boolean;
     selectedId?: string | null;
@@ -813,6 +817,7 @@
         <HudPanel
           {hud}
           {readOnly}
+          {accountReadOnly}
           onSet={setHud}
           {sharedNames}
           selectedKind={selectedFurniture}

@@ -304,13 +304,22 @@ import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 // name-prefix guess, so a future field can't be silently mislabelled.
 const ACCOUNT_FIELDS = new Set(["ship_top", "fighter_detached", "fighter_shown", "neocom_width"]);
 
-const hudEntry = (name: string, value: string | null, kind: HudEntry["kind"], dflt: string, how: "set" | "unavailable" = "set"): HudEntry => ({
+// `insert` is what the backend really sends for a key the file does not have —
+// the shape an absent value arrives in. The helper could only build `set` and
+// `unavailable`, so every "absent" case here was a `set` with a null value:
+// behaviourally the same for these functions, but not the wire shape.
+const hudEntry = (name: string, value: string | null, kind: HudEntry["kind"], dflt: string, how: "set" | "unavailable" | "insert" = "set"): HudEntry => ({
   name,
   kind,
   value,
   default: dflt,
   scope: ACCOUNT_FIELDS.has(name) ? "account" : "char",
-  set: how === "set" ? { how: "set", path: [] } : { how: "unavailable" },
+  set:
+    how === "set"
+      ? { how: "set", path: [] }
+      : how === "insert"
+        ? { how: "insert", parent: [], key: { kind: "bytes_hex", v: "" } }
+        : { how: "unavailable" },
 });
 
 const fullHud = (over: Partial<Record<string, HudEntry>> = {}): Hud => {
@@ -334,7 +343,7 @@ const layout2560: WindowLayout = { reference_w: 2560, reference_h: 1440, windows
 check("hudNum uses the value when present", hudNum(fullHud(), "fighter_x") === 326);
 check(
   "hudNum falls back to the default when the key is absent",
-  hudNum(fullHud({ fighter_x: hudEntry("fighter_x", null, "int", "7") }), "fighter_x") === 7,
+  hudNum(fullHud({ fighter_x: hudEntry("fighter_x", null, "int", "7", "insert") }), "fighter_x") === 7,
 );
 check(
   "hudNum is null when the field is unavailable",
@@ -365,6 +374,20 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const fighter = rects[2];
   check("the fighter panel sits at its stored point", fighter.x === 326 && fighter.y === 54);
   check("the fighter panel drags freely", fighter.drag === "xy");
+
+  // The badge was only ever checked for its place in the order string.
+  const badge = rects[3];
+  check("the badge sits at its stored point", badge.x === 1000 && badge.y === 20);
+  check("the badge is the nominal 32x32", badge.w === 32 && badge.h === 32);
+  check("the badge drags freely", badge.drag === "xy");
+}
+
+{
+  // A width of exactly 0 is a present value, not an absent one, so it takes the
+  // `> 0` branch rather than the null check — and a zero-width rect would be an
+  // invisible thing the canvas still hit-tests.
+  const rects = hudRects(fullHud({ neocom_width: hudEntry("neocom_width", "0", "int", "37") }), layout2560);
+  check("a zero-width neocom is not drawn", !rects.some((r) => r.kind === "neocom"));
 }
 
 {
