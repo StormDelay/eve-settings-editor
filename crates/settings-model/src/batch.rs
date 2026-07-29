@@ -83,10 +83,66 @@ impl Category {
     }
 }
 
+/// Whether an absent `cat` in THIS source document may be read as "the source
+/// sits at EVE's default" — the only thing that licenses `apply_to_tree` to
+/// DELETE that key from the target, which is the one place in the app that
+/// removes anything from a player's settings file. It is
+/// `cat.absent_means_default()` (the per-category half) plus one per-document
+/// shape check on the char side.
+///
+/// THE SIGNAL. A Layout preset created after the aspect grew its HUD
+/// categories always has a `notifications` root key in its `char.dat`, because
+/// `presets::prune` builds that parent for `Category::HudBadge` whether or not
+/// the source stores `notification_badge_offset`. A Layout preset created
+/// BEFORE never has one: its `char.dat` holds `windows` and
+/// `ui -> neocomButtonRawData`, and nothing else. So a source document with no
+/// `notifications` root key predates the HUD-carrying Layout aspect. Its
+/// missing `fightersDetachedPosition` and `notification_badge_offset` were
+/// never captured rather than captured-as-default, and deleting them would
+/// silently lose the TARGET character's fighter-panel and badge positions — on
+/// a preset the user saved before this behaviour existed and never re-captured.
+///
+/// WHY IT CANNOT MISFIRE ON A REAL CHARACTER FILE. EVE writes a root
+/// `notifications` section into every character file — all 6502 in the corpus
+/// carry it (`tests/hud_corpus.rs::a_real_char_file_is_never_read_as_a_pre_hud_preset`
+/// asserts exactly this, through this function). A real character source
+/// therefore keeps full removal semantics.
+///
+/// WHAT WOULD SILENTLY BREAK IT. Dropping `Category::HudBadge` from
+/// `Aspect::Layout`'s char-side category list: `prune` would stop building the
+/// `notifications` parent, every newly created Layout preset would then look
+/// like an old one, and the char-side HUD would quietly stop copying its
+/// defaults. `presets.rs`'s
+/// `a_new_layout_preset_carries_the_notifications_shape_signal` fails loudly
+/// if that ever happens.
+///
+/// A source that is itself old-shaped (an old preset's `char.dat` re-opened in
+/// the char slot and cut into a new preset) produces another old-shaped preset.
+/// That is the safe direction — it removes nothing — so it is left alone.
+///
+/// The ACCOUNT side is discriminated differently, by `extract_categories`'s
+/// empty-root check: a pre-branch Layout preset's `user.dat` IS `{}`. This rule
+/// must never be extended to account categories — a real account file has no
+/// `notifications` section at all, so it would disable every account-side
+/// removal.
+fn absence_means_eve_default(root: &Entries, cat: Category) -> bool {
+    if !cat.absent_means_default() {
+        return false;
+    }
+    match cat {
+        Category::HudFighterPos | Category::HudBadge => {
+            root.iter().any(|(k, _)| is_bytes(k, b"notifications"))
+        }
+        _ => true,
+    }
+}
+
 /// Inline the source's sharing, then clone each requested category's subtree.
-/// A category the source lacks is skipped — EXCEPT an `absent_means_default`
-/// one, which is returned as `(cat, None)` so the splice removes the target's
-/// own value. An absent leaf HUD key is EVE's default, not "nothing to copy".
+/// A category the source lacks is skipped — EXCEPT one whose absence
+/// `absence_means_eve_default` accepts, which is returned as `(cat, None)` so
+/// the splice removes the target's own value. An absent leaf HUD key is EVE's
+/// default, not "nothing to copy" — as long as the source is a document that
+/// could have stored it (see that function).
 pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, Option<Value>)> {
     let mut s = source.clone();
     inline_all(&mut s);
@@ -94,7 +150,9 @@ pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, O
     // An empty root is a preset side that was pruned away, never a real
     // settings file. It holds no values AND claims no absences: a Layout
     // preset created before the aspect grew an account side must not delete
-    // the target's HUD keys. See the spec's §4.4.
+    // the target's HUD keys. See the spec's §4.4. This covers the ACCOUNT side
+    // only — an old preset's char.dat is not empty, which is what
+    // `absence_means_eve_default` above is for.
     if root.is_empty() {
         return Vec::new();
     }
@@ -107,7 +165,7 @@ pub fn extract_categories(source: &Value, cats: &[Category]) -> Vec<(Category, O
                 .map(|(_, v)| v.clone());
             match found {
                 Some(v) => Some((cat, Some(v))),
-                None if cat.absent_means_default() => Some((cat, None)),
+                None if absence_means_eve_default(root, cat) => Some((cat, None)),
                 None => None,
             }
         })
@@ -530,6 +588,17 @@ mod tests {
         // Exactly the paths in hud.rs's FIELDS table, which is the only other
         // place these keys are named. A drift here half-applies a Layout copy
         // silently, which is the bug this whole branch exists to fix.
+        //
+        // These literals are COPIES of FIELDS (which is private), so this pin
+        // on its own only holds batch.rs against itself: change both and it
+        // still passes. The genuine cross-check is
+        // `ops.rs::a_layout_copy_leaves_every_hud_field_equal`, which copies
+        // through these key paths and then reads all nine fields back through
+        // `project_hud` — the only reader of FIELDS. If hud.rs moved a section
+        // or key without moving it here, the copy would write the old path and
+        // the projection would read the new one, so the field comes back None
+        // and that test fails. Keep it non-vacuous (every field non-None on
+        // both sides) or this pair stops cross-checking anything.
         let expected: [(Category, &[&[u8]]); 6] = [
             (Category::HudFighterPos, &[b"ui", b"fightersDetachedPosition"]),
             (Category::HudBadge, &[b"notifications", b"notification_badge_offset"]),
@@ -604,8 +673,13 @@ mod tests {
 
     #[test]
     fn a_removal_with_no_parent_section_on_the_target_is_a_no_op() {
-        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        // The source must carry a `notifications` root key, or the badge
+        // absence is not a removal at all (see `absence_means_eve_default`) and
+        // this would pass without exercising the removal path.
+        let source =
+            Value::Dict(vec![(b("ui"), Value::Dict(vec![])), (b("notifications"), Value::Dict(vec![]))]);
         let extracted = extract_categories(&source, &[Category::HudBadge]);
+        assert_eq!(extracted.len(), 1, "the source really does claim the default");
         let mut target = Value::Dict(vec![(b("keep"), Value::Int(1))]);
         apply_to_tree(&mut target, &extracted);
         let Value::Dict(root) = &target else { panic!("root is a dict") };
@@ -631,6 +705,80 @@ mod tests {
             w.iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
             "an old preset leaves the target's neocom width alone"
         );
+    }
+
+    /// The char.dat a Layout preset saved BEFORE the aspect carried the HUD
+    /// has: `windows` and `ui -> neocomButtonRawData`, and no `notifications`.
+    fn old_layout_preset_char_doc() -> Value {
+        Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![(b("openWindows"), Value::Dict(vec![]))])),
+            (
+                b("ui"),
+                Value::Dict(vec![(
+                    b("neocomButtonRawData"),
+                    Value::Tuple(vec![ts(), Value::List(vec![b("SOURCE-BAR")])]),
+                )]),
+            ),
+        ])
+    }
+
+    /// A character document with the two char-side HUD keys stored.
+    fn char_with_hud(fighter: i64, badge: i64) -> Value {
+        let point = |v: i64| Value::Tuple(vec![ts(), Value::Tuple(vec![Value::Int(v), Value::Int(v)])]);
+        Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![])),
+            (b("ui"), Value::Dict(vec![(b("fightersDetachedPosition"), point(fighter))])),
+            (b("notifications"), Value::Dict(vec![(b("notification_badge_offset"), point(badge))])),
+        ])
+    }
+
+    #[test]
+    fn an_old_layout_presets_char_side_claims_no_hud_absences() {
+        // The data-loss case. An old preset's char.dat is NOT an empty root, so
+        // the account-side guard never covered it: its missing
+        // fightersDetachedPosition and notification_badge_offset were read as
+        // "the source is at EVE's default" and DELETED from the target.
+        let extracted = extract_categories(
+            &old_layout_preset_char_doc(),
+            &[Category::Layout, Category::NeocomButtons, Category::HudFighterPos, Category::HudBadge],
+        );
+        let cats: Vec<Category> = extracted.iter().map(|(c, _)| *c).collect();
+        assert_eq!(
+            cats,
+            vec![Category::Layout, Category::NeocomButtons],
+            "an old preset carries what it captured, and claims nothing about the HUD"
+        );
+
+        let mut target = char_with_hud(10, 20);
+        apply_to_tree(&mut target, &extracted);
+        let hud = crate::hud::project_hud(&target, None);
+        let val = |n: &str| hud.entries.iter().find(|e| e.name == n).unwrap().value.clone();
+        assert_eq!(val("fighter_x").as_deref(), Some("10"), "the target's fighter panel survives");
+        assert_eq!(val("badge_x").as_deref(), Some("20"), "the target's badge offset survives");
+    }
+
+    #[test]
+    fn a_char_source_with_the_notifications_section_still_removes() {
+        // The other half of the discriminator: a document shaped like a real
+        // character file (or a Layout preset created after this branch) keeps
+        // full removal semantics, so a copy from a character sitting at EVE's
+        // defaults still resets the target.
+        let source = Value::Dict(vec![
+            (b("ui"), Value::Dict(vec![])),
+            (b("notifications"), Value::Dict(vec![])),
+        ]);
+        let extracted =
+            extract_categories(&source, &[Category::HudFighterPos, Category::HudBadge]);
+        assert_eq!(extracted.len(), 2, "both absences are claimed as EVE's default");
+        assert!(extracted.iter().all(|(_, v)| v.is_none()), "both are removals");
+
+        let mut target = char_with_hud(10, 20);
+        apply_to_tree(&mut target, &extracted);
+        let hud = crate::hud::project_hud(&target, None);
+        for name in ["fighter_x", "fighter_y", "badge_x", "badge_y"] {
+            let e = hud.entries.iter().find(|e| e.name == name).unwrap();
+            assert!(e.value.is_none(), "{name} fell back to EVE's default");
+        }
     }
 
     #[test]
