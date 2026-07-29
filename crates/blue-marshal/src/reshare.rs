@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 
+use crate::decode::MAX_DEPTH;
 use crate::encode::encode;
 use crate::value::Value;
 
@@ -67,10 +68,25 @@ fn collect(v: &Value, out: &mut HashMap<u32, Value>) {
 }
 
 fn resolve(v: &Value, table: &HashMap<u32, Value>) -> Value {
+    resolve_at(v, table, 0)
+}
+
+/// `hops` counts CONSECUTIVE indirection steps (`Shared`/`Ref`), not container
+/// nesting — descending into a child resets it. Container depth is already
+/// bounded to [`MAX_DEPTH`] by decode and encode; an indirection chain is not,
+/// and a hand-built self-referential `Ref` (the shape `encode`'s `cyclic` test
+/// rejects) would otherwise recurse until the stack died. At the bound the
+/// `Ref` is left unresolved, so the tree fails a later `encode` with
+/// `RefBeforeStore` instead of aborting the process — the same fail-safe
+/// `treewalk::effective` takes.
+fn resolve_at(v: &Value, table: &HashMap<u32, Value>, hops: usize) -> Value {
+    if hops >= MAX_DEPTH {
+        return v.clone();
+    }
     match v {
-        Value::Shared { value, .. } => resolve(value, table),
+        Value::Shared { value, .. } => resolve_at(value, table, hops + 1),
         Value::Ref(slot) => match table.get(slot) {
-            Some(t) => resolve(t, table),
+            Some(t) => resolve_at(t, table, hops + 1),
             None => v.clone(),
         },
         Value::Tuple(xs) => Value::Tuple(xs.iter().map(|c| resolve(c, table)).collect()),
@@ -330,7 +346,41 @@ mod tests {
         assert_eq!(inline(&decode(&bytes).unwrap()), inline(&t), "semantics preserved");
     }
 
+    #[test]
+    fn a_self_referential_ref_gives_up_instead_of_overflowing_the_stack() {
+        // Only reachable by hand: `decode` rejects cycles and no edit path
+        // builds one. Slot 1 stores a Ref to itself, so resolving it is an
+        // infinite chain. Left unresolved, it fails `encode` — an error the
+        // caller can report, unlike the abort a stack overflow would be.
+        let t = Value::Shared { slot: 1, value: Box::new(Value::Ref(1)) };
+        assert_eq!(inline(&t), Value::Ref(1));
+        assert!(encode(&reshare(&t)).is_err(), "the unresolved Ref must not silently encode");
+    }
+
+    #[test]
+    fn deep_nesting_short_of_the_limit_still_resolves() {
+        // The bound counts indirection hops, not container depth, so a tree
+        // nested near MAX_DEPTH with a Shared at every level must come out
+        // fully inlined — counting both would false-trip on real files, whose
+        // repeated window ids are Shared at many levels at once.
+        let mut t = Value::Shared { slot: 1, value: Box::new(b("overview")) };
+        for _ in 0..60 {
+            t = Value::List(vec![Value::Shared { slot: 2, value: Box::new(t) }]);
+        }
+        let out = inline(&t);
+        assert!(!has_sharing(&out), "every level inlined: {out:?}");
+    }
+
     // --- test helpers (walk the tree counting share nodes) ---
+    fn has_sharing(v: &Value) -> bool {
+        match v {
+            Value::Shared { .. } | Value::Ref(_) => true,
+            Value::Tuple(xs) | Value::List(xs) => xs.iter().any(has_sharing),
+            Value::Dict(es) => es.iter().any(|(k, val)| has_sharing(k) || has_sharing(val)),
+            _ => false,
+        }
+    }
+
     fn count_share_nodes(v: &Value, defs: &mut usize, refs: &mut usize) {
         match v {
             Value::Shared { value, .. } => { *defs += 1; count_share_nodes(value, defs, refs); }
