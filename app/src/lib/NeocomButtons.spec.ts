@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import NeocomButtons from "./NeocomButtons.svelte";
 import type { NeocomBar, NeocomButton } from "./api";
 import { confirm } from "@tauri-apps/plugin-dialog";
@@ -54,10 +54,40 @@ describe("NeocomButtons", () => {
   });
 
   test("read-only disables every control", () => {
+    // Every one of them, not a sample: a control left live on a read-only file
+    // reaches the backend and comes back as a dialog instead of being visibly
+    // unavailable.
     render(NeocomButtons, props(bar([btn(0, "chat"), btn(1, "mail")], [btn(0, "wallet")]), true));
+    expect((screen.getByLabelText("Move mail up") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Move chat down") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Remove chat") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Add a neocom button") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByText("Add") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Reset to original") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a failed add keeps the choice in the dropdown", async () => {
+    // The bar prop does not change when the command fails, so the id stays
+    // addable — and the pick must still be there to retry.
+    const p = props(bar([btn(0, "chat")], [btn(0, "chat"), btn(1, "mail")]));
+    render(NeocomButtons, p);
+    const select = screen.getByLabelText("Add a neocom button") as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "mail" } });
+    await fireEvent.click(screen.getByText("Add")); // fireEvent, so the state flush lands
+    expect(p.onAdd).toHaveBeenCalledWith("mail", 1, "mail.png");
+    await waitFor(() => expect(select.value).toBe("mail"));
+  });
+
+  test("a successful add clears the dropdown", async () => {
+    const p = props(bar([btn(0, "chat")], [btn(0, "chat"), btn(1, "mail")]));
+    const { rerender } = render(NeocomButtons, p);
+    const select = screen.getByLabelText("Add a neocom button") as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "mail" } });
+    await fireEvent.click(screen.getByText("Add"));
+    // What a successful add looks like from here: mail is on the bar now, so it
+    // is no longer addable.
+    await rerender({ ...p, bar: bar([btn(0, "chat"), btn(1, "mail")], [btn(0, "chat"), btn(1, "mail")]) });
+    await waitFor(() => expect(select.value).toBe(""));
   });
 
   test("confirming the reset dialog calls onReset", async () => {
