@@ -222,6 +222,16 @@ fn set_name(fields: &mut Entries, name: &str) {
     fields.push((Value::Str("name".into()), Value::StrUcs2(name.to_string())));
 }
 
+/// Whether the account's tab dict holds this index. Reading it never fabricates
+/// `tabsettings_new`, which is why this exists alongside `tabs_mut` — a guard
+/// that refuses an edit must not leave a minted key behind.
+fn has_tab(ov: &Entries, tab_idx: i64) -> bool {
+    ov.iter()
+        .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
+        .and_then(|(_, v)| dict_inner(v))
+        .is_some_and(|tabs| tabs.iter().any(|(k, _)| as_int(k) == Some(tab_idx)))
+}
+
 /// How many overview windows the account's `tabsByWindowInstanceID` maps tabs to
 /// (0 when the mapping is absent — a windowless account). Reading it never
 /// fabricates the mapping.
@@ -367,6 +377,12 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
 pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
+    // Without this, moving an index no tab has inserts a phantom entry into the
+    // destination strip — the strip is a list of ints, so nothing downstream
+    // would notice. Matches `delete_tab`'s guard.
+    if !has_tab(ov, tab_idx) {
+        return Err(OverviewTabError::UnknownTab { index: tab_idx });
+    }
     // Same as `reorder_tabs_in_window`: `groups_mut` below would fabricate an
     // empty mapping on a windowless account even though the edit is refused.
     if window_count(ov) == 0 {
@@ -794,6 +810,13 @@ mod tests {
         let mut v = user_two_windows();
         assert!(matches!(move_tab(&mut v, 0, 0, 9, 0), Err(OverviewTabError::UnknownWindow { index: 9 })));
         assert_eq!(window_indices(&v, 0), vec![0], "source strip unchanged when destination is invalid");
+    }
+
+    #[test]
+    fn move_of_a_tab_that_does_not_exist_errors_and_plants_no_phantom() {
+        let mut v = user_two_windows(); // tabs 0 and 1 only
+        assert!(matches!(move_tab(&mut v, 9, 0, 1, 0), Err(OverviewTabError::UnknownTab { index: 9 })));
+        assert_eq!(window_indices(&v, 1), vec![1], "no phantom index in the destination strip");
     }
 
     #[test]
