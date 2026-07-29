@@ -478,9 +478,26 @@ pub fn setup_preview(
     aspects: &[Aspect],
     allow_other_folders: bool,
 ) -> SetupPlan {
+    preview_with_sides(roots, dir, source, target_char_paths, aspects, allow_other_folders).0
+}
+
+/// The planner, handing back the resolved source alongside the plan.
+///
+/// `resolve_source` and `scoped_files` each walk `discover()`, and an apply used
+/// to run the whole preview and then resolve the source AGAIN — five walks where
+/// three do. `setup_apply` takes the sides from here instead. `None` accompanies
+/// a plan carrying a `source_error`: there is no resolved source to hand over.
+fn preview_with_sides(
+    roots: &[PathBuf],
+    dir: &Path,
+    source: &BatchSource,
+    target_char_paths: &[String],
+    aspects: &[Aspect],
+    allow_other_folders: bool,
+) -> (SetupPlan, Option<SourceSides>) {
     let sides = match resolve_source(roots, dir, source, aspects, allow_other_folders) {
         Ok(s) => s,
-        Err(e) => return SetupPlan { source_error: Some(e), ..Default::default() },
+        Err(e) => return (SetupPlan { source_error: Some(e), ..Default::default() }, None),
     };
     let (char_paths, user_paths) =
         scoped_files(roots, sides.anchor.as_deref(), allow_other_folders);
@@ -526,7 +543,7 @@ pub fn setup_preview(
             }
         }
     }
-    plan
+    (plan, Some(sides))
 }
 
 pub fn setup_apply(
@@ -537,12 +554,13 @@ pub fn setup_apply(
     aspects: &[Aspect],
     allow_other_folders: bool,
 ) -> Result<Vec<TargetResult>, ErrDto> {
-    let plan = setup_preview(roots, dir, source, target_char_paths, aspects, allow_other_folders);
+    let (plan, sides) =
+        preview_with_sides(roots, dir, source, target_char_paths, aspects, allow_other_folders);
     if let Some(e) = plan.source_error {
         return Err(ErrDto::new("source", e));
     }
-    let sides = resolve_source(roots, dir, source, aspects, allow_other_folders)
-        .map_err(|e| ErrDto::new("source", e))?;
+    // Set together with `source_error`: a plan without one always carries sides.
+    let sides = sides.ok_or_else(|| ErrDto::new("source", "The source could not be read."))?;
     let w = aspect_writes(aspects);
 
     // Only the account side is optional: a character source with no paired
