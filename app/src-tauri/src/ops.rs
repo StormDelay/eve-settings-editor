@@ -1208,10 +1208,7 @@ pub fn pack_export(state: &AppState, path: &str) -> Result<settings_model::PackR
     }
     let text = settings_model::emit_pack(&pack);
     std::fs::write(path, text).map_err(|e| ErrDto::new("io", format!("{path}: {e}")))?;
-    Ok(settings_model::PackReport {
-        applied: pack.sections.iter().map(|(name, _)| name.clone()).collect(),
-        warnings,
-    })
+    Ok(settings_model::PackReport::exported(&pack, warnings))
 }
 
 pub fn autofill_lists(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {

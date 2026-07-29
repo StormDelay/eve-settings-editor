@@ -109,6 +109,11 @@ wrong later.
   window 0 cannot take them — a tab that exists but appears in no window is
   invisible in-game. An account with no per-window mapping at all is now told
   that, instead of "keep at least one window".
+- **An overview pack now says what it could not apply.** A pack carrying only
+  one of its two ship-label sections applied neither and said nothing; a preset
+  field that is not a list of numbers was written as an empty list, so the
+  account read "this setting is empty" from a pack that never said so. Both are
+  reported now, and the malformed field is left alone rather than emptied.
 - **Importing a preset file whose two sides are identical works.** Such a file
   stores the second side as a reference to the first — valid, and what a
   canonical encoder produces — and the importer rejected it as "missing its
