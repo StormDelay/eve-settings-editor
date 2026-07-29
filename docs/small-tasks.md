@@ -103,14 +103,18 @@ Workflow:
   the `Tuple`-payload normalize branch in `neocom.rs`'s `bar_list_mut` is
   unreachable defensive code that silently rewrites shape instead of erroring —
   the next person in that function should delete it and let the `_ =>
-  Err(NoBar)` arm handle it; (3) no `ops.rs`-level tests for the new wiring
-  (no-document / read-only / happy path), unlike the sibling `stack_*` and
-  `hud_layout` cases — the thing genuinely untested there is the Tauri
-  camelCase↔snake_case argument binding, which only the live smoke exercises;
+  Err(NoBar)` arm handle it; (3) ~~no `ops.rs`-level tests for the new wiring~~ — **done 2026-07-30**:
+  no-document, read-only (against a non-canonical stream, the fixture
+  `document.rs` already uses) and a happy path through reorder, add and reset,
+  ending on a round-trip check after the reshare each edit runs. The Tauri
+  camelCase↔snake_case binding is still only exercised by the live smoke —
+  nothing below the command layer can see it;
   (4) ~~`NeocomButtons.spec.ts`'s read-only test samples 3 of 5 interactive
-  controls~~ — **done 2026-07-29**: it checks all five; (5) the corpus gate (`neocom_corpus.rs`) never inspects
-  `bar.original` (which feeds the addable set on every real character) and
-  never asserts the projected button count equals the raw list length; (6) ~~a
+  controls~~ — **done 2026-07-29**: it checks all five; (5) ~~the corpus gate never inspects `bar.original` and never
+  asserts the projected button count equals the raw list length~~ — **done
+  2026-07-30**: it does both, and a counter asserts the length comparison
+  actually ran rather than skipping every file. Both hold across the real corpus,
+  so the projection drops nothing today; (6) ~~a
   failed add clears the dropdown selection before the command runs~~ — **done
   2026-07-29**: the add no longer clears it; landing on the bar does, since a
   button on the bar is no longer addable, so a failure leaves the pick alone.
@@ -121,6 +125,14 @@ Workflow:
   as the open `container_label` item, worth solving once for both; (8)
   icon-path casing varies across catalog entries, faithfully reflecting the
   client's own data. _Added 2026-07-27._
+
+  **(1) and (8) are closed with no change (2026-07-30).** `reorder` rebuilding
+  the bar with `clone()` is what the entry itself says it is — a bar is ≤24 tiny
+  entries, so a true move buys nothing measurable and costs the clarity of the
+  current version. The icon-path casing is the client's own; normalising it would
+  make our catalog disagree with the files it describes. **(7) is the only item
+  left:** raw ids instead of friendly labels, which wants solving once alongside
+  the open `container_label` item rather than twice.
   **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:** the
   Tuple-payload branch is gone and `_ => Err(NoBar)` handles the shape. Worth
   recording *why* it was unreachable, since the comment defending it read as a
@@ -367,30 +379,6 @@ Workflow:
   `create_preset` resolves the source blob before checking the target name, so a
   typo'd source no longer reports "that name is taken". The rest remain open.
 
-- [ ] **Character-centric entry-point follow-ups (whole-branch review, all
-  ship-as-debt).** Non-blocking minors from the character-centric rework final
-  review: (1) the reconcile `$effect` in `+page.svelte` and `openFile`'s explicit
-  `reconcileUserSlot` can, in a rare scheduler-flush-during-`await` window, both
-  pass the `slots.user === null` guard and issue one redundant, idempotent
-  `api.open("user", <same path>)` — self-heals to the correct state, not a loop;
-  add an "in-flight" flag only if the double backend open ever shows as noise;
-  (2) ~~`overview.test.ts`'s "excludes only the current character" `sharedWith`
-  case is really a no-op-filter check~~ — **done 2026-07-29**: renamed to what it
-  actually pins, that a character who is not on the account excludes nobody;
-  (3) ~~`AutofillView`'s generic "Open a character…" hint is unreachable~~ —
-  **done 2026-07-29, and this entry was wrong.** The hint was reachable, and its
-  advice was false when it showed: the pairing prompt above it was gated on
-  `charName`, which stays null until the ESI name lookup resolves — so any open,
-  unpaired character with no resolved name (offline, or names never refreshed)
-  was told to "open a character" while one was open. It keys off a `charOpen`
-  prop now, the signal `OverviewView` already takes, and falls back to "this
-  character" when the name is unknown. New `AutofillView.spec.ts` covers all
-  three states; (4) a profile
-  containing only account files (no local char file) now renders no sidebar header
-  at all (`Sidebar.svelte` wraps each profile in `{#if chars.length > 0}`) — matches
-  the model (reach via Open file…), but no "nothing here" hint fires in the
-  all-hidden case. _Added 2026-07-20._
-
 - [ ] **Per-environment canvas views (in space / NPC station / player structure).**
   A player's screen differs by environment, and the canvas currently mixes all of
   them into one picture — which is part of why it shows far more windows than are
@@ -540,18 +528,6 @@ Workflow:
   `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
   _Added 2026-07-19._
 
-- [ ] **Profile the reshare (deduplication) pass.** Every structural editor
-  (overview / autofill / batch / window-stack membership) runs
-  `blue_marshal::reshare` over the WHOLE document after each edit to re-derive
-  canonical `Shared`/`Ref` sharing before save (inline → tally by `encode(v)`
-  bytes → rebuild — an O(tree) traversal, plus an `encode` per node for the
-  dedup key). It hasn't been profiled; on the largest real settings files it may
-  add noticeable latency to a structural edit. (The geometry drag path does NOT
-  reshare — it's plain `set_scalar` — so this is specifically the membership /
-  overview / autofill edit path.) Measure it on the biggest corpus files and, if
-  it's a bottleneck, consider caching the per-node encode key, an incremental
-  reshare, or scoping the pass to the edited subtree. _Added 2026-07-19._
-
 - [ ] **Improve the auto-derived autofill category labels.** In
   `app/src/lib/autofill.ts`, widget paths not matched by the `CURATED` substring
   map fall through to `derive()`, which just title-cases the last non-boilerplate
@@ -610,6 +586,31 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **Profile the reshare (deduplication) pass.** Measured 2026-07-30 on the
+  largest real account files (~390 KB), release build: decode 3 ms, inline 3 ms,
+  **reshare 10 ms**, encode 1 ms. A debug build is ~2.5x that (reshare ~25 ms),
+  which is what a `cargo run` session feels — worth knowing before mistaking
+  dev-mode latency for a shipped cost. **Not a bottleneck:** 10 ms once per
+  structural edit, on the biggest file anyone has. The per-node encode-key cache,
+  the incremental reshare and the subtree-scoped pass this entry floated all cost
+  more complexity than they buy. The harness stays as `tests/reshare_cost.rs`,
+  `#[ignore]`d with the baseline in its doc comment, so a re-run after a codec
+  change has something to compare against. _Added 2026-07-19; done 2026-07-30._
+
+- [x] **Character-centric entry-point follow-ups — all four closed.** (2) and (3)
+  were done 2026-07-29 (the misleading `sharedWith` test renamed; the
+  `AutofillView` hint keyed off `charOpen` rather than `charName`, which the entry
+  had wrongly filed as unreachable dead copy). (4) done 2026-07-30: a profile with
+  no listable character file draws no header, so a machine where that is true of
+  EVERY profile showed a blank sidebar. It now says why, and distinguishes "these
+  profiles hold no character files" from "the non-standard-name filter hid them",
+  because the fix differs. New `Sidebar.spec.ts` pins both, plus the toggle
+  clearing the second one and a real character file showing neither.
+  **(1) is closed with no change:** the doubled, idempotent `api.open("user", …)`
+  in the rare scheduler-flush window self-heals, and the entry's own instruction
+  was to add an in-flight flag only if it ever showed as noise. It has not.
+  _Added 2026-07-20; done 2026-07-30._
 
 - [x] **Settings-presets follow-ups — all ten closed.** Nine were fixed across
   the 2026-07-29/30 sweeps ((5)(7)(8) in the backend batch, (9)(10) in the
