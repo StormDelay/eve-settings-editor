@@ -31,7 +31,7 @@ pub enum Node {
 
 /// The section names a pack may carry, in the order the emitter writes them
 /// (alphabetical, matching what real packs look like).
-pub const SECTIONS: [&str; 13] = [
+const SECTIONS: [&str; 13] = [
     "backgroundOrder",
     "backgroundStates",
     "columnOrder",
@@ -84,6 +84,11 @@ pub enum PackError {
     /// A mapping with no section this build recognises — the user picked the
     /// wrong file. Reported rather than silently applying nothing.
     NotAPack,
+    /// A recognised section carrying the wrong YAML shape (a mapping where a
+    /// list belongs). Distinct from `NotAPack`, which claims the file holds no
+    /// pack sections at all — false, and confusing, for a real pack with one
+    /// malformed section.
+    BadSection { name: String },
     /// The document has no `overview` container to write into.
     NoOverview,
 }
@@ -94,6 +99,9 @@ impl std::fmt::Display for PackError {
             PackError::Yaml { message } => write!(f, "This file is not valid YAML: {message}"),
             PackError::NotAMapping => write!(f, "This file is not an overview pack."),
             PackError::NotAPack => write!(f, "This YAML file contains no overview pack sections."),
+            PackError::BadSection { name } => {
+                write!(f, "This pack's '{name}' section is not a list, so it cannot be applied.")
+            }
             PackError::NoOverview => write!(f, "This file has no overview settings."),
         }
     }
@@ -286,13 +294,13 @@ pub(crate) const PALETTE: [(&str, [f64; 4]); 6] = [
     ("white", [0.7, 0.7, 0.7, 1.0]),
 ];
 
-pub fn color_rgba(name: &str) -> Option<[f64; 4]> {
+fn color_rgba(name: &str) -> Option<[f64; 4]> {
     PALETTE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
 }
 
 /// Exact match only. Two floats that differ in the last bit are not the same
 /// colour name, and guessing the nearest one would rewrite a user's colours.
-pub fn color_name(rgba: [f64; 4]) -> Option<&'static str> {
+fn color_name(rgba: [f64; 4]) -> Option<&'static str> {
     PALETTE.iter().find(|(_, c)| *c == rgba).map(|(n, _)| *n)
 }
 
@@ -318,20 +326,6 @@ const LIST_SECTIONS: [(&str, &[u8]); 6] = [
     ("flagOrder", b"flagOrder2"),
     ("columnOrder", b"overviewColumnOrder"),
     ("overviewColumns", b"overviewColumns"),
-];
-
-/// The `userSettings` names this build understands, paired with the file key.
-/// Packs also carry names with no key on current files (`applyOnlyToShips`, an
-/// older single toggle that became `applyToStructures`/`applyToOtherObjects`);
-/// those are IGNORED rather than minted, and `set_overview_bool`'s allow-list is
-/// the backstop.
-const USER_SETTINGS: [(&str, &str); 6] = [
-    ("applyToStructures", "applyToStructures"),
-    ("applyToOtherObjects", "applyToOtherObjects"),
-    ("useSmallColorTags", "useSmallColorTags"),
-    ("useSmallText", "useSmallText"),
-    ("overviewBroadcastsToTop", "overviewBroadcastsToTop"),
-    ("hideCorpTicker", "hideCorpTicker"),
 ];
 
 /// What an import did, for the UI's summary line.
@@ -466,7 +460,9 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     // stores them; `state` stays an int.
     if let (Some(order), Some(labels)) = (pack.get("shipLabelOrder"), pack.get("shipLabels")) {
         let bodies = pairs(labels);
-        let Node::Seq(order_items) = order else { return Err(PackError::NotAPack) };
+        let Node::Seq(order_items) = order else {
+            return Err(PackError::BadSection { name: "shipLabelOrder".into() });
+        };
         let mut list = Vec::new();
         for want in order_items {
             let Some((_, body)) = bodies.iter().find(|(k, _)| *k == want) else { continue };
@@ -484,13 +480,15 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     }
 
     if let Some(node) = pack.get("userSettings") {
+        // A pack names these exactly as the file keys them, so `OVERVIEW_BOOLS`
+        // is both the allow-list and the mapping. Packs also carry names with no
+        // key on current files (`applyOnlyToShips`, an older single toggle that
+        // became `applyToStructures`/`applyToOtherObjects` — confirmed absent
+        // in-game 2026-07-27); those warn rather than being minted.
         for (k, val) in pairs(node) {
             let (Some(name), Node::Bool(on)) = (as_str(k), val) else { continue };
-            match USER_SETTINGS.iter().find(|(pack_name, _)| *pack_name == name) {
-                Some((_, file_key)) => {
-                    debug_assert!(OVERVIEW_BOOLS.contains(file_key));
-                    writes.push((file_key.as_bytes(), Value::Bool(*on)));
-                }
+            match OVERVIEW_BOOLS.iter().find(|key| **key == name) {
+                Some(key) => writes.push((key.as_bytes(), Value::Bool(*on))),
                 None => report.warnings.push(format!("ignored unknown setting '{name}'")),
             }
         }
@@ -840,12 +838,12 @@ pub fn read_pack(v: &Value) -> (Pack, Vec<String>) {
     }
 
     // userSettings
-    let settings: Vec<Node> = USER_SETTINGS
+    let settings: Vec<Node> = OVERVIEW_BOOLS
         .iter()
-        .filter_map(|(pack_name, file_key)| {
-            let raw = find(ov, file_key.as_bytes(), &sh)?;
+        .filter_map(|key| {
+            let raw = find(ov, key.as_bytes(), &sh)?;
             let Value::Bool(on) = unwrapped(raw, &sh) else { return None };
-            Some(Node::Seq(vec![Node::Str(pack_name.to_string()), Node::Bool(*on)]))
+            Some(Node::Seq(vec![Node::Str((*key).to_string()), Node::Bool(*on)]))
         })
         .collect();
     if !settings.is_empty() {
@@ -1486,7 +1484,9 @@ userSettings:
         let pack = parse_pack("shipLabelOrder: true\nshipLabels: []\n").unwrap();
 
         let err = apply_pack(&mut doc, &pack).unwrap_err();
-        assert!(matches!(err, PackError::NotAPack), "got {err:?}");
+        // Names the section rather than claiming the file holds no pack at all.
+        assert!(matches!(&err, PackError::BadSection { name } if name == "shipLabelOrder"), "got {err:?}");
+        assert!(err.to_string().contains("shipLabelOrder"), "the message names it too: {err}");
         assert_eq!(doc, before, "a build-phase failure must leave the document untouched");
     }
 
