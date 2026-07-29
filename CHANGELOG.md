@@ -26,6 +26,11 @@ All notable changes to this project are documented here. The format follows
   characters actually match.
 
 ### Fixed
+- **The sidebar says why it is empty.** A profile with no character file draws no
+  header — its account files are reached through "Open file…" — so a machine where
+  that was true of every profile showed a blank list with no explanation. It now
+  says which case it is: no character files at all, or the non-standard-name
+  filter hiding them.
 - **A read-only account file now greys out the HUD rows that write it.** Four of
   the HUD panel's fields (the neocom width and the fighter-UI toggles) live in
   the account file, but only the character file's read-only state disabled
@@ -90,6 +95,10 @@ wrong later.
 - **A repeated target in a batch apply is planned once.** The same id twice
   meant the same file written, and backed up, twice. The UI passes a set, so
   this guards the command boundary.
+- **Measured the pre-encode reshare pass, and left it alone.** 10 ms on the
+  largest real account file (390 KB, release), once per structural edit, against
+  a 3 ms decode — so the caching and incremental variants that were on the list
+  are not worth their complexity. `tests/reshare_cost.rs` keeps the baseline.
 - Filled `plan_setup`'s untested exclusion branches and one `setup_apply` error
   branch, and dropped an `Option` that was never `None` (`SourceSides.char_path`)
   along with the dead arm it kept alive.
