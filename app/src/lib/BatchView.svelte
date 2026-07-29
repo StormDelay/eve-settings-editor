@@ -168,11 +168,18 @@
 
   // Reset op + targets when the source changes — including a switch between
   // "character" and "preset", not just a different pick within one kind.
+  //
+  // `folderPick`, not `folder`: the derived one starts null and gains a value
+  // when `api.discover()` resolves, which is not a user action, and an aspect
+  // ticked in that window (the source seeds from the open file synchronously,
+  // so the checkboxes can render before discover lands) was silently cleared.
+  // Nothing is lost by watching the pick instead — `pickFolder` also nulls
+  // `sourcePath`, which triggers this effect anyway.
   $effect(() => {
     sourcePath;
     presetDir;
     sourceKind;
-    folder;
+    folderPick;
     selected = new Set();
     selectedTargets = new Set();
   });
