@@ -6,6 +6,10 @@ use blue_marshal::Value;
 use settings_model::{create_preset, delete_preset, project_overview, rename_preset};
 
 fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+/// Real files wrap these sections as `(Long timestamp, dict)`; the sibling
+/// unit tests use the same helper. Position is what the code unwraps by, so
+/// an Int worked — it just was not the shape being guarded against.
+fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
 /// user -> overview -> {
 ///   tabsettings_new: (ts, { 0: { overview: Ref(7) } }),
@@ -21,14 +25,14 @@ fn realish_user() -> Value {
     let preset = |g: i64| Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(g)]))]);
     let overview = Value::Dict(vec![
         (b("tabsettings_new"), Value::Tuple(vec![
-            Value::Int(1), Value::Dict(vec![(Value::Int(0), tab0)]),
+            ts(), Value::Dict(vec![(Value::Int(0), tab0)]),
         ])),
         (b("overviewProfilePresets"), Value::Tuple(vec![
-            Value::Int(1),
+            ts(),
             Value::Dict(vec![(name_shared, preset(25)), (b("pve"), preset(26))]),
         ])),
         (b("overviewProfilePresets_notSaved"), Value::Tuple(vec![
-            Value::Int(1),
+            ts(),
             Value::Dict(vec![(name_ref, preset(99))]),
         ])),
     ]);

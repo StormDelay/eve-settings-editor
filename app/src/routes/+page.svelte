@@ -506,6 +506,7 @@
             slot={active}
             {runMutations}
             readOnly={current.fidelity.state !== "editable"}
+            accountReadOnly={slots.user?.status === "opened" && slots.user.fidelity.state !== "editable"}
             refreshToken={savedAt}
             userOpen={slots.user?.status === "opened"}
             bind:selectedId={selectedWindowId}

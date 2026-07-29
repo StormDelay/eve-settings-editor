@@ -286,7 +286,11 @@ impl std::fmt::Display for HudError {
 /// Shares `locate`'s three-way decision with `probe` so the two can never
 /// disagree about whether a key is genuinely absent (safe to mint) or merely
 /// unreadable (must be refused, not duplicated).
-pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), HudError> {
+/// Write one HUD field. Returns `true` when the write MINTED an absent key,
+/// which is the only path that de-shares the document (`mint` inlines first) and
+/// so the only one whose caller must `reshare` before encoding. Overwriting a
+/// key that is already there sets one scalar in place and needs neither.
+pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<bool, HudError> {
     let f = FIELDS
         .iter()
         .find(|f| f.name == name)
@@ -303,10 +307,11 @@ pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<(), Hud
     match located {
         Located::Writable(path, _) => {
             let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
-            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))
+            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))?;
+            Ok(false)
         }
         Located::Unwritable => Err(HudError::NotEditable),
-        Located::Absent => mint(root, f, text),
+        Located::Absent => mint(root, f, text).map(|_| true),
     }
 }
 
@@ -581,6 +586,17 @@ mod tests {
         }
         // The character-side fields are unaffected.
         assert_eq!(entry(&hud, "fighter_x").value.as_deref(), Some("326"));
+    }
+
+    #[test]
+    fn only_a_mint_reports_that_the_document_was_de_shared() {
+        // The flag is what lets ops skip a whole-tree reshare on the common
+        // path: overwriting a key that is there sets one scalar and leaves the
+        // sharing alone, while minting inlines the document first.
+        let mut doc = char_doc();
+        assert!(!set_hud_value(&mut doc, "ship_offset", "-42").expect("overwrite"), "overwrite");
+        let mut empty = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        assert!(set_hud_value(&mut empty, "ship_offset", "-42").expect("mint"), "mint");
     }
 
     #[test]
