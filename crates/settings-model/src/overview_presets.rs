@@ -159,10 +159,14 @@ pub fn rename_preset(v: &mut Value, old: &str, new: &str) -> Result<(), Overview
         }
         let entry = presets.iter_mut().find(|(k, _)| as_str(k).as_deref() == Some(old))
             .ok_or(OverviewTabError::UnknownPreset { name: old.to_string() })?;
+        // A rename to the same name still has to VALIDATE — an unknown preset is
+        // an unknown preset — but it must not rewrite the key. Writing identical
+        // bytes is not identical: a key the file stored as `Str` would come back
+        // as `Bytes`, a shape change nobody asked for.
+        if old == new {
+            return Ok(());
+        }
         entry.0 = Value::Bytes(new.as_bytes().to_vec());
-    }
-    if old == new {
-        return Ok(());
     }
     if let Some(ns) = not_saved_mut(ov) {
         if let Some(entry) = ns.iter_mut().find(|(k, _)| as_str(k).as_deref() == Some(old)) {
@@ -401,6 +405,57 @@ mod tests {
     fn rename_to_existing_name_errors() {
         let mut v = user_with_presets();
         assert!(matches!(rename_preset(&mut v, "alpha", "beta"), Err(OverviewTabError::PresetExists { .. })));
+    }
+
+    #[test]
+    fn renaming_a_preset_to_its_own_name_changes_nothing() {
+        // The key here is a `Str`, which no real file uses — the point is that a
+        // no-op rename leaves whatever shape it found, rather than rewriting it
+        // as Bytes on the way through.
+        let preset = Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(1)]))]);
+        let mut v = Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("tabsettings_new"), wrapped_dict(vec![])),
+            (b("overviewProfilePresets"), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![(Value::Str("alpha".into()), preset)]),
+            ])),
+        ]))]);
+        let before = v.clone();
+        rename_preset(&mut v, "alpha", "alpha").unwrap();
+        assert_eq!(v, before, "a rename to the same name touches nothing");
+    }
+
+    #[test]
+    fn renaming_a_preset_that_does_not_exist_to_its_own_name_still_errors() {
+        let mut v = user_with_presets();
+        assert!(matches!(
+            rename_preset(&mut v, "nope", "nope"),
+            Err(OverviewTabError::UnknownPreset { .. })
+        ));
+    }
+
+    #[test]
+    fn delete_picks_its_replacement_by_case_insensitive_order() {
+        // `sorted_names` lowercases, and delete reassigns to the neighbour in
+        // THAT order. A raw byte sort puts "Beta" first (B is 0x42, a is 0x61),
+        // which would hand deleted "gamma" to "alpha" instead. The shared
+        // alpha/beta fixture sorts identically either way and cannot tell them
+        // apart.
+        let preset = |g: i64| Value::Dict(vec![(b("groups"), Value::List(vec![Value::Int(g)]))]);
+        let tab = Value::Dict(vec![(b("overview"), b("gamma"))]);
+        let mut v = Value::Dict(vec![(b("overview"), Value::Dict(vec![
+            (b("tabsettings_new"), wrapped_dict(vec![(Value::Int(0), tab)])),
+            (b("overviewProfilePresets"), Value::Tuple(vec![
+                Value::Long(vec![0u8; 8]),
+                Value::Dict(vec![
+                    (b("alpha"), preset(1)),
+                    (b("Beta"), preset(2)),
+                    (b("gamma"), preset(3)),
+                ]),
+            ])),
+        ]))]);
+        delete_preset(&mut v, "gamma").unwrap();
+        assert_eq!(tab_preset(&v, 0), "Beta", "the neighbour is Beta, not alpha");
     }
 
     #[test]
