@@ -142,7 +142,7 @@
 
 <style>
   .hud-panel {
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--border);
     padding: 0.4rem 0.5rem;
     font-size: 12px;
   }
@@ -160,8 +160,10 @@
     border-left: 2px solid transparent;
     padding-left: 0.3rem;
   }
-  /* Matches the canvas's selected-furniture colour, so it's obvious which
-     fields the highlighted rectangle edits. */
+  /* The two ambers below are deliberately NOT app.css variables: they match
+     the canvas's selected-furniture colour (LayoutView's own #f59e0b/#fde68a),
+     and the pair has to move together or the panel stops agreeing with the
+     rectangle it describes. Everything else here now follows the palette. */
   .group.selected {
     border-left-color: #f59e0b;
     background: rgba(245, 158, 11, 0.08);
@@ -175,7 +177,7 @@
     padding: 0;
     background: none;
     border: none;
-    color: #9aa4b2;
+    color: var(--fg-dim);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -191,25 +193,25 @@
     padding: 1px 0;
   }
   .label {
-    color: #cbd5e1;
+    color: var(--fg);
     min-width: 8.5rem;
   }
   /* Native controls render light in WebView2 unless told otherwise. */
   input[type="number"] {
     width: 5.5rem;
-    background: #1b1f27;
-    color: #e5e7eb;
-    border: 1px solid #444;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
   }
   input[type="number"]:disabled {
-    color: #6b7280;
+    color: var(--fg-dim);
   }
   input[type="checkbox"] {
     accent-color: var(--accent);
   }
   .badge {
-    color: #94a3b8;
-    background: #262b36;
+    color: var(--fg-dim);
+    background: var(--bg-panel);
     border-radius: 3px;
     padding: 0 4px;
     font-size: 10px;
