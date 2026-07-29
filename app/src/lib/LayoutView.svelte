@@ -586,7 +586,15 @@
    * full rect (not just x/y) is sent even for a move, so members also snap to
    * the anchor's w/h — geomMutations diffs per field, so an unchanged w/h emits
    * nothing and plain single-window units are unaffected. */
-  async function commitUnit(unit: DrawUnit) {
+  async function commitUnit(captured: DrawUnit) {
+    // Re-resolve the unit from the live list, falling back to the captured one.
+    // A drag captures its unit at pointerdown; a commit landing MID-drag — which
+    // a nudge keyup can now cause — would otherwise fan out against pre-reload
+    // `geom`, and `geomMutations`' per-field diff would skip a write that is
+    // actually needed. Re-resolving alone was not enough on its own: it silently
+    // skips the commit when the unit has since been filtered out of the list,
+    // which is the worse failure of the two. Hence both.
+    const unit = units.find((u) => u.anchor.id === captured.anchor.id) ?? captured;
     const p = preview[unit.anchor.id];
     if (!p) return;
     const next = { x: p.x, y: p.y, w: p.w, h: p.h };
