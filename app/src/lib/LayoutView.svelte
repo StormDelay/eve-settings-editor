@@ -314,6 +314,17 @@
     }
   }
 
+  /** Write one or more channels' splits and take the refreshed projection. The
+   * splits live in the account document, so that is the slot that goes dirty. */
+  async function setChatSplits(ids: string[], userlistWidth: number | null, inputHeight: number | null) {
+    try {
+      chats = await api.setChatSplits(ids, userlistWidth, inputHeight);
+      onDirty("user");
+    } catch (e) {
+      await message(errMessage(e), { title: "Chat layout edit failed", kind: "error" });
+    }
+  }
+
   /** Run a neocom command and take its refreshed projection. The bar lives in
    * the character document, so the char slot is what goes dirty.
    *
@@ -931,6 +942,10 @@
         {onDeleteOrphans}
         overrides={clutterOverrides()}
         onClutterOverride={setClutterOverride}
+        {chats}
+        {accountReadOnly}
+        {sharedNames}
+        onSetChatSplits={setChatSplits}
         bind:filter
         bind:focusFilter />
     </div>
