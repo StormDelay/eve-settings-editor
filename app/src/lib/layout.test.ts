@@ -3,7 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
-  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction,
+  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction, linkInventory,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -151,6 +151,59 @@ check("open filter keeps the right window", open[0].id === "a");
   check("a stack with no open members is not drawn", !units.some((u) => u.stack));
   check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
   check("unrelated free windows still draw", units.some((u) => u.key === "free"));
+}
+
+// --- the Inventory fold -----------------------------------------------------
+{
+  const station = win("InventoryStation", true, true);
+  const structure = win("InventoryStructure", true, true);
+  const market = win("market", true, true);
+  const layout = { reference_w: 2560, reference_h: 1440, windows: [station, structure, market], stacks: [] };
+
+  const all = linkInventory(stackUnits(layout as any), "all");
+  check("all leaves both Inventory units alone", all.filter((u) => u.key.startsWith("Inventory")).length === 2);
+  check("all leaves each fanning only to itself",
+    all.every((u) => !u.key.startsWith("Inventory") || u.fanTargets.length === 1));
+
+  const docked = linkInventory(stackUnits(layout as any), "docked");
+  const inv = docked.filter((u) => u.key.startsWith("Inventory"));
+  check("docked paints one Inventory rectangle", inv.length === 1);
+  check("docked keeps the station copy as the anchor", inv[0].key === "InventoryStation");
+  const ids = inv[0].fanTargets.map((w) => w.id).sort();
+  check("docked fans a drag onto both copies", ids.join(",") === "InventoryStation,InventoryStructure");
+  check("the fold leaves unrelated units untouched", docked.some((u) => u.key === "market"));
+
+  // The space copy is a different id and is never folded — it is a genuinely
+  // separate window with its own position, and it is not in the docked view.
+  const spaceOnly = { ...layout, windows: [win("InventorySpace", true, true), market] };
+  const space = linkInventory(stackUnits(spaceOnly as any), "space");
+  check("the space copy is left alone", space.filter((u) => u.key === "InventorySpace").length === 1);
+
+  // Partial presence: only one of the pair drawn (the other closed, or
+  // filtered out). There is nothing to fold, and the survivor must still draw.
+  const lone = { ...layout, windows: [structure, market] };
+  const folded = linkInventory(stackUnits(lone as any), "docked");
+  check("a lone structure copy still draws", folded.some((u) => u.key === "InventoryStructure"));
+  check("a lone copy fans only to itself",
+    folded.find((u) => u.key === "InventoryStructure")!.fanTargets.length === 1);
+
+  // A stacked Inventory already fans to its stack; merging across stacks is
+  // out of scope, so the fold declines rather than guessing. Note the stacked
+  // copy's unit is keyed by its CONTAINER, so it never matches the fold's
+  // `key === "InventoryStation"` test in the first place — this pins that.
+  const stacked = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["InventoryStation"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("InventoryStation", true, true, { container_id: "C", role: "member" }),
+      win("InventoryStructure", true, true, null),
+      market,
+    ],
+  };
+  const untouched = linkInventory(stackUnits(stacked as any), "docked");
+  check("a stacked Inventory is not folded", untouched.some((u) => u.key === "InventoryStructure"));
+  check("the stacked copy still draws as its stack", untouched.some((u) => u.key === "C" && u.stack));
 }
 
 // --- the shared filter predicate -------------------------------------------
