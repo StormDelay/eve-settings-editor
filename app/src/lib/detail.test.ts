@@ -1,5 +1,7 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail } from "./detail.ts";
 import { HUD_NOMINAL } from "./layout.ts";
 import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect } from "./api.ts";
@@ -178,6 +180,13 @@ const check = (name: string, ok: boolean) => {
   check("the input spans the full width with no member list", io[0].w === 256);
   const neither: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
   check("nothing drawn when neither is stored", chatParts(neither, rect).length === 0);
+
+  // A stored userlist_width can exceed the window's own width (real stored
+  // data, not invented) — the input band's width must clamp at 0 rather than
+  // go negative, which CSS would silently drop with no visible signal.
+  const overflow: ChatPanel = { window_id: "c", userlist_width: 300, input_height: 64 };
+  const of = chatParts(overflow, rect);
+  check("an oversized member list clamps the input band width to 0", of[1].w === 0);
 }
 
 // --- id dispatch -----------------------------------------------------------
@@ -264,6 +273,24 @@ const check = (name: string, ok: boolean) => {
   };
   check("a stack with no tabs falls back to the anchor without throwing",
     windowDetail(emptyStack, null, cols, chats, rect).length === 0);
+}
+
+// --- decoration-only guarantee -----------------------------------------
+{
+  // The ENTIRE "decoration only" guarantee of this feature rests on this one
+  // CSS declaration: it is what stops detail parts from swallowing drags on
+  // the rectangles they decorate. Nothing in TS/Svelte type-checking would
+  // catch its removal — only this text check would, so it exists purely as a
+  // tripwire for that one line.
+  //
+  // Scoped to the <style> block, not the whole file: the markup above it has
+  // an explanatory comment that also contains the words "pointer-events:
+  // none" in prose, which would let a whole-file substring search pass even
+  // after the real declaration was deleted.
+  const svelte = readFileSync(resolve(import.meta.dirname, "DetailParts.svelte"), "utf8");
+  const style = /<style>([\s\S]*)<\/style>/.exec(svelte)?.[1] ?? "";
+  check("DetailParts.svelte's <style> declares pointer-events: none", style.includes("pointer-events: none"));
+  check("DetailParts.svelte's <style> never overrides it with pointer-events: auto", !style.includes("pointer-events: auto"));
 }
 
 console.log("detail.test.ts ok");
