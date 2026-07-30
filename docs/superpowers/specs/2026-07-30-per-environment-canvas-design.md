@@ -1,6 +1,8 @@
 # Per-environment canvas views — docked vs in space (design)
 
-Status: designed 2026-07-30, not yet planned.
+Status: designed, planned, and implemented on `worktree-per-env-canvas`
+(through a whole-branch review and fix wave); in-game verification (§9)
+still outstanding.
 
 Milestone context: the **layout depth** milestone. This is the ledger item at
 `docs/small-tasks.md:288`, deferred out of the names-and-noise slice
