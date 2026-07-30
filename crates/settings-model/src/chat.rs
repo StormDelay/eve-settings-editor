@@ -4,15 +4,17 @@
 //! real account files, zero under `windows`). See docs/format-notes.md, "Chat
 //! window splits".
 //!
-//! Nothing here mutates. The canvas detail layer draws these; no editor writes
-//! them (design spec §6).
+//! The read path is `project_chat`; the write path is `set_chat_splits`. Only a
+//! mint (an absent key being created) de-shares the document — the same
+//! reshare contract `hud.rs::set_hud_value` uses.
 
 use std::collections::BTreeMap;
 
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, section, text, SharedTable};
+use crate::path::{NodePath, Step};
+use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, section, text, unwrap_shared, SharedTable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChatPanel {
@@ -87,6 +89,163 @@ fn leaf_int(v: &Value, shared: &SharedTable) -> Option<i64> {
         Value::Int(i) => Some(*i),
         _ => None,
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "code", content = "detail", rename_all = "snake_case")]
+pub enum ChatError {
+    /// An id that is not a chat channel. The key names are built by
+    /// concatenation, so an unchecked id would mint `market_userlistwidth` —
+    /// a key EVE never reads and nothing ever cleans up.
+    NotAChatWindow(String),
+    /// The account file has no `ui` section to write into.
+    NoSection,
+    /// The key exists but holds an unexpected wire kind; overwriting would
+    /// change its type and minting would duplicate the key.
+    NotEditable(String),
+    /// Refused, not clamped: silently rewriting a typed number makes the field
+    /// untrustworthy.
+    Negative(i64),
+}
+
+impl std::fmt::Display for ChatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatError::NotAChatWindow(id) => write!(f, "{id:?} is not a chat window."),
+            ChatError::NoSection => write!(f, "This file has no section to write these values into."),
+            ChatError::NotEditable(key) => {
+                write!(f, "{key:?} has an unexpected type here and cannot be edited safely.")
+            }
+            ChatError::Negative(v) => write!(f, "A chat split cannot be negative (got {v})."),
+        }
+    }
+}
+
+/// Write the member-list width and/or the input-box height for every id.
+///
+/// Returns `true` when at least one key was MINTED. That is the only path that
+/// de-shares the document (`inline_all`), and so the only one whose caller must
+/// `reshare` before encoding — the same contract `hud.rs::set_hud_value` has.
+///
+/// Both fields are optional so one function covers the single-field edit and the
+/// stack apply. Passing neither is a no-op rather than an error: the UI can call
+/// it with nothing changed and get a harmless re-projection.
+///
+/// NOTHING is written unless everything validates. A batch carrying one bad id
+/// leaves the document byte-identical, which is what makes the stack apply safe
+/// to offer as a single button.
+pub fn set_chat_splits(
+    root: &mut Value,
+    ids: &[String],
+    userlist: Option<i64>,
+    input: Option<i64>,
+) -> Result<bool, ChatError> {
+    for v in [userlist, input].into_iter().flatten() {
+        if v < 0 {
+            return Err(ChatError::Negative(v));
+        }
+    }
+    for id in ids {
+        if !id.starts_with(CHAT_PREFIX) {
+            return Err(ChatError::NotAChatWindow(id.clone()));
+        }
+    }
+
+    let keys: Vec<(String, i64)> = ids
+        .iter()
+        .flat_map(|id| {
+            [
+                userlist.map(|v| (format!("{id}{WIDTH_SUFFIX}"), v)),
+                input.map(|v| (format!("{INPUT_PREFIX}{id}"), v)),
+            ]
+        })
+        .flatten()
+        .collect();
+    if keys.is_empty() {
+        return Ok(false);
+    }
+
+    // Validate every target BEFORE mutating anything. `NotEditable` can only be
+    // found by looking, so without this pass a batch could write half its keys
+    // and then refuse — the state this function exists to make impossible.
+    for (key, _) in &keys {
+        if matches!(locate(root, key)?, Target::Unwritable) {
+            return Err(ChatError::NotEditable(key.clone()));
+        }
+    }
+
+    let mut minted = false;
+    for (key, value) in &keys {
+        // Re-located per key on purpose: minting runs `inline_all`, which
+        // rewrites the tree, so a NodePath computed before it can be stale.
+        match locate(root, key)? {
+            Target::Writable(path) => {
+                let m = crate::mutate::Mutation::SetScalar { path, text: value.to_string() };
+                // Unreachable in practice — `locate` already proved the leaf is
+                // an Int and the text is an integer's own Display.
+                crate::mutate::apply(root, &m).map_err(|_| ChatError::NotEditable(key.clone()))?;
+            }
+            Target::Unwritable => return Err(ChatError::NotEditable(key.clone())),
+            Target::Absent => {
+                mint(root, key, *value)?;
+                minted = true;
+            }
+        }
+    }
+    Ok(minted)
+}
+
+/// What a write to `key` may do. The same three-way split `hud.rs` uses, and for
+/// the same reason: "absent" (safe to mint) and "present but unreadable" (must
+/// be refused) look identical to a lookup that only asks whether it found a
+/// readable value.
+enum Target {
+    Writable(NodePath),
+    Unwritable,
+    Absent,
+}
+
+fn locate(root: &Value, key: &str) -> Result<Target, ChatError> {
+    let mut shared = SharedTable::new();
+    collect_shared(root, &mut shared);
+    let (entries, base) = section(root, b"ui", &shared).ok_or(ChatError::NoSection)?;
+    let found = entries
+        .iter()
+        .enumerate()
+        .find(|(_, (k, _))| text(k, &shared).as_deref() == Some(key));
+    let Some((i, (_, v))) = found else { return Ok(Target::Absent) };
+
+    let mut p = base;
+    p.push(Step::DictValue(i));
+    let (v, p) = unwrap_shared(v, p);
+    // (timestamp, value): take element 1. A bare value is tolerated the way
+    // leaf_int tolerates one.
+    let (v, p) = match v {
+        Value::Tuple(items) if items.len() == 2 => {
+            let mut q = p;
+            q.push(Step::Tuple(1));
+            (&items[1], q)
+        }
+        other => (other, p),
+    };
+    Ok(match effective(v, &shared) {
+        Value::Int(_) => Target::Writable(p),
+        _ => Target::Unwritable,
+    })
+}
+
+/// Insert the absent leaf. After `inline_all` every key is a plain byte-string,
+/// so this half needs no `Shared`/`Ref` resolution.
+fn mint(root: &mut Value, key: &str, value: i64) -> Result<(), ChatError> {
+    inline_all(root);
+    let Value::Dict(entries) = root else { return Err(ChatError::NoSection) };
+    let (_, ui) = entries.iter_mut().find(|(k, _)| is_bytes(k, b"ui")).ok_or(ChatError::NoSection)?;
+    let Value::Dict(section_entries) = ui else { return Err(ChatError::NoSection) };
+    section_entries.push((
+        Value::Bytes(key.as_bytes().to_vec()),
+        Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(value)]),
+    ));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -205,5 +364,129 @@ mod tests {
         let panels = project_chat(&doc);
         let ids: Vec<&str> = panels.iter().map(|p| p.window_id.as_str()).collect();
         assert_eq!(ids, ["chatchannel_alliance", "chatchannel_fleet", "chatchannel_local"]);
+    }
+
+    /// The `ui` section, with `entries` plus one unrelated key so the section is
+    /// never empty by accident.
+    fn ui_doc(entries: Vec<(Value, Value)>) -> Value {
+        let mut all = vec![(b("neocomWidth"), wrapped(Value::Int(37)))];
+        all.extend(entries);
+        user_doc(all)
+    }
+
+    fn width_of(doc: &Value, id: &str) -> Option<i64> {
+        project_chat(doc).into_iter().find(|p| p.window_id == id)?.userlist_width
+    }
+    fn input_of(doc: &Value, id: &str) -> Option<i64> {
+        project_chat(doc).into_iter().find(|p| p.window_id == id)?.input_height
+    }
+
+    #[test]
+    fn overwrites_an_existing_key_without_minting() {
+        let mut doc = ui_doc(vec![(b("chatchannel_local_userlistwidth"), wrapped(Value::Int(135)))]);
+        let minted = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(200), None).unwrap();
+        assert!(!minted, "overwriting an existing key must not report a mint");
+        assert_eq!(width_of(&doc, "chatchannel_local"), Some(200));
+    }
+
+    #[test]
+    fn mints_an_absent_key_with_a_zero_timestamp() {
+        let mut doc = ui_doc(vec![]);
+        let minted = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(120), None).unwrap();
+        assert!(minted, "minting must be reported so the caller reshares");
+        assert_eq!(width_of(&doc, "chatchannel_local"), Some(120));
+        // The leaf must be the (timestamp, value) shape real files use.
+        let Value::Dict(root) = &doc else { panic!("root is a dict") };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).expect("ui section");
+        let Value::Dict(entries) = ui else { panic!("ui is a dict") };
+        let (_, leaf) = entries
+            .iter()
+            .find(|(k, _)| is_bytes(k, b"chatchannel_local_userlistwidth"))
+            .expect("minted key");
+        assert_eq!(leaf, &Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(120)]));
+    }
+
+    #[test]
+    fn writes_both_fields_in_one_call() {
+        let mut doc = ui_doc(vec![]);
+        set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(120), Some(70)).unwrap();
+        assert_eq!(width_of(&doc, "chatchannel_local"), Some(120));
+        assert_eq!(input_of(&doc, "chatchannel_local"), Some(70));
+    }
+
+    /// The stack apply: many ids, one call.
+    #[test]
+    fn writes_every_id_in_one_call() {
+        let mut doc = ui_doc(vec![(b("chatchannel_corp_userlistwidth"), wrapped(Value::Int(50)))]);
+        let ids = vec!["chatchannel_local".into(), "chatchannel_corp".into(), "chatchannel_fleet".into()];
+        set_chat_splits(&mut doc, &ids, Some(111), Some(60)).unwrap();
+        for id in ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet"] {
+            assert_eq!(width_of(&doc, id), Some(111), "{id} width");
+            assert_eq!(input_of(&doc, id), Some(60), "{id} input");
+        }
+    }
+
+    /// A non-chat id is refused AND nothing at all is written — not even the
+    /// valid ids beside it. Validation completes before the first mutation.
+    #[test]
+    fn a_non_chat_id_writes_nothing() {
+        let mut doc = ui_doc(vec![]);
+        let before = doc.clone();
+        let ids = vec!["chatchannel_local".into(), "market".into()];
+        let err = set_chat_splits(&mut doc, &ids, Some(120), None).unwrap_err();
+        assert_eq!(err, ChatError::NotAChatWindow("market".into()));
+        assert_eq!(doc, before, "a refused batch must leave the document untouched");
+    }
+
+    #[test]
+    fn a_negative_value_writes_nothing() {
+        let mut doc = ui_doc(vec![]);
+        let before = doc.clone();
+        let err = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(-1), None).unwrap_err();
+        assert_eq!(err, ChatError::Negative(-1));
+        assert_eq!(doc, before);
+    }
+
+    /// The write path must resolve Ref/Shared exactly as the read path does —
+    /// real account files dedup their repeated key strings, and the `ui` section
+    /// key itself is Ref-keyed.
+    #[test]
+    fn writes_through_a_shared_section_key_and_a_shared_entry_key() {
+        let mut doc = Value::Dict(vec![(
+            Value::Shared { slot: 1, value: Box::new(b("ui")) },
+            Value::Dict(vec![(
+                Value::Shared { slot: 2, value: Box::new(b("chatchannel_local_userlistwidth")) },
+                wrapped(Value::Int(135)),
+            )]),
+        )]);
+        let minted = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(90), None).unwrap();
+        assert!(!minted, "the key is present, just shared — this is an overwrite");
+        assert_eq!(width_of(&doc, "chatchannel_local"), Some(90));
+    }
+
+    /// Present but the wrong wire kind: refuse rather than clobber it or mint a
+    /// duplicate key beside it. Mirrors hud.rs's Unwritable.
+    #[test]
+    fn a_malformed_existing_value_is_refused() {
+        let mut doc = ui_doc(vec![(b("chatchannel_local_userlistwidth"), wrapped(b("wide")))]);
+        let before = doc.clone();
+        let err = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(90), None).unwrap_err();
+        assert!(matches!(err, ChatError::NotEditable(_)));
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn a_document_with_no_ui_section_is_refused() {
+        let mut doc = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        let err = set_chat_splits(&mut doc, &["chatchannel_local".into()], Some(90), None).unwrap_err();
+        assert_eq!(err, ChatError::NoSection);
+    }
+
+    #[test]
+    fn passing_neither_field_writes_nothing() {
+        let mut doc = ui_doc(vec![]);
+        let before = doc.clone();
+        assert!(!set_chat_splits(&mut doc, &["chatchannel_local".into()], None, None).unwrap());
+        assert_eq!(doc, before);
     }
 }
