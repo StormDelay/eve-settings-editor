@@ -203,6 +203,8 @@ export interface ChatPanel {
 export interface LayoutPrefs {
   clutter: string[];
   visible: string[];
+  /** Whether the layout canvas draws each rectangle's internals. */
+  detail: boolean;
 }
 export interface Preferences {
   layout: LayoutPrefs;

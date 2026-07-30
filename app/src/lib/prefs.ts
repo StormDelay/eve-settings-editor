@@ -10,6 +10,7 @@ export const countIn = (stored: LayoutPrefs, ids: ReadonlySet<string>): number =
 
 /** The stored lists with every in-scope id removed, the rest untouched. */
 export const withoutIn = (stored: LayoutPrefs, ids: ReadonlySet<string>): LayoutPrefs => ({
+  ...stored,
   clutter: stored.clutter.filter((id) => !ids.has(id)),
   visible: stored.visible.filter((id) => !ids.has(id)),
 });
