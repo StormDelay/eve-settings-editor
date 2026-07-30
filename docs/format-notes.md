@@ -924,6 +924,36 @@ Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
 `hudRects` ↔ `hudPointFromRect`), which a round-trip unit test pins together.
 
+### Chat window splits
+
+Corpus-verified 2026-07-30 against the full `testdata/corpus` tree (184 distinct
+`core_user_*.dat` files). Both keys live in the ACCOUNT file under the **root
+`ui` section** — NOT `windows` (where `neocomWidth` lives) — as ordinary
+`(timestamp, value)` leaves. An earlier draft of this note assumed `windows` by
+analogy with `neocomWidth`; the corpus guard (`chat_panels_corpus.rs`) caught
+the mistake before it shipped, the same way `tests/hud_corpus.rs` caught
+`badge_*` assuming `ui` instead of `notifications`.
+
+| what | key | value | present |
+|---|---|---|---|
+| Member-list width | `chatchannel_<ch>_userlistwidth` | Int — 50, 59, 72, 85, 102, 104, 107, 109, 119, 126, 127, 128, 135 | 86/184 |
+| Input-box height | `chatinputsize_chatchannel_<ch>` | Int — 62, 63, 64, 70, 76 | 121/184 |
+
+**Both key names carry the canvas window id verbatim.** `chatchannel_local` owns
+`chatchannel_local_userlistwidth` and `chatinputsize_chatchannel_local`, so
+`chat.rs` strips the suffix or the prefix and what remains is already an id in
+`windowSizesAndPositions_1`. No mapping table.
+
+`chatCondensedUserList_<ch>` (Bool) is deliberately not read: it changes how the
+member list renders, not how wide it is, and its key naming is inconsistent —
+`chatCondensedUserList_corp` sits beside
+`chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
+prefix and one without.
+
+Whether the input box spans the full window width or only the message pane is
+NOT captured — the editor draws it under the message pane only, pending a live
+smoke.
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in
