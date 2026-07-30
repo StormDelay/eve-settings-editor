@@ -128,6 +128,41 @@ export function drawnWindowCount(units: DrawUnit[]): number {
   return units.reduce((n, u) => n + (u.stack ? u.tabs.length : 1), 0);
 }
 
+/**
+ * Fold the two docked Inventory copies into one drawn rectangle.
+ *
+ * Inventory is the ONLY window family EVE splits per context: the character
+ * file carries `InventoryStation`, `InventoryStructure` and `InventorySpace` as
+ * three separate ids with three separate geometries in the otherwise-flat
+ * `windowSizesAndPositions_1`. On a real character they have drifted apart
+ * (624,260 623x450 vs 136,285 880x619), so the docked view would paint two
+ * rectangles 488px apart for what the player thinks of is one window.
+ *
+ * In `docked` the structure copy is dropped as its own unit and appended to the
+ * station copy's `fanTargets` — which is already "every window a coherent move
+ * must repeat the rect onto", so the existing commit path repositions both from
+ * one drag with no new drag code.
+ *
+ * `all` is deliberately left untouched: three independent rectangles, exactly
+ * as today. That IS the escape hatch for a player who wants the station and
+ * structure inventories in different places, so there is no toggle to build.
+ *
+ * A post-pass rather than a parameter on stackUnits: it keeps the grouping and
+ * the fold separately testable, and it cannot affect the unfiltered denominator
+ * `LayoutView` computes for "showing N of M".
+ */
+export function linkInventory(units: DrawUnit[], env: Env): DrawUnit[] {
+  if (env !== "docked") return units;
+  const station = units.find((u) => u.key === "InventoryStation" && !u.stack);
+  const structure = units.find((u) => u.key === "InventoryStructure" && !u.stack);
+  // Nothing to fold: one of the pair is closed, filtered out, or stacked (a
+  // stacked copy already fans to its stack, and merging across stacks is out
+  // of scope). The survivor draws on its own.
+  if (!station || !structure) return units;
+  const linked = { ...station, fanTargets: [...station.fanTargets, ...structure.fanTargets] };
+  return units.filter((u) => u !== structure).map((u) => (u === station ? linked : u));
+}
+
 export interface FurnitureRect {
   kind: "neocom" | "shipui" | "fighter" | "badge";
   label: string;
