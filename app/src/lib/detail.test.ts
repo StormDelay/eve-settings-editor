@@ -186,6 +186,11 @@ const check = (name: string, ok: boolean) => {
   check("a numbered overview window is its number", overviewIndex("overview_7") === 7);
   check("the overview settings window is not an overview", overviewIndex("overviewsettings") === null);
   check("an unrelated id is not an overview", overviewIndex("market") === null);
+  check("a bare trailing underscore has no digits to match", overviewIndex("overview_") === null);
+  check("a non-numeric suffix does not match", overviewIndex("overview_1x") === null);
+  check("a prefix that merely ends in overview_N does not match", overviewIndex("myoverview_1") === null);
+  // \d+ accepts leading zeros; Number() parses them as decimal, not octal.
+  check("a zero-padded number still parses", overviewIndex("overview_01") === 1);
 
   const w = (id: string): WindowRect => ({
     id, label: id, name: null, open: true, renderable: true,
@@ -228,8 +233,37 @@ const check = (name: string, ok: boolean) => {
   };
   check("a stack resolves from its selected tab",
     windowDetail(stack, "chatchannel_local", cols, chats, rect).length === 2);
-  check("a stack falls back to its first tab",
+  // With no selection, this stack's fallback (tabs[0] = chatchannel_corp) and
+  // an incorrect fallback to the anchor (ChatWindowStack) both miss `chats`,
+  // so this alone cannot tell the two paths apart — it still pins "a resolved
+  // id with no matching panel draws nothing".
+  check("a selected tab that has no panel draws nothing",
     windowDetail(stack, null, cols, chats, rect).length === 0);
+
+  // Discriminating case: first tab IS in `chats`. Falling back to tabs[0]
+  // yields the two chat bands; falling back to the anchor (ChatWindowStack2,
+  // absent from chats) would yield zero — so this separates the two paths.
+  const stack2: DrawUnit = {
+    key: "ChatWindowStack2",
+    anchor: w("ChatWindowStack2"),
+    stack: { container_id: "ChatWindowStack2", container_label: "ChatWindowStack2", anchor_id: "chatchannel_local", members: ["chatchannel_local", "chatchannel_corp"] },
+    tabs: [w("chatchannel_local"), w("chatchannel_corp")],
+    fanTargets: [],
+  };
+  check("with no selection, a stack falls back to its first tab (not the anchor)",
+    windowDetail(stack2, null, cols, chats, rect).length === 2);
+
+  // A stack with no tabs at all falls back through to the anchor id, and must
+  // not throw doing it.
+  const emptyStack: DrawUnit = {
+    key: "EmptyStack",
+    anchor: w("EmptyStack"),
+    stack: { container_id: "EmptyStack", container_label: "EmptyStack", anchor_id: "EmptyStack", members: [] },
+    tabs: [],
+    fanTargets: [],
+  };
+  check("a stack with no tabs falls back to the anchor without throwing",
+    windowDetail(emptyStack, null, cols, chats, rect).length === 0);
 }
 
 console.log("detail.test.ts ok");
