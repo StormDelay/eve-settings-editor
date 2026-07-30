@@ -173,6 +173,15 @@ check("open filter keeps the right window", open[0].id === "a");
   check("docked fans a drag onto both copies", ids.join(",") === "InventoryStation,InventoryStructure");
   check("the fold leaves unrelated units untouched", docked.some((u) => u.key === "market"));
 
+  // tabs, not just fanTargets: every selection consumer (the panel row, the
+  // canvas highlight, resize handles, the arrow-key nudge) keys off anchor.id
+  // or tabs, so a station-only tabs array would leave the structure row
+  // selectable in the panel but inert on the canvas (F1).
+  const tabIds = inv[0].tabs.map((w) => w.id).sort();
+  check("the merged unit's tabs carry both Inventory ids", tabIds.join(",") === "InventoryStation,InventoryStructure");
+  const marketUnit = docked.find((u) => u.key === "market")!;
+  check("a normal free unit still has exactly one tab", marketUnit.tabs.length === 1);
+
   // The space copy is a different id and is never folded — it is a genuinely
   // separate window with its own position, and it is not in the docked view.
   const spaceOnly = { ...layout, windows: [win("InventorySpace", true, true), market] };
@@ -204,6 +213,17 @@ check("open filter keeps the right window", open[0].id === "a");
   const untouched = linkInventory(stackUnits(stacked as any), "docked");
   check("a stacked Inventory is not folded", untouched.some((u) => u.key === "InventoryStructure"));
   check("the stacked copy still draws as its stack", untouched.some((u) => u.key === "C" && u.stack));
+
+  // Guard the `env !== "docked"` check itself, not just its observable effect
+  // in "all" above: a mutation to `env === "all"` would still pass every check
+  // above (both leave the pair unfolded) but silently fold in "space" too.
+  // This state is UNREACHABLE in the running app — both Inventory ids are in
+  // DOCKED_ONLY, so `windowMatches`/`inEnv` strips them out of the visible set
+  // before stackUnits ever sees them under `env: "space"`. The test exists to
+  // pin the guard, not to describe a path a player can hit.
+  const spacePair = linkInventory(stackUnits(layout as any), "space");
+  check("a docked pair under a space env is left unfolded (guard, not a reachable path)",
+    spacePair.filter((u) => u.key.startsWith("Inventory")).length === 2);
 }
 
 // --- the shared filter predicate -------------------------------------------
