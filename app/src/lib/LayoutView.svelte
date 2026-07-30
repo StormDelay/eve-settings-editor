@@ -4,7 +4,7 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
-    snapLines, movingEdges, snapDelta, unitAt, dropAction,
+    snapLines, movingEdges, snapDelta, unitAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayNameOf } from "$lib/windowLabels";
@@ -82,7 +82,13 @@
     layout && filterIsActive(filter) ? visibleIds(layout.windows, filter, clutterOverrides()) : null,
   );
   const units = $derived(
-    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+    linkInventory(
+      stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+      filter.env,
+      // The raw window list, NOT the drawn units: the Inventory fan has to
+      // reach a closed copy, and stackUnits only makes units from open ones.
+      layout?.windows ?? [],
+    ),
   );
   // Both ends counted from what stackUnits actually draws, not the raw window
   // list (M5): a stack draws one rectangle but represents each of its visible
@@ -770,6 +776,15 @@
         {/each}
         {#each units as unit (unit.key)}
           {@const r = rectOf(unit.anchor)}
+          <!-- A folded unit (today, only linkInventory's docked Inventory pair)
+               draws one rectangle for more than one window id, and a drag or
+               nudge writes the full rect to all of them — resize included, not
+               just position. Nothing else on the rectangle says that, so name
+               the fanned ids in a tooltip. Stacks already show this via their
+               own tab strip, hence `!unit.stack`. -->
+          {@const foldTitle = !unit.stack && unit.fanTargets.length > 1
+            ? `Moves and resizes together with: ${unit.fanTargets.map((w) => w.id).join(", ")}`
+            : undefined}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="win"
@@ -778,6 +793,7 @@
             class:droptarget={dropTarget === unit.key}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
+            title={foldTitle}
             onpointerdown={(e) => startMove(unit, e)}>
             {#if unit.stack}
               <div class="tabs">

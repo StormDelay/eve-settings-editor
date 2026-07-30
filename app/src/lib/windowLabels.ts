@@ -239,6 +239,89 @@ export function isClutter(id: string, o?: ClutterOverrides): boolean {
   return CLUTTER_FAMILIES.has(n.family) && n.detail !== "";
 }
 
+// --- environments ----------------------------------------------------------
+// A player's screen differs by environment, and the canvas mixes every
+// environment into one picture. This is a VIEW FILTER, not a data model:
+// `windowSizesAndPositions_1` stores one geometry per window id, so there is a
+// single layout underneath and these sets only decide what is painted.
+//
+// Two environments, not EVE's thirteen. `ui → InfoPanelModes_<context>`
+// enumerates the client's own list (hangar, inflight, structure, charsel,
+// planet, starmap…), but only hangar/inflight/structure have an arrangeable
+// window layout, and NPC station and player structure are collapsed into one
+// "docked" view — which is also the split `dockPanels` itself stores
+// (widthProportion_docked). See the design spec for the corpus measurements.
+//
+// Only the EXCLUSIVES are listed. An id in neither set shows in both views —
+// the same safe-failure direction as the clutter tables: showing a harmless
+// extra rectangle beats hiding a window the player actually placed. Windows
+// whose environment is genuinely uncertain (Fitting, Assets, Market, the chat
+// stack) are deliberately absent rather than guessed at. Grow these lazily.
+//
+// The two sets are not the same kind of evidence. `DOCKED_ONLY` corroborates
+// against the corpus measurement (see the design spec's §2.2 — the Structure*
+// hangar ids and the station windows showed up as genuinely docked-only in
+// the file data). `SPACE_ONLY` is NOT: the corpus pass only observed
+// docked-side exclusives, so every `SPACE_ONLY` entry is game-knowledge
+// curation, not something measured. Do not mistake one for the other.
+
+export type Env = "all" | "docked" | "space";
+
+/** Windows that only exist while docked, in an NPC station or a player
+ * structure. The Structure* ids have no station twin — the station equivalent
+ * is the unified `InventoryStation`. `StructureCorpHangar` is rare but real —
+ * 31 character files in the corpus carry it, against 3,997 for
+ * `StructureItemHangar` — so it stays despite the low count.
+ * `CloneUpgradeWindow` also appears in `CLUTTER_IDS`; that is not an accident
+ * colliding with this one, the two tables answer different questions (kind
+ * of window vs. environment), and a window can legitimately be in both. */
+const DOCKED_ONLY: ReadonlySet<string> = new Set([
+  "lobbyWnd",
+  "cloneBay",
+  "CloneStationWindow",
+  "CloneUpgradeWindow",
+  "InventoryStation",
+  "InventoryStructure",
+  "StructureItemHangar",
+  "StructureShipHangar",
+  "StructureCorpHangar",
+  "DeliverToStructure",
+]);
+
+/** Windows that only exist in space. `ShipCargo` and `ShipDroneBay` were
+ * considered and deliberately left out: a docked player can open the active
+ * ship's cargo hold and drone bay from the station hangar, so they are not
+ * space-exclusive at all — including them would have hidden a window the
+ * player can genuinely have open while docked, the one direction this table
+ * must never fail in. */
+const SPACE_ONLY: ReadonlySet<string> = new Set([
+  "InventorySpace",
+  "droneview",
+  "selecteditemview",
+  "directionalScannerWindow",
+  "overview",
+]);
+
+/** Whether a window is shown in `env`. An id is a member of a set if EITHER
+ * its exact id or its family is listed, so one entry can cover a family's bare
+ * parent and all its spawned instances (`overview` and `overview_1`) — but
+ * only for entries whose family is also a PARAM prefix, the same condition
+ * `CLUTTER_FAMILIES` documents above (describe() never groups a suffixed id
+ * into a family that isn't one). Of the two sets, only `StructureShipHangar`
+ * and `overview` qualify; every other entry here is a singleton with no
+ * spawned form, so for those the family and exact-id checks below coincide
+ * and this is really just an exact-id lookup.
+ *
+ * No `detail !== ""` check, unlike isClutter: that check tells a spawned
+ * instance from its bare parent, and for environment purposes they are in the
+ * same place. */
+export function inEnv(id: string, env: Env): boolean {
+  if (env === "all") return true;
+  const family = describe(id).family;
+  const has = (s: ReadonlySet<string>) => s.has(id) || s.has(family);
+  return env === "docked" ? !has(SPACE_ONLY) : !has(DOCKED_ONLY);
+}
+
 /** Suffix segments that carry no meaning for a reader: ids, hashes, GUIDs. */
 const OPAQUE = /^(-?\d+L?|[0-9a-f]{16,})$/i;
 

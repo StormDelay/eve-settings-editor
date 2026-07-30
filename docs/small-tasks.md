@@ -285,7 +285,7 @@ Workflow:
   pack whole-branch review)._
   **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
-- [ ] **Per-environment canvas views (in space / NPC station / player structure).**
+- [x] **Per-environment canvas views (in space / NPC station / player structure).**
   A player's screen differs by environment, and the canvas currently mixes all of
   them into one picture — which is part of why it shows far more windows than are
   ever visible at once. Explore a view selector that shows only the windows
@@ -317,6 +317,20 @@ Workflow:
   windows open and diff the files. Worth pairing with the user-editable clutter
   list below, since both are "let the user say which windows count".
   _Added 2026-07-26._
+
+  **Done 2026-07-30.** Shipped as a two-environment view filter (docked / in
+  space — not three; NPC station and player structure are collapsed into one
+  "docked" view, per §3 of the design spec) on `WindowFilter`, with a curated
+  exclusives table in `windowLabels.ts` where an unlisted id shows in both
+  views. Inventory — the only context-split family in the geometry dict —
+  folds to one rectangle in the docked view and fans a drag onto both copies.
+  A corpus re-measurement (6,502 char files) confirmed the flat-geometry
+  finding, and found Inventory's copies had already drifted apart on a real
+  character. Still open, deliberately: splitting NPC station from player
+  structure, per-window user overrides of the env table, and the in-game
+  dock/undock capture that would replace the curated mapping with a measured
+  one (live-verification item 35).
+  The in-game by-eye verification of this view filter has not yet been done.
 
 - [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
   dragged out of a stack, which can leave the stack with a single member. The

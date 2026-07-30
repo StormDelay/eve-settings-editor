@@ -3,7 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
-  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction,
+  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction, linkInventory,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -153,6 +153,110 @@ check("open filter keeps the right window", open[0].id === "a");
   check("unrelated free windows still draw", units.some((u) => u.key === "free"));
 }
 
+// --- the Inventory fold -----------------------------------------------------
+{
+  const station = win("InventoryStation", true, true);
+  const structure = win("InventoryStructure", true, true);
+  const market = win("market", true, true);
+  const layout = { reference_w: 2560, reference_h: 1440, windows: [station, structure, market], stacks: [] };
+
+  const all = linkInventory(stackUnits(layout as any), "all", layout.windows);
+  check("all leaves both Inventory units alone", all.filter((u) => u.key.startsWith("Inventory")).length === 2);
+  check("all leaves each fanning only to itself",
+    all.every((u) => !u.key.startsWith("Inventory") || u.fanTargets.length === 1));
+
+  const docked = linkInventory(stackUnits(layout as any), "docked", layout.windows);
+  const inv = docked.filter((u) => u.key.startsWith("Inventory"));
+  check("docked paints one Inventory rectangle", inv.length === 1);
+  check("docked keeps the station copy as the anchor", inv[0].key === "InventoryStation");
+  const ids = inv[0].fanTargets.map((w) => w.id).sort();
+  check("docked fans a drag onto both copies", ids.join(",") === "InventoryStation,InventoryStructure");
+  check("the fold leaves unrelated units untouched", docked.some((u) => u.key === "market"));
+
+  // tabs, not just fanTargets: every selection consumer (the panel row, the
+  // canvas highlight, resize handles, the arrow-key nudge) keys off anchor.id
+  // or tabs, so a station-only tabs array would leave the structure row
+  // selectable in the panel but inert on the canvas (F1).
+  const tabIds = inv[0].tabs.map((w) => w.id).sort();
+  check("the merged unit's tabs carry both Inventory ids", tabIds.join(",") === "InventoryStation,InventoryStructure");
+  const marketUnit = docked.find((u) => u.key === "market")!;
+  check("a normal free unit still has exactly one tab", marketUnit.tabs.length === 1);
+
+  // The space copy is a different id and is never folded — it is a genuinely
+  // separate window with its own position, and it is not in the docked view.
+  const spaceOnly = { ...layout, windows: [win("InventorySpace", true, true), market] };
+  const space = linkInventory(stackUnits(spaceOnly as any), "space", spaceOnly.windows);
+  check("the space copy is left alone", space.filter((u) => u.key === "InventorySpace").length === 1);
+
+  // The other copy does not exist in the file at all — nothing to fan to, and
+  // the survivor must still draw.
+  const lone = { ...layout, windows: [structure, market] };
+  const folded = linkInventory(stackUnits(lone as any), "docked", lone.windows);
+  check("a lone structure copy still draws", folded.some((u) => u.key === "InventoryStructure"));
+  check("with no second copy in the file, the survivor fans only to itself",
+    folded.find((u) => u.key === "InventoryStructure")!.fanTargets.length === 1);
+
+  // THE CLOSED-COPY BUG. stackUnits only makes units from OPEN windows, so the
+  // first version of this sourced the pair from `units` and silently dropped a
+  // closed copy — a drag then moved one and left the other behind, which is
+  // exactly the drift stackUnits' own fanTargets already guards against for
+  // closed stack members. The fan follows RENDERABILITY, not openness.
+  const closedStructure = win("InventoryStructure", false, true);
+  const stationOpen = { ...layout, windows: [station, closedStructure, market] };
+  const so = linkInventory(stackUnits(stationOpen as any), "docked", stationOpen.windows);
+  const soInv = so.filter((u) => u.key.startsWith("Inventory"));
+  check("a closed structure copy still leaves one drawn rectangle", soInv.length === 1);
+  check("the open station copy anchors it", soInv[0].key === "InventoryStation");
+  check("a drag fans onto the CLOSED structure copy too",
+    soInv[0].fanTargets.map((w) => w.id).sort().join(",") === "InventoryStation,InventoryStructure");
+
+  // ...and the mirror: the station copy closed, the structure copy open.
+  const closedStation = win("InventoryStation", false, true);
+  const structureOpen = { ...layout, windows: [closedStation, structure, market] };
+  const sto = linkInventory(stackUnits(structureOpen as any), "docked", structureOpen.windows);
+  const stoInv = sto.filter((u) => u.key.startsWith("Inventory"));
+  check("a closed station copy still leaves one drawn rectangle", stoInv.length === 1);
+  check("the open structure copy anchors it when the station one is closed",
+    stoInv[0].key === "InventoryStructure");
+  check("a drag fans onto the CLOSED station copy too",
+    stoInv[0].fanTargets.map((w) => w.id).sort().join(",") === "InventoryStation,InventoryStructure");
+
+  // A stacked Inventory already fans to its stack; merging across stacks is
+  // out of scope, so the fold declines rather than guessing. Note the stacked
+  // copy's unit is keyed by its CONTAINER, so it never matches the fold's
+  // `key === "InventoryStation"` test in the first place — this pins that.
+  const stacked = {
+    reference_w: 2560, reference_h: 1440,
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["InventoryStation"] }],
+    windows: [
+      win("C", true, true, { container_id: "C", role: "container" }),
+      win("InventoryStation", true, true, { container_id: "C", role: "member" }),
+      win("InventoryStructure", true, true, null),
+      market,
+    ],
+  };
+  const untouched = linkInventory(stackUnits(stacked as any), "docked", stacked.windows);
+  check("a stacked Inventory is not folded", untouched.some((u) => u.key === "InventoryStructure"));
+  check("the stacked copy still draws as its stack", untouched.some((u) => u.key === "C" && u.stack));
+  // Now that the fan is sourced from the window list rather than the units, it
+  // could reach INTO a stack — which would drag the stacked copy out of place
+  // on every move of the free one. The stack owns its members' geometry.
+  check("the fan does not reach a stacked copy",
+    untouched.find((u) => u.key === "InventoryStructure")!.fanTargets
+      .every((w) => w.id !== "InventoryStation"));
+
+  // Guard the `env !== "docked"` check itself, not just its observable effect
+  // in "all" above: a mutation to `env === "all"` would still pass every check
+  // above (both leave the pair unfolded) but silently fold in "space" too.
+  // This state is UNREACHABLE in the running app — both Inventory ids are in
+  // DOCKED_ONLY, so `windowMatches`/`inEnv` strips them out of the visible set
+  // before stackUnits ever sees them under `env: "space"`. The test exists to
+  // pin the guard, not to describe a path a player can hit.
+  const spacePair = linkInventory(stackUnits(layout as any), "space", layout.windows);
+  check("a docked pair under a space env is left unfolded (guard, not a reachable path)",
+    spacePair.filter((u) => u.key.startsWith("Inventory")).length === 2);
+}
+
 // --- the shared filter predicate -------------------------------------------
 {
   const market = win("market", true, true);
@@ -212,6 +316,29 @@ check("open filter keeps the right window", open[0].id === "a");
   // isOrphanFrame — windowMatches calls it — so re-asserting each one adds no
   // coverage. This pins the exported name, which the delete offer counts with.
   check("the orphan rule is exported for the delete offer to count with", isOrphanFrame(orphanFrame));
+
+  const lobby = win("lobbyWnd", true, true);
+  const dscan = win("directionalScannerWindow", true, true);
+
+  check("the default env does not make the filter active", !filterIsActive({ ...NO_FILTER, env: "all" }));
+  check("a docked env makes the filter active", filterIsActive({ ...NO_FILTER, env: "docked" }));
+  check("a space env makes the filter active", filterIsActive({ ...NO_FILTER, env: "space" }));
+
+  check("docked keeps a docked-only window", windowMatches(lobby, { ...NO_FILTER, env: "docked" }));
+  check("docked drops a space-only window", !windowMatches(dscan, { ...NO_FILTER, env: "docked" }));
+  check("space keeps a space-only window", windowMatches(dscan, { ...NO_FILTER, env: "space" }));
+  check("space drops a docked-only window", !windowMatches(lobby, { ...NO_FILTER, env: "space" }));
+  check("an unlisted window survives both envs",
+    windowMatches(market, { ...NO_FILTER, env: "docked" }) && windowMatches(market, { ...NO_FILTER, env: "space" }));
+
+  // env composes with the other dimensions rather than replacing them.
+  check("env and openOnly compose", !windowMatches(closedMarket, { ...NO_FILTER, env: "docked", openOnly: true }));
+  check("env and text compose", !windowMatches(lobby, { ...NO_FILTER, env: "docked", text: "zzz" }));
+
+  check("visibleIds narrows by env",
+    !visibleIds([lobby, dscan, market], { ...NO_FILTER, env: "space" }).has("lobbyWnd"));
+  check("visibleIds keeps the space window and the unlisted one",
+    visibleIds([lobby, dscan, market], { ...NO_FILTER, env: "space" }).size === 2);
 }
 
 // --- the filter searches the real channel name -----------------------------
