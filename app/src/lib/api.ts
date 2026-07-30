@@ -191,8 +191,9 @@ export interface NeocomBar {
   original: NeocomButton[];
 }
 
-/** Per-channel chat window splits, from the ACCOUNT document. Read-only — the
- * canvas detail layer draws these; nothing writes them. */
+/** Per-channel chat window splits, from the ACCOUNT document. Editable via
+ * `setChatSplits`; account-scoped, so a write is shared by every character
+ * on the account. */
 export interface ChatPanel {
   window_id: string;
   /** null = the player has never resized this channel's member list. */
