@@ -13,21 +13,36 @@ Workflow:
 
 ## Open
 
-- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
-  columns.** The furniture boxes now cover the right area (2026-07-28) but are
-  still blank rectangles, and a blank rectangle does not tell a player what they
-  are positioning against — recognising the thing is half of why the footprint
-  mattered. The ship-HUD and fighter geometry needed for it is already measured
-  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
-  from the box origin with a ~158px ring, module slot rows starting at x 245 on
-  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
-  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
-  All offsets are from each element's own top-left, so they can be expressed as
-  percentages of the drawn box and rescale with the canvas for free. Overview
-  columns would need their own measuring pass — nothing is captured for them yet.
-  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
-  Split out of the HUD-footprint task, which shipped the sizing half.
-  _Added 2026-07-28._
+- [ ] **Draggable chat splits and overview column edges on the canvas.** The
+  detail layer draws the chat member-list width, the chat input height and the
+  overview column widths from their real stored values, but they are decoration
+  — `DetailParts.svelte` is `pointer-events: none` by design. Making them
+  draggable needs a `chat.rs` setter (the projection is read-only today),
+  `set_overview_width` wired into the Layout view (it exists, but only the
+  Overview view calls it), new `Drag` variants in `LayoutView.svelte`, and
+  hit-test exclusions so a split drag does not start a window move underneath.
+  Split out of the detail-layer slice, which shipped the read half.
+  _Added 2026-07-30._
+
+- [ ] **The overview and chat internals have never been measured.** Most of
+  `detail.ts`'s `DETAIL_NOMINAL` is invented, but not all of it: the ability
+  and squadron cell WIDTHS alone are pinned by the measured panel width
+  (`70 + 86x4 + 53 = 467` for the ability grid, `43 + 86x4 + 80 = 467` for the
+  squadron row), and `detail.test.ts` asserts both reach the panel's right edge
+  — so correcting either would need to fail that test first. Their HEIGHTS are
+  guessed, same as the module slot cell, which is invented in both dimensions
+  — nothing pins its width the way the fighter cells' widths are pinned, and
+  its own `detail.test.ts` coverage is a bounds check, not an edge-exact one.
+  What is genuinely guessed, in full: the module slot cell (both dimensions),
+  the ability and squadron cell heights, the ability row pitch, the neocom's
+  top EVE-menu cell, the overview tab-strip and header-band heights, and the
+  fallback width for a column with no stored width. The HUD and fighter
+  PITCHES around all of this are measured (`format-notes.md`, "HUD anchors");
+  only what is drawn inside them is guessed. One screenshot session like the
+  2026-07-28 one settles all of it, and each is a one-line edit. Also open
+  from the same session: whether the chat input box spans the full window
+  width or only the message pane — the editor draws the latter.
+  _Added 2026-07-30._
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
@@ -512,6 +527,24 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **A drawing layer for the canvas: module slots, fighter abilities,
+  overview columns.** Shipped as a `Detail` toggle beside the canvas's
+  reference-resolution line. With it on, the ship HUD draws its capacitor ring
+  and module racks, the fighter panel its ability grid and squadron row, the
+  neocom its real buttons in their real order, each overview window its real
+  tabs and its real columns at their real stored widths — a column set too wide
+  for its window now runs visibly off the edge — and each chat window its
+  member-list and input splits, a data source this entry did not know about,
+  added because the design spec found it cheap once the other read paths
+  existed. Decoration only, as the entry required: `DetailParts.svelte` is
+  `pointer-events: none`, and nothing here reaches `hudRects`, the snap lines,
+  or any drag. The overview columns needed their own measuring pass, exactly as
+  this entry predicted — nothing was captured for the overview or chat
+  internals, so a handful of sizes drawn inside them are still guessed; see the
+  new entry above.
+  See `docs/superpowers/specs/2026-07-30-canvas-detail-layer-design.md`.
+  _Added 2026-07-28; done 2026-07-30._
 
 - [x] **A "discard changes" button beside the unsaved badges in the top bar.**
   Shown only while something is dirty, prompts once, and re-reads the open

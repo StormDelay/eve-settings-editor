@@ -924,6 +924,176 @@ Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
 `hudRects` ↔ `hudPointFromRect`), which a round-trip unit test pins together.
 
+### Ship HUD internals
+
+Measured **2026-07-30** for the canvas detail layer, off the same two native
+2560×1440 shots the 2026-07-28 pass used (`hud_battleship.png`,
+`hud_frigate.png`, offset −642, top-aligned) — but by **row/column brightness
+profile rather than by eye**, which is what makes these reproducible. Offsets are
+from the element's own top-left, i.e. the box `HUD_NOMINAL.shipui` describes.
+
+Two ships at one offset agree on every number below. That is what separates the
+element's structure from one ship's fitting.
+
+| Part | Geometry |
+|---|---|
+| Ship-control cluster | two columns at x 0 and 30, buttons ⌀30, vertical pitch 32; column A 4 buttons from y 24, column B **3 buttons from y 40** (half a step down) |
+| Capacitor | centred (148, 72); outer rim r 80, gauge band r 50..80 **top half only**, inner ring r 42, lit core r 27 |
+| Module racks | round buttons ⌀44, column pitch 51 from x 247, rows on a uniform 44 pitch from y 4 |
+| Rack stagger | the **middle row is offset +25**, half a pitch, and carries one fewer button |
+
+Three things this corrected, all of which had made the drawn HUD wrong:
+
+- **The buttons are round, not rectangular.** Module slots and ship-control
+  buttons alike. The detail layer drew 44×40 rectangles until this pass.
+- **The middle rack row is staggered.** Frigate: mid row at 762/813/864 against
+  outer rows at 737/788/839. Battleship: 813/915/966 against 788/890/941. Exactly
+  +25 on both. This brick pattern is the rack's visual signature.
+- **The ship-control cluster belongs to the HUD and was not drawn at all**,
+  leaving the left third of the box empty. 2026-07-28 already recorded it moving
+  by exactly the HUD's drag delta — that is how the 148px left extension was
+  established — but nothing ever drew it.
+
+Two corrections to earlier figures, both from measuring rather than deriving:
+
+- **Column pitch is 51, not 50, and the first column is at 247, not 245**, so the
+  8-slot row's right edge is `247 + 51 × 7 + 44 = 648`, not 643.
+  `HUD_NOMINAL.shipui.w` was 643 — derived as `245 + 50 × 8`, which mixes a pitch
+  with a button width — so the box was 5px narrow and windows snapped just inside
+  the real HUD. Corrected to 648.
+- **Row tops are 4 / 48 / 92, a uniform 44 pitch**, not the 2 / 50 / 94 recorded
+  above, which gave an uneven 48-then-44.
+
+#### The vertical extent, re-measured — and the margins are equal after all
+
+The capacitor's rim reaches **r 88**, and that is the element's full height: the
+disc exactly fills the box, top to bottom.
+
+Getting there took two corrections worth recording, because both are traps:
+
+1. A full-circle brightness sweep peaks sharply at **r 80–81**. That is the rim's
+   bright *middle*, not its edge. A 5× crop at 12 o'clock shows the dark rim arc
+   and its highlight segment continuing out to **r 88**, above where the gauge
+   ticks begin. Taking the sweep's peak for the edge put the element's top 8px
+   too low.
+2. Below the capacitor sit small coloured drone-status indicators. They are
+   **ship-state dependent**, not element chrome — present on the battleship shot,
+   absent on the bottom-aligned one — so they cannot be used as the bottom edge.
+
+The resulting figures, and both are checked against the rack in **both**
+alignments rather than derived:
+
+| | old | measured 2026-07-30 |
+|---|---|---|
+| `SHIP_TOP_MARGIN` | 28 | **12** |
+| `SHIP_BOTTOM_MARGIN` | 12 | 12 (unchanged) |
+| `HUD_NOMINAL.shipui.h` | 160 | **176** |
+
+- Top-aligned: element 12..188, rack row 1 at `12 + 20 = 32`. **Measured 32.**
+- Bottom-aligned: element `1440 − 12 − 176 = 1252`..1428, rack row 1 at 1272.
+  **Measured 1272.**
+
+Both land exactly, which no other combination of the three does.
+
+**So the margins are equal, and the note above claiming otherwise was wrong.**
+That note reasoned: the bottom margin measures 12, the top is 28, therefore the
+element is not vertically symmetric. The 12 was right and the 28 was not — it was
+never measured, only inferred by assuming a 160px element whose rack sat 4px in.
+The rack's position is all that measurement pinned, and a rack position alone
+cannot fix the element's own edges: 28/160 and 12/176 both reproduce it. The
+capacitor is what breaks the tie.
+
+The general lesson, and the reason this section exists: **a figure that
+reproduces every measurement you have can still be wrong**, if the measurements
+never touched the thing it describes.
+
+### Fighter UI internals
+
+Measured **2026-07-30** from `fighter.png` (native 2560×1440, anchor
+`(329, 289)`, 4 squadrons with 3 launched), same profile method. Offsets are from
+the anchor — which is the panel's left edge and the ability grid's top.
+
+| Part | Geometry |
+|---|---|
+| Ability grid | ⌀44 round buttons, column pitch 86 from x 70, row pitch 50 from y 2, 3 rows |
+| Squadron dials | ⌀81 round gauges, same 86 pitch, from x 42 / y 152 |
+| Control column | 4 ⌀24 round buttons at x 4, vertical pitch 32 from y 148 |
+
+Same two lessons as the ship HUD: **everything is round**, and there is a
+**control column on the left that was never drawn**.
+
+**It is the squadron row, not the ability grid, that sets the panel width.** At
+the 5-squadron carrier maximum `42 + 86 × 4 + 81 = 467`, exactly
+`HUD_NOMINAL.fighter.w`; the ability grid stops short at
+`70 + 86 × 4 + 44 = 458`. An earlier pass had *derived* an ability cell width of
+53 by assuming the grid reached the edge — a reminder that a derivation which
+lands on the right total can still be wrong about the thing it measures.
+
+**The control column is the panel's lowest element**, ending at y 264 — so
+`HUD_NOMINAL.fighter.h` is **264**, not the 253 recorded on 2026-07-28. Nothing
+had noticed, because nothing drew the control column: the old figure stopped at
+the squadron labels, which are the lowest thing the editor knew about.
+
+Same shape of error as the ship HUD's height, and the same cause — a box sized
+from the parts we happened to be drawing rather than from the element.
+
+### Overview window chrome
+
+Measured **2026-07-30** off a real overview window in `fighter.png`.
+
+| Part | Geometry |
+|---|---|
+| Tab strip | ~30 tall (text band y 12..23) |
+| Column header band | ~26 tall (text y 46..53) |
+| Data rows | ~19 pitch |
+| Tabs | text-width, left-packed from x ~52, roughly `chars × 5.5 + 34` |
+
+Font-dependent — EVE's overview font size is configurable, so these are the
+default. The detail layer's previous values were invented and both bands were
+about 60% short (18 and 16).
+
+Two layout rules confirmed against the client, both of which the editor was
+getting wrong:
+
+- **Tabs are text-width and left-packed**, not stretched across the window. In
+  the sampled window: `Main` spans 22px with the next tab 59px on, `3` 6px with
+  the next 42px on, `Exit!` 20px with the next 53px on.
+- **A column that does not fit is not drawn at all.** EVE keeps the header on one
+  line and shows what fits; it does not wrap to a second row, and it does not
+  draw a column part-way. So an over-provisioned column set shows up as columns
+  *missing*, which is what the player sees in game. The editor drew them
+  overflowing and clipped until this was corrected.
+
+### Chat window splits
+
+Corpus-verified 2026-07-30 against the full `testdata/corpus` tree (184 distinct
+`core_user_*.dat` files). Both keys live in the ACCOUNT file under the **root
+`ui` section** — NOT `windows` (where `neocomWidth` lives) — as ordinary
+`(timestamp, value)` leaves. An earlier draft of this note assumed `windows` by
+analogy with `neocomWidth`; the corpus guard (`chat_panels_corpus.rs`) caught
+the mistake before it shipped, the same way `tests/hud_corpus.rs` caught
+`badge_*` assuming `ui` instead of `notifications`.
+
+| what | key | value | present |
+|---|---|---|---|
+| Member-list width | `chatchannel_<ch>_userlistwidth` | Int — 50, 59, 72, 85, 102, 104, 107, 109, 119, 126, 127, 128, 135 | 86/184 |
+| Input-box height | `chatinputsize_chatchannel_<ch>` | Int — 62, 63, 64, 70, 76 | 121/184 |
+
+**Both key names carry the canvas window id verbatim.** `chatchannel_local` owns
+`chatchannel_local_userlistwidth` and `chatinputsize_chatchannel_local`, so
+`chat.rs` strips the suffix or the prefix and what remains is already an id in
+`windowSizesAndPositions_1`. No mapping table.
+
+`chatCondensedUserList_<ch>` (Bool) is deliberately not read: it changes how the
+member list renders, not how wide it is, and its key naming is inconsistent —
+`chatCondensedUserList_corp` sits beside
+`chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
+prefix and one without.
+
+Whether the input box spans the full window width or only the message pane is
+NOT captured — the editor draws it under the message pane only, pending a live
+smoke.
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in

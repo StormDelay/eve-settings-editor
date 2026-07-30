@@ -13,6 +13,7 @@ pub mod save;
 mod treewalk;
 pub mod windows;
 pub mod hud;
+pub mod chat;
 pub mod neocom;
 pub mod overview;
 pub mod autofill;
@@ -33,6 +34,7 @@ pub use projection::{project, Node}; // enabled in Task 4
 pub use save::{save, SaveError, SaveReport}; // enabled in Task 6
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
+pub use chat::{project_chat, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use overview::{project_overview, set_column_order, set_column_visible, set_column_width, Appearance, OverviewColumn, OverviewColumns, OverviewError, OverviewTab, OverviewWindow, StateSurface};
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
