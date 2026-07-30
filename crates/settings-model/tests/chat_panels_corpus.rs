@@ -9,8 +9,11 @@ mod common;
 
 use settings_model::project_chat;
 
-/// Enough sightings to mean "the section is right", not "one odd file". The
-/// 2026-07-28 snapshot had 23 of 58 account files carrying a member-list width.
+/// Enough sightings to mean "the section is right", not "one odd file". Set
+/// well below the real fractions documented in format-notes.md ("Chat window
+/// splits": 86/184 account files carry a member-list width, 121/184 an input
+/// height), so the guard holds regardless of how many files a given corpus
+/// checkout has.
 const ENOUGH: usize = 5;
 
 #[test]
