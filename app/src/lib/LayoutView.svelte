@@ -85,6 +85,9 @@
     linkInventory(
       stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
       filter.env,
+      // The raw window list, NOT the drawn units: the Inventory fan has to
+      // reach a closed copy, and stackUnits only makes units from open ones.
+      layout?.windows ?? [],
     ),
   );
   // Both ends counted from what stackUnits actually draws, not the raw window

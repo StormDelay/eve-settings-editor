@@ -184,13 +184,27 @@ two different places (§2.2 shows they currently would, 488px apart). They fold
 into one unit:
 
 ```ts
-linkInventory(units: DrawUnit[], env: Env): DrawUnit[]
+linkInventory(units: DrawUnit[], env: Env, windows: WindowRect[]): DrawUnit[]
 ```
 
 A pure post-pass over `stackUnits`' output — no signature change to `stackUnits`
 itself, so it stays unit-testable on its own and the change has a small blast
-radius. In `"docked"` it drops the `InventoryStructure` unit and appends that
-window to the `InventoryStation` unit's `fanTargets`.
+radius. In `"docked"` the two copies collapse to one unit whose `fanTargets`
+carry both ids.
+
+**The fan follows renderability, not openness, which is why it needs the raw
+window list and not just the units.** `stackUnits` builds units from open
+windows only, so sourcing the pair from `units` drops a copy the player has
+closed — and a drag then moves the open one and leaves the closed one behind.
+That is the same drift `stackUnits` already guards against for closed stack
+members, and the first version of this function reproduced it: it bailed out
+whenever either copy was closed, with a comment calling that "nothing to fold"
+rather than the bug it was. Found by running the app. Whichever copy is drawn
+anchors the rectangle; the fan reaches both.
+
+A copy that belongs to a stack is excluded from the fan — the stack already
+owns its members' geometry, and writing to it from here would pull it out of
+place.
 
 `fanTargets` is already precisely "every window a coherent move must repeat the
 rect onto" (`layout.ts:66`), and `LayoutView.svelte:601` already commits

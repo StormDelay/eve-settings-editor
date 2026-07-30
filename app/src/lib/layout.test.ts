@@ -160,12 +160,12 @@ check("open filter keeps the right window", open[0].id === "a");
   const market = win("market", true, true);
   const layout = { reference_w: 2560, reference_h: 1440, windows: [station, structure, market], stacks: [] };
 
-  const all = linkInventory(stackUnits(layout as any), "all");
+  const all = linkInventory(stackUnits(layout as any), "all", layout.windows);
   check("all leaves both Inventory units alone", all.filter((u) => u.key.startsWith("Inventory")).length === 2);
   check("all leaves each fanning only to itself",
     all.every((u) => !u.key.startsWith("Inventory") || u.fanTargets.length === 1));
 
-  const docked = linkInventory(stackUnits(layout as any), "docked");
+  const docked = linkInventory(stackUnits(layout as any), "docked", layout.windows);
   const inv = docked.filter((u) => u.key.startsWith("Inventory"));
   check("docked paints one Inventory rectangle", inv.length === 1);
   check("docked keeps the station copy as the anchor", inv[0].key === "InventoryStation");
@@ -185,16 +185,41 @@ check("open filter keeps the right window", open[0].id === "a");
   // The space copy is a different id and is never folded — it is a genuinely
   // separate window with its own position, and it is not in the docked view.
   const spaceOnly = { ...layout, windows: [win("InventorySpace", true, true), market] };
-  const space = linkInventory(stackUnits(spaceOnly as any), "space");
+  const space = linkInventory(stackUnits(spaceOnly as any), "space", spaceOnly.windows);
   check("the space copy is left alone", space.filter((u) => u.key === "InventorySpace").length === 1);
 
-  // Partial presence: only one of the pair drawn (the other closed, or
-  // filtered out). There is nothing to fold, and the survivor must still draw.
+  // The other copy does not exist in the file at all — nothing to fan to, and
+  // the survivor must still draw.
   const lone = { ...layout, windows: [structure, market] };
-  const folded = linkInventory(stackUnits(lone as any), "docked");
+  const folded = linkInventory(stackUnits(lone as any), "docked", lone.windows);
   check("a lone structure copy still draws", folded.some((u) => u.key === "InventoryStructure"));
-  check("a lone copy fans only to itself",
+  check("with no second copy in the file, the survivor fans only to itself",
     folded.find((u) => u.key === "InventoryStructure")!.fanTargets.length === 1);
+
+  // THE CLOSED-COPY BUG. stackUnits only makes units from OPEN windows, so the
+  // first version of this sourced the pair from `units` and silently dropped a
+  // closed copy — a drag then moved one and left the other behind, which is
+  // exactly the drift stackUnits' own fanTargets already guards against for
+  // closed stack members. The fan follows RENDERABILITY, not openness.
+  const closedStructure = win("InventoryStructure", false, true);
+  const stationOpen = { ...layout, windows: [station, closedStructure, market] };
+  const so = linkInventory(stackUnits(stationOpen as any), "docked", stationOpen.windows);
+  const soInv = so.filter((u) => u.key.startsWith("Inventory"));
+  check("a closed structure copy still leaves one drawn rectangle", soInv.length === 1);
+  check("the open station copy anchors it", soInv[0].key === "InventoryStation");
+  check("a drag fans onto the CLOSED structure copy too",
+    soInv[0].fanTargets.map((w) => w.id).sort().join(",") === "InventoryStation,InventoryStructure");
+
+  // ...and the mirror: the station copy closed, the structure copy open.
+  const closedStation = win("InventoryStation", false, true);
+  const structureOpen = { ...layout, windows: [closedStation, structure, market] };
+  const sto = linkInventory(stackUnits(structureOpen as any), "docked", structureOpen.windows);
+  const stoInv = sto.filter((u) => u.key.startsWith("Inventory"));
+  check("a closed station copy still leaves one drawn rectangle", stoInv.length === 1);
+  check("the open structure copy anchors it when the station one is closed",
+    stoInv[0].key === "InventoryStructure");
+  check("a drag fans onto the CLOSED station copy too",
+    stoInv[0].fanTargets.map((w) => w.id).sort().join(",") === "InventoryStation,InventoryStructure");
 
   // A stacked Inventory already fans to its stack; merging across stacks is
   // out of scope, so the fold declines rather than guessing. Note the stacked
@@ -210,9 +235,15 @@ check("open filter keeps the right window", open[0].id === "a");
       market,
     ],
   };
-  const untouched = linkInventory(stackUnits(stacked as any), "docked");
+  const untouched = linkInventory(stackUnits(stacked as any), "docked", stacked.windows);
   check("a stacked Inventory is not folded", untouched.some((u) => u.key === "InventoryStructure"));
   check("the stacked copy still draws as its stack", untouched.some((u) => u.key === "C" && u.stack));
+  // Now that the fan is sourced from the window list rather than the units, it
+  // could reach INTO a stack — which would drag the stacked copy out of place
+  // on every move of the free one. The stack owns its members' geometry.
+  check("the fan does not reach a stacked copy",
+    untouched.find((u) => u.key === "InventoryStructure")!.fanTargets
+      .every((w) => w.id !== "InventoryStation"));
 
   // Guard the `env !== "docked"` check itself, not just its observable effect
   // in "all" above: a mutation to `env === "all"` would still pass every check
@@ -221,7 +252,7 @@ check("open filter keeps the right window", open[0].id === "a");
   // DOCKED_ONLY, so `windowMatches`/`inEnv` strips them out of the visible set
   // before stackUnits ever sees them under `env: "space"`. The test exists to
   // pin the guard, not to describe a path a player can hit.
-  const spacePair = linkInventory(stackUnits(layout as any), "space");
+  const spacePair = linkInventory(stackUnits(layout as any), "space", layout.windows);
   check("a docked pair under a space env is left unfolded (guard, not a reachable path)",
     spacePair.filter((u) => u.key.startsWith("Inventory")).length === 2);
 }

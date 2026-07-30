@@ -140,10 +140,20 @@ export function drawnWindowCount(units: DrawUnit[]): number {
  * (624,260 623x450 vs 136,285 880x619), so the docked view would paint two
  * rectangles 488px apart for what the player thinks of as one window.
  *
- * In `docked` the structure copy is dropped as its own unit and appended to the
- * station copy's `fanTargets` — which is already "every window a coherent move
- * must repeat the rect onto", so the existing commit path repositions both from
- * one drag with no new drag code.
+ * In `docked` the two copies collapse to one drawn unit whose `fanTargets`
+ * carry both window ids — already "every window a coherent move must repeat
+ * the rect onto", so the existing commit path moves both from one drag with no
+ * new drag code.
+ *
+ * **The fan follows renderability, not openness.** `stackUnits` only makes
+ * units from OPEN windows, so sourcing the pair from `units` silently drops a
+ * closed copy and leaves it behind — the exact drift `stackUnits` already
+ * guards against for closed stack members (see `fanTargets` there). Whichever
+ * copy is drawn, the fan reaches both, because the docked view is telling the
+ * player these are one window.
+ *
+ * A copy that belongs to a stack is excluded from the fan: its stack already
+ * owns its geometry, and writing to it from here would pull it out of place.
  *
  * `all` is deliberately left untouched: three independent rectangles, exactly
  * as today. That IS the escape hatch for a player who wants the station and
@@ -153,24 +163,27 @@ export function drawnWindowCount(units: DrawUnit[]): number {
  * the fold separately testable, and it cannot affect the unfiltered denominator
  * `LayoutView` computes for "showing N of M".
  */
-export function linkInventory(units: DrawUnit[], env: Env): DrawUnit[] {
+const DOCKED_INVENTORY = ["InventoryStation", "InventoryStructure"];
+
+export function linkInventory(units: DrawUnit[], env: Env, windows: WindowRect[]): DrawUnit[] {
   if (env !== "docked") return units;
-  const station = units.find((u) => u.key === "InventoryStation" && !u.stack);
-  const structure = units.find((u) => u.key === "InventoryStructure" && !u.stack);
-  // Nothing to fold: one of the pair is closed, filtered out, or stacked (a
-  // stacked copy already fans to its stack, and merging across stacks is out
-  // of scope). The survivor draws on its own.
-  if (!station || !structure) return units;
+  const isCopy = (u: DrawUnit) => !u.stack && DOCKED_INVENTORY.includes(u.key);
+  const drawn = units.filter(isCopy);
+  if (drawn.length === 0) return units;
+  // Both copies, open or closed — a closed one left out of the fan drifts away
+  // from the one that moved. Stacked copies are their stack's business.
+  const fanTargets = DOCKED_INVENTORY
+    .map((id) => windows.find((w) => w.id === id && w.renderable && w.stack === null))
+    .filter((w): w is WindowRect => !!w);
+  // Station anchors when both are drawn, so the rect stays where the station
+  // copy was; otherwise whichever one is drawn anchors.
+  const anchor = drawn.find((u) => u.key === "InventoryStation") ?? drawn[0];
   // tabs, not just fanTargets: every selection consumer (the panel row, the
   // canvas highlight, resize handles, arrow-key nudge) keys off anchor.id or
   // tabs, so a station-only tabs array would leave the structure row selectable
   // in the panel but inert on the canvas.
-  const linked = {
-    ...station,
-    tabs: [...station.tabs, ...structure.tabs],
-    fanTargets: [...station.fanTargets, ...structure.fanTargets],
-  };
-  return units.filter((u) => u !== structure).map((u) => (u === station ? linked : u));
+  const linked = { ...anchor, tabs: drawn.flatMap((u) => u.tabs), fanTargets };
+  return units.filter((u) => !isCopy(u) || u === anchor).map((u) => (u === anchor ? linked : u));
 }
 
 export interface FurnitureRect {
