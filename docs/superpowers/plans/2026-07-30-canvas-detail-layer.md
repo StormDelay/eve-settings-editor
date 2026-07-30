@@ -571,6 +571,12 @@ const check = (name: string, ok: boolean) => {
     cells.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.fighter.w
       && p.y >= 0 && p.y + p.h <= HUD_NOMINAL.fighter.h),
   );
+  // The cell widths are DERIVED from the measured panel width, not guessed:
+  // both rows must reach its right edge exactly, from different origins.
+  // If HUD_NOMINAL.fighter.w is ever corrected, these are what fail.
+  const right = (ps: typeof cells) => Math.max(...ps.map((p) => p.x + p.w));
+  check("the ability grid reaches the panel's right edge", right(grid) === HUD_NOMINAL.fighter.w);
+  check("the squadron row reaches the panel's right edge", right(squad) === HUD_NOMINAL.fighter.w);
 }
 
 console.log("detail.test.ts ok");
@@ -624,12 +630,23 @@ export interface DetailPart {
 export const DETAIL_NOMINAL = {
   /** Module slot cell, drawn inside the measured 50 x ~46 pitch. */
   slot: { w: 44, h: 40 },
-  /** Fighter ability cell. The COLUMN pitch (86) is measured; the row pitch is
-   *  not — 3 rows spanning y 0..178 gives ~59. */
-  abilityCell: { w: 78, h: 52 },
+  /**
+   * Fighter ability cell. The COLUMN pitch (86) is measured; the row pitch is
+   * not — 3 rows spanning y 0..178 gives ~59.
+   *
+   * The WIDTH is not free: at the 5-column maximum the last column starts at
+   * `70 + 86 x 4 = 414`, and the measured panel is 467 wide, so 53 is what
+   * reaches the right edge exactly. Anything wider draws outside the box.
+   */
+  abilityCell: { w: 53, h: 52 },
   abilityRowPitch: 59,
-  /** Fighter squadron cell, on the same measured 86 column pitch. */
-  squadCell: { w: 78, h: 70 },
+  /**
+   * Fighter squadron cell, on the same measured 86 column pitch. Same
+   * derivation: `43 + 86 x 4 = 387`, and `387 + 80 = 467`. That both rows land
+   * on 467 from different origins is the check that the measured table and
+   * HUD_NOMINAL.fighter agree.
+   */
+  squadCell: { w: 80, h: 70 },
   /** The EVE-menu button at the top of the neocom. It is not in
    *  neocomButtonRawData, so the button column starts below it. */
   neocomTop: 40,
