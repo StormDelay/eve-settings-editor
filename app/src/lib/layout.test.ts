@@ -3,7 +3,7 @@
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
-  snapLines, movingEdges, snapDelta, unitAt, moveInOrder, dropAction, linkInventory,
+  snapLines, movingEdges, snapDelta, unitAt, rectsAt, moveInOrder, dropAction, linkInventory,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
@@ -812,6 +812,36 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     unitAt(units, rectOf, 900, 900) === null);
   check("unitAt counts the rect edge as inside",
     unitAt(units, rectOf, 100, 100)?.key === "small");
+
+  // --- rectsAt: everything under the point, for the right-click picker ------
+  check("rectsAt returns every unit containing the point, topmost first",
+    rectsAt(units, rectOf, 150, 150).map((x: any) => x.key).join(",") === "small,big");
+  check("rectsAt returns just the one where they do not overlap",
+    rectsAt(units, rectOf, 400, 400).map((x: any) => x.key).join(",") === "big");
+  check("rectsAt returns nothing on empty canvas",
+    rectsAt(units, rectOf, 900, 900).length === 0);
+  check("rectsAt counts the rect edge as inside, like unitAt",
+    rectsAt(units, rectOf, 100, 100).map((x: any) => x.key).join(",") === "small,big");
+
+  // THE one that matters. Two walks now answer "what is under this point":
+  // unitAt keeps its early-returning walk because it runs on every pointermove
+  // of a drag, so it must not allocate. This pins the two to one ranking, so a
+  // change to either cannot make the menu's "topmost" differ from the window a
+  // plain click selects.
+  for (const [x, y] of [[150, 150], [400, 400], [100, 100], [900, 900]]) {
+    check(`unitAt agrees with rectsAt[0] at ${x},${y}`,
+      (unitAt(units, rectOf, x, y) ?? null) === (rectsAt(units, rectOf, x, y)[0] ?? null));
+  }
+
+  // Furniture is the second caller, and it IS its own rect rather than
+  // carrying one — which is why rectsAt is generic over the element type.
+  const neocom = { kind: "neocom", label: "Neocom", x: 0, y: 0, w: 60, h: 1440 };
+  const shipui = { kind: "shipui", label: "Ship HUD", x: 900, y: 1200, w: 643, h: 160 };
+  const furniture = [neocom, shipui] as any[];
+  check("rectsAt works on furniture, which is its own rect",
+    rectsAt(furniture, (f: any) => f, 30, 700).map((f: any) => f.label).join(",") === "Neocom");
+  check("rectsAt finds no furniture away from it",
+    rectsAt(furniture, (f: any) => f, 500, 500).length === 0);
 }
 
 // --- moveInOrder: the full ordering reorder_stack takes ----------------------

@@ -542,10 +542,40 @@ export function unitAt(
   y: number,
 ): DrawUnit | null {
   for (let i = units.length - 1; i >= 0; i--) {
-    const r = rectOf(units[i]);
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return units[i];
+    if (hits(rectOf(units[i]), x, y)) return units[i];
   }
   return null;
+}
+
+/** Point-in-rect, edges inclusive. The one copy of this test: `unitAt` and
+ * `rectsAt` both rank by it, and two hand-written copies would eventually
+ * disagree on an edge pixel. */
+const hits = (r: Rect, x: number, y: number) =>
+  x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+/**
+ * Everything whose rect contains a data-px point, topmost first — the same
+ * last-painted-wins ranking `unitAt` uses, so `rectsAt(...)[0]` is always the
+ * unit a plain click would select (pinned by a test).
+ *
+ * This is what the canvas's right-click picker lists: a click can only ever
+ * reach the top rectangle, and on a real file with hundreds of heavily
+ * overlapping windows that leaves anything underneath findable only by name.
+ *
+ * `unitAt` is NOT rewritten as `rectsAt(...)[0]`. It runs on every pointermove
+ * for the length of a drag, where returning early beats allocating an array to
+ * answer a question that only needs its first element.
+ *
+ * Generic because it has two callers with different element types: draw units,
+ * which are asked for their anchor's rect, and furniture rects, which are their
+ * own rect.
+ */
+export function rectsAt<T>(items: T[], rectOf: (t: T) => Rect, x: number, y: number): T[] {
+  const out: T[] = [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (hits(rectOf(items[i]), x, y)) out.push(items[i]);
+  }
+  return out;
 }
 
 /** `ids` with `id` moved to `toIndex` (clamped into range). This is the whole
