@@ -4,7 +4,7 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
-    snapLines, movingEdges, snapDelta, unitAt, dropAction,
+    snapLines, movingEdges, snapDelta, unitAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayNameOf } from "$lib/windowLabels";
@@ -82,7 +82,10 @@
     layout && filterIsActive(filter) ? visibleIds(layout.windows, filter, clutterOverrides()) : null,
   );
   const units = $derived(
-    stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+    linkInventory(
+      stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, visible),
+      filter.env,
+    ),
   );
   // Both ends counted from what stackUnits actually draws, not the raw window
   // list (M5): a stack draws one rectangle but represents each of its visible
