@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { WindowRect, BoolFlag, NodePath, Stack } from "$lib/api";
+  import type { WindowRect, BoolFlag, NodePath, Stack, ChatPanel } from "$lib/api";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, isOrphanFrame, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
+  import ChatSplit from "$lib/ChatSplit.svelte";
 
   let {
     windows,
@@ -21,6 +22,10 @@
     onDeleteOrphans,
     overrides,
     onClutterOverride,
+    chats,
+    accountReadOnly,
+    sharedNames,
+    onSetChatSplits,
     filter = $bindable({ ...NO_FILTER }),
     focusFilter = $bindable(undefined),
   }: {
@@ -43,6 +48,16 @@
      * it takes. */
     overrides: ClutterOverrides;
     onClutterOverride: (id: string, mode: "clutter" | "visible" | "default") => void;
+    /** Per-channel chat splits, from the ACCOUNT document. Empty when no
+     * account file is open, which is also when the fields are read-only. */
+    chats: ChatPanel[];
+    /** The account document's read-only flag. The chat splits are the only
+     * thing this panel writes to that file, so it is theirs alone to honour. */
+    accountReadOnly: boolean;
+    /** Other characters on this account — named in the chat block's legend,
+     * because these two fields are account-wide. */
+    sharedNames: string[];
+    onSetChatSplits: (ids: string[], userlistWidth: number | null, inputHeight: number | null) => void;
     /** Shared with the canvas — see LayoutView. The panel renders the controls;
      * LayoutView owns the state and applies the same predicate to the rects. */
     filter?: WindowFilter;
@@ -253,6 +268,16 @@
         </label>
       {/each}
     </div>
+    {#if w.id.startsWith("chatchannel_")}
+      <ChatSplit
+        windowId={w.id}
+        geom={w.geom}
+        panel={chats.find((c) => c.window_id === w.id)}
+        stack={w.stack ? (stacks.find((s) => s.container_id === w.stack!.container_id) ?? null) : null}
+        readOnly={accountReadOnly || chats.length === 0}
+        {sharedNames}
+        onSet={onSetChatSplits} />
+    {/if}
   </div>
 {/snippet}
 
