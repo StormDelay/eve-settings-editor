@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage } from "$lib/api";
-  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar } from "$lib/api";
+  import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
@@ -12,6 +12,8 @@
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
+  import DetailParts from "$lib/DetailParts.svelte";
+  import { shipHudParts, fighterParts, neocomParts, windowDetail } from "$lib/detail";
   import { confirm, message } from "@tauri-apps/plugin-dialog";
 
   let {
@@ -52,6 +54,8 @@
   let layout = $state<WindowLayout | null>(null);
   let hud = $state<Hud | null>(null);
   let neocom = $state<NeocomBar | null>(null);
+  let columns = $state<OverviewColumns | null>(null);
+  let chats = $state<ChatPanel[]>([]);
   let containerWidth = $state(0);
   let canvasEl: HTMLDivElement | undefined = $state();
   // Live drag/resize preview by window id (data px); absent when not dragging.
@@ -121,6 +125,11 @@
     // Same tolerance as the HUD: an account file opened on its own, or a document
     // with no neocom key, must not take the canvas down with it.
     neocom = await api.neocomBar().catch(() => null);
+    // Same tolerance as the HUD and the neocom: a character with no overview
+    // container, or an account file opened on its own, must not take the canvas
+    // down with it. Detail is a bonus layer.
+    columns = await api.overviewColumns().catch(() => null);
+    chats = await api.chatPanels().catch(() => []);
   }
 
   // Reload when the parent signals a save/restore, when the slot switches, or
@@ -356,6 +365,15 @@
 
   const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
+
+  /** The internals of a furniture element. The ship HUD and fighter are
+   * constant (measured, not stored); the neocom is drawn from its real button
+   * list. The badge has neither, so it stays a plain box. */
+  const furnitureDetail = (f: FurnitureRect) =>
+    f.kind === "shipui" ? shipHudParts()
+    : f.kind === "fighter" ? fighterParts()
+    : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
+    : [];
 
   /** Pointer position in data px, relative to the canvas origin. */
   function pointerData(e: PointerEvent) {
@@ -804,6 +822,9 @@
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(f.w, scale)}px; height: {toCanvas(f.h, scale)}px;"
             onpointerdown={(e) => startFurniture(f, e)}>
+            {#if detailOn()}
+              <DetailParts parts={furnitureDetail(f)} {scale} />
+            {/if}
             <span class="furniture-label">{f.label}</span>
           </div>
         {/each}
@@ -828,6 +849,9 @@
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
             title={foldTitle}
             onpointerdown={(e) => startMove(unit, e)}>
+            {#if detailOn()}
+              <DetailParts parts={windowDetail(unit, selectedId, columns, chats, r)} {scale} />
+            {/if}
             {#if unit.stack}
               <div class="tabs">
                 {#each unit.tabs as tab, i (tab.id)}
@@ -1030,12 +1054,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     pointer-events: none;
+    position: relative;
+    z-index: 1;
   }
   .tabs {
     display: flex;
     gap: 1px;
     background: #11141a;
     overflow: hidden;
+    /* Above the detail layer, which is an absolutely-positioned sibling. */
+    position: relative;
+    z-index: 1;
   }
   .tab {
     padding: 1px 4px;
