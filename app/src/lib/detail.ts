@@ -64,21 +64,24 @@ export const DETAIL_NOMINAL = {
 /**
  * The capacitor assembly, as concentric radii about its centre.
  *
- * The centre IS the element's anchor point: box-relative (148, 72) here, against
- * `SHIP_ANCHOR_LEFT = 148` derived independently in 2026-07-28's colour-isolation
- * pass. Two methods, same pixel.
+ * The centre IS the element's anchor point horizontally: box-relative x 148,
+ * against `SHIP_ANCHOR_LEFT = 148` derived independently in 2026-07-28's
+ * colour-isolation pass. Two methods, same pixel. Vertically it sits at 88,
+ * dead centre of the 176-tall box — because the CAPACITOR IS THE ELEMENT'S FULL
+ * HEIGHT: `rim` reaches 88 either way, so the disc exactly fills the box.
  *
- * `outer` came from sweeping a full circle at each radius and taking the mean:
- * both ships peak sharply at r 80-81 and are back to background by r 90. (An
- * earlier read of a magnified crop put it at 86 — the sweep is what corrected
- * it, and it is why this is measured rather than eyeballed.)
+ * `rim` is the outer edge of the dark rim arc, visible in a 5x crop above where
+ * the gauge ticks start. `gauge` is the outer edge of the tick band itself. A
+ * full-circle brightness sweep peaks at r 80-81, between the two — that is the
+ * rim's bright middle, not its edge, and taking it for the edge is what put the
+ * element's top 8px too low on the first attempt.
  *
- * `gauge` is the shield/armour/hull tick band, and it covers the TOP HALF ONLY:
- * the arcs sweep 9 o'clock through 12 to 3, and the bottom half is the dark
- * speed dial. That asymmetry is most of the shape's signature, so it is drawn
- * as a half annulus rather than approximated with a full ring.
+ * The gauge band covers the TOP HALF ONLY: the shield/armour/hull arcs sweep
+ * 9 o'clock through 12 to 3, and the bottom half is the dark speed dial. That
+ * asymmetry is most of the shape's signature, so it is drawn as a half annulus
+ * rather than approximated with a full ring.
  */
-const CAP = { cx: 148, cy: 72, outer: 80, gaugeInner: 50, innerRing: 42, core: 27 };
+const CAP = { cx: 148, cy: 88, rim: 88, gauge: 74, inner: 42, core: 27 };
 
 /**
  * Module slots. Round buttons of diameter 44 on a column pitch of 51, first
@@ -93,7 +96,7 @@ const CAP = { cx: 148, cy: 72, outer: 80, gaugeInner: 50, innerRing: 42, core: 2
  * file records it. The staggered row gets one fewer: sitting half a pitch in, 7
  * spans the same width the outer rows' 8 do, which is exactly how it looks.
  */
-const SLOTS = { firstX: 247, pitchX: 51, diameter: 44, rowTop: 4, rowPitch: 44, cols: 8, rowOffset: 25 };
+const SLOTS = { firstX: 247, pitchX: 51, diameter: 44, rowTop: 20, rowPitch: 44, cols: 8, rowOffset: 25 };
 
 /**
  * The ship-control button cluster left of the capacitor — the part that was
@@ -110,8 +113,8 @@ const CLUSTER = {
   diameter: 30,
   rowPitch: 32,
   columns: [
-    { x: 0, top: 24, rows: 4 },
-    { x: 30, top: 40, rows: 3 },
+    { x: 0, top: 40, rows: 4 },
+    { x: 30, top: 56, rows: 3 },
   ],
 };
 
@@ -127,12 +130,12 @@ export function shipHudParts(): DetailPart[] {
     ({ kind, x: CAP.cx - r, y: CAP.cy - r, w: r * 2, h: r * 2 });
 
   const out: DetailPart[] = [
-    // The outer rim, then the tick band as a half annulus (its border thickness
-    // is what fills r gaugeInner..outer), then the metallic inner ring, then the
-    // bright core.
-    disc(CAP.outer, "ring"),
-    disc(CAP.outer, "arc"),
-    disc(CAP.innerRing, "ring"),
+    // The outer rim, then the tick band as a half annulus (the renderer's border
+    // thickness is what fills it inward from `gauge`), then the metallic inner
+    // ring, then the bright core.
+    disc(CAP.rim, "ring"),
+    disc(CAP.gauge, "arc"),
+    disc(CAP.inner, "ring"),
     disc(CAP.core, "core"),
   ];
 
@@ -177,7 +180,7 @@ export function shipHudParts(): DetailPart[] {
 const FIGHTER = {
   /** Ability grid: ⌀44 buttons — the same size as the ship HUD's module slots —
    * on the measured 86 column pitch from x 70, rows on a 50 pitch from y 2. */
-  abilityX: 70, abilityY: 2, abilityD: 44, abilityRowPitch: 50, rows: 3,
+  abilityX: 70, abilityY: 0, abilityD: 44, abilityRowPitch: 50, rows: 3,
   /** Squadron gauges: large ⌀81 dials on the same 86 pitch, from x 42. These are
    * what set the panel's width — at the 5-squadron carrier maximum,
    * `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
@@ -185,8 +188,10 @@ const FIGHTER = {
    * rather than one being derived from the other. */
   squadX: 42, squadY: 152, squadD: 81,
   /** Fighter control column, left of the squadron dials: 4 small ⌀24 buttons on
-   * a 32 pitch from y 148. Missing entirely until 2026-07-30. */
-  ctrlX: 4, ctrlY: 148, ctrlD: 24, ctrlPitch: 32, ctrlRows: 4,
+   * a 32 pitch from y 144. Missing entirely until 2026-07-30 — and it is the
+   * panel's LOWEST element, ending at 264, which is what re-measured
+   * HUD_NOMINAL.fighter.h up from 253. */
+  ctrlX: 4, ctrlY: 144, ctrlD: 24, ctrlPitch: 32, ctrlRows: 4,
   /** Column pitch, shared by the ability grid and the squadron row. */
   pitch: 86,
   /** A carrier's maximum squadron count, and the maximum this can ever draw. */

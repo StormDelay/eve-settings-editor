@@ -24,23 +24,23 @@ const check = (name: string, ok: boolean) => {
   const arc = parts.filter((p) => p.kind === "arc");
   const core = parts.filter((p) => p.kind === "core");
 
-  // --- capacitor: four concentric pieces about box (148, 72) ---------------
+  // --- capacitor: four concentric pieces about box (148, 88) ---------------
   check("the capacitor has an outer rim and an inner ring", rings.length === 2);
   check("one gauge arc", arc.length === 1);
   check("one core", core.length === 1);
   const centred = (p: { x: number; y: number; w: number; h: number }) =>
-    p.x + p.w / 2 === 148 && p.y + p.h / 2 === 72;
+    p.x + p.w / 2 === 148 && p.y + p.h / 2 === 88;
   check("every capacitor piece is centred on the anchor", [...rings, ...arc, ...core].every(centred));
   check("every capacitor piece is round", [...rings, ...arc, ...core].every((p) => p.w === p.h));
-  // Measured r 80 outer, r 42 inner ring, r 27 core — strictly nested.
+  // Measured r 88 rim, r 42 inner ring, r 27 core — strictly nested.
   const byR = [...rings, ...core].map((p) => p.w / 2).sort((a, b) => b - a);
-  check("the capacitor radii are the measured 80 / 42 / 27", byR.join(",") === "80,42,27");
+  check("the capacitor radii are the measured 88 / 42 / 27", byR.join(",") === "88,42,27");
   // The anchor is the capacitor's centre, established twice by different
   // methods. If SHIP_ANCHOR_LEFT ever moves, this is what notices.
   check("the capacitor centre is SHIP_ANCHOR_LEFT", rings[0].x + rings[0].w / 2 === SHIP_ANCHOR_LEFT);
 
   // --- module racks: round buttons on a staggered grid ---------------------
-  const rackTops = [4, 48, 92];
+  const rackTops = [20, 64, 108];
   const rack = circles.filter((p) => rackTops.includes(p.y));
   // 8 + 7 + 8: the staggered middle row sits half a pitch in, so it carries one
   // fewer and still spans the same width.
@@ -70,7 +70,7 @@ const check = (name: string, ok: boolean) => {
   // It is the leftmost thing drawn, which is what makes it define the box edge.
   check("the cluster starts at the box's left edge", colA[0].x === 0);
 
-  // The point of correcting HUD_NOMINAL.shipui.w to 650: the widest rack row
+  // The point of correcting HUD_NOMINAL.shipui.w to 648: the widest rack row
   // has to FIT the box it is drawn in. At the old 643 it did not.
   check(
     "every rack slot lies inside the measured ship HUD box",
@@ -78,10 +78,12 @@ const check = (name: string, ok: boolean) => {
   );
   const rackRight = Math.max(...rack.map((p) => p.x + p.w));
   check("the widest rack row reaches the measured 648", rackRight === 648);
-  // The capacitor is the one piece that overhangs: its measured centre and
-  // radius put it 8px above the box top, which `overflow: hidden` clips —
-  // exactly as EVE's own capacitor overhangs the rack block.
-  check("the capacitor overhangs the box top", rings[0].y < 0);
+  // The capacitor IS the element's height: rim r 88 about a centre at y 88, so
+  // the disc exactly fills the 176-tall box, touching top and bottom. This is
+  // what re-measuring SHIP_TOP_MARGIN (28 -> 12) and the height (160 -> 176)
+  // bought — before it, the capacitor hung 8px out of its own box and clipped.
+  const rim = rings.reduce((a, b) => (a.w > b.w ? a : b));
+  check("the capacitor exactly fills the box height", rim.y === 0 && rim.h === HUD_NOMINAL.shipui.h);
 }
 
 // --- fighter UI ------------------------------------------------------------
@@ -105,13 +107,13 @@ const check = (name: string, ok: boolean) => {
   check("squadron dials are round and 81 across", squad.every((p) => p.w === 81 && p.h === 81));
   check("control buttons are round and 24 across", ctrl.every((p) => p.w === 24 && p.h === 24));
 
-  // Measured: ability grid from x 70 / y 2 on an 86 column pitch and a 50 row
-  // pitch; squadron dials from x 42 / y 152 on the same 86 pitch.
-  const top = grid.filter((p) => p.y === 2).sort((a, b) => a.x - b.x);
+  // Measured: ability grid from x 70 / y 0 (the anchor IS the grid's top) on an
+  // 86 column pitch and a 50 row pitch; squadron dials from x 42 / y 152.
+  const top = grid.filter((p) => p.y === 0).sort((a, b) => a.x - b.x);
   check("the ability grid starts at the measured x", top[0].x === 70);
   check("ability columns step by the measured pitch", top[1].x - top[0].x === 86);
   const gridRows = [...new Set(grid.map((p) => p.y))].sort((a, b) => a - b);
-  check("ability rows are on the measured 50 pitch", gridRows.join(",") === "2,52,102");
+  check("ability rows are on the measured 50 pitch", gridRows.join(",") === "0,50,100");
   const sq = squad.slice().sort((a, b) => a.x - b.x);
   check("the squadron row starts at the measured x", sq[0].x === 42);
   check("squadron columns step by the measured pitch", sq[1].x - sq[0].x === 86);
@@ -119,7 +121,7 @@ const check = (name: string, ok: boolean) => {
 
   const c = ctrl.slice().sort((a, b) => a.y - b.y);
   check("the control column is at the measured x", c.every((p) => p.x === 4));
-  check("control buttons are on the measured 32 pitch", c[1].y - c[0].y === 32 && c[0].y === 148);
+  check("control buttons are on the measured 32 pitch", c[1].y - c[0].y === 32 && c[0].y === 144);
 
   // It is the SQUADRON row that sets the panel width — at 5 squadrons
   // `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
@@ -143,8 +145,8 @@ const check = (name: string, ok: boolean) => {
   // re-measured (the 253 is 2026-07-28's), so this pins the discrepancy rather
   // than hiding it — if the height is ever corrected, this check says so.
   const bottom = Math.max(...parts.map((p) => p.y + p.h));
-  check("the control column overhangs the recorded panel height", bottom === 268);
-  check("everything else fits it", Math.max(...[...grid, ...squad].map((p) => p.y + p.h)) <= HUD_NOMINAL.fighter.h);
+  check("the control column is the panel's lowest element", bottom === 264);
+  check("and it defines the measured panel height", bottom === HUD_NOMINAL.fighter.h);
 }
 
 // --- neocom ----------------------------------------------------------------
