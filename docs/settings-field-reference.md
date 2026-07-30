@@ -521,6 +521,7 @@ disabled visual effects.
 
 **Chat.** `chatfontsize_chatchannel_<channel>` (`Int`, ~12),
 `chatinputsize_chatchannel_<channel>` (`Int`),
+`chatchannel_<channel>_userlistwidth` (`Int`),
 `chatCondensedUserList_<channel>` (`Bool`),
 `chatWindowBlink_chatchannel_<channel>` (`Int`),
 `chatchannel_local_mode` (`Int`), `timestampchat` (`Bool`),

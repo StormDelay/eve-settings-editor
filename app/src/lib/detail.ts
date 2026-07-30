@@ -26,12 +26,15 @@ export interface DetailPart {
 }
 
 /**
- * ponytail: every number here is INVENTED, and correcting them is a one-line
- * edit each. They are the sizes of things drawn inside a measured pitch, plus
- * the overview chrome, which has never had a measuring pass. Upgrade path: a
- * screenshot session like the 2026-07-28 one that produced the measured table
- * below, then move each corrected value out of this object and into a named
- * constant citing format-notes.md.
+ * ponytail: every number here is INVENTED, EXCEPT `abilityCell.w` and
+ * `squadCell.w` — those two are DERIVED from the measured fighter panel width
+ * (`70 + 86*4 + 53 = 467` and `43 + 86*4 + 80 = 467`, see their own comments
+ * below) and pinned by assertions in detail.test.ts. Correcting the invented
+ * ones is a one-line edit each. They are the sizes of things drawn inside a
+ * measured pitch, plus the overview chrome, which has never had a measuring
+ * pass. Upgrade path: a screenshot session like the 2026-07-28 one that
+ * produced the measured table below, then move each corrected value out of
+ * this object and into a named constant citing format-notes.md.
  *
  * The distinction matters. HUD_NOMINAL's invented 686x250 drew the ship HUD
  * 195px off its real position for three releases.
@@ -241,7 +244,11 @@ export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): Det
       kind: "band",
       x: 0,
       y: rect.h - panel.input_height,
-      w: rect.w - (members ?? 0),
+      // Clamped: a stored userlist_width can exceed the window's own width
+      // (real stored data, not invented), which would otherwise go negative.
+      // CSS silently drops a negative width, so the band would vanish with no
+      // signal — clamp to 0 instead so it stays visible as "no room".
+      w: Math.max(0, rect.w - (members ?? 0)),
       h: panel.input_height,
       label: "Input",
     });
