@@ -4,6 +4,8 @@
 // Decoration only. Nothing here may reach hudRects, snapLines, or any drag:
 // that separation is why this is its own module and not more of layout.ts.
 
+import type { NeocomBar, OverviewColumns } from "./api";
+
 /**
  * One drawn piece of a rectangle's internals.
  *
@@ -141,6 +143,74 @@ export function fighterParts(): DetailPart[] {
       y: FIGHTER.squadY,
       ...DETAIL_NOMINAL.squadCell,
     });
+  }
+  return out;
+}
+
+// --- neocom -----------------------------------------------------------------
+
+/**
+ * The real buttons on the neocom, top-down. `w` is the bar's own width
+ * (`neocomWidth`), which is also the cell size — EVE's neocom buttons are
+ * square and fill the bar.
+ *
+ * Stops emitting when the next square would pass the bar's height, so a bar
+ * with more buttons than fit draws truncated. That is what the client does; it
+ * is not an error to report.
+ */
+export function neocomParts(bar: NeocomBar, w: number, h: number): DetailPart[] {
+  const out: DetailPart[] = [];
+  let y = DETAIL_NOMINAL.neocomTop;
+  for (const b of bar.buttons) {
+    if (y + w > h) break;
+    out.push({ kind: "button", x: 0, y, w, h: w, label: b.id });
+    y += w;
+  }
+  return out;
+}
+
+// --- overview ---------------------------------------------------------------
+
+/**
+ * An overview window's tab strip and the column header band of its FIRST tab.
+ *
+ * The first tab, because nothing in either settings file records which tab is
+ * selected (`tabgroups` is chat-window state). Naming every tab in the strip is
+ * what keeps that choice visible instead of silent.
+ *
+ * Column bands are laid out left to right from x 0 at their STORED widths, with
+ * no clamping. A set wider than the window therefore runs off the edge and gets
+ * clipped by the rectangle — which is the whole point: it makes an overflowing
+ * overview visible without any overflow arithmetic.
+ */
+export function overviewParts(
+  cols: OverviewColumns,
+  windowIndex: number,
+  rect: { w: number; h: number },
+): DetailPart[] {
+  const win = cols.windows.find((w) => w.index === windowIndex);
+  const tabs = (win?.tab_indices ?? [])
+    .map((i) => cols.tabs.find((t) => t.index === i))
+    .filter((t): t is OverviewColumns["tabs"][number] => !!t);
+  if (tabs.length === 0) return [];
+
+  const out: DetailPart[] = [];
+  // Equal-width tab cells. EVE sizes them by their text, but the information
+  // here is which tabs the window holds, not how wide their labels render, and
+  // an equal split always fits the rect it is drawn in.
+  const tw = rect.w / tabs.length;
+  tabs.forEach((t, i) => {
+    out.push({ kind: "cell", x: i * tw, y: 0, w: tw, h: DETAIL_NOMINAL.tabStrip, label: t.name });
+  });
+
+  let x = 0;
+  for (const c of tabs[0].columns) {
+    if (!c.visible) continue;
+    // width null = the key is absent = EVE's own default, which the file does
+    // not record. The nominal is the only thing available.
+    const w = c.width ?? DETAIL_NOMINAL.columnWidth;
+    out.push({ kind: "column", x, y: DETAIL_NOMINAL.tabStrip, w, h: DETAIL_NOMINAL.headerBand, label: c.label });
+    x += w;
   }
   return out;
 }
