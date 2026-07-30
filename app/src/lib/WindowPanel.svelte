@@ -24,6 +24,7 @@
     onClutterOverride,
     chats,
     accountReadOnly,
+    userOpen,
     sharedNames,
     onSetChatSplits,
     filter = $bindable({ ...NO_FILTER }),
@@ -48,12 +49,18 @@
      * it takes. */
     overrides: ClutterOverrides;
     onClutterOverride: (id: string, mode: "clutter" | "visible" | "default") => void;
-    /** Per-channel chat splits, from the ACCOUNT document. Empty when no
-     * account file is open, which is also when the fields are read-only. */
+    /** Per-channel chat splits, from the ACCOUNT document. Empty both when no
+     * account file is open AND when one is open but no channel has ever had a
+     * split stored — `userOpen` is what actually distinguishes the two. */
     chats: ChatPanel[];
     /** The account document's read-only flag. The chat splits are the only
      * thing this panel writes to that file, so it is theirs alone to honour. */
     accountReadOnly: boolean;
+    /** Whether an account file is open at all. `chats.length === 0` cannot
+     * stand in for this: it is equally true for an open account that simply
+     * has no chat split stored yet, and disabling on that would permanently
+     * block the mint path the chat split fields exist to offer. */
+    userOpen: boolean;
     /** Other characters on this account — named in the chat block's legend,
      * because these two fields are account-wide. */
     sharedNames: string[];
@@ -269,12 +276,19 @@
       {/each}
     </div>
     {#if w.id.startsWith("chatchannel_")}
+      {@const chatStack = w.stack ? (stacks.find((s) => s.container_id === w.stack!.container_id) ?? null) : null}
+      <!-- A stacked chat window is DISPLAYED at its stack anchor's size (the
+           canvas draws every split against `rectOf(unit.anchor)` — see
+           LayoutView), not its own stored geometry — those two can differ for
+           a stacked member. Falls back to the window's own geom when it is
+           not stacked, or when the anchor can't be found. -->
+      {@const chatGeom = (chatStack ? findWindow(chatStack.anchor_id)?.geom : null) ?? w.geom}
       <ChatSplit
         windowId={w.id}
-        geom={w.geom}
+        geom={chatGeom}
         panel={chats.find((c) => c.window_id === w.id)}
-        stack={w.stack ? (stacks.find((s) => s.container_id === w.stack!.container_id) ?? null) : null}
-        readOnly={accountReadOnly || chats.length === 0}
+        stack={chatStack}
+        readOnly={accountReadOnly || !userOpen}
         {sharedNames}
         onSet={onSetChatSplits} />
     {/if}

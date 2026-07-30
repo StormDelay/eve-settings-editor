@@ -475,6 +475,21 @@ mod tests {
         assert_eq!(doc, before);
     }
 
+    /// The only case the pre-validation loop exists for: within one batch, an
+    /// EARLIER id would mint (absent, so writable) and a LATER id is refused
+    /// (a malformed existing value). Without validating every key before
+    /// mutating any, the mutation loop would mint the first id and only then
+    /// discover the second is unwritable, leaving a half-written batch.
+    #[test]
+    fn a_valid_mint_before_an_unwritable_id_writes_nothing() {
+        let mut doc = ui_doc(vec![(b("chatchannel_corp_userlistwidth"), wrapped(b("wide")))]);
+        let before = doc.clone();
+        let ids = vec!["chatchannel_local".into(), "chatchannel_corp".into()];
+        let err = set_chat_splits(&mut doc, &ids, Some(90), None).unwrap_err();
+        assert!(matches!(err, ChatError::NotEditable(_)));
+        assert_eq!(doc, before, "chatchannel_local must not have been minted before chatchannel_corp was found unwritable");
+    }
+
     #[test]
     fn a_document_with_no_ui_section_is_refused() {
         let mut doc = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
