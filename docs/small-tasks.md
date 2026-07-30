@@ -322,11 +322,13 @@ Workflow:
   space) on `WindowFilter`, with a curated exclusives table in
   `windowLabels.ts` where an unlisted id shows in both views. Inventory — the
   only context-split family in the geometry dict — folds to one rectangle in
-  the docked view and fans a drag onto both copies. Still open, deliberately:
-  splitting NPC station from player structure, per-window user overrides of
-  the env table, and the in-game dock/undock capture that would replace the
-  curated mapping with a measured one (live-verification item 35). The
-  in-game by-eye verification of this view filter has not yet been done.
+  the docked view and fans a drag onto both copies. A corpus re-measurement
+  (6,502 char files) confirmed the flat-geometry finding, and found Inventory's
+  copies had already drifted apart on a real character. Still open,
+  deliberately: splitting NPC station from player structure, per-window user
+  overrides of the env table, and the in-game dock/undock capture that would
+  replace the curated mapping with a measured one (live-verification item 35).
+  The in-game by-eye verification of this view filter has not yet been done.
 
 - [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
   dragged out of a stack, which can leave the stack with a single member. The
