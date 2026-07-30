@@ -257,12 +257,24 @@ export function isClutter(id: string, o?: ClutterOverrides): boolean {
 // extra rectangle beats hiding a window the player actually placed. Windows
 // whose environment is genuinely uncertain (Fitting, Assets, Market, the chat
 // stack) are deliberately absent rather than guessed at. Grow these lazily.
+//
+// The two sets are not the same kind of evidence. `DOCKED_ONLY` corroborates
+// against the corpus measurement (see the design spec's §2.2 — the Structure*
+// hangar ids and the station windows showed up as genuinely docked-only in
+// the file data). `SPACE_ONLY` is NOT: the corpus pass only observed
+// docked-side exclusives, so every `SPACE_ONLY` entry is game-knowledge
+// curation, not something measured. Do not mistake one for the other.
 
 export type Env = "all" | "docked" | "space";
 
 /** Windows that only exist while docked, in an NPC station or a player
  * structure. The Structure* ids have no station twin — the station equivalent
- * is the unified `InventoryStation`. */
+ * is the unified `InventoryStation`. `StructureCorpHangar` is rare but real —
+ * 31 character files in the corpus carry it, against 3,997 for
+ * `StructureItemHangar` — so it stays despite the low count.
+ * `CloneUpgradeWindow` also appears in `CLUTTER_IDS`; that is not an accident
+ * colliding with this one, the two tables answer different questions (kind
+ * of window vs. environment), and a window can legitimately be in both. */
 const DOCKED_ONLY: ReadonlySet<string> = new Set([
   "lobbyWnd",
   "cloneBay",
@@ -276,11 +288,14 @@ const DOCKED_ONLY: ReadonlySet<string> = new Set([
   "DeliverToStructure",
 ]);
 
-/** Windows that only exist in space. */
+/** Windows that only exist in space. `ShipCargo` and `ShipDroneBay` were
+ * considered and deliberately left out: a docked player can open the active
+ * ship's cargo hold and drone bay from the station hangar, so they are not
+ * space-exclusive at all — including them would have hidden a window the
+ * player can genuinely have open while docked, the one direction this table
+ * must never fail in. */
 const SPACE_ONLY: ReadonlySet<string> = new Set([
   "InventorySpace",
-  "ShipCargo",
-  "ShipDroneBay",
   "droneview",
   "selecteditemview",
   "directionalScannerWindow",
@@ -288,9 +303,14 @@ const SPACE_ONLY: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether a window is shown in `env`. An id is a member of a set if EITHER
- * its exact id or its family is listed, so one entry covers a family's bare
- * parent and all its spawned instances (`ShipCargo` and
- * `ShipCargo_1033391582929`; `overview` and `overview_1`).
+ * its exact id or its family is listed, so one entry can cover a family's bare
+ * parent and all its spawned instances (`overview` and `overview_1`) — but
+ * only for entries whose family is also a PARAM prefix, the same condition
+ * `CLUTTER_FAMILIES` documents above (describe() never groups a suffixed id
+ * into a family that isn't one). Of the two sets, only `StructureShipHangar`
+ * and `overview` qualify; every other entry here is a singleton with no
+ * spawned form, so for those the family and exact-id checks below coincide
+ * and this is really just an exact-id lookup.
  *
  * No `detail !== ""` check, unlike isClutter: that check tells a spawned
  * instance from its bare parent, and for environment purposes they are in the
