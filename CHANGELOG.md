@@ -26,6 +26,16 @@ All notable changes to this project are documented here. The format follows
   characters actually match.
 
 ### Fixed
+- **Autofill lists are named after what they are.** Most of them showed a label
+  scraped off the end of EVE's widget path — "Input", "Header Cont", "Edit0",
+  "Subjec Field" — because only a fraction of the real paths were recognised.
+  206 of the 290 the corpus carries now get a real name (Market search, Contract
+  description, Bookmark label, Skill search), and the rest derive something
+  readable rather than scaffolding.
+- **A number field no longer shows a value you did not get.** Typing something
+  the editor refuses — blank, "abc", or a decimal in a whole-number field that
+  rounds back to what was already there — left the typed text on screen next to
+  a setting that never changed. The field snaps back to the stored value.
 - **The sidebar says why it is empty.** A profile with no character file draws no
   header — its account files are reached through "Open file…" — so a machine where
   that was true of every profile showed a blank list with no explanation. It now
