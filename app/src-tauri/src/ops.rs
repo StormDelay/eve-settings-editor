@@ -813,6 +813,43 @@ pub fn chat_panels(state: &AppState) -> Result<Vec<ChatPanel>, ErrDto> {
     Ok(guard.as_ref().map(|d| project_chat(&d.value)).unwrap_or_default())
 }
 
+/// Write the chat splits for one or more channels, reshare if anything was
+/// minted, and return the fresh projection.
+///
+/// The account slot only: the character document holds the chat WINDOW, but the
+/// split is account-scoped, so nothing here touches it. The frontend marks the
+/// user slot dirty.
+///
+/// Projects from inside the same guard rather than calling `chat_panels`, which
+/// would take the same lock again — `std::sync::Mutex` is not reentrant.
+pub fn set_chat_splits(
+    state: &AppState,
+    ids: Vec<String>,
+    userlist: Option<i64>,
+    input: Option<i64>,
+) -> Result<Vec<ChatPanel>, ErrDto> {
+    let mut guard = state.user.lock().unwrap();
+    let doc = guard
+        .as_mut()
+        .ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+        return Err(ErrDto::new("read_only", reason.clone()));
+    }
+    let minted = settings_model::set_chat_splits(&mut doc.value, &ids, userlist, input)
+        .map_err(chat_err)?;
+    // Only a mint de-shares the document; a scalar overwrite sets one value in
+    // place, where a whole-tree reshare would buy nothing.
+    if minted {
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    Ok(project_chat(&doc.value))
+}
+
+fn chat_err(e: settings_model::ChatError) -> ErrDto {
+    let v = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("chat"), e.to_string())
+}
+
 /// Write one HUD field into whichever document its scope names, reshare, and
 /// re-project. The frontend marks that slot dirty from the entry's scope.
 pub fn set_hud_field(state: &AppState, name: &str, text: &str) -> Result<Hud, ErrDto> {
@@ -2879,6 +2916,15 @@ mod tests {
     fn chat_panels_is_empty_without_an_account_file() {
         let state = AppState::new();
         assert!(chat_panels(&state).unwrap().is_empty());
+    }
+
+    #[test]
+    fn setting_a_chat_split_without_an_account_file_errors() {
+        let state = AppState::new();
+        // Contrast with chat_panels, which returns an empty list: reading an
+        // unpaired character is normal, but there is nowhere to write.
+        let err = set_chat_splits(&state, vec!["chatchannel_local".into()], Some(120), None).unwrap_err();
+        assert_eq!(err.code, "no_document");
     }
 
     #[test]

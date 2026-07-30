@@ -2,9 +2,9 @@
 // framework — matching layout.test.ts.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail } from "./detail.ts";
+import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
 import { HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
-import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect } from "./api.ts";
+import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect, Stack } from "./api.ts";
 import type { DrawUnit } from "./layout.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -378,6 +378,41 @@ const check = (name: string, ok: boolean) => {
   const style = /<style>([\s\S]*)<\/style>/.exec(svelte)?.[1] ?? "";
   check("DetailParts.svelte's <style> declares pointer-events: none", style.includes("pointer-events: none"));
   check("DetailParts.svelte's <style> never overrides it with pointer-events: auto", !style.includes("pointer-events: auto"));
+}
+
+// --- chat stack targets ----------------------------------------------------
+{
+  const stack = (members: string[]): Stack =>
+    ({ container_id: "ChatWindowStack", container_label: "Chat stack", anchor_id: members[0], members });
+
+  const mixed = stack(["chatchannel_local", "market", "chatchannel_corp"]);
+  check("only chat channels are targeted", chatStackTargets(mixed).join(",") === "chatchannel_local,chatchannel_corp");
+  // A non-chat window sharing the stack must be skipped, not have a meaningless
+  // key minted for it.
+  check("a non-chat member is skipped", !chatStackTargets(mixed).includes("market"));
+  check("member order is preserved", chatStackTargets(stack(["chatchannel_b", "chatchannel_a"]))[0] === "chatchannel_b");
+  check("a stack with no chat members yields nothing", chatStackTargets(stack(["market", "overview"])).length === 0);
+}
+
+// --- history area ----------------------------------------------------------
+{
+  const geom = { w: 256, h: 424 };
+  const both: ChatPanel = { window_id: "chatchannel_local", userlist_width: 104, input_height: 63 };
+  const a = historyArea(geom, both);
+  check("history is what the two splits leave", a.w === 152 && a.h === 361);
+
+  // An absent split takes nothing away — the player has never resized it.
+  const none: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
+  const b = historyArea(geom, none);
+  check("an absent split subtracts nothing", b.w === 256 && b.h === 424);
+  check("no panel at all subtracts nothing", historyArea(geom, undefined).w === 256);
+
+  // The case the panel exists to surface: a split wider than the window leaves
+  // the history area NEGATIVE. Not clamped — see the spec's §6. This is what
+  // tells the player the account-wide value does not fit this character.
+  const over: ChatPanel = { window_id: "c", userlist_width: 300, input_height: 500 };
+  const c = historyArea(geom, over);
+  check("an oversized split reports a negative history area", c.w === -44 && c.h === -76);
 }
 
 console.log("detail.test.ts ok");
