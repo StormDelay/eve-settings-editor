@@ -1,8 +1,9 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts } from "./detail.ts";
+import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail } from "./detail.ts";
 import { HUD_NOMINAL } from "./layout.ts";
-import type { NeocomBar, OverviewColumns } from "./api.ts";
+import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect } from "./api.ts";
+import type { DrawUnit } from "./layout.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -100,6 +101,11 @@ const check = (name: string, ok: boolean) => {
     "no button is drawn past the bottom edge",
     short.every((p) => p.y + p.h <= 200),
   );
+
+  // The break is `y + w > h`, so a button that exactly fills the remaining
+  // space is drawn and one pixel over is not. Top cell 40 + 4 x 40 = 200.
+  check("a button that exactly fills the bar is drawn", neocomParts(bar(9), 40, 200).length === 4);
+  check("one pixel short drops it", neocomParts(bar(9), 40, 199).length === 3);
 }
 
 // --- overview columns ------------------------------------------------------
@@ -143,6 +149,87 @@ const check = (name: string, ok: boolean) => {
   // A window with no tabs, and an index no window has.
   check("a window with no tabs draws nothing", overviewParts(cols, 1, { w: 400, h: 300 }).length === 0);
   check("an unknown window index draws nothing", overviewParts(cols, 9, { w: 400, h: 300 }).length === 0);
+}
+
+// --- chat splits -----------------------------------------------------------
+{
+  const rect = { w: 256, h: 424 };
+  const both: ChatPanel = { window_id: "chatchannel_local", userlist_width: 135, input_height: 64 };
+  const parts = chatParts(both, rect);
+  check("two bands when both values are stored", parts.length === 2);
+
+  const members = parts[0];
+  check("the member list is right-anchored", members.x === 256 - 135 && members.w === 135);
+  check("the member list is full height", members.y === 0 && members.h === 424);
+
+  const input = parts[1];
+  check("the input is bottom-anchored", input.y === 424 - 64 && input.h === 64);
+  // Drawn under the message pane only, not under the member list. NOT captured
+  // in-game — the live smoke settles it.
+  check("the input spans the message pane only", input.x === 0 && input.w === 256 - 135);
+
+  // Absent means "never resized". Inventing a default would draw a split that
+  // is not there.
+  const widthOnly: ChatPanel = { window_id: "c", userlist_width: 135, input_height: null };
+  check("no input band without a stored height", chatParts(widthOnly, rect).length === 1);
+  const inputOnly: ChatPanel = { window_id: "c", userlist_width: null, input_height: 64 };
+  const io = chatParts(inputOnly, rect);
+  check("no member band without a stored width", io.length === 1);
+  check("the input spans the full width with no member list", io[0].w === 256);
+  const neither: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
+  check("nothing drawn when neither is stored", chatParts(neither, rect).length === 0);
+}
+
+// --- id dispatch -----------------------------------------------------------
+{
+  check("the bare overview window is index 0", overviewIndex("overview") === 0);
+  check("a numbered overview window is its number", overviewIndex("overview_7") === 7);
+  check("the overview settings window is not an overview", overviewIndex("overviewsettings") === null);
+  check("an unrelated id is not an overview", overviewIndex("market") === null);
+
+  const w = (id: string): WindowRect => ({
+    id, label: id, name: null, open: true, renderable: true,
+    resolution_matches: true, geom: null, flags: [], stack: null,
+  });
+  const free = (id: string): DrawUnit =>
+    ({ key: id, anchor: w(id), stack: null, tabs: [w(id)], fanTargets: [w(id)] });
+
+  const rect = { w: 400, h: 300 };
+  const chats: ChatPanel[] = [
+    { window_id: "chatchannel_local", userlist_width: 135, input_height: 64 },
+  ];
+  const cols: OverviewColumns = {
+    tabs: [{ index: 0, name: "General", preset: "p", inherits: false,
+             columns: [{ name: "icon", label: "ICON", visible: true, width: 30 }] }],
+    windows: [{ index: 0, tab_indices: [0] }],
+    presets: [],
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+  };
+
+  check("an overview window gets column parts",
+    windowDetail(free("overview"), null, cols, chats, rect).some((p) => p.kind === "column"));
+  check("an overview window with no projection draws nothing",
+    windowDetail(free("overview"), null, null, chats, rect).length === 0);
+  check("a chat window gets its splits",
+    windowDetail(free("chatchannel_local"), null, cols, chats, rect).length === 2);
+  check("a chat window with no stored panel draws nothing",
+    windowDetail(free("chatchannel_corp"), null, cols, chats, rect).length === 0);
+  check("an unrelated window draws nothing",
+    windowDetail(free("market"), null, cols, chats, rect).length === 0);
+
+  // A stack resolves from the SELECTED tab — a chat stack is the common case,
+  // and the selected tab is the one you are looking at.
+  const stack: DrawUnit = {
+    key: "ChatWindowStack",
+    anchor: w("ChatWindowStack"),
+    stack: { container_id: "ChatWindowStack", container_label: "ChatWindowStack", anchor_id: "chatchannel_corp", members: ["chatchannel_corp", "chatchannel_local"] },
+    tabs: [w("chatchannel_corp"), w("chatchannel_local")],
+    fanTargets: [],
+  };
+  check("a stack resolves from its selected tab",
+    windowDetail(stack, "chatchannel_local", cols, chats, rect).length === 2);
+  check("a stack falls back to its first tab",
+    windowDetail(stack, null, cols, chats, rect).length === 0);
 }
 
 console.log("detail.test.ts ok");
