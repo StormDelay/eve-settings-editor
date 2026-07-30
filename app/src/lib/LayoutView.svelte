@@ -9,7 +9,7 @@
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
-  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import { confirm, message } from "@tauri-apps/plugin-dialog";
@@ -852,6 +852,10 @@
       </div>
       <p class="ref">
         reference {layout.reference_w}×{layout.reference_h}
+        <label class="det">
+          <input type="checkbox" checked={detailOn()} onchange={(e) => setDetail(e.currentTarget.checked)} />
+          Detail
+        </label>
         {#if !readOnly}
           <span class="hintish">· Shift-drag onto another window to stack · drag a tab to reorder or pull out</span>
         {/if}
@@ -1074,6 +1078,17 @@
   }
   .hintish {
     color: #666;
+  }
+  /* Explicit colours per the dark-native-controls note: an unstyled checkbox
+     renders light-on-light in this theme. */
+  .det {
+    color: #888;
+    cursor: pointer;
+    margin-left: 0.4rem;
+  }
+  .det input {
+    accent-color: var(--accent);
+    vertical-align: -1px;
   }
   .linkish {
     background: none;

@@ -13,7 +13,7 @@ import { message } from "@tauri-apps/plugin-dialog";
 
 export { countIn, withoutIn } from "$lib/prefs";
 
-let prefs = $state<Preferences>({ layout: { clutter: [], visible: [] } });
+let prefs = $state<Preferences>({ layout: { clutter: [], visible: [], detail: false } });
 
 /** Load once. A failure leaves the defaults in place: preferences are a
  * convenience, and the editor must open without them. */
@@ -73,6 +73,7 @@ export function setClutterOverride(id: string, mode: "clutter" | "visible" | "de
   prefs = {
     ...prefs,
     layout: {
+      ...l,
       clutter: l.clutter.filter((x) => x !== id).concat(mode === "clutter" ? [id] : []),
       visible: l.visible.filter((x) => x !== id).concat(mode === "visible" ? [id] : []),
     },
@@ -95,5 +96,14 @@ export function setClutterOverride(id: string, mode: "clutter" | "visible" | "de
  * Same chained write as `setClutterOverride` — only the value written changed. */
 export function clearClutterOverrides(ids: ReadonlySet<string>): void {
   prefs = { ...prefs, layout: withoutIn(prefs.layout, ids) };
+  persist(prefs);
+}
+
+/** Whether the layout canvas draws each rectangle's internals. */
+export const detailOn = (): boolean => prefs.layout.detail;
+
+/** Same chained write as setClutterOverride — only the value written changed. */
+export function setDetail(on: boolean): void {
+  prefs = { ...prefs, layout: { ...prefs.layout, detail: on } };
   persist(prefs);
 }
