@@ -328,21 +328,6 @@ Workflow:
   member — then either auto-dissolve on the drag-out or leave this closed.
   _Added 2026-07-26 (layout stack polish)._
 
-- [ ] **A "discard changes" button beside the unsaved badges in the top bar.**
-  Today the only way to abandon edits is to open a different file and accept the
-  discard prompt, then come back — or to quit. Add a button next to the
-  `character: unsaved` / `account: unsaved` badges (`+page.svelte`, around the
-  `{#if dirtySlots.char}` / `{#if dirtySlots.user}` spans) that throws the edits
-  away and reloads the *same* file fresh from disk. Shown only while something is
-  dirty. Should reuse the existing machinery rather than grow its own: the
-  confirm prompt is `confirmDiscardIfDirty()`, and reloading is what `openFile()`
-  already does — the open path re-reads the file, resets `dirtySlots[slot]`,
-  bumps `savedAt` so every view refreshes, and reconciles the paired char/account
-  slot. Decide whether it discards both slots at once or one per badge (the
-  editors write to both, so per-badge could leave a half-reverted pair — probably
-  discard both and say so on the button). Must not touch the backup chain: this
-  is a re-read, not a restore. _Added 2026-07-26._
-
 - [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
   because the `tabsByWindowInstanceID` position ↔ char-file `overview_N` key link is
@@ -436,10 +421,12 @@ Workflow:
   pattern~~ — **done 2026-07-28**: both now refuse with `NoWindowMapping` before
   reaching `groups_mut`, so a refused edit no longer leaves an empty mapping
   behind.
-  (c)
-  **Orphan-tab create placement:** creating a tab while an "Other" (orphan) tab is
-  selected on an account that HAS windows lands the new tab in window 0 (via the
-  `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
+  (c) ~~**Orphan-tab create placement**~~ — **documented 2026-07-30**, which was
+  one of the two options this entry offered. Creating a tab while an "Other"
+  (orphan) tab is selected lands it in window 0: arbitrary, but visible and
+  movable, where disabling the New button would leave it dead for a selection
+  that looks perfectly ordinary. The comment at the call site now covers both
+  reasons `currentWindowIndex` can be null, not just the windowless one.
   _Added 2026-07-19._
 
 ## Promoted to milestones
@@ -491,6 +478,22 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **A "discard changes" button beside the unsaved badges in the top bar.**
+  Shown only while something is dirty, prompts once, and re-reads the open
+  file(s) from disk. It discards **both** slots and says so on the prompt — the
+  entry's own recommendation, and the right one: the editors write to both (an
+  overview edit touches the account's tabs and the character's column widths), so
+  reverting one would leave the half-reverted pair the slot-pairing machinery
+  exists to prevent. A re-read, not a restore: the backup chain is untouched, and
+  the view, the selection and an open preset all stay put, because exactly the
+  files that were open are the ones reopened.
+
+  Which slots get re-read is `slotsToReload` in `overview.ts`, beside the other
+  slot-pairing decisions, and tested there. **The wiring around it — prompt,
+  reopen, clear the flags — has no component test**, because mounting the page
+  means stubbing the whole app; a click-through before release would close that.
+  _Added 2026-07-26; done 2026-07-30._
 
 - [x] **HUD furniture follow-ups — all nine closed.** (3)(4)(5)(6) went in the
   2026-07-26 names-and-noise sweep, (1)(2)(7)(9) on 2026-07-29. (8) done
