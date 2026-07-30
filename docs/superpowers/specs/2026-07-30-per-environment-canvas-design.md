@@ -147,13 +147,22 @@ export function inEnv(id: string, env: Env): boolean;
 `StructureItemHangar`, `StructureShipHangar`, `StructureCorpHangar`,
 `DeliverToStructure`.
 
-`SPACE_ONLY`: `InventorySpace`, `ShipCargo`, `ShipDroneBay`, `droneview`,
-`selecteditemview`, `directionalScannerWindow`, `overview`.
+`SPACE_ONLY`: `InventorySpace`, `droneview`, `selecteditemview`,
+`directionalScannerWindow`, `overview`.
+
+Unlike `DOCKED_ONLY`, nothing in `SPACE_ONLY` is corroborated by the corpus
+measurement in §2.2 — that pass only turned up docked-side exclusives.
+`SPACE_ONLY` is game-knowledge curation, not measured data, and should not be
+read as if it were. `ShipCargo` and `ShipDroneBay` were considered for it and
+deliberately left out: a docked player can open the active ship's cargo hold
+and drone bay from the station hangar, so they are not space-exclusive, and
+the cost of guessing wrong here is hiding a window the player actually has
+open — the one direction §3's safe-failure rule forbids. They fail safe into
+both views instead, same as any other unlisted window.
 
 An id is a member if **either** its exact id or its `describe(id).family` is in
-the set. Both `ShipCargo` and `ShipCargo_1033391582929` have family `ShipCargo`,
-and both `overview` and `overview_1` have family `overview`, so one entry covers
-a family's bare parent and every spawned instance.
+the set. Both `overview` and `overview_1` have family `overview`, so one entry
+covers a family's bare parent and every spawned instance.
 
 Unlike `isClutter`, there is no `detail !== ""` check: that check exists to tell
 a spawned instance from its bare parent, and for environment purposes the two
@@ -191,9 +200,14 @@ separate Inventory rectangles, independently positionable. Docked links them,
 All does not, and there is no toggle to build. A player who genuinely wants the
 station and structure inventories in different places works in All.
 
-Note the first Docked drag reconciles the two positions — that is the intent
-("move both at once to reduce duplicating work"), not a side effect, and it is
-recoverable through the existing undo path like any other drag.
+Note the first Docked drag reconciles the two windows — that is the intent
+("move both at once to reduce duplicating work"), not a side effect, and it
+writes the anchor's full `{x, y, w, h}` to both ids, so it **resizes as well
+as repositions** the structure copy. This application has **no undo** — the
+only occurrences of the word in the codebase are prose warnings that an action
+"can't be undone" — so recovery from an unwanted reconciliation is the
+whole-session Discard button (which throws away every unsaved edit, not just
+this one) or restoring from a backup.
 
 ## 7. UI
 
@@ -211,17 +225,20 @@ active view is readable at a glance next to the two toggles.
 
 1. `inEnv` admits a `DOCKED_ONLY` id in `docked` and rejects it in `space`, and
    the mirror for `SPACE_ONLY`.
-2. A suffixed id (`ShipCargo_1033391582929`) follows its family.
+2. A suffixed id (`overview_1`) follows its family.
 3. An unlisted id (`market`) is admitted in **both** environments — the
    safe-failure direction, which is the property most likely to regress if
-   someone later "tidies" the tables into a total mapping.
+   someone later "tidies" the tables into a total mapping. `ShipCargo` and
+   `ShipDroneBay` are pinned the same way: considered for `SPACE_ONLY` and
+   deliberately left out (§5), so they fail safe into both views too.
 4. `filterIsActive` is true for a non-`all` env with no other filter set.
-5. `linkInventory` in `docked` yields one Inventory unit whose `fanTargets`
-   carry both `InventoryStation` and `InventoryStructure`; in `all` it yields
-   the units unchanged.
+5. `linkInventory` in `docked` yields one Inventory unit whose `tabs` and
+   `fanTargets` carry both `InventoryStation` and `InventoryStructure`; in
+   `all` it yields the units unchanged.
 
 No component test for the radio row — it binds to the same prop the existing
-checkboxes do, and `WindowPanel.spec.ts` does not test those either.
+checkboxes do, and there is no component test for this panel at all (nine
+other `*.spec.ts` files exist; `WindowPanel.spec.ts` is not one of them).
 
 ## 9. Live verification
 
