@@ -318,6 +318,15 @@ Workflow:
   list below, since both are "let the user say which windows count".
   _Added 2026-07-26._
 
+  **Spec'd 2026-07-30** as `docs/superpowers/specs/2026-07-30-per-environment-canvas-design.md`
+  (branch `worktree-per-env-canvas`). Scope settled at **two** environments,
+  docked vs in space, not three. A corpus re-measurement (6,502 char files)
+  confirmed the flat-geometry finding above and added one: **Inventory is the
+  only context-split family** in `windowSizesAndPositions_1`, and its three
+  copies have already drifted apart on a real character. The in-game capture is
+  no longer blocking — the mapping ships as a curated ~15-entry exclusives table
+  where an unlisted id falls through to "shows in both".
+
 - [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
   dragged out of a stack, which can leave the stack with a single member. The
   editor leaves it alone: what the client does with a one-member stack was
