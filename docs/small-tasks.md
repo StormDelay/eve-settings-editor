@@ -86,7 +86,7 @@ Workflow:
   `overview_pack.rs:274`, which records why a sampled hex cannot be inverted into
   the exact floats `color_name` needs. _Added 2026-07-27._
 
-- [ ] **No way to reach a window that sits underneath another in the layout
+- [x] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
   so anything fully covered is unreachable — you have to drag the top window away
   and put it back. Worth investigating: alt/right-click to cycle the stack under
@@ -95,6 +95,26 @@ Workflow:
   descend. Note the real files carry hundreds of window entries with heavy
   overlap (`format-notes.md`: one character had 381 windows, ~9 actually on
   screen), so this is a common case, not an edge one. _Added 2026-07-27._
+
+  **Done 2026-07-30 — but read this, because the entry above was wrong when it
+  was written.** "Unreachable, you have to drag the top window away" was already
+  false: `.win.selected` has carried `z-index: 1` since the canvas landed
+  (`0f814e0`, 2026-07-15), so a selected window paints above every other one,
+  and the list has always selected onto the canvas — `02c7d42` (2026-07-26)
+  even added an explicit `Select on canvas` item to its right-click menu. A
+  covered window was reachable and movable by name the whole time. The second
+  of the three suggested routes was therefore already built.
+
+  What was genuinely missing was discovery *from the canvas*: `unitAt` returns
+  the topmost hit, so there was no way to learn what else sat under the cursor
+  without knowing its name — which is exactly the part that fails at 381
+  windows. Shipped as **right-click lists every rectangle containing the point**
+  (windows topmost-first, then furniture) via the existing `ContextMenu`;
+  picking one selects it, and the existing z-index and `scrollOnSelect` do the
+  rest. Not built: click-cycling (it fights the drag gesture, and a list beats
+  blind traversal), keyboard traversal, and any menu action beyond selecting —
+  the panel's own menu already has those, and the pick lands there.
+  See `docs/superpowers/specs/2026-07-30-canvas-overlap-pick-design.md`.
 
 - [ ] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the layout-depth milestone's final slice (the neocom
