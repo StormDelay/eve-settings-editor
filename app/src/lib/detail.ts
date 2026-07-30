@@ -4,7 +4,8 @@
 // Decoration only. Nothing here may reach hudRects, snapLines, or any drag:
 // that separation is why this is its own module and not more of layout.ts.
 
-import type { NeocomBar, OverviewColumns } from "./api";
+import type { ChatPanel, NeocomBar, OverviewColumns } from "./api";
+import type { DrawUnit } from "./layout";
 
 /**
  * One drawn piece of a rectangle's internals.
@@ -213,4 +214,83 @@ export function overviewParts(
     x += w;
   }
   return out;
+}
+
+// --- chat -------------------------------------------------------------------
+
+/**
+ * A chat window's member-list and input splits, from the stored widths.
+ *
+ * Either field being null means the player has never resized that split, so the
+ * part is OMITTED rather than drawn at a guessed default — a split that is not
+ * in the file is a split the canvas has nothing to say about.
+ *
+ * The input band spans the message pane only, not the full window width. That
+ * is the one thing here NOT confirmed against the client (format-notes.md,
+ * "Chat window splits") — the live smoke settles it, and it is a one-line
+ * change either way.
+ */
+export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): DetailPart[] {
+  const out: DetailPart[] = [];
+  const members = panel.userlist_width;
+  if (members !== null) {
+    out.push({ kind: "band", x: rect.w - members, y: 0, w: members, h: rect.h, label: "Members" });
+  }
+  if (panel.input_height !== null) {
+    out.push({
+      kind: "band",
+      x: 0,
+      y: rect.h - panel.input_height,
+      w: rect.w - (members ?? 0),
+      h: panel.input_height,
+      label: "Input",
+    });
+  }
+  return out;
+}
+
+// --- dispatch ---------------------------------------------------------------
+
+/**
+ * The overview window index a canvas window id names: `overview` is window 0,
+ * `overview_N` is window N — the positional link `overview_tabs.rs` documents
+ * on `add_overview_window` and enforces on `remove_overview_window`.
+ *
+ * Anchored at both ends so `overviewsettings` cannot match.
+ */
+export function overviewIndex(id: string): number | null {
+  if (id === "overview") return 0;
+  const m = /^overview_(\d+)$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The detail parts for a drawn window unit, or `[]` when the unit is not a
+ * family this layer knows about (which is most of them).
+ *
+ * For a STACK the family is resolved from the tab carrying the selection,
+ * falling back to the first tab. A chat stack (`ChatWindowStack`) is the common
+ * case, and the selected tab is the one the player is looking at — resolving
+ * from the anchor instead would show one channel's splits while another's tab
+ * is active.
+ *
+ * A pure function rather than a ternary in markup, so the id resolution is
+ * unit-tested.
+ */
+export function windowDetail(
+  unit: DrawUnit,
+  selectedId: string | null,
+  cols: OverviewColumns | null,
+  chats: ChatPanel[],
+  rect: { w: number; h: number },
+): DetailPart[] {
+  const id = unit.stack
+    ? (unit.tabs.find((t) => t.id === selectedId)?.id ?? unit.tabs[0]?.id ?? unit.anchor.id)
+    : unit.anchor.id;
+
+  const ov = overviewIndex(id);
+  if (ov !== null) return cols ? overviewParts(cols, ov, rect) : [];
+
+  const panel = chats.find((c) => c.window_id === id);
+  return panel ? chatParts(panel, rect) : [];
 }
