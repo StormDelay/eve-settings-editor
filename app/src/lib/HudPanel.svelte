@@ -83,10 +83,23 @@
   // Int fields round before writing: <input type="number"> doesn't enforce
   // integrality (typing "1.5" is not blocked), and the backend's Int parser
   // rejects a fractional string outright.
+  //
+  // The field is put back in step with the model on every commit, whatever
+  // happens next. Svelte only patches `value` when the EXPRESSION changes, so an
+  // edit that does not move the model — one this refuses, one the backend
+  // refuses, or an int rounding back to what it already was (326.4 -> 326) —
+  // left the typed text sitting on screen beside a value that is not it. If the
+  // write does land, the parent's re-render overwrites this a moment later.
   const numberEdit = (name: string, kind: HudKind) => (ev: Event) => {
-    const raw = (ev.target as HTMLInputElement).value;
-    if (raw.trim() === "" || !Number.isFinite(Number(raw))) return;
+    const el = ev.target as HTMLInputElement;
+    const raw = el.value;
+    const resync = () => { el.value = shown(name); };
+    if (raw.trim() === "" || !Number.isFinite(Number(raw))) {
+      resync();
+      return;
+    }
     onSet(name, kind === "float" ? raw : String(Math.round(Number(raw))));
+    resync();
   };
 </script>
 
