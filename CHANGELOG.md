@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A `Detail` toggle that draws what is inside each rectangle on the layout
+  canvas.** The canvas has always drawn blank boxes, so a correctly-placed
+  overview window still told you nothing about what it holds. With Detail on,
+  the ship HUD shows its capacitor ring and module racks, the fighter panel its
+  ability grid and squadron row, the neocom your actual buttons in your actual
+  order, each overview window its real tabs and its real columns at their
+  stored widths — so a column set too wide for its window is now visible as
+  columns running off the edge — and each chat window its member-list and input
+  splits. The HUD and fighter geometry is measured from the client; the rest
+  comes from your own settings. It is decoration only: nothing here can be
+  dragged, and nothing snaps to it.
 - **Right-click the layout canvas to pick a window out from under another.**
   A click lands on the topmost rectangle, so a window covered by another one
   could only be found through the list, by name — awkward when a real file
