@@ -6,17 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
+**Dragging Inventory in the Docked view writes to your settings files in a
+new way.** Docked folds the station and structure Inventory copies into one
+drawn rectangle, so a drag or nudge writes the same position AND size to both
+`InventoryStation` and `InventoryStructure` — it resizes as well as
+repositions. This has not yet been verified in-game.
 
-- Layout canvas: an `All / Docked / In space` view selector. The canvas mixed
-  every environment into one picture, painting windows that can never be on
-  screen together. The mapping is curated and deliberately partial — a window
-  the editor does not recognise shows in both views. Inventory, the one window
-  EVE stores per context, draws as a single rectangle when docked and a drag
-  repositions the station and structure copies together. **Dragging Inventory
-  in the Docked view writes geometry to both `InventoryStation` and
-  `InventoryStructure` window ids — a new write to settings files — and this
-  has not yet been verified in-game.**
+### Added
+- **Layout canvas: an `All / Docked / In space` view selector.** The canvas
+  mixed every environment into one picture, painting windows that can never be
+  on screen together. The mapping is curated and deliberately partial — a
+  window the editor does not recognise shows in both views. Inventory, the one
+  window EVE stores per context, draws as a single rectangle when docked, and
+  a drag repositions and resizes the station and structure copies together.
 
 ## [0.23.0] - 2026-07-30
 

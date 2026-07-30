@@ -369,7 +369,7 @@ Add to `app/src/lib/layout.ts` after `drawnWindowCount`:
  * three separate ids with three separate geometries in the otherwise-flat
  * `windowSizesAndPositions_1`. On a real character they have drifted apart
  * (624,260 623x450 vs 136,285 880x619), so the docked view would paint two
- * rectangles 488px apart for what the player thinks of is one window.
+ * rectangles 488px apart for what the player thinks of as one window.
  *
  * In `docked` the structure copy is dropped as its own unit and appended to the
  * station copy's `fanTargets` — which is already "every window a coherent move
@@ -484,13 +484,20 @@ Leave `allUnits` alone. It is the unfiltered denominator for "showing N of M", s
 Run: `cd app && npm test && npm run check`
 Expected: PASS, no svelte-check errors.
 
-Then run the app and confirm by eye — this is the part no unit test covers:
+Then run the app and confirm by eye — this is the part no unit test covers.
+**Do this on a scratch character:** there is no undo in this application (the
+only "undo" hits in the codebase are prose warnings that an action can't be
+undone), so an unwanted Inventory reconciliation can only be recovered via the
+whole-session Discard button or a backup restore, not stepped back.
+
 1. Open a character with a real layout, go to the Layout view.
 2. Default is `All`, and the canvas looks exactly as it did before.
 3. Pick `In space`: the Overview, D-Scan, drone and cargo windows remain; `lobbyWnd` / Clone Bay / the structure hangars are gone; the `showing N of M` counter appears with N < M.
 4. Pick `Docked`: the mirror, and **one** Inventory rectangle rather than two.
 5. In `Docked`, drag Inventory, then switch to `All`: both `Inventory (Station)` and `Inventory (Structure)` are now at the dropped position.
-6. Switch back to `All`: the counter's `reset` link clears the env back to `all` along with the other dimensions (it assigns `{ ...NO_FILTER }`, so this should already hold — confirm it does).
+6. Still in `Docked`, select the folded Inventory rectangle and press an arrow key **once** (a nudge, not a drag), then switch to `All`: confirm both copies moved by the nudge, not just the one dragged in step 5. The steps above only ever exercised dragging, and the nudge path is separate code (`onKeyDown`/`endNudge` in `LayoutView.svelte`).
+7. In `Docked`, drag Inventory to a spot with an obviously different size available (e.g. resize the rectangle, or note the two copies' original sizes first), then switch to `All` and confirm the structure copy's **size** was replaced too, not just its position. Check #5 above ("both are now at the dropped position") would pass while missing that 880×619 became 623×450 — the fold writes the anchor's full `{x, y, w, h}`, not just x/y.
+8. While in `Docked` or `In space` (not `All` — the counter and its `reset` link only render while a filter is active, so this check cannot be performed from `All`), confirm the `reset` link clears the env back to `all` along with the other filter dimensions (it assigns `{ ...NO_FILTER }`, so this should already hold — confirm it does).
 
 - [ ] **Step 5: Commit**
 
