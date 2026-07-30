@@ -1094,6 +1094,17 @@ Whether the input box spans the full window width or only the message pane is
 NOT captured — the editor draws it under the message pane only, pending a live
 smoke.
 
+**Both keys are now written**, by `chat.rs::set_chat_splits`. An existing key is
+overwritten in place; an absent one is minted as `(Long(0), Int(v))` under `ui`,
+the same zero-timestamp mint the overview-presets container and the HUD anchors
+use. Only the mint de-shares the document, so only then does `ops` reshare.
+
+Ids are validated against the `chatchannel_` prefix before anything is written.
+The key names are built by concatenating the window id, so an unvalidated id
+would mint `market_userlistwidth` — a key EVE never reads and nothing ever
+cleans up. Validation of the whole batch completes before the first mutation, so
+a refused write leaves the document byte-identical.
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in
