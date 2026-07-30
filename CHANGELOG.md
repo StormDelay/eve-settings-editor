@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Right-click the layout canvas to pick a window out from under another.**
+  A click lands on the topmost rectangle, so a window covered by another one
+  could only be found through the list, by name — awkward when a real file
+  carries hundreds of windows. Right-clicking a spot now lists everything
+  drawn at it, topmost first, with the screen furniture after the windows;
+  picking one selects it and brings it to the front.
+
 ## [0.24.0] - 2026-07-30
 
 A single-feature release: the layout canvas can now show one game environment
