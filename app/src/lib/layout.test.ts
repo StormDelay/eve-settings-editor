@@ -495,7 +495,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // character photographed top- and bottom-aligned at one offset) and the
   // element is NOT vertically symmetric. Mirroring the top margin, which this
   // asserted before, drew the box 16px high.
-  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 12 - 160);
+  check("the ship HUD sits at the bottom by default", ship.y === 1440 - 12 - 176);
   check("the ship HUD drags on x only", ship.drag === "x");
 
   const fighter = rects[2];
@@ -519,8 +519,8 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
 {
   const rects = hudRects(fullHud({ ship_top: hudEntry("ship_top", "true", "bool", "false") }), layout2560);
-  // Top-aligned it clears the screen edge by the measured 28px, not by 0.
-  check("ship_top anchors the HUD to the top", rects[1].y === 28);
+  // Top-aligned it clears the screen edge by the measured 12px, not by 0.
+  check("ship_top anchors the HUD to the top", rects[1].y === 12);
 }
 
 {
@@ -628,8 +628,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // 1094..1137, so the element's right edge is 1138. The old figure came from
   // `245 + 50 x 8`, which mixes a pitch with a button width — see HUD_NOMINAL.
   check("its right edge covers the widest slot row", ship.x + ship.w === 1138);
-  check("its top clears the screen edge by the measured margin", ship.y === 28);
-  check("its bottom edge, 160px below the top", ship.y + ship.h === 188);
+  check("its top clears the screen edge by the measured margin", ship.y === 12);
+  // 188 is unchanged, but for a different reason: the top moved up 16 and the
+  // height grew by the same 16. Both were wrong together (2026-07-30).
+  check("its bottom edge, 176px below the top", ship.y + ship.h === 188);
 
   // The anchor: the capacitor wheel's centre, measured at 638.5 against 638
   // predicted. NOTE this check holds for any SHIP_ANCHOR_LEFT — it pins the
@@ -682,7 +684,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // windows snapped straight through the ability grid above it.
   check(
     "it is tall enough for the ability grid, not just the squadron row",
-    f.h === 253,
+    f.h === 264,
   );
 }
 

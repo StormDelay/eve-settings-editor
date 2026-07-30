@@ -8,9 +8,10 @@
    * is dropped rather than ellipsised — a row of "…" is noise, not information. */
   const LABEL_MIN = 28;
 
-  /** The capacitor gauge band's thickness as a fraction of its diameter: the
-   * measured band spans r 50..80, so 30 of the 160 across. See detail.ts's CAP. */
-  const ARC_BAND = 30 / 160;
+  /** The capacitor gauge band's thickness as a fraction of the arc part's own
+   * diameter: the measured tick band spans r 48..74, so 26 of the 148 across.
+   * See detail.ts's CAP. */
+  const ARC_BAND = 26 / 148;
 </script>
 
 <!-- pointer-events: none is the ONE mechanism that keeps this layer decoration:

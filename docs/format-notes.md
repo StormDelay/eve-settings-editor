@@ -964,15 +964,48 @@ Two corrections to earlier figures, both from measuring rather than deriving:
 - **Row tops are 4 / 48 / 92, a uniform 44 pitch**, not the 2 / 50 / 94 recorded
   above, which gave an uneven 48-then-44.
 
-The capacitor's outer radius is **80**, from sweeping a full circle at each
-radius and taking the mean: both ships peak sharply at r 80–81 and are back to
-background by r 90. An earlier reading off a 4× magnified crop put it at 86; the
-sweep is what corrected it. At r 80 the capacitor's top sits 8px **above** the
-box, which the element's own `overflow: hidden` clips — the same way the real
-capacitor overhangs the rack block. **The element's true vertical extent has not
-been re-measured**, so `SHIP_TOP_MARGIN` (28) and `HUD_NOMINAL.shipui.h` (160)
-are still the 2026-07-28 values; if the top margin is really ~20, the box is
-short by that overhang. Open.
+#### The vertical extent, re-measured — and the margins are equal after all
+
+The capacitor's rim reaches **r 88**, and that is the element's full height: the
+disc exactly fills the box, top to bottom.
+
+Getting there took two corrections worth recording, because both are traps:
+
+1. A full-circle brightness sweep peaks sharply at **r 80–81**. That is the rim's
+   bright *middle*, not its edge. A 5× crop at 12 o'clock shows the dark rim arc
+   and its highlight segment continuing out to **r 88**, above where the gauge
+   ticks begin. Taking the sweep's peak for the edge put the element's top 8px
+   too low.
+2. Below the capacitor sit small coloured drone-status indicators. They are
+   **ship-state dependent**, not element chrome — present on the battleship shot,
+   absent on the bottom-aligned one — so they cannot be used as the bottom edge.
+
+The resulting figures, and both are checked against the rack in **both**
+alignments rather than derived:
+
+| | old | measured 2026-07-30 |
+|---|---|---|
+| `SHIP_TOP_MARGIN` | 28 | **12** |
+| `SHIP_BOTTOM_MARGIN` | 12 | 12 (unchanged) |
+| `HUD_NOMINAL.shipui.h` | 160 | **176** |
+
+- Top-aligned: element 12..188, rack row 1 at `12 + 20 = 32`. **Measured 32.**
+- Bottom-aligned: element `1440 − 12 − 176 = 1252`..1428, rack row 1 at 1272.
+  **Measured 1272.**
+
+Both land exactly, which no other combination of the three does.
+
+**So the margins are equal, and the note above claiming otherwise was wrong.**
+That note reasoned: the bottom margin measures 12, the top is 28, therefore the
+element is not vertically symmetric. The 12 was right and the 28 was not — it was
+never measured, only inferred by assuming a 160px element whose rack sat 4px in.
+The rack's position is all that measurement pinned, and a rack position alone
+cannot fix the element's own edges: 28/160 and 12/176 both reproduce it. The
+capacitor is what breaks the tie.
+
+The general lesson, and the reason this section exists: **a figure that
+reproduces every measurement you have can still be wrong**, if the measurements
+never touched the thing it describes.
 
 ### Fighter UI internals
 
@@ -996,9 +1029,13 @@ the 5-squadron carrier maximum `42 + 86 × 4 + 81 = 467`, exactly
 53 by assuming the grid reached the edge — a reminder that a derivation which
 lands on the right total can still be wrong about the thing it measures.
 
-**The control column overhangs the recorded panel height.** It ends at y 268
-against `HUD_NOMINAL.fighter.h`'s 253 (2026-07-28's figure, not re-measured).
-Open, and pinned by a test so it cannot be forgotten.
+**The control column is the panel's lowest element**, ending at y 264 — so
+`HUD_NOMINAL.fighter.h` is **264**, not the 253 recorded on 2026-07-28. Nothing
+had noticed, because nothing drew the control column: the old figure stopped at
+the squadron labels, which are the lowest thing the editor knew about.
+
+Same shape of error as the ship HUD's height, and the same cause — a box sized
+from the parts we happened to be drawing rather than from the element.
 
 ### Overview window chrome
 
