@@ -25,9 +25,6 @@ file.** They are account-wide, so an edit affects every character on that
 account, and the panel names the siblings before you change anything. The edit
 lands in the open document as usual: Discard or a backup restore is the way back.
 
-**Not smoke-tested against a running client.** Both features were driven in the
-app, but the check lists in `docs/superpowers/plans/` were not walked end to end.
-
 ### Added
 - **Edit a chat window's member list and input box.** Selecting a chat window in
   the Layout view now offers its member-list width and input-box height, with
