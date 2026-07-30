@@ -6,11 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-30
+
+A single-feature release: the layout canvas can now show one game environment
+at a time instead of all of them at once. The work started by measuring rather
+than guessing — 6,502 character files — and the measurement is what shaped it.
+EVE stores one geometry per window, so this is a filter over a single layout
+rather than three saved layouts, and it needed no backend change at all.
+
 **Dragging Inventory in the Docked view writes to your settings files in a
 new way.** Docked folds the station and structure Inventory copies into one
 drawn rectangle, so a drag or nudge writes the same position AND size to both
 `InventoryStation` and `InventoryStructure` — it resizes as well as
-repositions. This has not yet been verified in-game.
+repositions. That is the point of merging the two environments rather than a
+side effect, but note there is no undo: recovery is the Discard button, which
+drops the whole session's unsaved edits, or a backup restore. The behaviour was
+driven in the running app, including with one of the two copies closed; what
+has **not** happened is a dock/undock check against a live client.
 
 ### Added
 - **Layout canvas: an `All / Docked / In space` view selector.** The canvas
