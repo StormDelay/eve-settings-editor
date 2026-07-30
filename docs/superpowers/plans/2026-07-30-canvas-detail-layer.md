@@ -1524,6 +1524,23 @@ With **Detail** on, confirm each of these — this is the acceptance list:
 6. **Dragging still works everywhere.** Grab the ship HUD, a window, a stack tab — the detail parts must never intercept the pointer. Grab a window by a spot covered by a detail part specifically.
 7. Turning **Detail** off returns the canvas to plain boxes.
 
+Four more, added after the whole-branch review — the first three cover paths that
+are unit-tested but have never been *seen*, and the last is the reason the
+feature exists:
+
+8. Tick **Detail**, restart the app, and confirm it is still ticked. Then click
+   **clear** on the clutter-override counter and confirm Detail stays ticked —
+   that is the object-literal spread trap, verified live.
+9. Switching tabs inside a **chat stack** changes the drawn splits, because the
+   detail follows the selected tab rather than the stack's anchor.
+10. Detail on with an **unpaired character** (no account file, so no chat panels
+    and possibly no overview container) draws nothing and does not throw.
+11. **The overflow signal is truthful.** Widen an overview column in the Overview
+    view until the set is wider than its window, then look at the canvas: the
+    last columns must visibly run past the window's edge. Points 4 only checks
+    the columns appear; this checks they share the window rect's pixel space,
+    which is the claim the whole feature rests on.
+
 - [ ] **Step 7: Commit**
 
 ```bash
