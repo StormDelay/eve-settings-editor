@@ -20,6 +20,9 @@ pub struct LayoutPrefs {
     pub clutter: Vec<String>,
     /// Window ids the user forced OUT of it.
     pub visible: Vec<String>,
+    /// Whether the layout canvas draws each rectangle's internals. Purely a
+    /// view setting — it changes nothing about any EVE settings file.
+    pub detail: bool,
 }
 
 /// Read the file, or defaults. A file we cannot parse is USER DATA: move it
