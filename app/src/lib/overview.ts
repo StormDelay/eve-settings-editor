@@ -68,6 +68,23 @@ export function userSlotFor(
   return { kind: "load", path: userPath };
 }
 
+// Which slots a "discard changes" re-read must reload: every slot holding a
+// decoded document, by its own path. BOTH sides, even when only one is dirty —
+// the editors write to both (an overview edit touches account tabs and character
+// column widths), so reloading one would leave a half-reverted pair, which is
+// the state everything else in this file exists to prevent. A slot that failed
+// to parse holds no document to revert.
+export function slotsToReload(
+  slots: { char: { status: string; path?: string } | null; user: { status: string; path?: string } | null },
+): { slot: "char" | "user"; path: string }[] {
+  const out: { slot: "char" | "user"; path: string }[] = [];
+  for (const slot of ["char", "user"] as const) {
+    const o = slots[slot];
+    if (o?.status === "opened" && o.path) out.push({ slot, path: o.path });
+  }
+  return out;
+}
+
 // On opening an ACCOUNT file, decide what the CHAR slot becomes: keep it only if
 // it holds one of this account's characters, else empty it. There is no single
 // character to auto-load (an account has several); the selector picks one.

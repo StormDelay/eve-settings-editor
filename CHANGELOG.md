@@ -25,6 +25,12 @@ All notable changes to this project are documented here. The format follows
   default rather than keeping its own value, which is what makes the two
   characters actually match.
 
+### Added
+- **A Discard button beside the "unsaved" badges.** Abandoning your edits used to
+  mean opening another file, accepting the discard prompt and coming back — or
+  quitting. It reloads both files from disk after one confirmation. Your backups
+  are untouched: this re-reads what is on disk, it does not restore anything.
+
 ### Fixed
 - **Autofill lists are named after what they are.** Most of them showed a label
   scraped off the end of EVE's widget path — "Input", "Header Cont", "Edit0",
