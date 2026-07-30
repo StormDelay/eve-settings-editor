@@ -7,7 +7,10 @@
 
 <script lang="ts">
   // A flat right-click menu. Deliberately minimal: no submenus, no icons, no
-  // portal — the panel is the only caller and it needs one list of actions.
+  // portal — both callers need one list, and nothing more. `WindowPanel` uses
+  // it for a row's actions; `LayoutView` uses it to list the rectangles
+  // stacked under a point on the canvas, where a click can only reach the top
+  // one.
   let {
     x,
     y,
