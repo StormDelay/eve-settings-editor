@@ -111,6 +111,26 @@ describe("writing a value", () => {
     expect(onSet).not.toHaveBeenCalled();
   });
 
+  test("a refused edit puts the field back to the stored value", async () => {
+    // Svelte patches `value` only when the expression changes, so a rejected
+    // edit used to leave the typed text on screen next to a value that is not
+    // it, until some unrelated re-render cleared it.
+    mount(hud());
+    const el = input("Fighter UI", "x");
+    await fireEvent.change(el, { target: { value: "   " } });
+    expect(el.value).toBe("326");
+  });
+
+  test("an int edit that rounds back to the stored value resyncs too", async () => {
+    // 326.4 rounds to 326, which the model already holds — nothing changes, so
+    // nothing re-renders, so the field kept showing 326.4.
+    const { onSet } = mount(hud());
+    const el = input("Fighter UI", "x");
+    await fireEvent.change(el, { target: { value: "326.4" } });
+    expect(onSet).toHaveBeenCalledWith("fighter_x", "326");
+    expect(el.value).toBe("326");
+  });
+
   test("a checkbox writes the string the backend parses, not a boolean", () => {
     const { onSet } = mount(hud());
     fireEvent.click(input("Fighter UI", "Detached"));
