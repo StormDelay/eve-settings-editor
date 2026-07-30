@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Layout canvas: an `All / Docked / In space` view selector. The canvas mixed
+  every environment into one picture, painting windows that can never be on
+  screen together. The mapping is curated and deliberately partial — a window
+  the editor does not recognise shows in both views. Inventory, the one window
+  EVE stores per context, draws as a single rectangle when docked and a drag
+  repositions the station and structure copies together. **Dragging Inventory
+  in the Docked view writes geometry to both `InventoryStation` and
+  `InventoryStructure` window ids — a new write to settings files — and this
+  has not yet been verified in-game.**
+
 ## [0.23.0] - 2026-07-30
 
 A debt-clearing release: the small-tasks ledger went from 30 open items to 15,
