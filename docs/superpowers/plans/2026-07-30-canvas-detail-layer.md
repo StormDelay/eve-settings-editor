@@ -25,6 +25,22 @@ Design spec: `docs/superpowers/specs/2026-07-30-canvas-detail-layer-design.md`.
 
 ### Task 1: `chat.rs` — project the chat window splits
 
+> **Correction (2026-07-30, post-implementation):** every section name below —
+> in the module doc comment, the `section(user_root, b"windows", …)` call, the
+> "wrong section name (`ui` instead of `windows`)" line, and the
+> `format-notes.md` block — is **wrong**. Running the projection over the real
+> corpus (184 `core_user_*.dat` files, 705 total sightings) proved the chat
+> keys live in the account file's root **`ui`** section, not `windows`, and the
+> real presence counts are 86/184 (member-list width) and 121/184 (input
+> height), not the "23/58" / "33/58" quoted here. `chat.rs`,
+> `docs/format-notes.md`, and `docs/superpowers/specs/2026-07-30-canvas-detail-layer-design.md`
+> were all corrected during implementation and are correct as shipped — only
+> this plan section still shows the pre-correction draft. This plan is a
+> historical record of intent, so the steps below are left as originally
+> written; do not use them as a reference for the section name. See the design
+> spec §2.1 and `docs/format-notes.md`, "Chat window splits", for the corrected
+> version.
+
 **Files:**
 - Create: `crates/settings-model/src/chat.rs`
 - Modify: `crates/settings-model/src/lib.rs` (add `pub mod chat;` beside `pub mod hud;` on line 15, and a `pub use` beside line 35)
