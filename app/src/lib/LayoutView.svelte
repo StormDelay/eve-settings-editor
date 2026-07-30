@@ -773,6 +773,15 @@
         {/each}
         {#each units as unit (unit.key)}
           {@const r = rectOf(unit.anchor)}
+          <!-- A folded unit (today, only linkInventory's docked Inventory pair)
+               draws one rectangle for more than one window id, and a drag or
+               nudge writes the full rect to all of them — resize included, not
+               just position. Nothing else on the rectangle says that, so name
+               the fanned ids in a tooltip. Stacks already show this via their
+               own tab strip, hence `!unit.stack`. -->
+          {@const foldTitle = !unit.stack && unit.fanTargets.length > 1
+            ? `Moves and resizes together with: ${unit.fanTargets.map((w) => w.id).join(", ")}`
+            : undefined}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="win"
@@ -781,6 +790,7 @@
             class:droptarget={dropTarget === unit.key}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(r.w, scale)}px; height: {toCanvas(r.h, scale)}px;"
+            title={foldTitle}
             onpointerdown={(e) => startMove(unit, e)}>
             {#if unit.stack}
               <div class="tabs">
