@@ -319,6 +319,16 @@ fn chat_panels(state: tauri::State<'_, AppState>) -> Result<Vec<settings_model::
     ops::chat_panels(&state)
 }
 #[tauri::command]
+#[allow(non_snake_case)]
+fn set_chat_splits(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+    userlistWidth: Option<i64>,
+    inputHeight: Option<i64>,
+) -> Result<Vec<settings_model::ChatPanel>, ErrDto> {
+    ops::set_chat_splits(&state, ids, userlistWidth, inputHeight)
+}
+#[tauri::command]
 fn neocom_reorder(state: tauri::State<'_, AppState>, order: Vec<usize>) -> Result<settings_model::NeocomBar, ErrDto> {
     ops::neocom_reorder(&state, order)
 }
@@ -485,7 +495,7 @@ pub fn run() {
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
-            neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels,
+            neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
             hud_layout, set_hud_value,
             preferences, set_preferences
         ])
