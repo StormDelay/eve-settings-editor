@@ -191,6 +191,15 @@ export interface NeocomBar {
   original: NeocomButton[];
 }
 
+/** Per-channel chat window splits, from the ACCOUNT document. Read-only — the
+ * canvas detail layer draws these; nothing writes them. */
+export interface ChatPanel {
+  window_id: string;
+  /** null = the player has never resized this channel's member list. */
+  userlist_width: number | null;
+  input_height: number | null;
+}
+
 export interface LayoutPrefs {
   clutter: string[];
   visible: string[];
@@ -443,6 +452,7 @@ export const api = {
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
   stackDeleteOrphans: () => invoke<WindowLayout>("stack_delete_orphans"),
   neocomBar: () => invoke<NeocomBar>("neocom_bar"),
+  chatPanels: () => invoke<ChatPanel[]>("chat_panels"),
   neocomReorder: (order: number[]) => invoke<NeocomBar>("neocom_reorder", { order }),
   neocomRemove: (index: number) => invoke<NeocomBar>("neocom_remove", { index }),
   neocomAdd: (id: string, btnType: number, iconPath: string) =>

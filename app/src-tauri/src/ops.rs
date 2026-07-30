@@ -24,6 +24,7 @@ use settings_model::{
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
     NeocomBar, NeocomError,
+    project_chat, ChatPanel,
 };
 
 use crate::accounts;
@@ -802,6 +803,14 @@ pub fn hud_layout(state: &AppState) -> Result<Hud, ErrDto> {
     let cguard = state.char.lock().unwrap();
     let cdoc = cguard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no character file open"))?;
     Ok(project_hud(&cdoc.value, uguard.as_ref().map(|d| &d.value)))
+}
+
+/// Project the account document's chat window splits. An unpaired character is
+/// normal, so no account file open means an empty list, NOT an error — the
+/// canvas treats these as a bonus layer (design spec §4.5).
+pub fn chat_panels(state: &AppState) -> Result<Vec<ChatPanel>, ErrDto> {
+    let guard = state.user.lock().unwrap();
+    Ok(guard.as_ref().map(|d| project_chat(&d.value)).unwrap_or_default())
 }
 
 /// Write one HUD field into whichever document its scope names, reshare, and
@@ -2861,6 +2870,15 @@ mod tests {
         assert_eq!(neocom_remove(&state, 0).unwrap_err().code, "no_document");
         assert_eq!(neocom_add(&state, "chat", 1, "chat.png").unwrap_err().code, "no_document");
         assert_eq!(neocom_reset(&state).unwrap_err().code, "no_document");
+    }
+
+    /// An unpaired character is normal, so this is an empty list, not an error —
+    /// unlike `neocom_bar`, which needs the character document and refuses without
+    /// one.
+    #[test]
+    fn chat_panels_is_empty_without_an_account_file() {
+        let state = AppState::new();
+        assert!(chat_panels(&state).unwrap().is_empty());
     }
 
     #[test]
