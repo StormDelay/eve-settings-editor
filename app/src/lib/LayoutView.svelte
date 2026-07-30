@@ -4,10 +4,11 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
-    snapLines, movingEdges, snapDelta, unitAt, dropAction, linkInventory,
+    snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
-  import { displayNameOf } from "$lib/windowLabels";
+  import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
+  import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
@@ -214,6 +215,37 @@
   }
 
   const onSelect = (id: string) => selectWindow(id);
+
+  // --- picking a rectangle out from under another --------------------------
+  // A click can only ever reach the top rectangle, and a real file overlaps
+  // heavily (one character: 381 windows, ~9 on screen), so anything underneath
+  // is findable only if you already know its name. Right-click lists what is
+  // actually at the point instead. Selecting is enough on its own: the pick
+  // gets `.win.selected`'s z-index and paints above its neighbours, and the
+  // panel scrolls its row into view.
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  /** A unit's name, the same way the canvas and the panel spell it, so the
+   * three cannot disagree. */
+  const unitLabel = (u: DrawUnit) =>
+    u.stack ? (stackLabel(u.stack) ?? displayName(u.stack.container_id)) : displayNameOf(u.anchor);
+
+  function onCanvasContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const p = pointerData(e as unknown as PointerEvent);
+    // Windows first, then furniture: furniture always paints beneath the
+    // windows, so listing it last matches what is actually stacked there.
+    const items: MenuItem[] = [
+      ...rectsAt(units, (u) => rectOf(u.anchor), p.x, p.y)
+        .map((u) => ({ label: unitLabel(u), run: () => selectWindow(u.anchor.id) })),
+      ...rectsAt(furniture, (f) => f, p.x, p.y)
+        .map((f) => ({ label: f.label, run: () => selectFurniture(f.kind) })),
+    ];
+    // Empty canvas: no menu rather than an empty box.
+    if (items.length === 0) return;
+    // ContextMenu positions in client px, not the canvas's data px.
+    menu = { x: e.clientX, y: e.clientY, items };
+  }
 
   function onToggleOpen(w: WindowRect) {
     const open = w.flags.find((f) => f.name === "openWindows");
@@ -754,7 +786,8 @@
         style="width: {toCanvas(layout.reference_w, scale)}px; height: {canvasHeight}px;"
         onpointerdowncapture={() => (document.activeElement as HTMLElement | null)?.blur()}
         onpointermove={onPointerMove}
-        onpointerup={onPointerUp}>
+        onpointerup={onPointerUp}
+        oncontextmenu={onCanvasContextMenu}>
         {#if guides.x !== null}
           <div class="guide vertical" style="left: {toCanvas(guides.x, scale)}px;"></div>
         {/if}
@@ -874,6 +907,10 @@
         bind:focusFilter />
     </div>
   </div>
+{/if}
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => (menu = null)} />
 {/if}
 
 <style>
