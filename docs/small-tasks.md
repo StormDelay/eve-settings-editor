@@ -490,10 +490,13 @@ _Added 2026-07-17; designed 2026-07-18._
   files that were open are the ones reopened.
 
   Which slots get re-read is `slotsToReload` in `overview.ts`, beside the other
-  slot-pairing decisions, and tested there. **The wiring around it — prompt,
-  reopen, clear the flags — has no component test**, because mounting the page
-  means stubbing the whole app; a click-through before release would close that.
-  _Added 2026-07-26; done 2026-07-30._
+  slot-pairing decisions, and tested there. The wiring around it — prompt,
+  reopen, clear the flags — has no component test, because mounting the page
+  means stubbing the whole app. **The developer ran the click-through in the dev
+  app on 2026-07-30 and it works**, so the gap is now "no automated coverage of
+  the wiring" rather than "unverified". Worth knowing if that wiring is touched
+  again: nothing but a human will notice it breaking. _Added 2026-07-26; done
+  2026-07-30._
 
 - [x] **HUD furniture follow-ups — all nine closed.** (3)(4)(5)(6) went in the
   2026-07-26 names-and-noise sweep, (1)(2)(7)(9) on 2026-07-29. (8) done
