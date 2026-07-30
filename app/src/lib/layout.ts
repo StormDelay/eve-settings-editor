@@ -1,7 +1,12 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
-import { isClutter, nameOf, type ClutterOverrides } from "./windowLabels.ts";
+import { isClutter, inEnv, nameOf, type ClutterOverrides, type Env } from "./windowLabels.ts";
+
+/** Re-exported so callers that already import from layout.ts get it here.
+ * It is DECLARED in windowLabels.ts, beside the mapping it belongs to —
+ * layout.ts imports from windowLabels.ts and not the reverse. */
+export type { Env };
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -342,13 +347,17 @@ export interface WindowFilter {
    * windows the player placed. Applies whether open or closed: kind of
    * window is the axis, not open/closed (see isClutter). */
   hideClutter: boolean;
+  /** Show only the windows that exist in one environment. `all` — the default
+   * — is today's mixed picture. Windows the mapping does not recognise show in
+   * every environment, so this narrows rather than hides (see inEnv). */
+  env: Env;
 }
 
-export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false };
+export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false, env: "all" };
 
 /** Whether the filter narrows anything — drives the "showing N of M" line. */
 export function filterIsActive(f: WindowFilter): boolean {
-  return f.text.trim() !== "" || f.openOnly || f.hideClutter;
+  return f.text.trim() !== "" || f.openOnly || f.hideClutter || f.env !== "all";
 }
 
 /**
@@ -368,6 +377,7 @@ export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrid
   if (f.openOnly && !w.open) return false;
   if (f.hideClutter && isClutter(w.id, o)) return false;
   if (f.hideClutter && isOrphanFrame(w)) return false;
+  if (!inEnv(w.id, f.env)) return false;
   const n = nameOf(w);
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;

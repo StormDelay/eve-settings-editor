@@ -212,6 +212,29 @@ check("open filter keeps the right window", open[0].id === "a");
   // isOrphanFrame — windowMatches calls it — so re-asserting each one adds no
   // coverage. This pins the exported name, which the delete offer counts with.
   check("the orphan rule is exported for the delete offer to count with", isOrphanFrame(orphanFrame));
+
+  const lobby = win("lobbyWnd", true, true);
+  const dscan = win("directionalScannerWindow", true, true);
+
+  check("the default env does not make the filter active", !filterIsActive({ ...NO_FILTER, env: "all" }));
+  check("a docked env makes the filter active", filterIsActive({ ...NO_FILTER, env: "docked" }));
+  check("a space env makes the filter active", filterIsActive({ ...NO_FILTER, env: "space" }));
+
+  check("docked keeps a docked-only window", windowMatches(lobby, { ...NO_FILTER, env: "docked" }));
+  check("docked drops a space-only window", !windowMatches(dscan, { ...NO_FILTER, env: "docked" }));
+  check("space keeps a space-only window", windowMatches(dscan, { ...NO_FILTER, env: "space" }));
+  check("space drops a docked-only window", !windowMatches(lobby, { ...NO_FILTER, env: "space" }));
+  check("an unlisted window survives both envs",
+    windowMatches(market, { ...NO_FILTER, env: "docked" }) && windowMatches(market, { ...NO_FILTER, env: "space" }));
+
+  // env composes with the other dimensions rather than replacing them.
+  check("env and openOnly compose", !windowMatches(closedMarket, { ...NO_FILTER, env: "docked", openOnly: true }));
+  check("env and text compose", !windowMatches(lobby, { ...NO_FILTER, env: "docked", text: "zzz" }));
+
+  check("visibleIds narrows by env",
+    !visibleIds([lobby, dscan, market], { ...NO_FILTER, env: "space" }).has("lobbyWnd"));
+  check("visibleIds keeps the space window and the unlisted one",
+    visibleIds([lobby, dscan, market], { ...NO_FILTER, env: "space" }).size === 2);
 }
 
 // --- the filter searches the real channel name -----------------------------
