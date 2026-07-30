@@ -62,18 +62,28 @@ differs per file:
 
 ### 2.1 The chat keys (corpus-verified 2026-07-30)
 
-Dumped from a real account file in the `2026-07-28T170701Z_c-after` snapshot.
-Both live under the account file's **root `windows` section** — the same section
-as `neocomWidth`, not `ui`:
+Both live under the account file's **root `ui` section** — *not* `windows`,
+where `neocomWidth` lives:
 
 | what | key | value | present |
 |---|---|---|---|
-| Member-list width | `chatchannel_<ch>_userlistwidth` | Int — 107, 135, 126, 104, 50 | 23/58 |
-| Input-box height | `chatinputsize_chatchannel_<ch>` | Int — 64, 63 | 33/58 |
+| Member-list width | `chatchannel_<ch>_userlistwidth` | Int — 107, 135, 126, 104, 50 | 86/184 |
+| Input-box height | `chatinputsize_chatchannel_<ch>` | Int — 64, 63 | 121/184 |
 
-Counts are account files in that snapshot containing the key at all (a raw byte
-scan; 58 account files). Both are ordinary `(timestamp, value)` leaves needing
-the usual value-wrapper unwrap.
+Counts are real `core_user_*.dat` files carrying the key, measured by running
+the projection over the corpus (184 files, 705 total sightings, **zero** under
+`windows`). Both are ordinary `(timestamp, value)` leaves needing the usual
+value-wrapper unwrap.
+
+**This section name was wrong in the first draft of this spec, and the way it
+was wrong is the point.** The draft said `windows`, from a text dump of one real
+account file: `b"windows"` appears a few lines above the chat keys, and the
+section that actually encloses them prints as `ref[240]:` — a `Ref`-keyed
+section key, invisible to a grep for a byte-string name. That is the same trap
+`format-notes.md` records for this file ("The account file's `ui` section key is
+`Ref`-keyed") and the same class as the v0.15.0 `badge_*` bug. The corpus guard
+in `tests/chat_panels_corpus.rs` is what caught it; a fixture-only test suite
+would have passed on the wrong section, reading nothing from any real file.
 
 **The key names carry the canvas window id verbatim.** `chatchannel_local` on the
 canvas owns `chatchannel_local_userlistwidth` and
@@ -138,7 +148,7 @@ compares a bare `Value::Bytes` … misses it entirely and projects nothing from
 real account files"), and the states/colours slice already shipped that bug once.
 `hud.rs::section` is the pattern to copy.
 
-Entries are collected by scanning the `windows` section once and matching the two
+Entries are collected by scanning the `ui` section once and matching the two
 patterns, keyed into a map by window id, so a channel with only one of the two
 keys still produces a panel with the other field `None`.
 
@@ -290,7 +300,7 @@ personal data, per the repo rule):
   file;
 - a malformed value (non-Int, wrong wrapper arity) is skipped, not panicked on,
   mirroring `windows.rs`'s malformed-tuple skip;
-- a document with no `windows` section → empty vec.
+- a document with no `ui` section → empty vec.
 
 **Frontend (`node --test`, zero-dep), new `detail.test.ts`:**
 
