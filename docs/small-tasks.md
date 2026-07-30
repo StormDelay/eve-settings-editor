@@ -285,7 +285,7 @@ Workflow:
   pack whole-branch review)._
   **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
 
-- [ ] **Per-environment canvas views (in space / NPC station / player structure).**
+- [x] **Per-environment canvas views (in space / NPC station / player structure).**
   A player's screen differs by environment, and the canvas currently mixes all of
   them into one picture — which is part of why it shows far more windows than are
   ever visible at once. Explore a view selector that shows only the windows
@@ -318,14 +318,15 @@ Workflow:
   list below, since both are "let the user say which windows count".
   _Added 2026-07-26._
 
-  **Spec'd 2026-07-30** as `docs/superpowers/specs/2026-07-30-per-environment-canvas-design.md`
-  (branch `worktree-per-env-canvas`). Scope settled at **two** environments,
-  docked vs in space, not three. A corpus re-measurement (6,502 char files)
-  confirmed the flat-geometry finding above and added one: **Inventory is the
-  only context-split family** in `windowSizesAndPositions_1`, and its three
-  copies have already drifted apart on a real character. The in-game capture is
-  no longer blocking — the mapping ships as a curated ~15-entry exclusives table
-  where an unlisted id falls through to "shows in both".
+  **Done 2026-07-30.** Shipped as a two-environment view filter (docked / in
+  space) on `WindowFilter`, with a curated exclusives table in
+  `windowLabels.ts` where an unlisted id shows in both views. Inventory — the
+  only context-split family in the geometry dict — folds to one rectangle in
+  the docked view and fans a drag onto both copies. Still open, deliberately:
+  splitting NPC station from player structure, per-window user overrides of
+  the env table, and the in-game dock/undock capture that would replace the
+  curated mapping with a measured one (live-verification item 35). The
+  in-game by-eye verification of this view filter has not yet been done.
 
 - [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
   dragged out of a stack, which can leave the stack with a single member. The
