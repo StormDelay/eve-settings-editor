@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-30
+
+A debt-clearing release: the small-tasks ledger went from 30 open items to 15,
+and most of what came out of it was smaller than its entry claimed — three
+things filed as harmless turned out to be real (an autofill hint that gave false
+advice offline, a batch selection that could be wiped a moment after the view
+opened, and a cycle guard that still overflowed the stack on a cycle through a
+list). New: a Discard button, and autofill lists that are named after what they
+are rather than after EVE's widget scaffolding.
+
+**One change writes to your settings files in a new way.** "Window layout" now
+carries all nine HUD fields, four of which live in the account file, so a copy
+reaches every character on the target's account and resets a field the source
+leaves at EVE's default. That change has not been through an in-game smoke yet —
+the editor still backs up every file before writing it, and the batch preview
+names the characters it will touch.
+
 ### Changed
 - **Saving an `Everything` preset now says what it captures.** The warning that
   a full preset carries your autofill history — station names, searches and
