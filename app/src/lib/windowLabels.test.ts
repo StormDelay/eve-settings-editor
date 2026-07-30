@@ -254,15 +254,24 @@ const check = (name: string, ok: boolean) => {
   check("the d-scan window is hidden when docked", !inEnv("directionalScannerWindow", "docked"));
 
   // A family entry covers the bare parent AND every spawned instance, so
-  // `ShipCargo_<itemID>` needs no entry of its own.
-  check("a spawned instance follows its family", inEnv("ShipCargo_1033391582929", "space"));
-  check("a spawned instance is hidden in the other env", !inEnv("ShipCargo_1033391582929", "docked"));
+  // `overview_<N>` needs no entry of its own.
   check("a numbered overview follows its family", inEnv("overview_1", "space"));
   check("a numbered overview is hidden when docked", !inEnv("overview_1", "docked"));
 
   // Unlike isClutter there is no `detail !== ""` requirement: for environment
   // purposes a spawned instance and its bare parent are in the same place.
-  check("the bare parent is in the same env as its instances", inEnv("ShipCargo", "space"));
+  check("the bare parent is in the same env as its instances", inEnv("overview", "space"));
+
+  // ShipCargo/ShipDroneBay were deliberately NOT put in SPACE_ONLY: a docked
+  // player can open the active ship's cargo hold and drone bay from the
+  // station hangar, so hiding them while docked would have been the exact
+  // failure direction the safe-failure invariant forbids. They fail safe into
+  // both views, same as any other unlisted window — pinned here so a future
+  // "tidy" of the tables can't quietly re-add them.
+  check("ShipCargo shows in both views, not space-only", inEnv("ShipCargo", "docked") && inEnv("ShipCargo", "space"));
+  check("a spawned ShipCargo instance shows in both views too",
+    inEnv("ShipCargo_1033391582929", "docked") && inEnv("ShipCargo_1033391582929", "space"));
+  check("ShipDroneBay shows in both views, not space-only", inEnv("ShipDroneBay", "docked") && inEnv("ShipDroneBay", "space"));
 
   // THE safe-failure property. If someone later "tidies" the tables into a
   // total mapping, this is what catches it.
