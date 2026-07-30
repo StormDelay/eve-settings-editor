@@ -110,6 +110,9 @@ button:hover { border-color: var(--accent); }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .spacer { flex: 1; }
 .save { border-color: var(--accent); }
+/* Sits beside the "unsaved" badges, and is the destructive half of that pair —
+   bordered like the danger buttons elsewhere rather than shouting in red. */
+.discard { border-color: var(--danger); font-size: 0.85em; padding: 1px 8px; }
 /* Disabled buttons read as greyed everywhere (e.g. Rename/Delete on a read-only
    built-in preset), not just the Save button. */
 button:disabled { opacity: 0.4; cursor: default; }

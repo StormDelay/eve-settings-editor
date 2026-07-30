@@ -21,6 +21,7 @@
     userSlotFor,
     charSlotFor,
     sharedWith,
+    slotsToReload,
   } from "$lib/overview";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -202,6 +203,35 @@
       `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
       { title: "Unsaved changes", kind: "warning" },
     );
+  }
+
+  /// Throw the unsaved edits away and re-read the open file(s) from disk.
+  ///
+  /// Both slots, even when only one is dirty: the editors write to both — an
+  /// overview edit touches the account's tabs and the character's column widths
+  /// — so reverting one would leave a half-reverted pair. The button says so.
+  ///
+  /// This is a RE-READ, not a restore: nothing in the backup chain is touched,
+  /// and the view, the selection and an open preset all stay where they are,
+  /// because exactly the files that were open are the files reopened.
+  async function discardChanges() {
+    if (!dirtySlots.char && !dirtySlots.user) return;
+    const targets = slotsToReload(slots);
+    if (targets.length === 0) return;
+    const ok = await ask(
+      "Discard your unsaved changes and reload from disk? Both the character and the account file are reloaded, and your backups are untouched.",
+      { title: "Discard changes", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      const reopened = await Promise.all(targets.map((t) => api.open(t.slot, t.path)));
+      targets.forEach((t, i) => (slots[t.slot] = reopened[i]));
+      dirtySlots.char = false;
+      dirtySlots.user = false;
+      savedAt += 1;
+    } catch (e) {
+      await message(errMessage(e), { title: "Discard failed", kind: "error" });
+    }
   }
 
   async function openFile(path: string) {
@@ -484,6 +514,13 @@
         {:else}
           {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
           {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
+        {/if}
+        {#if dirtySlots.char || dirtySlots.user}
+          <button
+            class="discard"
+            onclick={discardChanges}
+            title="Throw the unsaved changes away and reload both files from disk. Backups are untouched."
+            >Discard</button>
         {/if}
         {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
           <span class="viewtabs">

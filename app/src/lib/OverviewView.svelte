@@ -98,8 +98,13 @@
     if (!name) return;
     try {
       if (p.kind === "createTab") {
-        // No overview windows: currentWindowIndex is null; window 0 is a sentinel
-        // the backend ignores for a windowless account (it distributes by default).
+        // `currentWindowIndex` is null in two different situations, and 0 is the
+        // right answer to both. A windowless account ignores the argument
+        // entirely — the backend refuses to fabricate a mapping and EVE
+        // distributes tabs itself. An account that HAS windows but whose
+        // selected tab belongs to none of them (the "Other" group) gets the new
+        // tab in window 0: arbitrary, but visible and movable, where refusing
+        // would leave the New button dead for a selection that looks ordinary.
         const before = new Set(data?.tabs.map((t) => t.index) ?? []);
         data = await api.tabCreate(currentWindowIndex ?? 0, name, tabIndex);
         // Select whichever index is NEW rather than the highest one: the

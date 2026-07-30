@@ -7,6 +7,7 @@ import {
   userSlotFor,
   charSlotFor,
   sharedWith,
+  slotsToReload,
 } from "./overview.ts";
 import type { AccountRoster, Profile } from "./api.ts";
 
@@ -121,5 +122,24 @@ check(
   "sharedWith excludes nobody when the current character is not on the account",
   sharedWith(456, 999, roster, (id) => (id === 123 ? "A" : id === 124 ? "B" : String(id))).join(",") === "A,B",
 );
+
+// A discard re-reads BOTH open slots, whichever one is dirty: the editors write
+// to both, so reloading one would leave a half-reverted pair.
+const opened = (path: string) => ({ status: "opened", path });
+check(
+  "a discard reloads both open slots",
+  JSON.stringify(slotsToReload({ char: opened("c.dat"), user: opened("u.dat") })) ===
+    JSON.stringify([{ slot: "char", path: "c.dat" }, { slot: "user", path: "u.dat" }]),
+);
+check(
+  "a discard reloads only what is open",
+  JSON.stringify(slotsToReload({ char: opened("c.dat"), user: null })) ===
+    JSON.stringify([{ slot: "char", path: "c.dat" }]),
+);
+check(
+  "a slot that failed to parse holds nothing to revert",
+  slotsToReload({ char: { status: "parse_failed", path: "c.dat" }, user: null }).length === 0,
+);
+check("nothing open, nothing to reload", slotsToReload({ char: null, user: null }).length === 0);
 
 console.log("overview: all checks passed");
