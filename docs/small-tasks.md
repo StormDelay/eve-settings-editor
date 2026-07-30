@@ -13,16 +13,18 @@ Workflow:
 
 ## Open
 
-- [ ] **Draggable chat splits and overview column edges on the canvas.** The
-  detail layer draws the chat member-list width, the chat input height and the
-  overview column widths from their real stored values, but they are decoration
-  — `DetailParts.svelte` is `pointer-events: none` by design. Making them
-  draggable needs a `chat.rs` setter (the projection is read-only today),
-  `set_overview_width` wired into the Layout view (it exists, but only the
-  Overview view calls it), new `Drag` variants in `LayoutView.svelte`, and
-  hit-test exclusions so a split drag does not start a window move underneath.
-  Split out of the detail-layer slice, which shipped the read half.
-  _Added 2026-07-30._
+- [ ] **Draggable splits and column edges on the canvas.** The chat splits are
+  now editable as numeric fields on the selected window (2026-07-30), but not by
+  dragging the splitter on the canvas, and the overview column widths are still
+  editable only from the Overview view. Dragging was considered and dropped
+  twice over: `DetailParts.svelte` is `pointer-events: none` by construction —
+  the one declaration that stops decoration swallowing a canvas gesture, pinned
+  by a test — so a splitter drag means punching a hole in it, adding `Drag`
+  variants and adding hit-test exclusions; and at a typical canvas scale of ~0.3
+  a chat window's input band is about 19 screen px tall, which is not a drag
+  target. Worth revisiting only if the canvas gains a zoom. Wiring
+  `set_overview_width` into the Layout view is the smaller, independent half.
+  _Added 2026-07-30, narrowed from the detail layer's original entry._
 
 - [ ] **The overview and chat internals have never been measured.** Most of
   `detail.ts`'s `DETAIL_NOMINAL` is invented, but not all of it: the ability

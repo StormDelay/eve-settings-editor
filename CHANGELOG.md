@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Edit a chat window's member list and input box.** Selecting a chat window in
+  the Layout view now offers its member-list width and input-box height, with
+  the chat history area it leaves shown alongside — and a button to apply both
+  to every channel in the same chat stack at once. These are account-wide
+  settings, shared with your other characters on that account, and the panel
+  says so. If a width is too wide for the window on the character you are
+  looking at, the history area is shown negative rather than quietly clamped:
+  the same setting can fit one character's chat window and overflow another's.
 - **A `Detail` toggle that draws what is inside each rectangle on the layout
   canvas.** The canvas has always drawn blank boxes, so a correctly-placed
   overview window still told you nothing about what it holds. With Detail on,
