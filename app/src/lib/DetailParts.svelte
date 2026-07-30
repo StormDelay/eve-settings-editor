@@ -7,6 +7,10 @@
   /** A label is only worth drawing when it has room to be read. Below this it
    * is dropped rather than ellipsised — a row of "…" is noise, not information. */
   const LABEL_MIN = 28;
+
+  /** The capacitor gauge band's thickness as a fraction of its diameter: the
+   * measured band spans r 50..80, so 30 of the 160 across. See detail.ts's CAP. */
+  const ARC_BAND = 30 / 160;
 </script>
 
 <!-- pointer-events: none is the ONE mechanism that keeps this layer decoration:
@@ -18,7 +22,8 @@
     <div
       class="part {p.kind}"
       style="left: {toCanvas(p.x, scale)}px; top: {toCanvas(p.y, scale)}px;
-             width: {w}px; height: {toCanvas(p.h, scale)}px;">
+             width: {w}px; height: {toCanvas(p.h, scale)}px;
+             {p.kind === 'arc' ? `border-width: ${Math.max(1, w * ARC_BAND)}px;` : ''}">
       {#if p.label && w > LABEL_MIN}<span>{p.label}</span>{/if}
     </div>
   {/each}
@@ -40,8 +45,30 @@
     overflow: hidden;
     white-space: nowrap;
   }
-  .ring {
+  /* EVE's HUD buttons are round — module slots and the ship-control cluster
+     alike. Drawing them as rectangles was most of why the HUD read as "boxes in
+     a box" rather than a ship HUD. */
+  .ring,
+  .slot,
+  .core {
     border-radius: 50%;
+  }
+  /* The capacitor's gauge band: shield/armour/hull ticks sweeping 9 o'clock
+     through 12 to 3, with the dark speed dial below. A thick-bordered circle
+     clipped to its top half — the border thickness IS the annulus, so no SVG
+     and no second element. The thickness is set inline, because border-width
+     cannot take a percentage and this has to scale with the canvas. */
+  .arc {
+    border-style: solid;
+    border-color: rgba(148, 163, 184, 0.5);
+    border-radius: 50%;
+    clip-path: inset(0 0 50% 0);
+  }
+  /* The capacitor core reads as the one lit thing on the element, which is what
+     the eye finds first on the real HUD. */
+  .core {
+    background: rgba(245, 158, 11, 0.45);
+    border-color: rgba(245, 158, 11, 0.7);
   }
   /* The two data-driven bands read as panels, not outlines — they are the parts
      whose SIZE is the information. */

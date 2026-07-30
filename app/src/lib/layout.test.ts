@@ -623,7 +623,11 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const ship = hudRects(hud, layout2560).find((f) => f.kind === "shipui")!;
 
   check("the ship HUD's left edge sits 148px left of the anchor", ship.x === 490);
-  check("its right edge covers the widest slot row", ship.x + ship.w === 1133);
+  // 1133 until 2026-07-30, when the same screenshot was re-measured by
+  // brightness profile for the detail layer: the 8-slot row's last button spans
+  // 1094..1137, so the element's right edge is 1138. The old figure came from
+  // `245 + 50 x 8`, which mixes a pitch with a button width — see HUD_NOMINAL.
+  check("its right edge covers the widest slot row", ship.x + ship.w === 1138);
   check("its top clears the screen edge by the measured margin", ship.y === 28);
   check("its bottom edge, 160px below the top", ship.y + ship.h === 188);
 
