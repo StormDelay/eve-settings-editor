@@ -122,10 +122,12 @@ export function stackUnits(layout: WindowLayout, visible: Set<string> | null = n
 }
 
 /** How many windows a set of draw units actually paints: a stack unit draws one
- * rectangle but represents each of its visible tabs, a free unit exactly one.
- * The counter reports windows, not rectangles — "showing 3 of 68 windows". */
+ * rectangle but represents each of its visible tabs, a free unit ordinarily
+ * exactly one — except the folded Inventory unit `linkInventory` produces,
+ * whose `tabs` carries both merged ids, so it counts 2. The counter reports
+ * windows, not rectangles — "showing 3 of 68 windows". */
 export function drawnWindowCount(units: DrawUnit[]): number {
-  return units.reduce((n, u) => n + (u.stack ? u.tabs.length : 1), 0);
+  return units.reduce((n, u) => n + Math.max(u.tabs.length, 1), 0);
 }
 
 /**
@@ -136,7 +138,7 @@ export function drawnWindowCount(units: DrawUnit[]): number {
  * three separate ids with three separate geometries in the otherwise-flat
  * `windowSizesAndPositions_1`. On a real character they have drifted apart
  * (624,260 623x450 vs 136,285 880x619), so the docked view would paint two
- * rectangles 488px apart for what the player thinks of is one window.
+ * rectangles 488px apart for what the player thinks of as one window.
  *
  * In `docked` the structure copy is dropped as its own unit and appended to the
  * station copy's `fanTargets` — which is already "every window a coherent move
@@ -159,7 +161,15 @@ export function linkInventory(units: DrawUnit[], env: Env): DrawUnit[] {
   // stacked copy already fans to its stack, and merging across stacks is out
   // of scope). The survivor draws on its own.
   if (!station || !structure) return units;
-  const linked = { ...station, fanTargets: [...station.fanTargets, ...structure.fanTargets] };
+  // tabs, not just fanTargets: every selection consumer (the panel row, the
+  // canvas highlight, resize handles, arrow-key nudge) keys off anchor.id or
+  // tabs, so a station-only tabs array would leave the structure row selectable
+  // in the panel but inert on the canvas.
+  const linked = {
+    ...station,
+    tabs: [...station.tabs, ...structure.tabs],
+    fanTargets: [...station.fanTargets, ...structure.fanTargets],
+  };
   return units.filter((u) => u !== structure).map((u) => (u === station ? linked : u));
 }
 
