@@ -997,6 +997,9 @@
   .furniture-label {
     padding: 1px 3px;
     pointer-events: none;
+    /* Above the detail layer, which is an absolutely-positioned sibling. */
+    position: relative;
+    z-index: 1;
   }
   .win {
     position: absolute;
