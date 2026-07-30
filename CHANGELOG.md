@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-31
+
+The layout canvas stops drawing blank boxes. With the new `Detail` toggle on,
+each rectangle shows what is actually inside it — and the chat windows' splits,
+newly drawn, are also newly editable.
+
+Most of this was measurement rather than code. The ship HUD and fighter panel
+are drawn from native screenshots measured by brightness profile, and that pass
+found three things the editor had been getting wrong since the footprints
+landed: the buttons are round rather than rectangular, the middle module rack row
+is staggered half a pitch against the outer two, and the ship-control cluster
+left of the capacitor was never drawn at all. It also corrected the boxes
+themselves — see **Fixed**, because that part changes where your windows snap.
+
+**The chat splits are the first thing the Layout view writes to your account
+file.** They are account-wide, so an edit affects every character on that
+account, and the panel names the siblings before you change anything. The edit
+lands in the open document as usual: Discard or a backup restore is the way back.
+
+**Not smoke-tested against a running client.** Both features were driven in the
+app, but the check lists in `docs/superpowers/plans/` were not walked end to end.
+
 ### Added
 - **Edit a chat window's member list and input box.** Selecting a chat window in
   the Layout view now offers its member-list width and input-box height, with
@@ -21,9 +43,11 @@ All notable changes to this project are documented here. The format follows
   the ship HUD shows its capacitor ring and module racks, the fighter panel its
   ability grid and squadron row, the neocom your actual buttons in your actual
   order, each overview window its real tabs and its real columns at their
-  stored widths — so a column set too wide for its window is now visible as
-  columns running off the edge — and each chat window its member-list and input
-  splits. The HUD and fighter geometry is measured from the client; the rest
+  stored widths, and each chat window its member-list and input splits. Columns
+  are drawn the way EVE draws them: as many as fit on the line, and a column
+  that does not fit is not shown at all — so an over-provisioned column set
+  reads as columns *missing* from the picture, which is what you see in game.
+  The HUD and fighter geometry is measured from the client; everything else
   comes from your own settings. It is decoration only: nothing here can be
   dragged, and nothing snaps to it.
 - **Right-click the layout canvas to pick a window out from under another.**
@@ -32,6 +56,23 @@ All notable changes to this project are documented here. The format follows
   carries hundreds of windows. Right-clicking a spot now lists everything
   drawn at it, topmost first, with the screen furniture after the windows;
   picking one selects it and brings it to the front.
+
+### Fixed
+- **The ship HUD and fighter panel footprints were the wrong size, so windows
+  snapped to the wrong edges.** Re-measuring them found the ship HUD box 5px too
+  narrow and 16px too short, sitting 16px too low when top-aligned, and the
+  fighter panel 11px too short. Windows snapping against those elements now land
+  on the element's real edge instead of just inside it. **If you have windows
+  carefully snapped against the ship HUD or the fighter panel, they will sit a
+  few pixels differently after this release** — that is the correction, not a
+  regression.
+
+  The errors had a common cause worth naming: each box had been sized from the
+  parts the editor happened to draw rather than from the element. The ship HUD's
+  height came from its module racks, so it missed the capacitor overhanging them;
+  the fighter panel's came from the squadron labels, so it missed the control
+  column below. Both are now measured against the element and checked in both
+  screen alignments.
 
 ## [0.24.0] - 2026-07-30
 
