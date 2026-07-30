@@ -334,6 +334,18 @@
       <input type="checkbox" bind:checked={filter.hideClutter} />
       Hide clutter
     </label>
+    <div
+      class="envs"
+      role="radiogroup"
+      aria-label="Environment"
+      title="Shows only the windows that exist in one environment. Station and player structure are one “Docked” view — EVE stores a single position per window, so this filters the picture, it does not switch layouts. A window the editor does not recognise shows in both.">
+      {#each [["all", "All"], ["docked", "Docked"], ["space", "In space"]] as const as [value, label]}
+        <label class="toggle">
+          <input type="radio" name="env" {value} bind:group={filter.env} />
+          {label}
+        </label>
+      {/each}
+    </div>
   </div>
   {#if orphanCount > 0 && !readOnly}
     <div class="orphans">
@@ -513,6 +525,10 @@
   }
   .toggle input {
     margin: 0;
+  }
+  .envs {
+    display: flex;
+    gap: 0.6rem;
   }
   .row {
     border-bottom: 1px solid var(--border);
