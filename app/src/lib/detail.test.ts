@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail } from "./detail.ts";
-import { HUD_NOMINAL } from "./layout.ts";
+import { HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect } from "./api.ts";
 import type { DrawUnit } from "./layout.ts";
 
@@ -13,34 +13,75 @@ const check = (name: string, ok: boolean) => {
 };
 
 // --- ship HUD --------------------------------------------------------------
+// Every number below is MEASURED (2026-07-30, hud_battleship.png and
+// hud_frigate.png at native 2560x1440) — see format-notes.md, "Ship HUD
+// internals". These checks are what stop a future edit from quietly reverting
+// the shape to the invented rectangles it started as.
 {
   const parts = shipHudParts();
-  const ring = parts.filter((p) => p.kind === "ring");
-  const slots = parts.filter((p) => p.kind === "slot");
+  const circles = parts.filter((p) => p.kind === "slot");
+  const rings = parts.filter((p) => p.kind === "ring");
+  const arc = parts.filter((p) => p.kind === "arc");
+  const core = parts.filter((p) => p.kind === "core");
 
-  check("one capacitor ring", ring.length === 1);
-  // Measured: the ring spans x 73..231, so it is 158 wide and its left edge is
-  // at 73 — NOT centred on the box.
-  check("the ring sits at the measured span", ring[0].x === 73 && ring[0].w === 158);
-  check("the ring is round", ring[0].h === ring[0].w);
+  // --- capacitor: four concentric pieces about box (148, 72) ---------------
+  check("the capacitor has an outer rim and an inner ring", rings.length === 2);
+  check("one gauge arc", arc.length === 1);
+  check("one core", core.length === 1);
+  const centred = (p: { x: number; y: number; w: number; h: number }) =>
+    p.x + p.w / 2 === 148 && p.y + p.h / 2 === 72;
+  check("every capacitor piece is centred on the anchor", [...rings, ...arc, ...core].every(centred));
+  check("every capacitor piece is round", [...rings, ...arc, ...core].every((p) => p.w === p.h));
+  // Measured r 80 outer, r 42 inner ring, r 27 core — strictly nested.
+  const byR = [...rings, ...core].map((p) => p.w / 2).sort((a, b) => b - a);
+  check("the capacitor radii are the measured 80 / 42 / 27", byR.join(",") === "80,42,27");
+  // The anchor is the capacitor's centre, established twice by different
+  // methods. If SHIP_ANCHOR_LEFT ever moves, this is what notices.
+  check("the capacitor centre is SHIP_ANCHOR_LEFT", rings[0].x + rings[0].w / 2 === SHIP_ANCHOR_LEFT);
 
-  check("8 columns x 3 rows of module slots", slots.length === 24);
-  // Measured: first slot x 245, column pitch 50.
-  const row0 = slots.filter((p) => p.y === 2).sort((a, b) => a.x - b.x);
-  check("the first slot is at the measured x", row0[0].x === 245);
-  check("slots step by the measured column pitch", row0[1].x - row0[0].x === 50);
-  // Measured verbatim, NOT as an averaged pitch: 2 -> 50 is 48, 50 -> 94 is 44.
-  const tops = [...new Set(slots.map((p) => p.y))].sort((a, b) => a - b);
-  check("the three row tops are the measured ones", tops.join(",") === "2,50,94");
+  // --- module racks: round buttons on a staggered grid ---------------------
+  const rackTops = [4, 48, 92];
+  const rack = circles.filter((p) => rackTops.includes(p.y));
+  // 8 + 7 + 8: the staggered middle row sits half a pitch in, so it carries one
+  // fewer and still spans the same width.
+  check("8 / 7 / 8 module slots", rack.length === 23);
+  check("module slots are round", rack.every((p) => p.w === 44 && p.h === 44));
 
-  // The whole point of the measured box: everything drawn inside it must fit.
-  // The ring is the one exception — its measured centre puts it 5px above the
-  // box top, which the rectangle's own `overflow: hidden` clips.
+  const row = (y: number) => rack.filter((p) => p.y === y).sort((a, b) => a.x - b.x);
+  const [r0, r1, r2] = rackTops.map(row);
+  check("rows carry 8, 7, 8", `${r0.length},${r1.length},${r2.length}` === "8,7,8");
+  check("the first slot is at the measured x", r0[0].x === 247);
+  check("slots step by the measured column pitch", r0[1].x - r0[0].x === 51);
+  check("the outer rows share one grid", r0.map((p) => p.x).join() === r2.map((p) => p.x).join());
+  // THE signature of EVE's rack: the middle row is staggered half a pitch.
+  // Confirmed on two ships at one offset — +25 both times.
+  check("the middle row is staggered half a pitch", r1[0].x - r0[0].x === 25);
+  check("rows are on a uniform 44 pitch", rackTops[1] - rackTops[0] === 44 && rackTops[2] - rackTops[1] === 44);
+
+  // --- ship-control cluster: two staggered columns, 4 then 3 ---------------
+  const cluster = circles.filter((p) => !rackTops.includes(p.y));
+  check("7 ship-control buttons", cluster.length === 7);
+  check("cluster buttons are round", cluster.every((p) => p.w === 30 && p.h === 30));
+  const colA = cluster.filter((p) => p.x === 0).sort((a, b) => a.y - b.y);
+  const colB = cluster.filter((p) => p.x === 30).sort((a, b) => a.y - b.y);
+  check("the cluster is 4 then 3", colA.length === 4 && colB.length === 3);
+  check("cluster columns are on a 32 pitch", colA[1].y - colA[0].y === 32);
+  check("the second cluster column is staggered half a step", colB[0].y - colA[0].y === 16);
+  // It is the leftmost thing drawn, which is what makes it define the box edge.
+  check("the cluster starts at the box's left edge", colA[0].x === 0);
+
+  // The point of correcting HUD_NOMINAL.shipui.w to 650: the widest rack row
+  // has to FIT the box it is drawn in. At the old 643 it did not.
   check(
-    "every slot lies inside the measured ship HUD box",
-    slots.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.shipui.w
-      && p.y >= 0 && p.y + p.h <= HUD_NOMINAL.shipui.h),
+    "every rack slot lies inside the measured ship HUD box",
+    rack.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.shipui.w),
   );
+  const rackRight = Math.max(...rack.map((p) => p.x + p.w));
+  check("the widest rack row reaches the measured 648", rackRight === 648);
+  // The capacitor is the one piece that overhangs: its measured centre and
+  // radius put it 8px above the box top, which `overflow: hidden` clips —
+  // exactly as EVE's own capacitor overhangs the rack block.
+  check("the capacitor overhangs the box top", rings[0].y < 0);
 }
 
 // --- fighter UI ------------------------------------------------------------

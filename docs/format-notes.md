@@ -924,6 +924,56 @@ Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
 `hudRects` ↔ `hudPointFromRect`), which a round-trip unit test pins together.
 
+### Ship HUD internals
+
+Measured **2026-07-30** for the canvas detail layer, off the same two native
+2560×1440 shots the 2026-07-28 pass used (`hud_battleship.png`,
+`hud_frigate.png`, offset −642, top-aligned) — but by **row/column brightness
+profile rather than by eye**, which is what makes these reproducible. Offsets are
+from the element's own top-left, i.e. the box `HUD_NOMINAL.shipui` describes.
+
+Two ships at one offset agree on every number below. That is what separates the
+element's structure from one ship's fitting.
+
+| Part | Geometry |
+|---|---|
+| Ship-control cluster | two columns at x 0 and 30, buttons ⌀30, vertical pitch 32; column A 4 buttons from y 24, column B **3 buttons from y 40** (half a step down) |
+| Capacitor | centred (148, 72); outer rim r 80, gauge band r 50..80 **top half only**, inner ring r 42, lit core r 27 |
+| Module racks | round buttons ⌀44, column pitch 51 from x 247, rows on a uniform 44 pitch from y 4 |
+| Rack stagger | the **middle row is offset +25**, half a pitch, and carries one fewer button |
+
+Three things this corrected, all of which had made the drawn HUD wrong:
+
+- **The buttons are round, not rectangular.** Module slots and ship-control
+  buttons alike. The detail layer drew 44×40 rectangles until this pass.
+- **The middle rack row is staggered.** Frigate: mid row at 762/813/864 against
+  outer rows at 737/788/839. Battleship: 813/915/966 against 788/890/941. Exactly
+  +25 on both. This brick pattern is the rack's visual signature.
+- **The ship-control cluster belongs to the HUD and was not drawn at all**,
+  leaving the left third of the box empty. 2026-07-28 already recorded it moving
+  by exactly the HUD's drag delta — that is how the 148px left extension was
+  established — but nothing ever drew it.
+
+Two corrections to earlier figures, both from measuring rather than deriving:
+
+- **Column pitch is 51, not 50, and the first column is at 247, not 245**, so the
+  8-slot row's right edge is `247 + 51 × 7 + 44 = 648`, not 643.
+  `HUD_NOMINAL.shipui.w` was 643 — derived as `245 + 50 × 8`, which mixes a pitch
+  with a button width — so the box was 5px narrow and windows snapped just inside
+  the real HUD. Corrected to 648.
+- **Row tops are 4 / 48 / 92, a uniform 44 pitch**, not the 2 / 50 / 94 recorded
+  above, which gave an uneven 48-then-44.
+
+The capacitor's outer radius is **80**, from sweeping a full circle at each
+radius and taking the mean: both ships peak sharply at r 80–81 and are back to
+background by r 90. An earlier reading off a 4× magnified crop put it at 86; the
+sweep is what corrected it. At r 80 the capacitor's top sits 8px **above** the
+box, which the element's own `overflow: hidden` clips — the same way the real
+capacitor overhangs the rack block. **The element's true vertical extent has not
+been re-measured**, so `SHIP_TOP_MARGIN` (28) and `HUD_NOMINAL.shipui.h` (160)
+are still the 2026-07-28 values; if the top margin is really ~20, the box is
+short by that overhang. Open.
+
 ### Chat window splits
 
 Corpus-verified 2026-07-30 against the full `testdata/corpus` tree (184 distinct

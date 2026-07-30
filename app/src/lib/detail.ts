@@ -17,7 +17,10 @@ import type { DrawUnit } from "./layout";
  * the position and the clipping.
  */
 export interface DetailPart {
-  kind: "ring" | "slot" | "cell" | "band" | "column" | "button";
+  /** `slot` and `ring` are circles, `arc` a half annulus (the capacitor's gauge
+   * band), `core` a filled disc; the rest are rectangles. The renderer keys its
+   * shape off this and nothing else. */
+  kind: "ring" | "arc" | "core" | "slot" | "cell" | "band" | "column" | "button";
   x: number;
   y: number;
   w: number;
@@ -40,8 +43,6 @@ export interface DetailPart {
  * 195px off its real position for three releases.
  */
 export const DETAIL_NOMINAL = {
-  /** Module slot cell, drawn inside the measured 50 x ~46 pitch. */
-  slot: { w: 44, h: 40 },
   /**
    * Fighter ability cell. The COLUMN pitch (86) is measured; the row pitch is
    * not — 3 rows spanning y 0..178 gives ~59.
@@ -71,51 +72,114 @@ export const DETAIL_NOMINAL = {
 };
 
 // --- ship HUD ---------------------------------------------------------------
-// MEASURED 2026-07-28, docs/format-notes.md "HUD anchors", internal-geometry
-// table. All offsets are from the element's own top-left.
+// MEASURED 2026-07-30 from the two native 2560x1440 shots the 2026-07-28 pass
+// used (hud_battleship.png, hud_frigate.png), by row/column brightness profile
+// rather than by eye — see docs/format-notes.md, "Ship HUD internals". Every
+// offset is from the element's own top-left, i.e. the box HUD_NOMINAL.shipui
+// describes. Two ships at one offset agree on every number below, which is what
+// separates structure from one ship's fitting.
 
-/** Capacitor ring: spans x 73..231 (diameter ~158), centred on y ~74. */
-const RING = { left: 73, diameter: 158, centreY: 74 };
-/** Module slots: first slot x 245, column pitch 50, 8 columns x 3 rows max. */
-const SLOTS = { firstX: 245, pitchX: 50, cols: 8 };
 /**
- * Row tops used VERBATIM, not as a pitch: 2 -> 50 is 48 and 50 -> 94 is 44, so
- * a single averaged pitch would be wrong on two of the three rows.
+ * The capacitor assembly, as concentric radii about its centre.
+ *
+ * The centre IS the element's anchor point: box-relative (148, 72) here, against
+ * `SHIP_ANCHOR_LEFT = 148` derived independently in 2026-07-28's colour-isolation
+ * pass. Two methods, same pixel.
+ *
+ * `outer` came from sweeping a full circle at each radius and taking the mean:
+ * both ships peak sharply at r 80-81 and are back to background by r 90. (An
+ * earlier read of a magnified crop put it at 86 — the sweep is what corrected
+ * it, and it is why this is measured rather than eyeballed.)
+ *
+ * `gauge` is the shield/armour/hull tick band, and it covers the TOP HALF ONLY:
+ * the arcs sweep 9 o'clock through 12 to 3, and the bottom half is the dark
+ * speed dial. That asymmetry is most of the shape's signature, so it is drawn
+ * as a half annulus rather than approximated with a full ring.
  */
-const SLOT_ROW_TOPS = [2, 50, 94];
+const CAP = { cx: 148, cy: 72, outer: 80, gaugeInner: 50, innerRing: 42, core: 27 };
+
+/**
+ * Module slots. Round buttons of diameter 44 on a column pitch of 51, first
+ * column at x 247, rows on a uniform 44 pitch from y 4.
+ *
+ * `rowOffset` is the one that makes it read as EVE: the middle row is staggered
+ * half a pitch against the outer two. Confirmed independently on both ships —
+ * the frigate's mid row sits at 762/813/864 against its outer rows' 737/788/839,
+ * the battleship's at 813/915/966 against 788/890/941. Exactly +25 both times.
+ *
+ * The count is the MAXIMUM, because slot count is ship-dependent and no settings
+ * file records it. The staggered row gets one fewer: sitting half a pitch in, 7
+ * spans the same width the outer rows' 8 do, which is exactly how it looks.
+ */
+const SLOTS = { firstX: 247, pitchX: 51, diameter: 44, rowTop: 4, rowPitch: 44, cols: 8, rowOffset: 25 };
+
+/**
+ * The ship-control button cluster left of the capacitor — the part that was
+ * missing entirely, leaving the left third of the box empty. It belongs to the
+ * HUD: 2026-07-28 recorded it moving by exactly the HUD's drag delta, which is
+ * how the 148px left extension was established in the first place.
+ *
+ * Two staggered columns, 4 then 3, on a 32px vertical pitch with the second
+ * column half a step down — the same brick motif as the racks. Measured column A
+ * at box x -2, clamped to 0: it is the leftmost thing drawn, so it defines the
+ * box edge, and 2px is inside the anchor's own stated tolerance.
+ */
+const CLUSTER = {
+  diameter: 30,
+  rowPitch: 32,
+  columns: [
+    { x: 0, top: 24, rows: 4 },
+    { x: 30, top: 40, rows: 3 },
+  ],
+};
 
 /**
  * The ship HUD's internals. Constant: the box is fixed (HUD_NOMINAL.shipui) and
  * none of this is in any settings file.
  *
- * The slot count is the MAXIMUM (8), because it is ship-dependent and nothing
- * records it — and because the box's measured width was derived from it
- * (245 + 50 x 8 = 643). Drawing fewer would under-draw the footprint the canvas
- * already reserves.
+ * Order matters only for painting: the capacitor's pieces are emitted outermost
+ * first so the core lands on top of the dial.
  */
 export function shipHudParts(): DetailPart[] {
+  const disc = (r: number, kind: DetailPart["kind"]): DetailPart =>
+    ({ kind, x: CAP.cx - r, y: CAP.cy - r, w: r * 2, h: r * 2 });
+
   const out: DetailPart[] = [
-    {
-      kind: "ring",
-      x: RING.left,
-      // The measured centre puts the ring 5px above the box top. That is not a
-      // transcription slip — the element's own `overflow: hidden` clips it, the
-      // same way EVE's capacitor overhangs the rack block.
-      y: RING.centreY - RING.diameter / 2,
-      w: RING.diameter,
-      h: RING.diameter,
-    },
+    // The outer rim, then the tick band as a half annulus (its border thickness
+    // is what fills r gaugeInner..outer), then the metallic inner ring, then the
+    // bright core.
+    disc(CAP.outer, "ring"),
+    disc(CAP.outer, "arc"),
+    disc(CAP.innerRing, "ring"),
+    disc(CAP.core, "core"),
   ];
-  for (const top of SLOT_ROW_TOPS) {
-    for (let c = 0; c < SLOTS.cols; c++) {
+
+  for (let row = 0; row < 3; row++) {
+    const staggered = row === 1;
+    const cols = staggered ? SLOTS.cols - 1 : SLOTS.cols;
+    for (let c = 0; c < cols; c++) {
       out.push({
         kind: "slot",
-        x: SLOTS.firstX + SLOTS.pitchX * c,
-        y: top,
-        ...DETAIL_NOMINAL.slot,
+        x: SLOTS.firstX + (staggered ? SLOTS.rowOffset : 0) + SLOTS.pitchX * c,
+        y: SLOTS.rowTop + SLOTS.rowPitch * row,
+        w: SLOTS.diameter,
+        h: SLOTS.diameter,
       });
     }
   }
+
+  for (const { x, top, rows } of CLUSTER.columns) {
+    for (let i = 0; i < rows; i++) {
+      out.push({
+        kind: "slot",
+        x,
+        y: top + CLUSTER.rowPitch * i,
+        w: CLUSTER.diameter,
+        h: CLUSTER.diameter,
+      });
+    }
+  }
+
   return out;
 }
 

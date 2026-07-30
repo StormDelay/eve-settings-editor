@@ -249,15 +249,23 @@ export const SHIP_BOTTOM_MARGIN = 12;
  * far left while missing 152px of module rack on the right.
  *
  * `shipui` covers the widest possible rack: the battleship shot's widest row
- * already carries the maximum 8 slots (pitch ~50), so 643 is a measured maximum
- * rather than an extrapolation.
+ * already carries the maximum 8 slots, so this is a measured maximum rather
+ * than an extrapolation.
+ *
+ * The width was 643 until 2026-07-30, when the racks were re-measured by
+ * brightness profile rather than by eye for the detail layer: the buttons sit
+ * on a pitch of 51 (not 50) starting at x 247 (not 245), so the 8th ends at
+ * `247 + 51 x 7 + 44 = 648` — the measured right edge, not a rounded one.
+ * The old 643 came from the arithmetic `245 + 50 x 8`, which mixes a pitch with
+ * a button width and lands 5px short, so windows snapped just inside the real
+ * HUD. See docs/format-notes.md, "Ship HUD internals".
  *
  * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
  * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
  * to the measured 381. Height does not change with squadron count.
  */
 export const HUD_NOMINAL = {
-  shipui: { w: 643, h: 160 },
+  shipui: { w: 648, h: 160 },
   fighter: { w: 467, h: 253 },
   badge: { w: 32, h: 32 },
 };
