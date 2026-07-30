@@ -322,6 +322,9 @@
       onDirty("user");
     } catch (e) {
       await message(errMessage(e), { title: "Chat layout edit failed", kind: "error" });
+      // A refused value (a typed negative, the reachable case) must not stay
+      // on screen as if it had been stored — re-read what is actually there.
+      chats = await api.chatPanels().catch(() => chats);
     }
   }
 
@@ -944,6 +947,7 @@
         onClutterOverride={setClutterOverride}
         {chats}
         {accountReadOnly}
+        {userOpen}
         {sharedNames}
         onSetChatSplits={setChatSplits}
         bind:filter

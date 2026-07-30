@@ -48,11 +48,13 @@
     <label>
       Member list
       <input type="number" min="0" value={panel?.userlist_width ?? ""} disabled={readOnly}
+        title={readOnly ? "Not present in this file" : undefined}
         onchange={edit("userlist")} />
     </label>
     <label>
       Input box
       <input type="number" min="0" value={panel?.input_height ?? ""} disabled={readOnly}
+        title={readOnly ? "Not present in this file" : undefined}
         onchange={edit("input")} />
     </label>
   </div>
