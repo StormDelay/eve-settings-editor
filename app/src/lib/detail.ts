@@ -29,45 +29,27 @@ export interface DetailPart {
 }
 
 /**
- * ponytail: every number here is INVENTED, EXCEPT `abilityCell.w` and
- * `squadCell.w` — those two are DERIVED from the measured fighter panel width
- * (`70 + 86*4 + 53 = 467` and `43 + 86*4 + 80 = 467`, see their own comments
- * below) and pinned by assertions in detail.test.ts. Correcting the invented
- * ones is a one-line edit each. They are the sizes of things drawn inside a
- * measured pitch, plus the overview chrome, which has never had a measuring
- * pass. Upgrade path: a screenshot session like the 2026-07-28 one that
- * produced the measured table below, then move each corrected value out of
- * this object and into a named constant citing format-notes.md.
+ * ponytail: what is left here is INVENTED. Correcting each is a one-line edit,
+ * and the upgrade path is a measuring pass like the 2026-07-30 one — take a
+ * native screenshot, profile it, then move the corrected value OUT of this
+ * object into a named constant citing format-notes.md.
+ *
+ * That pass has already emptied most of this object. The ship HUD, the fighter
+ * panel and the overview chrome all used to live here; every one of them turned
+ * out to be materially wrong (rectangles that are really circles, a rack row
+ * that is really staggered, chrome bands ~60% too short), which is the argument
+ * for keeping the two kinds of number strictly apart.
  *
  * The distinction matters. HUD_NOMINAL's invented 686x250 drew the ship HUD
  * 195px off its real position for three releases.
  */
 export const DETAIL_NOMINAL = {
-  /**
-   * Fighter ability cell. The COLUMN pitch (86) is measured; the row pitch is
-   * not — 3 rows spanning y 0..178 gives ~59.
-   *
-   * The WIDTH is not free: at the 5-column maximum the last column starts at
-   * `70 + 86 x 4 = 414`, and the measured panel is 467 wide, so 53 is what
-   * reaches the right edge exactly. Anything wider draws outside the box.
-   */
-  abilityCell: { w: 53, h: 52 },
-  abilityRowPitch: 59,
-  /**
-   * Fighter squadron cell, on the same measured 86 column pitch. Same
-   * derivation: `43 + 86 x 4 = 387`, and `387 + 80 = 467`. That both rows land
-   * on 467 from different origins is the check that the measured table and
-   * HUD_NOMINAL.fighter agree.
-   */
-  squadCell: { w: 80, h: 70 },
   /** The EVE-menu button at the top of the neocom. It is not in
    *  neocomButtonRawData, so the button column starts below it. */
   neocomTop: 40,
-  /** Overview chrome. Never measured. */
-  tabStrip: 18,
-  headerBand: 16,
-  /** Width for an overview column whose width key is absent (= EVE's own
-   *  default, which the file does not record). */
+  /** Width for an overview column whose width key is absent. This one is not a
+   *  screenshot away: it is EVE's own built-in default, which the file does not
+   *  record and the client never shows as a number. */
   columnWidth: 80,
 };
 
@@ -184,32 +166,64 @@ export function shipHudParts(): DetailPart[] {
 }
 
 // --- fighter UI -------------------------------------------------------------
-// MEASURED 2026-07-28, same table: ability grid at x 70 / y 0, squadron row at
-// x 43 / y ~178, both on an 86px column pitch, 5 columns max (a carrier's
-// maximum squadron count, which is also what HUD_NOMINAL.fighter's width is).
+// MEASURED 2026-07-30 from fighter.png (native 2560x1440, anchor (329, 289),
+// 4 squadrons with 3 launched) by the same profile method as the ship HUD.
+// Offsets are from the anchor, which is the panel's left edge and the ability
+// grid's top. See docs/format-notes.md, "Fighter UI internals".
+//
+// Like the ship HUD, everything here is ROUND, and there is a control column on
+// the left that was not drawn at all.
 
-const FIGHTER = { abilityX: 70, squadX: 43, squadY: 178, pitch: 86, cols: 5, rows: 3 };
+const FIGHTER = {
+  /** Ability grid: ⌀44 buttons — the same size as the ship HUD's module slots —
+   * on the measured 86 column pitch from x 70, rows on a 50 pitch from y 2. */
+  abilityX: 70, abilityY: 2, abilityD: 44, abilityRowPitch: 50, rows: 3,
+  /** Squadron gauges: large ⌀81 dials on the same 86 pitch, from x 42. These are
+   * what set the panel's width — at the 5-squadron carrier maximum,
+   * `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
+   * stops short of that at 458, which is why the two are measured separately
+   * rather than one being derived from the other. */
+  squadX: 42, squadY: 152, squadD: 81,
+  /** Fighter control column, left of the squadron dials: 4 small ⌀24 buttons on
+   * a 32 pitch from y 148. Missing entirely until 2026-07-30. */
+  ctrlX: 4, ctrlY: 148, ctrlD: 24, ctrlPitch: 32, ctrlRows: 4,
+  /** Column pitch, shared by the ability grid and the squadron row. */
+  pitch: 86,
+  /** A carrier's maximum squadron count, and the maximum this can ever draw. */
+  cols: 5,
+};
 
 /** The fighter panel's internals. Constant, and maxima, for the same reasons
- * as shipHudParts. */
+ * as shipHudParts: squadron count is fitting-dependent and no file records it. */
 export function fighterParts(): DetailPart[] {
   const out: DetailPart[] = [];
   for (let r = 0; r < FIGHTER.rows; r++) {
     for (let c = 0; c < FIGHTER.cols; c++) {
       out.push({
-        kind: "cell",
+        kind: "slot",
         x: FIGHTER.abilityX + FIGHTER.pitch * c,
-        y: DETAIL_NOMINAL.abilityRowPitch * r,
-        ...DETAIL_NOMINAL.abilityCell,
+        y: FIGHTER.abilityY + FIGHTER.abilityRowPitch * r,
+        w: FIGHTER.abilityD,
+        h: FIGHTER.abilityD,
       });
     }
   }
   for (let c = 0; c < FIGHTER.cols; c++) {
     out.push({
-      kind: "cell",
+      kind: "ring",
       x: FIGHTER.squadX + FIGHTER.pitch * c,
       y: FIGHTER.squadY,
-      ...DETAIL_NOMINAL.squadCell,
+      w: FIGHTER.squadD,
+      h: FIGHTER.squadD,
+    });
+  }
+  for (let i = 0; i < FIGHTER.ctrlRows; i++) {
+    out.push({
+      kind: "slot",
+      x: FIGHTER.ctrlX,
+      y: FIGHTER.ctrlY + FIGHTER.ctrlPitch * i,
+      w: FIGHTER.ctrlD,
+      h: FIGHTER.ctrlD,
     });
   }
   return out;
@@ -238,6 +252,29 @@ export function neocomParts(bar: NeocomBar, w: number, h: number): DetailPart[] 
 }
 
 // --- overview ---------------------------------------------------------------
+// MEASURED 2026-07-30 off a real overview window in fighter.png (native
+// 2560x1440), the same profile method as the HUD. These were invented until
+// then, and both bands were roughly 60% short.
+//
+// Font-dependent: EVE's overview font size is configurable, so these are the
+// default. That is a ceiling worth knowing, not a reason to keep guessing.
+
+const OVERVIEW = {
+  /** Tab strip: text band measured at y 12..23, strip through to the header at
+   * ~34. Was an invented 18. */
+  tabStrip: 30,
+  /** Column header band: text at y 46..53, band ~34..60. Was an invented 16. */
+  headerBand: 26,
+  /** Tabs start clear of the window's leading overview-settings icon. */
+  tabsX: 52,
+  /** Approximate glyph advance and per-tab padding, from the measured strip:
+   * "Main" spans 22px over 4 characters and the next tab starts 59px on, "Exit!"
+   * 20px over 5 with the next 53 on. Approximate on purpose — the exact advance
+   * is a font metric the canvas has no way to know, and this is decoration. */
+  charWidth: 5.5,
+  tabPad: 34,
+};
+
 
 /**
  * An overview window's tab strip and the column header band of its FIRST tab.
@@ -263,13 +300,18 @@ export function overviewParts(
   if (tabs.length === 0) return [];
 
   const out: DetailPart[] = [];
-  // Equal-width tab cells. EVE sizes them by their text, but the information
-  // here is which tabs the window holds, not how wide their labels render, and
-  // an equal split always fits the rect it is drawn in.
-  const tw = rect.w / tabs.length;
-  tabs.forEach((t, i) => {
-    out.push({ kind: "cell", x: i * tw, y: 0, w: tw, h: DETAIL_NOMINAL.tabStrip, label: t.name });
-  });
+  // Tabs are TEXT-WIDTH and left-packed, exactly as EVE draws them — not an
+  // equal split of the window, which is what this did until 2026-07-30 and
+  // which made a wide window look like a row of stretched cells. A tab that
+  // does not fit is not drawn: EVE keeps them on one line and simply runs out
+  // of room, it never wraps to a second row.
+  let tx = OVERVIEW.tabsX;
+  for (const t of tabs) {
+    const w = t.name.length * OVERVIEW.charWidth + OVERVIEW.tabPad;
+    if (tx + w > rect.w) break;
+    out.push({ kind: "cell", x: tx, y: 0, w, h: OVERVIEW.tabStrip, label: t.name });
+    tx += w;
+  }
 
   let x = 0;
   for (const c of tabs[0].columns) {
@@ -277,7 +319,13 @@ export function overviewParts(
     // width null = the key is absent = EVE's own default, which the file does
     // not record. The nominal is the only thing available.
     const w = c.width ?? DETAIL_NOMINAL.columnWidth;
-    out.push({ kind: "column", x, y: DETAIL_NOMINAL.tabStrip, w, h: DETAIL_NOMINAL.headerBand, label: c.label });
+    // A column that does not fit WHOLE is not drawn at all — EVE shows what fits
+    // on the one line and drops the rest. So a column set wider than its window
+    // shows up as columns MISSING from the picture, which is exactly what the
+    // player sees in game. (This replaced letting them overflow and clip: that
+    // drew something EVE never draws.)
+    if (x + w > rect.w) break;
+    out.push({ kind: "column", x, y: OVERVIEW.tabStrip, w, h: OVERVIEW.headerBand, label: c.label });
     x += w;
   }
   return out;

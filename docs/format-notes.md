@@ -974,6 +974,59 @@ been re-measured**, so `SHIP_TOP_MARGIN` (28) and `HUD_NOMINAL.shipui.h` (160)
 are still the 2026-07-28 values; if the top margin is really ~20, the box is
 short by that overhang. Open.
 
+### Fighter UI internals
+
+Measured **2026-07-30** from `fighter.png` (native 2560×1440, anchor
+`(329, 289)`, 4 squadrons with 3 launched), same profile method. Offsets are from
+the anchor — which is the panel's left edge and the ability grid's top.
+
+| Part | Geometry |
+|---|---|
+| Ability grid | ⌀44 round buttons, column pitch 86 from x 70, row pitch 50 from y 2, 3 rows |
+| Squadron dials | ⌀81 round gauges, same 86 pitch, from x 42 / y 152 |
+| Control column | 4 ⌀24 round buttons at x 4, vertical pitch 32 from y 148 |
+
+Same two lessons as the ship HUD: **everything is round**, and there is a
+**control column on the left that was never drawn**.
+
+**It is the squadron row, not the ability grid, that sets the panel width.** At
+the 5-squadron carrier maximum `42 + 86 × 4 + 81 = 467`, exactly
+`HUD_NOMINAL.fighter.w`; the ability grid stops short at
+`70 + 86 × 4 + 44 = 458`. An earlier pass had *derived* an ability cell width of
+53 by assuming the grid reached the edge — a reminder that a derivation which
+lands on the right total can still be wrong about the thing it measures.
+
+**The control column overhangs the recorded panel height.** It ends at y 268
+against `HUD_NOMINAL.fighter.h`'s 253 (2026-07-28's figure, not re-measured).
+Open, and pinned by a test so it cannot be forgotten.
+
+### Overview window chrome
+
+Measured **2026-07-30** off a real overview window in `fighter.png`.
+
+| Part | Geometry |
+|---|---|
+| Tab strip | ~30 tall (text band y 12..23) |
+| Column header band | ~26 tall (text y 46..53) |
+| Data rows | ~19 pitch |
+| Tabs | text-width, left-packed from x ~52, roughly `chars × 5.5 + 34` |
+
+Font-dependent — EVE's overview font size is configurable, so these are the
+default. The detail layer's previous values were invented and both bands were
+about 60% short (18 and 16).
+
+Two layout rules confirmed against the client, both of which the editor was
+getting wrong:
+
+- **Tabs are text-width and left-packed**, not stretched across the window. In
+  the sampled window: `Main` spans 22px with the next tab 59px on, `3` 6px with
+  the next 42px on, `Exit!` 20px with the next 53px on.
+- **A column that does not fit is not drawn at all.** EVE keeps the header on one
+  line and shows what fits; it does not wrap to a second row, and it does not
+  draw a column part-way. So an over-provisioned column set shows up as columns
+  *missing*, which is what the player sees in game. The editor drew them
+  overflowing and clipped until this was corrected.
+
 ### Chat window splits
 
 Corpus-verified 2026-07-30 against the full `testdata/corpus` tree (184 distinct
