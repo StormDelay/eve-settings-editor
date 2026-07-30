@@ -1,6 +1,6 @@
 // Run: npm test (node --test; Node strips the types). Throw-based checks, no
 // framework — matching layout.test.ts.
-import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel, inEnv } from "./windowLabels.ts";
 
 const check = (name: string, ok: boolean) => {
   if (!ok) throw new Error(`FAIL: ${name}`);
@@ -237,6 +237,43 @@ const check = (name: string, ok: boolean) => {
   // disjoint. Pinned so the precedence is not accidental.
   const both = { clutter: new Set(["market"]), visible: new Set(["market"]) };
   check("visible wins when a hand-edited file lists an id twice", !isClutter("market", both));
+}
+
+// --- per-environment mapping -----------------------------------------------
+{
+  check("everything shows in the all view", inEnv("lobbyWnd", "all") && inEnv("overview", "all"));
+
+  check("a docked-only id shows when docked", inEnv("lobbyWnd", "docked"));
+  check("a docked-only id is hidden in space", !inEnv("lobbyWnd", "space"));
+  check("the structure hangar is docked-only", inEnv("StructureItemHangar", "docked"));
+  check("the structure hangar is hidden in space", !inEnv("StructureItemHangar", "space"));
+
+  check("a space-only id shows in space", inEnv("overview", "space"));
+  check("a space-only id is hidden when docked", !inEnv("overview", "docked"));
+  check("the d-scan window is space-only", inEnv("directionalScannerWindow", "space"));
+  check("the d-scan window is hidden when docked", !inEnv("directionalScannerWindow", "docked"));
+
+  // A family entry covers the bare parent AND every spawned instance, so
+  // `ShipCargo_<itemID>` needs no entry of its own.
+  check("a spawned instance follows its family", inEnv("ShipCargo_1033391582929", "space"));
+  check("a spawned instance is hidden in the other env", !inEnv("ShipCargo_1033391582929", "docked"));
+  check("a numbered overview follows its family", inEnv("overview_1", "space"));
+  check("a numbered overview is hidden when docked", !inEnv("overview_1", "docked"));
+
+  // Unlike isClutter there is no `detail !== ""` requirement: for environment
+  // purposes a spawned instance and its bare parent are in the same place.
+  check("the bare parent is in the same env as its instances", inEnv("ShipCargo", "space"));
+
+  // THE safe-failure property. If someone later "tidies" the tables into a
+  // total mapping, this is what catches it.
+  check("an unlisted id shows when docked", inEnv("market", "docked"));
+  check("an unlisted id shows in space", inEnv("market", "space"));
+  check("an unknown id shows in both", inEnv("someWindowNobodyCurated", "docked") && inEnv("someWindowNobodyCurated", "space"));
+
+  // The three Inventory ids each declare their own environment.
+  check("InventoryStation is docked", inEnv("InventoryStation", "docked") && !inEnv("InventoryStation", "space"));
+  check("InventoryStructure is docked", inEnv("InventoryStructure", "docked") && !inEnv("InventoryStructure", "space"));
+  check("InventorySpace is in space", inEnv("InventorySpace", "space") && !inEnv("InventorySpace", "docked"));
 }
 
 console.log("windowLabels.test.ts ok");
