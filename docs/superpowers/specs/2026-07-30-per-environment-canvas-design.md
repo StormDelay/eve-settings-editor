@@ -116,11 +116,14 @@ Out of scope, and why:
 
 ## 4. The filter dimension
 
-`layout.ts` gains:
-
 ```ts
 export type Env = "all" | "docked" | "space";
 ```
+
+`Env` is declared in `windowLabels.ts` beside `inEnv` (§5) and re-exported from
+`layout.ts` for callers that already import from there. It cannot live in
+`layout.ts`: `layout.ts` imports from `windowLabels.ts` and not the reverse, and
+`inEnv` needs the type.
 
 `WindowFilter` gains `env: Env`; `NO_FILTER` sets `"all"`; `filterIsActive`
 adds `f.env !== "all"`; `windowMatches` adds one `inEnv(w.id, f.env)` guard
