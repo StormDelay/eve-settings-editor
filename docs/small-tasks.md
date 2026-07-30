@@ -25,20 +25,23 @@ Workflow:
   _Added 2026-07-30._
 
 - [ ] **The overview and chat internals have never been measured.** Most of
-  `detail.ts`'s `DETAIL_NOMINAL` is invented, but not all of it: the fighter
-  ability and squadron cell WIDTHS are pinned by the measured panel width
+  `detail.ts`'s `DETAIL_NOMINAL` is invented, but not all of it: the ability
+  and squadron cell WIDTHS alone are pinned by the measured panel width
   (`70 + 86x4 + 53 = 467` for the ability grid, `43 + 86x4 + 80 = 467` for the
   squadron row), and `detail.test.ts` asserts both reach the panel's right edge
-  — so correcting either would need to fail that test first. What is genuinely
-  guessed: the heights (module slot cell, ability cell, squadron cell), the
-  ability row pitch, the neocom's top EVE-menu cell, the overview tab-strip and
-  header-band heights, and the fallback width for a column with no stored
-  width. The HUD and fighter PITCHES around all of this are measured
-  (`format-notes.md`, "HUD anchors"); only what is drawn inside them is
-  guessed. One screenshot session like the 2026-07-28 one settles all of it,
-  and each is a one-line edit. Also open from the same session: whether the
-  chat input box spans the full window width or only the message pane — the
-  editor draws the latter.
+  — so correcting either would need to fail that test first. Their HEIGHTS are
+  guessed, same as the module slot cell, which is invented in both dimensions
+  — nothing pins its width the way the fighter cells' widths are pinned, and
+  its own `detail.test.ts` coverage is a bounds check, not an edge-exact one.
+  What is genuinely guessed, in full: the module slot cell (both dimensions),
+  the ability and squadron cell heights, the ability row pitch, the neocom's
+  top EVE-menu cell, the overview tab-strip and header-band heights, and the
+  fallback width for a column with no stored width. The HUD and fighter
+  PITCHES around all of this are measured (`format-notes.md`, "HUD anchors");
+  only what is drawn inside them is guessed. One screenshot session like the
+  2026-07-28 one settles all of it, and each is a one-line edit. Also open
+  from the same session: whether the chat input box spans the full window
+  width or only the message pane — the editor draws the latter.
   _Added 2026-07-30._
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
