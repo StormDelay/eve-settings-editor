@@ -1003,6 +1003,22 @@ With a character open that has an account file paired:
 7. Save, reopen the file, and confirm the values persisted.
 8. Open a character with NO account file — the fields are disabled.
 
+Three more, added after the whole-branch review. Each covers a path that is
+unit-tested but has never been seen, and the first two cover bugs that review
+actually found:
+
+9. **A channel with NO stored values** — the minting case. Pick a chat window
+   whose fields come up blank, type a number, save, reopen. This was unreachable
+   until the review: the fields were disabled whenever the account file had no
+   chat split stored *at all*, which is exactly when minting is needed.
+10. **Type a negative number.** The backend refuses it, and the "Chat layout
+    edit failed" dialog must appear — it is the only error a user can trigger
+    from these fields. The value should then snap back to what is stored.
+11. **On a STACKED chat window**, check the panel's history-area number against
+    the bands the canvas draws with Detail on. They read from the same geometry
+    now; before the review the panel used the member's own size while the canvas
+    used the stack anchor's, so the two could disagree.
+
 - [ ] **Step 6: Commit**
 
 ```bash
