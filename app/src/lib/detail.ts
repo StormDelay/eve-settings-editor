@@ -4,7 +4,7 @@
 // Decoration only. Nothing here may reach hudRects, snapLines, or any drag:
 // that separation is why this is its own module and not more of layout.ts.
 
-import type { ChatPanel, NeocomBar, OverviewColumns } from "./api";
+import type { ChatPanel, NeocomBar, OverviewColumns, Stack } from "./api";
 import type { DrawUnit } from "./layout";
 
 /**
@@ -417,4 +417,37 @@ export function windowDetail(
 
   const panel = chats.find((c) => c.window_id === id);
   return panel ? chatParts(panel, rect) : [];
+}
+
+/**
+ * The chat channels in a stack — what the "apply to this stack" button writes
+ * to. Non-chat members are skipped: the split keys are named by concatenating
+ * the window id, so minting one for `market` would leave a key EVE never reads.
+ *
+ * Takes only the stack: its `members` are already window ids from the same
+ * projection, so there is nothing to cross-reference them against.
+ */
+export function chatStackTargets(stack: Stack): string[] {
+  return stack.members.filter((id) => id.startsWith("chatchannel_"));
+}
+
+/**
+ * What the chat history area is left with, for THIS character's window.
+ *
+ * Deliberately unclamped, and it can go negative. The splits are account-scoped
+ * while the window geometry is character-scoped, so a value that fits one
+ * character can overflow another's window — and reporting that honestly is the
+ * point. Clamping would hide exactly the case worth seeing.
+ *
+ * An absent split subtracts nothing: the player has never resized it, so EVE's
+ * own default applies and the file has no number to show.
+ */
+export function historyArea(
+  geom: { w: number; h: number },
+  panel: ChatPanel | undefined,
+): { w: number; h: number } {
+  return {
+    w: geom.w - (panel?.userlist_width ?? 0),
+    h: geom.h - (panel?.input_height ?? 0),
+  };
 }
