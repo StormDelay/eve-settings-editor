@@ -85,39 +85,66 @@ const check = (name: string, ok: boolean) => {
 }
 
 // --- fighter UI ------------------------------------------------------------
+// MEASURED 2026-07-30 from fighter.png, native 2560x1440, anchor (329, 289) —
+// see format-notes.md, "Fighter UI internals". Same story as the ship HUD:
+// everything is round, and a control column was missing entirely.
 {
   const parts = fighterParts();
-  const cells = parts.filter((p) => p.kind === "cell");
+  const squad = parts.filter((p) => p.kind === "ring");
+  const round = parts.filter((p) => p.kind === "slot");
+  // The ability grid and the control column are both `slot`; the control column
+  // is the only thing left of the squadron dials.
+  const grid = round.filter((p) => p.x >= 70);
+  const ctrl = round.filter((p) => p.x < 70);
 
-  // 5 x 3 ability grid plus a 5-cell squadron row = 20.
-  check("20 fighter cells", cells.length === 20);
+  check("a 5 x 3 ability grid", grid.length === 15);
+  check("5 squadron dials", squad.length === 5);
+  check("4 fighter control buttons", ctrl.length === 4);
 
-  // 178 is the MEASURED squadron row top (format-notes.md, "HUD anchors").
-  const grid = cells.filter((p) => p.y < 178);
-  const squad = cells.filter((p) => p.y >= 178);
-  check("15 ability cells", grid.length === 15);
-  check("5 squadron cells", squad.length === 5);
+  check("ability buttons are round and 44 across", grid.every((p) => p.w === 44 && p.h === 44));
+  check("squadron dials are round and 81 across", squad.every((p) => p.w === 81 && p.h === 81));
+  check("control buttons are round and 24 across", ctrl.every((p) => p.w === 24 && p.h === 24));
 
-  // Measured: ability grid starts at x 70, squadron row at x 43, both on an
-  // 86px column pitch.
-  const top = grid.filter((p) => p.y === 0).sort((a, b) => a.x - b.x);
+  // Measured: ability grid from x 70 / y 2 on an 86 column pitch and a 50 row
+  // pitch; squadron dials from x 42 / y 152 on the same 86 pitch.
+  const top = grid.filter((p) => p.y === 2).sort((a, b) => a.x - b.x);
   check("the ability grid starts at the measured x", top[0].x === 70);
   check("ability columns step by the measured pitch", top[1].x - top[0].x === 86);
-  const sq = squad.sort((a, b) => a.x - b.x);
-  check("the squadron row starts at the measured x", sq[0].x === 43);
+  const gridRows = [...new Set(grid.map((p) => p.y))].sort((a, b) => a - b);
+  check("ability rows are on the measured 50 pitch", gridRows.join(",") === "2,52,102");
+  const sq = squad.slice().sort((a, b) => a.x - b.x);
+  check("the squadron row starts at the measured x", sq[0].x === 42);
   check("squadron columns step by the measured pitch", sq[1].x - sq[0].x === 86);
+  check("the squadron row sits at the measured y", sq[0].y === 152);
+
+  const c = ctrl.slice().sort((a, b) => a.y - b.y);
+  check("the control column is at the measured x", c.every((p) => p.x === 4));
+  check("control buttons are on the measured 32 pitch", c[1].y - c[0].y === 32 && c[0].y === 148);
+
+  // It is the SQUADRON row that sets the panel width — at 5 squadrons
+  // `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
+  // stops short at 458. Measuring them separately is what corrected an earlier
+  // guess that derived the ability cell width by assuming the grid set the edge.
+  check(
+    "the squadron row reaches the panel's right edge exactly",
+    Math.max(...squad.map((p) => p.x + p.w)) === HUD_NOMINAL.fighter.w,
+  );
+  check(
+    "the ability grid stops short of it",
+    Math.max(...grid.map((p) => p.x + p.w)) === 458,
+  );
 
   check(
-    "every fighter cell lies inside the measured fighter box",
-    cells.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.fighter.w
-      && p.y >= 0 && p.y + p.h <= HUD_NOMINAL.fighter.h),
+    "every fighter part fits the panel's measured width",
+    parts.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.fighter.w),
   );
-  // The cell widths are DERIVED from the measured panel width, not guessed:
-  // both rows must reach its right edge exactly, from different origins.
-  // If HUD_NOMINAL.fighter.w is ever corrected, these are what fail.
-  const right = (ps: typeof cells) => Math.max(...ps.map((p) => p.x + p.w));
-  check("the ability grid reaches the panel's right edge", right(grid) === HUD_NOMINAL.fighter.w);
-  check("the squadron row reaches the panel's right edge", right(squad) === HUD_NOMINAL.fighter.w);
+  // The control column runs 15px BELOW the recorded panel height: measured, it
+  // ends at 268 against HUD_NOMINAL.fighter.h's 253. The height has not been
+  // re-measured (the 253 is 2026-07-28's), so this pins the discrepancy rather
+  // than hiding it — if the height is ever corrected, this check says so.
+  const bottom = Math.max(...parts.map((p) => p.y + p.h));
+  check("the control column overhangs the recorded panel height", bottom === 268);
+  check("everything else fits it", Math.max(...[...grid, ...squad].map((p) => p.y + p.h)) <= HUD_NOMINAL.fighter.h);
 }
 
 // --- neocom ----------------------------------------------------------------
@@ -171,8 +198,18 @@ const check = (name: string, ok: boolean) => {
   const bands = parts.filter((p) => p.kind === "column");
 
   check("one strip cell per tab in the window", tabs.length === 2);
-  check("tab cells split the rect width", tabs[0].w === 200 && tabs[1].x === 200);
+  // Tabs are TEXT-WIDTH and left-packed, as EVE draws them — NOT an equal split
+  // of the window, which is what this did until 2026-07-30.
+  // "General" is 7 characters and "Mining" 6, so at 5.5/char + 34 padding they
+  // are 72.5 and 67 — different widths, which an equal split could never give.
+  check("tabs are sized by their label, not by the window", tabs[0].w === 72.5 && tabs[1].w === 67);
+  check("tabs are packed left to right", tabs[0].x === 52 && tabs[1].x === 124.5);
   check("tab cells are labelled with the tab name", tabs[0].label === "General");
+  // EVE keeps tabs on one line and runs out of room; it never wraps to a second
+  // row. A tab that does not fit is simply not drawn.
+  const cramped = overviewParts(cols, 0, { w: 130, h: 300 }).filter((p) => p.kind === "cell");
+  check("a tab that does not fit is dropped", cramped.length === 1);
+  check("no tab is ever drawn past the window", cramped.every((t) => t.x + t.w <= 130));
 
   // Only visible columns, in stored order — `name` is hidden and must be gone.
   check("hidden columns are omitted", bands.length === 3);
@@ -182,12 +219,19 @@ const check = (name: string, ok: boolean) => {
 
   // Offsets are the running sum, and the band sits below the tab strip.
   check("bands start at the running sum of widths", bands[1].x === 30 && bands[2].x === 120);
-  check("bands sit below the tab strip", bands.every((b) => b.y === DETAIL_NOMINAL.tabStrip));
+  check("bands sit below the tab strip", bands.every((b) => b.y === 30));
 
-  // THE payoff: a column set wider than its window runs off the edge, and that
-  // is the signal. No clamping.
+  // EVE shows the columns that fit on the one line and DROPS the rest — it does
+  // not draw a column part-way and clip it. So an over-provisioned column set
+  // reads as columns MISSING from the picture, which is what the player sees in
+  // game. This replaced letting them overflow, which drew something EVE never
+  // draws.
   const narrow = overviewParts(cols, 0, { w: 100, h: 300 }).filter((p) => p.kind === "column");
-  check("an overflowing column set runs past the rect", narrow[2].x + narrow[2].w > 100);
+  // icon (30) fits in 100; distance (90) would end at 120, so it and everything
+  // after it are gone. Once a column runs off the line, so does every column
+  // right of it — hence stopping rather than skipping ahead to a narrower one.
+  check("columns that do not fit are dropped", narrow.length === 1 && narrow[0].label === "ICON");
+  check("no column is ever drawn past the window", narrow.every((b) => b.x + b.w <= 100));
 
   // A window with no tabs, and an index no window has.
   check("a window with no tabs draws nothing", overviewParts(cols, 1, { w: 400, h: 300 }).length === 0);
