@@ -220,20 +220,34 @@ export const SHIP_ANCHOR_LEFT = 148;
 
 /**
  * Gap between the top of the screen and the HUD when it is top-aligned.
- * MEASURED 2026-07-28, twice, on shots 410px apart.
+ *
+ * MEASURED 2026-07-30. Was 28, which was never measured directly: it came from
+ * assuming a 160px element whose rack block sat 4px in. The rack's position is
+ * the only thing that measurement pinned, and it does not, on its own, fix the
+ * element's own top edge.
+ *
+ * The element's top edge is the capacitor's outer rim, which reaches 88px above
+ * the capacitor's centre — visible in a 5x crop as the dark rim arc plus its
+ * highlight segment, above where the gauge ticks start. Top-aligned the centre
+ * is at y 100, so the element begins at 12.
+ *
+ * The pair below is checked against the rack in BOTH alignments and lands
+ * exactly, which is what makes it trustworthy: top-aligned the element runs
+ * 12..188 with rack row 1 at `12 + 20 = 32`; bottom-aligned it runs
+ * `1440 - 12 - 176 = 1252`..1428 with rack row 1 at 1272. Both match measured
+ * rack positions to the pixel. See docs/format-notes.md, "Ship HUD internals".
  */
-export const SHIP_TOP_MARGIN = 28;
+export const SHIP_TOP_MARGIN = 12;
 
 /**
  * Gap between the HUD and the bottom of the screen when it is bottom-aligned.
- * MEASURED 2026-07-28 — and it is NOT the top margin mirrored, which is what
- * this code assumed until a bottom-aligned shot existed.
+ * MEASURED 2026-07-28 and UNCHANGED by the 2026-07-30 re-measure — it is the one
+ * figure of the three that was right.
  *
- * Derived from one character at one offset photographed both ways: the module
- * rack block is 127px tall in both, sitting 4px into the element, at y 32 top-
- * aligned and y 1272 bottom-aligned. So the element's top is 1268, its bottom
- * `1268 + 160 = 1428`, and the gap below it is `1440 - 1428 = 12` — 16px less
- * than the mirrored guess. ±2px: the element height reads 159-160.
+ * What did change is the conclusion drawn from it. The margins are equal, not
+ * asymmetric: the earlier note reasoned "12 below, so the 28 above is not a
+ * mirror", when in fact the 28 was the wrong number and the element is
+ * vertically symmetric about its capacitor after all.
  */
 export const SHIP_BOTTOM_MARGIN = 12;
 
@@ -263,10 +277,21 @@ export const SHIP_BOTTOM_MARGIN = 12;
  * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
  * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
  * to the measured 381. Height does not change with squadron count.
+ *
+ * Both HEIGHTS were re-measured 2026-07-30 and both grew:
+ *
+ * - `shipui` 160 -> 176. The element is exactly as tall as its capacitor, whose
+ *   outer rim reaches 88px either side of a centre sitting 88 from the top. The
+ *   old 160 was inferred from the rack block rather than measured, and pairs
+ *   with the old 28px top margin — both were wrong together, which is why the
+ *   rack still landed in the right place and nothing looked broken.
+ * - `fighter` 253 -> 264. The fighter CONTROL COLUMN, four buttons left of the
+ *   squadron dials, is the panel's lowest element and ends at 264. It was never
+ *   drawn before, so nothing had noticed it hanging out of the box.
  */
 export const HUD_NOMINAL = {
-  shipui: { w: 648, h: 160 },
-  fighter: { w: 467, h: 253 },
+  shipui: { w: 648, h: 176 },
+  fighter: { w: 467, h: 264 },
   badge: { w: 32, h: 32 },
 };
 
