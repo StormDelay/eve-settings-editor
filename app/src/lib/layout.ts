@@ -1,7 +1,12 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
-import { isClutter, nameOf, type ClutterOverrides } from "./windowLabels.ts";
+import { isClutter, inEnv, nameOf, type ClutterOverrides, type Env } from "./windowLabels.ts";
+
+/** Re-exported so callers that already import from layout.ts get it here.
+ * It is DECLARED in windowLabels.ts, beside the mapping it belongs to —
+ * layout.ts imports from windowLabels.ts and not the reverse. */
+export type { Env };
 
 /** Canvas px per data px. 1 when the reference has no width (empty file). */
 export function canvasScale(referenceWidth: number, containerWidth: number): number {
@@ -117,10 +122,68 @@ export function stackUnits(layout: WindowLayout, visible: Set<string> | null = n
 }
 
 /** How many windows a set of draw units actually paints: a stack unit draws one
- * rectangle but represents each of its visible tabs, a free unit exactly one.
- * The counter reports windows, not rectangles — "showing 3 of 68 windows". */
+ * rectangle but represents each of its visible tabs, a free unit ordinarily
+ * exactly one — except the folded Inventory unit `linkInventory` produces,
+ * whose `tabs` carries both merged ids, so it counts 2. The counter reports
+ * windows, not rectangles — "showing 3 of 68 windows". */
 export function drawnWindowCount(units: DrawUnit[]): number {
-  return units.reduce((n, u) => n + (u.stack ? u.tabs.length : 1), 0);
+  return units.reduce((n, u) => n + Math.max(u.tabs.length, 1), 0);
+}
+
+/**
+ * Fold the two docked Inventory copies into one drawn rectangle.
+ *
+ * Inventory is the ONLY window family EVE splits per context: the character
+ * file carries `InventoryStation`, `InventoryStructure` and `InventorySpace` as
+ * three separate ids with three separate geometries in the otherwise-flat
+ * `windowSizesAndPositions_1`. On a real character they have drifted apart
+ * (624,260 623x450 vs 136,285 880x619), so the docked view would paint two
+ * rectangles 488px apart for what the player thinks of as one window.
+ *
+ * In `docked` the two copies collapse to one drawn unit whose `fanTargets`
+ * carry both window ids — already "every window a coherent move must repeat
+ * the rect onto", so the existing commit path moves both from one drag with no
+ * new drag code.
+ *
+ * **The fan follows renderability, not openness.** `stackUnits` only makes
+ * units from OPEN windows, so sourcing the pair from `units` silently drops a
+ * closed copy and leaves it behind — the exact drift `stackUnits` already
+ * guards against for closed stack members (see `fanTargets` there). Whichever
+ * copy is drawn, the fan reaches both, because the docked view is telling the
+ * player these are one window.
+ *
+ * A copy that belongs to a stack is excluded from the fan: its stack already
+ * owns its geometry, and writing to it from here would pull it out of place.
+ *
+ * `all` is deliberately left untouched: three independent rectangles, exactly
+ * as today. That IS the escape hatch for a player who wants the station and
+ * structure inventories in different places, so there is no toggle to build.
+ *
+ * A post-pass rather than a parameter on stackUnits: it keeps the grouping and
+ * the fold separately testable, and it cannot affect the unfiltered denominator
+ * `LayoutView` computes for "showing N of M".
+ */
+const DOCKED_INVENTORY = ["InventoryStation", "InventoryStructure"];
+
+export function linkInventory(units: DrawUnit[], env: Env, windows: WindowRect[]): DrawUnit[] {
+  if (env !== "docked") return units;
+  const isCopy = (u: DrawUnit) => !u.stack && DOCKED_INVENTORY.includes(u.key);
+  const drawn = units.filter(isCopy);
+  if (drawn.length === 0) return units;
+  // Both copies, open or closed — a closed one left out of the fan drifts away
+  // from the one that moved. Stacked copies are their stack's business.
+  const fanTargets = DOCKED_INVENTORY
+    .map((id) => windows.find((w) => w.id === id && w.renderable && w.stack === null))
+    .filter((w): w is WindowRect => !!w);
+  // Station anchors when both are drawn, so the rect stays where the station
+  // copy was; otherwise whichever one is drawn anchors.
+  const anchor = drawn.find((u) => u.key === "InventoryStation") ?? drawn[0];
+  // tabs, not just fanTargets: every selection consumer (the panel row, the
+  // canvas highlight, resize handles, arrow-key nudge) keys off anchor.id or
+  // tabs, so a station-only tabs array would leave the structure row selectable
+  // in the panel but inert on the canvas.
+  const linked = { ...anchor, tabs: drawn.flatMap((u) => u.tabs), fanTargets };
+  return units.filter((u) => !isCopy(u) || u === anchor).map((u) => (u === anchor ? linked : u));
 }
 
 export interface FurnitureRect {
@@ -342,13 +405,17 @@ export interface WindowFilter {
    * windows the player placed. Applies whether open or closed: kind of
    * window is the axis, not open/closed (see isClutter). */
   hideClutter: boolean;
+  /** Show only the windows that exist in one environment. `all` — the default
+   * — is today's mixed picture. Windows the mapping does not recognise show in
+   * every environment, so this narrows rather than hides (see inEnv). */
+  env: Env;
 }
 
-export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false };
+export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false, env: "all" };
 
 /** Whether the filter narrows anything — drives the "showing N of M" line. */
 export function filterIsActive(f: WindowFilter): boolean {
-  return f.text.trim() !== "" || f.openOnly || f.hideClutter;
+  return f.text.trim() !== "" || f.openOnly || f.hideClutter || f.env !== "all";
 }
 
 /**
@@ -368,6 +435,7 @@ export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrid
   if (f.openOnly && !w.open) return false;
   if (f.hideClutter && isClutter(w.id, o)) return false;
   if (f.hideClutter && isOrphanFrame(w)) return false;
+  if (!inEnv(w.id, f.env)) return false;
   const n = nameOf(w);
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
