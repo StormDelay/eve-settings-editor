@@ -249,69 +249,6 @@ Workflow:
   round-trip cases that pin them. If they hold, delete the hedging from the
   comments. _Added 2026-07-26._ _Done 2026-07-27/28. Both conventions were RIGHT: the ship offset is centre-relative anchoring the HUD's own centre, and the point tuples are top-left corners in absolute screen px. The nominal SIZES are still invented — see the footprint task above._
 
-- [ ] **Precision-editing follow-ups (whole-branch review, both ship-as-debt).**
-  Two non-blocking minors from the layout slice 1b branch, ruled deferred at
-  review time: (1) a keyup for a *different* arrow than the one being held ends
-  the nudge early — hold Right, tap Down, release Down, and the glide commits
-  while Right is still repeating. The outcome is correct (the next keydown
-  re-acquires, and `commitUnit`'s `nudging` guard protects the new preview); it
-  just costs one extra round-trip mid-glide, and ref-counting held keys to avoid
-  it is not worth the state. (2) The drag path commits against the `DrawUnit`
-  captured at drag start, while the nudge path re-resolves from live `units`. If
-  a commit lands *during* a drag — newly possible now that a nudge keyup can fire
-  mid-drag — the captured `WindowRect`s carry pre-reload `geom`, so
-  `geomMutations`' per-field diff can skip a write that is actually needed
-  (stale-but-valid paths, not corruption). Re-resolving inside `commitUnit` would
-  fix it but would silently skip the commit when the unit has since been filtered
-  out, which is worse; decide whether a third path (re-resolve, fall back to the
-  captured unit) earns its keep. _Added 2026-07-26._
-
-- [ ] **HUD furniture follow-ups (task + whole-branch reviews, all ship-as-debt).**
-  Non-blocking minors from the layout-depth HUD slice, triaged by the final
-  review as none-blocking-merge: (1) `ops::set_hud_field` reshares the whole
-  document after *every* write, where the spec says a key-present scalar
-  overwrite needs neither `inline_all` nor `reshare` (it matches what every
-  other editor does and measures in single-digit ms — to fix, have
-  `set_hud_value` report whether it minted and reshare only then); (2) the four
-  account-scoped rows in `HudPanel` are disabled by the *character* document's
-  read-only flag, so a read-only account file leaves them clickable and the
-  backend refusal surfaces as a dialog (stricter than `OverviewView`, which has
-  no read-only concept at all); (3) `hud.rs::section()` resolves a `Shared` root
-  with `effective` but doesn't push `Step::SharedInner`, so a `Shared`-wrapped
-  root would yield paths that fail `resolve_mut` (safe failure, unreachable on
-  real files); (4) `hud.rs::hex()` duplicates the private `hex()` in
-  `windows.rs` byte-for-byte — fold into `treewalk` as `pub(crate)` next time
-  either file is touched; (5) `locate()`'s `Option<String>` half is computed and
-  discarded on the writer path; (6) `mint` has three separate
-  `Err(HudError::NoSection)` guard returns; (7) `HudPanel` hardcodes hex colours
-  instead of `app.css`'s custom properties (inherited from the plan) — candidate
-  for a theming pass; (8) a rejected number-input edit leaves the field visually
-  desynced until an unrelated re-render (pre-existing pattern, same as
-  `WindowPanel`); (9) test gaps — the badge rect's geometry is never asserted
-  (only its position in the order string), there's no case for a fighter axis
-  reading `unavailable` nor for a neocom width of exactly 0, and the `hudEntry`
-  test helper can't build a `set.how === "insert"` entry, so the real absent-key
-  wire shape is never literally exercised (behaviourally equivalent).
-  **(3), (4), (5) and (6) are now RESOLVED — closed by the layout-names-and-noise
-  debt sweep:** `section()` (folded into `treewalk`, along with `hex()`) now
-  pushes `Step::SharedInner` for a `Shared`-wrapped root; `locate()`'s scalar text
-  is carried on `Located::Writable` and used by `probe` instead of being
-  discarded; `mint` now has one `NoSection` guard via `section_dict_mut`.
-  **(1), (2), (7) and (9) are now RESOLVED — done 2026-07-29:** `set_hud_value`
-  returns whether it minted and `set_hud_field` reshares only then; the
-  account-scoped rows take the ACCOUNT document's read-only flag, threaded from
-  the page beside the character one (verified: the new test fails without the
-  predicate); seven hardcoded greys in `HudPanel` became the `app.css` variables
-  they approximated, with the two ambers left literal on purpose because they
-  match `LayoutView`'s equally literal selected-furniture colour and the pair has
-  to move together; and the four test gaps are covered — badge geometry, a
-  zero neocom width, an unavailable fighter axis that leaves its sibling alone,
-  and a `hudEntry` helper that can now build the real `insert` wire shape.
-  **Only (8) remains** — a rejected number-input edit staying visually desynced,
-  which is the same pattern `WindowPanel` has and wants fixing in both at once.
-  _Added 2026-07-25; partially done 2026-07-26 (layout names-and-noise) and
-  2026-07-29._
-
 - [x] **Run the overview-pack live in-game smoke — deliberately skipped before
   merge.** Slice 4 (import/export packs, PR #18, merged `210007e`) shipped without
   its live smoke; the user chose to come back to it. Nothing in the branch has been
@@ -505,15 +442,6 @@ Workflow:
   `?? 0` sentinel) — valid and visible, but arbitrary; keep-disabled or document.
   _Added 2026-07-19._
 
-- [ ] **Improve the auto-derived autofill category labels.** In
-  `app/src/lib/autofill.ts`, widget paths not matched by the `CURATED` substring
-  map fall through to `derive()`, which just title-cases the last non-boilerplate
-  path segment — for many real EVE widgets this yields cryptic or generic labels
-  (the raw path is always shown too, so it's never *confusing*, just ugly). Fix
-  by expanding `CURATED` to cover the common real widget paths and/or making
-  `derive()` smarter (pick a more meaningful segment, or fold in more context
-  than the last one). _Added 2026-07-18._
-
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
@@ -563,6 +491,42 @@ _Added 2026-07-17; designed 2026-07-18._
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **HUD furniture follow-ups — all nine closed.** (3)(4)(5)(6) went in the
+  2026-07-26 names-and-noise sweep, (1)(2)(7)(9) on 2026-07-29. (8) done
+  2026-07-30, in both panels at once as the entry asked: Svelte patches an
+  input's `value` only when the EXPRESSION changes, so an edit that left the
+  model where it was — blank input, a refused write, or an int rounding back to
+  what it already held (326.4 → 326) — kept the typed text on screen beside a
+  value that is not it. `HudPanel` and `WindowPanel` resync the element on every
+  commit; a write that lands is overwritten by the parent's re-render a moment
+  later. The rounding case is the test worth having: it fails without the
+  resync, where the blank case can pass either way depending on what re-rendered.
+  _Added 2026-07-25; done 2026-07-30._
+
+- [x] **Precision-editing follow-ups — both closed.** (2) done 2026-07-30:
+  `commitUnit` re-resolves its unit from the live list by anchor id and falls
+  back to the one captured at pointerdown. That is the third path the entry asked
+  about, and it earns its keep at two lines — re-resolving alone silently skips
+  the commit when the unit has since been filtered out, which is the worse of the
+  two failures, and the captured unit alone can diff against pre-reload `geom`
+  and skip a write that is needed. **(1) is closed with no change:** a keyup for a
+  different arrow than the one being held ends the glide a round-trip early. The
+  outcome is already correct — the next keydown re-acquires — and ref-counting
+  held keys to avoid one extra round-trip is state this view does not need, which
+  is what the entry itself concluded. _Added 2026-07-26; done 2026-07-30._
+
+- [x] **Improve the auto-derived autofill category labels.** Curated needles now
+  cover **206 of the 290 distinct widget paths** the corpus carries, up from 62.
+  They are keyed on the window or the field, taken from a dump of the real paths
+  rather than guessed, and `BOILERPLATE` learned EVE's layout scaffolding
+  (`__maincontainer`, `headerCont`, `panelCont`, …) so the fallback lands on a
+  panel name rather than a container one — the character sheet's skill search
+  derived "Header Cont" purely because the informative segment was two levels up.
+  The test carries thirteen real paths with what each used to derive in a comment.
+  What is left uncovered derives something readable ("Skins Panel", "Sell
+  Filter", "Edit Division3"), which is the bar for leaving one alone. _Added
+  2026-07-18; done 2026-07-30._
 
 - [x] **Overview-pack follow-ups — all seven closed.** (1)(3)(4) were done in the
   2026-07-29 sweeps: `BadSection { name }` replaced the reused `NotAPack`,
