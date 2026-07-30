@@ -239,6 +239,69 @@ export function isClutter(id: string, o?: ClutterOverrides): boolean {
   return CLUTTER_FAMILIES.has(n.family) && n.detail !== "";
 }
 
+// --- environments ----------------------------------------------------------
+// A player's screen differs by environment, and the canvas mixes every
+// environment into one picture. This is a VIEW FILTER, not a data model:
+// `windowSizesAndPositions_1` stores one geometry per window id, so there is a
+// single layout underneath and these sets only decide what is painted.
+//
+// Two environments, not EVE's thirteen. `ui → InfoPanelModes_<context>`
+// enumerates the client's own list (hangar, inflight, structure, charsel,
+// planet, starmap…), but only hangar/inflight/structure have an arrangeable
+// window layout, and NPC station and player structure are collapsed into one
+// "docked" view — which is also the split `dockPanels` itself stores
+// (widthProportion_docked). See the design spec for the corpus measurements.
+//
+// Only the EXCLUSIVES are listed. An id in neither set shows in both views —
+// the same safe-failure direction as the clutter tables: showing a harmless
+// extra rectangle beats hiding a window the player actually placed. Windows
+// whose environment is genuinely uncertain (Fitting, Assets, Market, the chat
+// stack) are deliberately absent rather than guessed at. Grow these lazily.
+
+export type Env = "all" | "docked" | "space";
+
+/** Windows that only exist while docked, in an NPC station or a player
+ * structure. The Structure* ids have no station twin — the station equivalent
+ * is the unified `InventoryStation`. */
+const DOCKED_ONLY: ReadonlySet<string> = new Set([
+  "lobbyWnd",
+  "cloneBay",
+  "CloneStationWindow",
+  "CloneUpgradeWindow",
+  "InventoryStation",
+  "InventoryStructure",
+  "StructureItemHangar",
+  "StructureShipHangar",
+  "StructureCorpHangar",
+  "DeliverToStructure",
+]);
+
+/** Windows that only exist in space. */
+const SPACE_ONLY: ReadonlySet<string> = new Set([
+  "InventorySpace",
+  "ShipCargo",
+  "ShipDroneBay",
+  "droneview",
+  "selecteditemview",
+  "directionalScannerWindow",
+  "overview",
+]);
+
+/** Whether a window is shown in `env`. An id is a member of a set if EITHER
+ * its exact id or its family is listed, so one entry covers a family's bare
+ * parent and all its spawned instances (`ShipCargo` and
+ * `ShipCargo_1033391582929`; `overview` and `overview_1`).
+ *
+ * No `detail !== ""` check, unlike isClutter: that check tells a spawned
+ * instance from its bare parent, and for environment purposes they are in the
+ * same place. */
+export function inEnv(id: string, env: Env): boolean {
+  if (env === "all") return true;
+  const family = describe(id).family;
+  const has = (s: ReadonlySet<string>) => s.has(id) || s.has(family);
+  return env === "docked" ? !has(SPACE_ONLY) : !has(DOCKED_ONLY);
+}
+
 /** Suffix segments that carry no meaning for a reader: ids, hashes, GUIDs. */
 const OPAQUE = /^(-?\d+L?|[0-9a-f]{16,})$/i;
 
