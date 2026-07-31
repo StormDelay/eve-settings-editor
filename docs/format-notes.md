@@ -1164,6 +1164,11 @@ edge sits within half a pixel of centred on the ring — so the detail layer
 centres them and does not pretend to know the text. A shorter name uses fewer
 rows; nothing in any file says how many.
 
+**The write direction is confirmed in-game** (2026-07-31): anchors set through
+the editor drew where the canvas said they would, in both orientations. Only a
+minted value is still untested — that session edited a value the file already
+carried, so the denominator was recovered rather than assumed.
+
 **EVE's own default position is still unknown** — 87 % of account files have no
 `targetOrigin`, and no capture has produced one from a virgin account. The canvas
 draws nothing for those rather than guess, and a *minted* value has no

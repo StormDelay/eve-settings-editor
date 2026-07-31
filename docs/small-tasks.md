@@ -70,10 +70,11 @@ Workflow:
   their list **delete** the target's position. Neither is fatal — both match how
   the other HUD keys already behave — but it changes what a copy writes, so it
   is the developer's call.
-  Also still unverified in-game: that a value this editor *writes* lands where
-  the canvas drew it (the capture only proved the read direction), and the
-  `TARGET_MARGIN = 72` fallback a minted value has to assume. Both want one
-  logged-in session with `docs/live-verification-target-origin.md` open.
+  **The write side is smoked** (2026-07-31): edits made in the editor landed
+  where the canvas drew them in a running client, position and direction both.
+  What that session did NOT cover is a *minted* value — it edited an anchor the
+  file already had, so the denominator was recovered rather than assumed, and
+  `TARGET_MARGIN = 72` is still the one number no capture has exercised.
 
 - [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
   columns.** The furniture boxes now cover the right area (2026-07-28) but are
