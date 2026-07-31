@@ -614,6 +614,23 @@ export interface WindowFilter {
 
 export const NO_FILTER: WindowFilter = { text: "", openOnly: false, hideClutter: false, env: "all" };
 
+/**
+ * What the canvas STARTS at, and what `reset` goes back to — not the same
+ * thing as NO_FILTER, which stays the identity `filterIsActive` is defined
+ * against.
+ *
+ * Clutter is hidden by default because the unfiltered picture is mostly not
+ * the player's layout: a real file is largely windows EVE spawned per
+ * conversation, item or dialog, and drawing them all buries the handful of
+ * rectangles anyone came here to move. Hiding them is the useful first view.
+ *
+ * This deliberately makes `filterIsActive` true on load, so the "showing N of
+ * M · reset" line is present from the start. That is the point — a canvas that
+ * quietly omits windows and says nothing is worse than one that omits them and
+ * says how many.
+ */
+export const DEFAULT_FILTER: WindowFilter = { ...NO_FILTER, hideClutter: true };
+
 /** Whether the filter narrows anything — drives the "showing N of M" line. */
 export function filterIsActive(f: WindowFilter): boolean {
   return f.text.trim() !== "" || f.openOnly || f.hideClutter || f.env !== "all";
