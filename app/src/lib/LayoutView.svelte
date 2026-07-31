@@ -4,7 +4,7 @@
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
     hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetCorner, targetFractionFromPoint,
-    NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
+    DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
@@ -75,7 +75,7 @@
   // while flipping between characters to compare them. The "showing N of M
   // · reset" counter is what keeps a carried-over filter visible instead of
   // silently misleading.
-  let filter = $state<WindowFilter>({ ...NO_FILTER });
+  let filter = $state<WindowFilter>({ ...DEFAULT_FILTER });
 
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its
@@ -978,7 +978,11 @@
         {#if filterIsActive(filter)}
           <span class="showing">
             · showing {shownCount} of {totalCount} windows
-            <button class="linkish" onclick={() => (filter = { ...NO_FILTER })}>reset</button>
+            <!-- Back to the DEFAULT, not to nothing: `reset` undoes what the
+                 user narrowed, and hiding clutter is the view they started
+                 from rather than something they chose. Showing every window is
+                 one click away on the toggle itself. -->
+            <button class="linkish" onclick={() => (filter = { ...DEFAULT_FILTER })}>reset</button>
           </span>
         {/if}
         {#if overrideCount(documentWindowIds) > 0}
