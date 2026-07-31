@@ -1155,6 +1155,15 @@ not move the anchor: one stored value photographed vertically and horizontally
 put the anchor slot on the same pixel (label centre x 1369.0, ring band y
 578..644).
 
+**Inside one slot** (offsets from the slot's own top-left, for the canvas detail
+layer): the lock ring is ⌀79 at x 19, y 0 — centre (58, 40). Three label rows
+follow at y 102, 115 and 128, 8px tall on a 13px pitch: two of name, one of
+distance. Their measured widths (90 / 68 / 28 for "Caldari Police /
+Commissioner / 29 km") are the name's, not the element's, and each row's left
+edge sits within half a pixel of centred on the ring — so the detail layer
+centres them and does not pretend to know the text. A shorter name uses fewer
+rows; nothing in any file says how many.
+
 **EVE's own default position is still unknown** — 87 % of account files have no
 `targetOrigin`, and no capture has produced one from a virgin account. The canvas
 draws nothing for those rather than guess, and a *minted* value has no

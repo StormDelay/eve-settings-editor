@@ -294,12 +294,24 @@ export const HUD_NOMINAL = {
   fighter: { w: 467, h: 264 },
   badge: { w: 32, h: 32 },
   // ONE target slot, measured 2026-07-31: the list's slot pitch is 110 across
-  // and 181 down (four label rows apart, in three shots). How many slots are
-  // drawn depends on how many things the player has locked, which no file
-  // knows, so the canvas draws the one that is always there — the slot at the
-  // anchor. The others fan out from it, away from the screen edge.
+  // and 181 down (four label rows apart, in three shots). A list is N of these
+  // in a row or a column — see hudRects, which takes the count, because no file
+  // records how many things a pilot locks.
   target: { w: 110, h: 181 },
 };
+
+/** How many target slots the canvas draws when nobody has said otherwise. Four
+ * is a common enough lock count to be representative without filling the
+ * screen; the preference behind it is `LayoutPrefs.targets`. */
+export const TARGET_COUNT_DEFAULT = 4;
+
+/** The footprint of a target list of `count` slots. Vertical stacks them down,
+ * horizontal runs them across — `alignHorizontally` picks which. */
+export function targetSize(count: number, horizontal: boolean): { w: number; h: number } {
+  const n = Math.max(1, Math.round(count));
+  const { w, h } = HUD_NOMINAL.target;
+  return horizontal ? { w: w * n, h } : { w, h: h * n };
+}
 
 /**
  * How much of the screen's left edge the target list's x fraction does NOT
@@ -465,8 +477,17 @@ export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: numb
  * (neocom, ship HUD, fighter, badge, target list) so the canvas paints the bar
  * first and tests can index. An element whose values aren't writable is omitted
  * rather than drawn at a guessed position.
+ *
+ * `targetCount` is how many locked targets to draw the target list at. It is a
+ * view preference rather than anything read from a file — no settings file
+ * records how many things a pilot locks — and it changes the rectangle's size,
+ * so windows snap against the area the list really covers at that count.
  */
-export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
+export function hudRects(
+  hud: Hud,
+  layout: WindowLayout,
+  targetCount: number = TARGET_COUNT_DEFAULT,
+): FurnitureRect[] {
   const out: FurnitureRect[] = [];
 
   const neocom = hudNum(hud, "neocom_width");
@@ -528,7 +549,7 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
   const ty = hudNum(hud, "target_y");
   if (tx !== null && ty !== null && stored(hud, "target_x") && stored(hud, "target_y")) {
     const a = targetAnchor(tx, ty, layout.reference_w, layout.reference_h);
-    const { w, h } = HUD_NOMINAL.target;
+    const { w, h } = targetSize(targetCount, hudFlag(hud, "target_horizontal"));
     out.push({
       kind: "target",
       label: "Target list",
