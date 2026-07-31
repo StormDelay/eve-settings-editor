@@ -2,7 +2,7 @@
 // framework — matching search.test.ts.
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
-  NO_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
+  NO_FILTER, DEFAULT_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
   snapLines, movingEdges, snapDelta, unitAt, rectsAt, moveInOrder, dropAction, linkInventory,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
@@ -272,6 +272,18 @@ check("open filter keeps the right window", open[0].id === "a");
   check("whitespace-only text does not", !filterIsActive({ ...NO_FILTER, text: "  " }));
   check("openOnly makes it active", filterIsActive({ ...NO_FILTER, openOnly: true }));
   check("hideClutter makes it active", filterIsActive({ ...NO_FILTER, hideClutter: true }));
+
+  // The canvas opens on DEFAULT_FILTER, not NO_FILTER. The pair below is the
+  // contract: clutter starts hidden, and nothing else is narrowed.
+  check("the default filter hides clutter", DEFAULT_FILTER.hideClutter);
+  check("the default filter narrows nothing else",
+    DEFAULT_FILTER.text === "" && !DEFAULT_FILTER.openOnly && DEFAULT_FILTER.env === "all");
+  // Deliberate: it drives the "showing N of M · reset" line, which is what
+  // discloses that the opening view is already omitting windows.
+  check("the default filter counts as active", filterIsActive(DEFAULT_FILTER));
+  check("a clutter window is out of the default view",
+    !windowMatches(privateChat, DEFAULT_FILTER));
+  check("an ordinary window is still in it", windowMatches(market, DEFAULT_FILTER));
 
   check("an empty filter matches everything", windowMatches(standingChat, NO_FILTER));
   check("text matches the friendly label", windowMatches(market, { ...NO_FILTER, text: "mark" }));
