@@ -24,7 +24,7 @@ pub enum Category {
     Keybinds,
     NeocomButtons,
     // The HUD's individual keys. `hud.rs`'s FIELDS table is the source of
-    // truth for these paths; `Aspect::Layout` carries all six so a layout
+    // truth for these paths; `Aspect::Layout` carries all of them so a layout
     // copy moves the whole of a character's screen furniture. They cannot be
     // whole-section splices: char `ui` also holds editHistory and
     // SortHeadersSizes, so copying the section would carry the target's
@@ -35,6 +35,12 @@ pub enum Category {
     HudFighterDetached,
     HudFighterShown,
     HudNeocomWidth,
+    // The locked-target list: where it sits, and which way it runs. Its
+    // `targetOriginLocked` sibling is deliberately NOT carried — that is a
+    // per-player interaction preference, and copying a locked state onto
+    // someone would leave them unable to drag their own list back in-game.
+    HudTargetOrigin,
+    HudTargetAlign,
 }
 
 impl Category {
@@ -61,6 +67,11 @@ impl Category {
             // Account-side `windows`, which holds only this key — a different
             // document from the char-side `windows` Category::Layout splices.
             Category::HudNeocomWidth => &[b"windows", b"neocomWidth"],
+            // Account-side `ui`, like the three toggles above it. NOT
+            // `windows`: a plain `bmdump dump` walks these two back there, and
+            // only an inlined dump shows the real tree. See hud.rs.
+            Category::HudTargetOrigin => &[b"ui", b"targetOrigin"],
+            Category::HudTargetAlign => &[b"ui", b"alignHorizontally"],
         }
     }
 
@@ -70,6 +81,24 @@ impl Category {
     /// target alone" would half-apply a Layout copy on a quarter of accounts.
     /// Never true for a whole-section category — a source with no `overview`
     /// deleting the target's would be data loss, not a copy.
+    ///
+    /// **`HudTargetOrigin` makes this path common rather than occasional.**
+    /// 87 % of corpus account files have never had the target list dragged, so
+    /// most Layout copies now DELETE the target's target-list position, putting
+    /// it back at EVE's default. That is the same rule the other leaves follow
+    /// and it is what "the two characters match" means — but where the others
+    /// fire on a quarter of sources, this one fires on most of them, and the
+    /// target's own carefully-placed list is what goes. Worth saying out loud
+    /// before anyone reads the deletion as a bug.
+    ///
+    /// One case is genuinely lossy and has no signal to catch it: a Layout
+    /// preset saved between 0.23.0 and 0.26.0 has a non-empty `user.dat` (so
+    /// the empty-root rule below does not apply) and no `targetOrigin` (because
+    /// the category did not exist), and applying it therefore deletes the
+    /// target's. The char side has a shape signal for exactly this — `prune`
+    /// building a root `notifications` key — but these two live under `ui`,
+    /// which every such preset already has, so there is nothing to test. Filed
+    /// in docs/small-tasks.md; re-saving the preset fixes it.
     pub fn absent_means_default(self) -> bool {
         matches!(
             self,
@@ -79,6 +108,8 @@ impl Category {
                 | Category::HudFighterDetached
                 | Category::HudFighterShown
                 | Category::HudNeocomWidth
+                | Category::HudTargetOrigin
+                | Category::HudTargetAlign
         )
     }
 }
@@ -593,19 +624,22 @@ mod tests {
         // on its own only holds batch.rs against itself: change both and it
         // still passes. The genuine cross-check is
         // `ops.rs::a_layout_copy_leaves_every_hud_field_equal`, which copies
-        // through these key paths and then reads all nine fields back through
+        // through these key paths and then reads every field back through
         // `project_hud` — the only reader of FIELDS. If hud.rs moved a section
         // or key without moving it here, the copy would write the old path and
         // the projection would read the new one, so the field comes back None
         // and that test fails. Keep it non-vacuous (every field non-None on
         // both sides) or this pair stops cross-checking anything.
-        let expected: [(Category, &[&[u8]]); 6] = [
+        let expected: [(Category, &[&[u8]]); 8] = [
             (Category::HudFighterPos, &[b"ui", b"fightersDetachedPosition"]),
             (Category::HudBadge, &[b"notifications", b"notification_badge_offset"]),
             (Category::HudShipTop, &[b"ui", b"shipuialigntop"]),
             (Category::HudFighterDetached, &[b"ui", b"detachFighterUI"]),
             (Category::HudFighterShown, &[b"ui", b"displayFighterUI"]),
             (Category::HudNeocomWidth, &[b"windows", b"neocomWidth"]),
+            // `ui`, not `windows` — the trap hud.rs documents at length.
+            (Category::HudTargetOrigin, &[b"ui", b"targetOrigin"]),
+            (Category::HudTargetAlign, &[b"ui", b"alignHorizontally"]),
         ];
         for (cat, path) in expected {
             assert_eq!(cat.key_path(), path, "{cat:?} addresses the wrong key");

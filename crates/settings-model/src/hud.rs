@@ -1,6 +1,7 @@
 //! Read-only projection of EVE's screen furniture — the ship HUD's horizontal
 //! offset, the detached fighter UI and notification badge positions, the neocom
-//! width, and the account-level HUD toggles. Every writable field carries the
+//! width, the locked-target list's anchor, and the account-level HUD toggles.
+//! Every writable field carries the
 //! resolved `NodePath` a `set_scalar` mutation targets. All format knowledge
 //! (which section, which key, which tuple element, the `(timestamp, value)`
 //! wrapper) lives here. The setter is `set_hud_value`; nothing else mutates.
@@ -68,7 +69,7 @@ struct Field {
     scope: HudScope,
 }
 
-const FIELDS: [Field; 9] = [
+const FIELDS: [Field; 12] = [
     Field { name: "ship_offset", section: b"windows", key: b"shipuialignleftoffset",
             elem: None, kind: HudKind::Float, default: "0", scope: HudScope::Char },
     Field { name: "fighter_x", section: b"ui", key: b"fightersDetachedPosition",
@@ -100,6 +101,34 @@ const FIELDS: [Field; 9] = [
             elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
     Field { name: "neocom_width", section: b"windows", key: b"neocomWidth",
             elem: None, kind: HudKind::Int, default: "37", scope: HudScope::Account },
+    // The locked-target list. CAPTURED in-game 2026-07-31 (Holy Storm, three
+    // positions and an orientation toggle) — see
+    // docs/live-verification-target-origin.md. Two things to know before
+    // touching these:
+    //
+    // - The section is `ui`, NOT `windows`. A plain `bmdump dump` walks these
+    //   keys back to `windows`, where `neocomWidth` genuinely lives; only
+    //   `dump-inline` shows the real tree. The account gate in
+    //   `tests/hud_corpus.rs` is what holds this honest, exactly as the
+    //   `badge_*` gate does on the character side.
+    // - `targetOrigin` is a FRACTION, not a pixel: y over the screen height, x
+    //   over the width right of the neocom. `layout.ts` owns that conversion;
+    //   this table only carries the number.
+    //
+    // The default is a placeholder: 87 % of corpus account files have no
+    // `targetOrigin` at all, and EVE's own starting position was never
+    // captured. Rather than draw an element at a guessed spot, `hudRects` omits
+    // the rectangle whenever the value is absent — the badge's `0` default is
+    // as unmeasured, but a corner is a defensible guess where 0.0 here is not.
+    Field { name: "target_x", section: b"ui", key: b"targetOrigin",
+            elem: Some(0), kind: HudKind::Float, default: "0", scope: HudScope::Account },
+    Field { name: "target_y", section: b"ui", key: b"targetOrigin",
+            elem: Some(1), kind: HudKind::Float, default: "0", scope: HudScope::Account },
+    // Which way the list runs from that anchor: false stacks it vertically,
+    // true lays it out in a row. It does not move the anchor — one stored value
+    // photographed in both orientations put the anchor slot on the same pixel.
+    Field { name: "target_horizontal", section: b"ui", key: b"alignHorizontally",
+            elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
 ];
 
 pub fn project_hud(char_root: &Value, user_root: Option<&Value>) -> Hud {
@@ -117,8 +146,8 @@ pub fn project_hud(char_root: &Value, user_root: Option<&Value>) -> Hud {
                 HudScope::Char => (Some(char_root), &char_shared),
                 HudScope::Account => (user_root, &user_shared),
             };
-            // No account file open is normal (an unpaired character): the four
-            // account fields are then simply not writable.
+            // No account file open is normal (an unpaired character): the account-
+            // scoped fields are then simply not writable.
             let (value, set) = root.map_or((None, SetTarget::Unavailable), |r| probe(r, f, shared));
             HudEntry {
                 name: f.name.to_string(),
@@ -553,6 +582,16 @@ mod tests {
                     (b("shipuialigntop"), wrapped(Value::Bool(true))),
                     (b("detachFighterUI"), wrapped(Value::Bool(true))),
                     (b("displayFighterUI"), wrapped(Value::Bool(false))),
+                    // The target list, in the same Ref-keyed section — the
+                    // shape a real account file has, floats and all.
+                    (
+                        b("targetOrigin"),
+                        wrapped(Value::Tuple(vec![
+                            Value::Float(0.5442122186495176),
+                            Value::Float(0.5222222222222223),
+                        ])),
+                    ),
+                    (b("alignHorizontally"), wrapped(Value::Bool(true))),
                 ]),
             ),
             (b("anchor"), Value::Shared { slot: 9, value: Box::new(b("ui")) }),
@@ -569,9 +608,20 @@ mod tests {
         assert_eq!(entry(&hud, "fighter_detached").value.as_deref(), Some("true"));
         assert_eq!(entry(&hud, "fighter_shown").value.as_deref(), Some("false"));
         assert_eq!(entry(&hud, "neocom_width").scope, HudScope::Account);
+        // The target list: a float pair in the same Ref-keyed `ui` section, and
+        // each axis resolving to its own tuple element.
+        assert_eq!(entry(&hud, "target_x").value.as_deref(), Some("0.5442122186495176"));
+        assert_eq!(entry(&hud, "target_y").value.as_deref(), Some("0.5222222222222223"));
+        assert_eq!(entry(&hud, "target_horizontal").value.as_deref(), Some("true"));
         // Paths address the ACCOUNT document, not the character one.
         match &entry(&hud, "neocom_width").set {
             SetTarget::Set { path } => assert_eq!(resolve(&udoc, path), Some(&Value::Int(37))),
+            other => panic!("expected Set, got {other:?}"),
+        }
+        match &entry(&hud, "target_y").set {
+            SetTarget::Set { path } => {
+                assert_eq!(resolve(&udoc, path), Some(&Value::Float(0.5222222222222223)))
+            }
             other => panic!("expected Set, got {other:?}"),
         }
     }
@@ -579,7 +629,10 @@ mod tests {
     #[test]
     fn without_an_account_file_the_account_fields_are_unavailable() {
         let hud = project_hud(&char_doc(), None);
-        for name in ["ship_top", "fighter_detached", "fighter_shown", "neocom_width"] {
+        for name in [
+            "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+            "target_x", "target_y", "target_horizontal",
+        ] {
             let e = entry(&hud, name);
             assert!(e.value.is_none(), "{name} has no value");
             assert!(matches!(e.set, SetTarget::Unavailable), "{name} is unavailable");
@@ -710,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn all_nine_fields_are_projected_in_a_stable_order() {
+    fn every_field_is_projected_in_a_stable_order() {
         let hud = project_hud(&char_doc(), Some(&user_doc()));
         let names: Vec<&str> = hud.entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
@@ -718,6 +771,7 @@ mod tests {
             vec![
                 "ship_offset", "fighter_x", "fighter_y", "badge_x", "badge_y",
                 "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+                "target_x", "target_y", "target_horizontal",
             ]
         );
     }

@@ -424,12 +424,26 @@ check("open filter keeps the right window", open[0].id === "a");
 }
 
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
-import { hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT } from "./layout.ts";
+import {
+  hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
+  targetDenominator, targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
+  TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
+} from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
 // The four account-scoped fields, by name — a literal list rather than a
 // name-prefix guess, so a future field can't be silently mislabelled.
-const ACCOUNT_FIELDS = new Set(["ship_top", "fighter_detached", "fighter_shown", "neocom_width"]);
+const ACCOUNT_FIELDS = new Set([
+  "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+  "target_x", "target_y", "target_horizontal",
+]);
+
+// The value Holy Storm's account file held after the 2026-07-31 capture:
+// 1354/2488 and 752/1440 on a 2560x1440 client with a 72px neocom. Real
+// numbers, so the arithmetic below is checked against a photographed position
+// rather than against itself.
+const TARGET_X = 0.5442122186495176;
+const TARGET_Y = 0.5222222222222223;
 
 // `insert` is what the backend really sends for a key the file does not have —
 // the shape an absent value arrives in. The helper could only build `set` and
@@ -460,6 +474,9 @@ const fullHud = (over: Partial<Record<string, HudEntry>> = {}): Hud => {
     hudEntry("fighter_detached", "true", "bool", "false"),
     hudEntry("fighter_shown", "true", "bool", "false"),
     hudEntry("neocom_width", "37", "int", "37"),
+    hudEntry("target_x", String(TARGET_X), "float", "0"),
+    hudEntry("target_y", String(TARGET_Y), "float", "0"),
+    hudEntry("target_horizontal", "false", "bool", "false"),
   ];
   return { entries: base.map((e) => over[e.name] ?? e) };
 };
@@ -481,7 +498,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 {
   const rects = hudRects(fullHud(), layout2560);
   const kinds = rects.map((r) => r.kind).join(",");
-  check("all four elements are drawn in a stable order", kinds === "neocom,shipui,fighter,badge");
+  check("all five elements are drawn in a stable order", kinds === "neocom,shipui,fighter,badge,target");
 
   const neocom = rects[0];
   check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 37 && neocom.h === 1440);
@@ -539,6 +556,177 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     layout2560,
   );
   check("no account file means no neocom bar", !rects.some((r) => r.kind === "neocom"));
+}
+
+// --- the target list -------------------------------------------------------
+// Everything here is measured against `docs/live-verification-target-origin.md`:
+// three photographed positions on one 2560x1440 client, with the stored value
+// the client wrote for each.
+{
+  check(
+    "the stored value's own denominator is recovered",
+    targetDenominator(TARGET_X, 2560) === 2488,
+  );
+  check(
+    "a value that divides evenly into many candidates is not trusted",
+    targetDenominator(0.5, 2560) === 2560 - TARGET_MARGIN,
+  );
+  check(
+    "the placeholder default recovers nothing and falls back",
+    targetDenominator(0, 2560) === 2560 - TARGET_MARGIN,
+  );
+  // Written at a 48px neocom (2038/2512), which is the case the fallback would
+  // get wrong by 24px if the denominator were assumed rather than read.
+  check(
+    "an older value written at a different neocom width recovers ITS denominator",
+    targetDenominator(0.8113057324840764, 2560) === 2512,
+  );
+
+  const a = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440);
+  check("the anchor is the neocom margin plus the fraction of what is left", a.x === 72 + 1354);
+  check("the anchor's y is a plain fraction of the screen height", a.y === 752);
+}
+
+{
+  const rects = hudRects(fullHud(), layout2560, 1);
+  const t = rects.find((r) => r.kind === "target")!;
+  check("one target slot is the measured 110x181", t.w === 110 && t.h === 181);
+  check("the target list drags freely", t.drag === "xy");
+  // Anchor (1426, 752): right of centre and below it, so the slot hangs up and
+  // to the left, toward the middle of the screen.
+  check("the slot hangs inward from its anchor", t.x === 1426 - 110 && t.y === 752 - 181);
+  // The photograph: with this exact value stored, the anchor slot's label
+  // centre measured x=1369.0 and its ring band spanned y 578..644. Both fall
+  // inside the drawn slot, and the slot's centre is within a pixel or two of
+  // the label — this is the check that the whole conversion agrees with a real
+  // screenshot rather than with itself.
+  check("the drawn slot straddles the photographed label centre", Math.abs(t.x + t.w / 2 - 1369) <= 3);
+  check("and contains the photographed ring band", t.y <= 578 && t.y + t.h >= 644);
+}
+
+{
+  // The count is a view setting, and the rectangle is the area that many
+  // targets really cover — so it grows along the stacking axis and nowhere
+  // else, and the anchored corner stays put.
+  const one = hudRects(fullHud(), layout2560, 1).find((r) => r.kind === "target")!;
+  const four = hudRects(fullHud(), layout2560, 4).find((r) => r.kind === "target")!;
+  check("four targets stack four slots down", four.w === 110 && four.h === 181 * 4);
+  check("and grow away from the anchored corner", four.x === one.x && four.y === one.y - 181 * 3);
+
+  const across = hudRects(
+    fullHud({ target_horizontal: hudEntry("target_horizontal", "true", "bool", "false") }),
+    layout2560, 4,
+  ).find((r) => r.kind === "target")!;
+  check("horizontal runs the same four slots across", across.w === 110 * 4 && across.h === 181);
+  check("and grows leftward from a right-hand anchor",
+    across.y === one.y && across.x === one.x - 110 * 3);
+
+  check("the default count is four", targetSize(TARGET_COUNT_DEFAULT, false).h === 181 * 4);
+  // Not reachable from the number input, but a hand-edited preferences file is
+  // a real source: a zero-height rectangle would be an invisible thing the
+  // canvas still hit-tests.
+  check("a zero count still draws one slot", targetSize(0, false).h === 181);
+}
+
+{
+  // horizontal2.png: 531/2488, anchor at x=603 — left of centre, so the list
+  // runs the other way and the slot hangs to the RIGHT of the anchor. Its
+  // label measured 657.0.
+  const rects = hudRects(fullHud({ target_x: hudEntry("target_x", "0.21342443729903537", "float", "0") }), layout2560);
+  const t = rects.find((r) => r.kind === "target")!;
+  check("a left-of-centre anchor draws its slot to the right", t.x === 603);
+  check("which still lands on the photographed label centre", Math.abs(t.x + t.w / 2 - 657) <= 3);
+}
+
+{
+  const rects = hudRects(
+    fullHud({ target_x: hudEntry("target_x", null, "float", "0", "insert") }),
+    layout2560,
+  );
+  check("an unstored target anchor is not drawn at all", !rects.some((r) => r.kind === "target"));
+}
+
+{
+  // The drag round trip, through both halves: place a slot, move its anchor,
+  // convert back to fractions, and read the anchor out again. The ANCHOR is the
+  // invariant — it must land exactly where the drag put it, whatever the drawn
+  // rect then does with it.
+  const before = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440);
+  const slotBefore = hudRects(fullHud(), layout2560).find((r) => r.kind === "target")!;
+  const placed = (next: { x: number; y: number }) =>
+    hudRects(
+      fullHud({
+        target_x: hudEntry("target_x", String(next.x), "float", "0"),
+        target_y: hudEntry("target_y", String(next.y), "float", "0"),
+      }),
+      layout2560,
+    ).find((r) => r.kind === "target")!;
+
+  for (const [dx, dy] of [[-1000, 400], [17, 3], [-100, -20], [0, 0]]) {
+    const next = targetFractionFromPoint(TARGET_X, before.x + dx, before.y + dy, 2560, 1440);
+    const after = targetAnchor(next.x, next.y, 2560, 1440);
+    check(
+      `a ${dx},${dy} drag moves the anchor by exactly that`,
+      after.x === before.x + dx && after.y === before.y + dy,
+    );
+    check(
+      `and the written value keeps the client's own denominator (${dx},${dy})`,
+      targetDenominator(next.x, 2560) === 2488,
+    );
+  }
+
+  // While the anchor stays in the same half of the screen, the drawn slot
+  // tracks the drag one-for-one.
+  const near = targetFractionFromPoint(TARGET_X, before.x - 100, before.y - 20, 2560, 1440);
+  const moved = placed(near);
+  check("a drag that stays in the same half moves the slot with it",
+    moved.x === slotBefore.x - 100 && moved.y === slotBefore.y - 20);
+
+  // Crossing the middle is the case that makes an absolute rect inverse
+  // ambiguous: the anchor moves the full 300px, but the slot is now drawn on
+  // the other side of it, so the rect moves 110 less. This is EVE's behaviour
+  // — the list always grows toward the centre — not a rounding slip.
+  const crossed = placed(targetFractionFromPoint(TARGET_X, before.x - 300, before.y, 2560, 1440));
+  check("crossing the middle flips which side the slot hangs on",
+    crossed.x === before.x - 300 && crossed.x === slotBefore.x - 300 + 110);
+}
+
+{
+  // The marked corner is the one the box hangs from, and it must agree with
+  // where targetRect actually put the box — a marker on the wrong corner is
+  // worse than none.
+  const w = 110, h = 181;
+  for (const [ax, ay, want] of [
+    [1426, 752, "br"], [603, 752, "bl"], [1426, 100, "tr"], [603, 100, "tl"],
+  ] as [number, number, string][]) {
+    check(`an anchor at ${ax},${ay} is marked ${want}`, targetCorner(ax, ay, 2560, 1440) === want);
+    const r = targetRect(ax, ay, w, h, 2560, 1440);
+    check(`and the box really hangs from that corner (${want})`,
+      (want[1] === "r" ? r.x + w : r.x) === ax && (want[0] === "b" ? r.y + h : r.y) === ay);
+  }
+}
+
+{
+  // The panel's pixel fields go through targetFractionFromPoint. Same
+  // invariant as the drag, stated absolutely: the anchor lands exactly where
+  // it was put, and the value keeps the denominator it came with.
+  for (const [x, y] of [[1426, 752], [300, 100], [2559, 1439], [72, 0]]) {
+    const next = targetFractionFromPoint(TARGET_X, x, y, 2560, 1440);
+    const back = targetAnchor(next.x, next.y, 2560, 1440);
+    check(`a pixel typed at ${x},${y} round-trips through the fraction`,
+      back.x === x && back.y === y);
+    check(`and keeps the client's own denominator (${x},${y})`,
+      targetDenominator(next.x, 2560) === 2488);
+  }
+}
+
+{
+  // A drag that ends where it started must not dirty the document: the commit
+  // compares the converted value with the stored one, so they have to be
+  // identical, not merely close.
+  const same = targetFractionFromPoint(TARGET_X, 1426, 752, 2560, 1440);
+  check("re-writing the anchor it already has reproduces the fractions exactly",
+    same.x === TARGET_X && same.y === TARGET_Y);
 }
 
 // The drag round-trip: run hudRects to get the rect a stored value places,

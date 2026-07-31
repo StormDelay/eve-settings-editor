@@ -45,6 +45,81 @@ Workflow:
   from the same session: whether the chat input box spans the full window
   width or only the message pane — the editor draws the latter.
   _Added 2026-07-30._
+- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
+  canvas makes the entire box the grab target, so the cursor sits at an
+  arbitrary offset from the anchor — and when the list flips to the other side
+  of the anchor at the middle of the screen, that offset changes sign under the
+  user's hand. In game the handle IS the anchor, which is why it feels right
+  there and slightly wrong here. The flip itself is correct (2026-07-31
+  capture), and the anchor is now MARKED on that corner, which makes it
+  visible — but the grab target is unchanged, so the feel is not. What is
+  missing is making that marker the handle, with the rest of the box selectable
+  but not draggable. Everything needed is
+  already there — `targetRect` places the box from the anchor and the drop
+  writes the anchor — so this is a hit-target change, not a geometry one.
+  _Added 2026-07-31._
+
+- [ ] **A minted target anchor has to guess the neocom margin, and an old
+  Layout preset deletes the target's list.** Two loose ends from making the
+  target list a Layout category (2026-07-31). First: the stored value is a
+  fraction whose denominator encodes the writing client's neocom width, and a
+  value the editor MINTS has none to recover, so it assumes
+  `TARGET_MARGIN = 72` — the one number in this feature no capture has
+  exercised. Second: a Layout preset saved between 0.23.0 and 0.26.0 has a
+  non-empty `user.dat` but no `targetOrigin`, so applying it reads the absence
+  as "the source is at EVE's default" and removes the target's position. The
+  char side has a shape signal for exactly this class (`prune` building a root
+  `notifications` key); these two keys live under `ui`, which such a preset
+  already has, so there is nothing to test against. Re-saving the preset fixes
+  it. Both are argued in full in `batch.rs::absent_means_default`.
+  _Added 2026-07-31._
+
+- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
+  canvas makes the entire box the grab target, so the cursor sits at an
+  arbitrary offset from the anchor — and when the list flips to the other side
+  of the anchor at the middle of the screen, that offset changes sign under the
+  user's hand. In game the handle IS the anchor, which is why it feels right
+  there and slightly wrong here. The flip itself is correct (2026-07-31
+  capture), and the anchor is now MARKED on that corner, which makes it
+  visible — but the grab target is unchanged, so the feel is not. What is
+  missing is making that marker the handle, with the rest of the box selectable
+  but not draggable. Everything needed is
+  already there — `targetRect` places the box from the anchor and the drop
+  writes the anchor — so this is a hit-target change, not a geometry one.
+  _Added 2026-07-31._
+
+- [ ] **Decide whether a Layout copy should carry the target list, and smoke the
+  editor's writes in-game.** The anchor is editable now (`targetOrigin` /
+  `alignHorizontally`, both account-scoped), but deliberately **not** a
+  `batch::Category` — a Layout copy leaves the target account's list where it
+  is. Two reasons to think before adding it: the stored value is a fraction
+  whose denominator encodes the *source* client's neocom width, so a copy across
+  accounts with different neocoms lands up to ~35px off; and `absent_means_default`
+  would make a copy from any of the 87 % of accounts that have never dragged
+  their list **delete** the target's position. Neither is fatal — both match how
+  the other HUD keys already behave — but it changes what a copy writes, so it
+  is the developer's call.
+  **The write side is smoked** (2026-07-31): edits made in the editor landed
+  where the canvas drew them in a running client, position and direction both.
+  What that session did NOT cover is a *minted* value — it edited an anchor the
+  file already had, so the denominator was recovered rather than assumed, and
+  `TARGET_MARGIN = 72` is still the one number no capture has exercised.
+
+- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
+  columns.** The furniture boxes now cover the right area (2026-07-28) but are
+  still blank rectangles, and a blank rectangle does not tell a player what they
+  are positioning against — recognising the thing is half of why the footprint
+  mattered. The ship-HUD and fighter geometry needed for it is already measured
+  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
+  from the box origin with a ~158px ring, module slot rows starting at x 245 on
+  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
+  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
+  All offsets are from each element's own top-left, so they can be expressed as
+  percentages of the drawn box and rescale with the canvas for free. Overview
+  columns would need their own measuring pass — nothing is captured for them yet.
+  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
+  Split out of the HUD-footprint task, which shipped the sizing half.
+  _Added 2026-07-28._
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
