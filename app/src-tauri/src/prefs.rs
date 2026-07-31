@@ -13,7 +13,7 @@ pub struct Preferences {
     pub layout: LayoutPrefs,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutPrefs {
     /// Window ids the user forced INTO the clutter set.
@@ -23,6 +23,21 @@ pub struct LayoutPrefs {
     /// Whether the layout canvas draws each rectangle's internals. Purely a
     /// view setting — it changes nothing about any EVE settings file.
     pub detail: bool,
+    /// How many locked targets the canvas draws the target list at. Also a
+    /// view setting: no file records how many things a pilot locks, so the
+    /// canvas has to be told. See `layout.ts`'s `hudRects`.
+    pub targets: u8,
+}
+
+/// Hand-written rather than derived because `targets` is the one field whose
+/// sensible default is not zero — and container-level `#[serde(default)]`
+/// fills every missing field from here, so a preferences file written before
+/// this field existed loads with 4 rather than a target list drawn as a
+/// zero-height sliver.
+impl Default for LayoutPrefs {
+    fn default() -> Self {
+        Self { clutter: Vec::new(), visible: Vec::new(), detail: false, targets: 4 }
+    }
 }
 
 /// Read the file, or defaults. A file we cannot parse is USER DATA: move it
@@ -82,6 +97,17 @@ mod tests {
         assert!(prefs.layout.clutter.is_empty());
         assert!(prefs.layout.visible.is_empty());
         assert!(!p.exists(), "loading must not create the file");
+    }
+
+    #[test]
+    fn a_file_written_before_the_targets_field_loads_with_the_default() {
+        // The extensibility contract in practice: an older build's file has no
+        // `targets` key at all, and 0 would draw the target list as a sliver.
+        let p = temp_dir("old-shape").join("preferences.json");
+        std::fs::write(&p, br#"{"layout":{"clutter":[],"visible":[],"detail":true}}"#).unwrap();
+        let prefs = load_from(&p);
+        assert_eq!(prefs.layout.targets, 4);
+        assert!(prefs.layout.detail, "the fields it DOES carry still load");
     }
 
     #[test]

@@ -714,6 +714,13 @@ fn user_modern() -> Value {
         (b("shipuialigntop"), w(Value::Bool(true))),
         (b("detachFighterUI"), w(Value::Bool(true))),
         (b("displayFighterUI"), w(Value::Bool(true))),
+        // The locked-target list, in its real section (`ui`, not `windows` —
+        // see hud.rs). The pair is a FRACTION: y over the screen height, x over
+        // the width right of the neocom, so 0.5442122186495176 = 1354/2488 is
+        // a real client's exact rational at 2560 wide with a 72px neocom.
+        (b("targetOrigin"), w(tup(vec![f(0.5442122186495176), f(0.5222222222222223)]))),
+        (b("targetOriginLocked"), w(i(0))),
+        (b("alignHorizontally"), w(Value::Bool(true))),
         // Probe scanner filter naming an overview preset — the cross-container
         // reference `rename_preset` does not currently retarget.
         (b("scanner_presetInUse"), w(b("hostile"))),
