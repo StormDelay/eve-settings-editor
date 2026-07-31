@@ -45,6 +45,37 @@ Workflow:
   from the same session: whether the chat input box spans the full window
   width or only the message pane — the editor draws the latter.
   _Added 2026-07-30._
+- [ ] **Decide whether a Layout copy should carry the target list, and smoke the
+  editor's writes in-game.** The anchor is editable now (`targetOrigin` /
+  `alignHorizontally`, both account-scoped), but deliberately **not** a
+  `batch::Category` — a Layout copy leaves the target account's list where it
+  is. Two reasons to think before adding it: the stored value is a fraction
+  whose denominator encodes the *source* client's neocom width, so a copy across
+  accounts with different neocoms lands up to ~35px off; and `absent_means_default`
+  would make a copy from any of the 87 % of accounts that have never dragged
+  their list **delete** the target's position. Neither is fatal — both match how
+  the other HUD keys already behave — but it changes what a copy writes, so it
+  is the developer's call.
+  Also still unverified in-game: that a value this editor *writes* lands where
+  the canvas drew it (the capture only proved the read direction), and the
+  `TARGET_MARGIN = 72` fallback a minted value has to assume. Both want one
+  logged-in session with `docs/live-verification-target-origin.md` open.
+
+- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
+  columns.** The furniture boxes now cover the right area (2026-07-28) but are
+  still blank rectangles, and a blank rectangle does not tell a player what they
+  are positioning against — recognising the thing is half of why the footprint
+  mattered. The ship-HUD and fighter geometry needed for it is already measured
+  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
+  from the box origin with a ~158px ring, module slot rows starting at x 245 on
+  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
+  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
+  All offsets are from each element's own top-left, so they can be expressed as
+  percentages of the drawn box and rescale with the canvas for free. Overview
+  columns would need their own measuring pass — nothing is captured for them yet.
+  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
+  Split out of the HUD-footprint task, which shipped the sizing half.
+  _Added 2026-07-28._
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings

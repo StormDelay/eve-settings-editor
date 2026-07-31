@@ -25,6 +25,18 @@ const ENOUGH_SYNTHETIC: usize = 1;
 
 const CHAR_FIELDS: [&str; 3] = ["ship_offset", "fighter_x", "badge_x"];
 
+/// The account half of the same guard. `target_x` is the reason it exists: its
+/// keys read back from a plain `bmdump dump` as if they sat under `windows`,
+/// beside `neocomWidth`, and only an inlined dump shows them under `ui`. A
+/// `Field` naming the wrong one passes every hand-built fixture in `hud.rs`
+/// while reading nothing from a real account file.
+const ACCOUNT_FIELDS: [&str; 3] = ["neocom_width", "ship_top", "target_x"];
+
+/// `targetOrigin` is written on demand — 87 % of corpus account files have
+/// never had the target list dragged — so it cannot clear `ENOUGH_REAL`.
+/// Ten distinct real files is still far past "one odd file".
+const ENOUGH_REAL_TARGET: usize = 10;
+
 #[test]
 fn every_character_hud_anchor_reads_from_a_real_file() {
     let mut synthetic = [0usize; CHAR_FIELDS.len()];
@@ -58,6 +70,45 @@ fn every_character_hud_anchor_reads_from_a_real_file() {
             assert!(
                 real[i] >= ENOUGH_REAL,
                 "{name} projected a value in only {}/{scanned} scanned real character files                  — its `section`/`key` almost certainly does not match real data",
+                real[i]
+            );
+        }
+    }
+}
+
+#[test]
+fn every_account_hud_field_reads_from_a_real_file() {
+    // The character root every account field ignores: `project_hud` needs one,
+    // and an empty document proves these values come from the account side.
+    let no_char = blue_marshal::Value::Dict(vec![]);
+    let mut synthetic = [0usize; ACCOUNT_FIELDS.len()];
+    let mut real = [0usize; ACCOUNT_FIELDS.len()];
+    let mut scanned = 0usize;
+
+    for f in common::user_files() {
+        let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
+        scanned += 1;
+        let hud = project_hud(&no_char, Some(&doc));
+        for (i, name) in ACCOUNT_FIELDS.iter().enumerate() {
+            let e = hud.entries.iter().find(|e| &e.name == name).expect("field projected");
+            if e.value.is_some() {
+                if f.synthetic { synthetic[i] += 1 } else { real[i] += 1 }
+            }
+        }
+    }
+
+    for (i, name) in ACCOUNT_FIELDS.iter().enumerate() {
+        assert!(
+            synthetic[i] >= ENOUGH_SYNTHETIC,
+            "{name} projected no value in any synthetic account fixture \
+             — its `section`/`key` does not match the shape the generator writes"
+        );
+        if common::real_corpus_present() {
+            let enough = if *name == "target_x" { ENOUGH_REAL_TARGET } else { ENOUGH_REAL };
+            assert!(
+                real[i] >= enough,
+                "{name} projected a value in only {}/{scanned} scanned real account files \
+                 — its `section`/`key` almost certainly does not match real data",
                 real[i]
             );
         }
