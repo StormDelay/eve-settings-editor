@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The effects applied to your ship, under the HUD on the layout canvas, with `Detail` on.
+- They move above the HUD when it is aligned to the bottom of the screen, as they do in game.
+- An `Effects drawn` count, 0–16, for how busy that row gets.
+- The effects applied to each locked target, under its labels.
+
+### Fixed
+- Clearing the `Targets drawn` box no longer reads as a count of zero.
+
 ## [0.26.0] - 2026-07-31
 
 The locked-target list: drawn, draggable, and carried by a layout copy.
