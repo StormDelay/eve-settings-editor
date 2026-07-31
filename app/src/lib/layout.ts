@@ -341,7 +341,7 @@ export const TARGET_MARGIN = 72;
  * margin out of a value that never encoded one.
  */
 export function targetDenominator(f: number, referenceW: number): number {
-  const fallback = referenceW - TARGET_MARGIN;
+  const fallback = Math.max(1, referenceW - TARGET_MARGIN);
   if (!Number.isFinite(f) || f <= 0 || referenceW <= TARGET_MARGIN) return fallback;
   let found = 0;
   // 200px is well past every margin seen (37, 48, 72) without reaching the
@@ -389,13 +389,24 @@ export function targetAnchor(fx: number, fy: number, referenceW: number, referen
 export function targetFractionFromDelta(
   fx: number, fy: number, dx: number, dy: number, referenceW: number, referenceH: number,
 ): { x: number; y: number } {
-  const d = targetDenominator(fx, referenceW);
-  const margin = referenceW - d;
   const a = targetAnchor(fx, fy, referenceW, referenceH);
-  return {
-    x: (Math.round(a.x + dx) - margin) / d,
-    y: Math.round(a.y + dy) / referenceH,
-  };
+  return targetFractionFromPoint(fx, a.x + dx, a.y + dy, referenceW, referenceH);
+}
+
+/**
+ * Stored fractions for an anchor AT data px `x, y` — the exact inverse of
+ * targetAnchor, and what the panel's pixel fields write.
+ *
+ * `fx` is the value being replaced, and is read only for its denominator: that
+ * is the client's own margin, recovered from the number it wrote, and an edit
+ * must not quietly re-base the value onto ours. A minted value has none to
+ * recover and falls back to TARGET_MARGIN.
+ */
+export function targetFractionFromPoint(
+  fx: number, x: number, y: number, referenceW: number, referenceH: number,
+): { x: number; y: number } {
+  const d = targetDenominator(fx, referenceW);
+  return { x: (Math.round(x) - (referenceW - d)) / d, y: Math.round(y) / referenceH };
 }
 
 const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
