@@ -208,6 +208,8 @@ export interface LayoutPrefs {
   detail: boolean;
   /** How many locked targets the canvas draws the target list at. */
   targets: number;
+  /** How many effect icons the canvas draws under the ship HUD. */
+  effects: number;
 }
 export interface Preferences {
   layout: LayoutPrefs;
