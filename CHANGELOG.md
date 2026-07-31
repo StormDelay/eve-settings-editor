@@ -19,8 +19,10 @@ All notable changes to this project are documented here. The format follows
   count.** No settings file records how many things a pilot locks, so the canvas
   is told: a `Targets drawn` box in the Target list group, 1 to 10, remembered in
   your preferences. The rectangle grows along the stacking axis, so windows snap
-  against the area the list really covers. With `Detail` on, each slot draws its
-  lock ring and label rows, measured from the same shots as the anchor.
+  against the area the list really covers. A dot marks the stored anchor — the
+  corner the list grows from, and the point a drag actually writes. With
+  `Detail` on, each slot draws its lock ring and label rows, measured from the
+  same shots as the anchor.
 
 ## [0.25.0] - 2026-07-31
 

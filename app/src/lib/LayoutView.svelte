@@ -3,7 +3,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetFractionFromPoint,
+    hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetCorner, targetFractionFromPoint,
     NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
@@ -362,11 +362,13 @@
         ax?: number; ay?: number }
     | { kind: "tab"; unit: DrawUnit; tabId: string; startX: number; startY: number; gx: number; gy: number };
   let drag: Drag | null = null;
-  // Where the target list's anchor is RIGHT NOW during a drag of it. Not
-  // $state: nothing renders from it — the preview rect does — and the drop
-  // needs the anchor it ended at, which a rect cannot be inverted back to
-  // unambiguously once it has flipped sides.
-  let targetDragAnchor: { x: number; y: number } | null = null;
+  // Where the target list's anchor is RIGHT NOW during a drag of it, and null
+  // when no such drag is in flight. $state because the anchor marker renders
+  // from it — a marker left on the committed corner while the preview flipped
+  // would point at the wrong one. The drop reads it too: it needs the anchor
+  // the drag ended at, which a rect cannot be inverted back to unambiguously
+  // once it has crossed the middle.
+  let targetDragAnchor = $state<{ x: number; y: number } | null>(null);
 
   // The lines the current drag has locked onto, in data px; null when this axis
   // isn't snapped. Drawn as guides, cleared on drop.
@@ -402,6 +404,15 @@
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
     : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))
     : [];
+
+  /** Which corner of the target list's box its anchor is — what the marker is
+   * drawn on. Follows the drag while one is in flight, so the marker moves to
+   * the other corner exactly when the box flips sides. */
+  const targetMarkerCorner = $derived.by(() => {
+    if (!layout) return null;
+    const a = targetDragAnchor ?? committedTargetAnchor();
+    return a ? targetCorner(a.x, a.y, layout.reference_w, layout.reference_h) : null;
+  });
 
   /** The target list's committed anchor, from the stored fractions. Null when
    * the file has no anchor to move (the canvas draws nothing then either). */
@@ -650,6 +661,9 @@
         if (stored.x !== d.f.x) await setHud(`${prefix}_x`, String(stored.x));
         if (stored.y !== d.f.y) await setHud(`${prefix}_y`, String(stored.y));
       }
+      // Only while a drag is in flight: the marker falls back to the stored
+      // anchor, which the write above has just refreshed.
+      if (!drag) targetDragAnchor = null;
       // A re-grab on the same furniture piece may have started during the
       // async write and now owns fPreview — don't wipe it out from under the
       // new drag. (The cast: TS narrowed `drag` to null above and can't see
@@ -895,6 +909,14 @@
             {#if detailOn()}
               <DetailParts parts={furnitureDetail(f)} {scale} />
             {/if}
+            <!-- The anchor is what the file stores and what a drag writes; the
+                 box is just what the list covers from there. In game the anchor
+                 is also the only thing you can grab, and this canvas lets you
+                 drag the whole box — so mark the corner rather than leave the
+                 user to infer it from which way the box grew. -->
+            {#if f.kind === "target" && targetMarkerCorner}
+              <span class="anchor-dot {targetMarkerCorner}" title="The stored anchor. The list grows from here toward the middle of the screen."></span>
+            {/if}
             <span class="furniture-label">{f.label}</span>
           </div>
         {/each}
@@ -1073,6 +1095,22 @@
     color: #fde68a;
     z-index: 1;
   }
+  .anchor-dot {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    /* Straddles the corner, so it reads as ON the point rather than inside the
+       box — the point is what moves, and it is often outside the drawn list. */
+    margin: -5px;
+    background: #f59e0b;
+    border: 1px solid #1c1917;
+    pointer-events: none;
+  }
+  .anchor-dot.tl { top: 0; left: 0; }
+  .anchor-dot.tr { top: 0; right: 0; }
+  .anchor-dot.bl { bottom: 0; left: 0; }
+  .anchor-dot.br { bottom: 0; right: 0; }
   .furniture-label {
     padding: 1px 3px;
     pointer-events: none;

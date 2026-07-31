@@ -369,7 +369,20 @@ export function targetDenominator(f: number, referenceW: number): number {
 export function targetRect(
   ax: number, ay: number, w: number, h: number, referenceW: number, referenceH: number,
 ): { x: number; y: number } {
-  return { x: ax > referenceW / 2 ? ax - w : ax, y: ay > referenceH / 2 ? ay - h : ay };
+  const c = targetCorner(ax, ay, referenceW, referenceH);
+  return { x: c[1] === "r" ? ax - w : ax, y: c[0] === "b" ? ay - h : ay };
+}
+
+/**
+ * Which corner of the drawn box the anchor is — the one facing away from the
+ * middle of the screen, since the list grows toward it.
+ *
+ * Shares its predicate with targetRect above, deliberately: the canvas marks
+ * this corner so the anchor is visible, and a marker on the wrong corner would
+ * be worse than none. One rule, two readings of it.
+ */
+export function targetCorner(ax: number, ay: number, referenceW: number, referenceH: number): Corner {
+  return `${ay > referenceH / 2 ? "b" : "t"}${ax > referenceW / 2 ? "r" : "l"}` as Corner;
 }
 
 /**
