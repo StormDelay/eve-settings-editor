@@ -5,6 +5,7 @@
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
+    targets, onTargets,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
   }: {
     hud: Hud;
@@ -21,6 +22,12 @@
     /** Selecting a group here highlights the matching rectangle on the canvas,
      * the mirror of clicking that rectangle. */
     onSelectKind: (kind: FurnitureRect["kind"]) => void;
+    /** How many locked targets the canvas draws the target list at, and the
+     * setter for it. A VIEW setting, not a field: no settings file records how
+     * many things a pilot locks, so the canvas has to be told. Badged `view`
+     * in the row below so it cannot be mistaken for something that writes. */
+    targets: number;
+    onTargets: (n: number) => void;
     /** The neocom bar, when a character file is open. Rendered inside the
      * Neocom group so the bar the user clicks on the canvas and the buttons
      * they edit are the same object. */
@@ -150,6 +157,26 @@
           </label>
         {/if}
       {/each}
+      {#if g.kind === "target"}
+        <!-- `view`, not a field: it stays enabled on a read-only document,
+             because changing it writes nothing. HudPanel.spec pins that. -->
+        <label class="row view" title="How many locked targets the canvas draws. A view setting — it writes nothing.">
+          <span class="label">Targets drawn</span>
+          <input
+            type="number"
+            min="1"
+            max="10"
+            step="1"
+            value={targets}
+            onchange={(ev) => {
+              const el = ev.target as HTMLInputElement;
+              const n = Number(el.value);
+              if (Number.isFinite(n)) onTargets(n);
+              el.value = String(targets);
+            }} />
+          <span class="badge">view</span>
+        </label>
+      {/if}
       {#if g.kind === "neocom" && neocom}
         <NeocomButtons
           bar={neocom}

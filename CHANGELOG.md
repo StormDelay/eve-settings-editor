@@ -10,10 +10,16 @@ All notable changes to this project are documented here. The format follows
 - **The locked-target list is on the layout canvas.** It was the one piece of
   screen furniture the canvas never drew. EVE stores it as a fraction, not
   pixels: y over the screen height, x over the width right of the neocom. Both
-  conventions were captured in-game. Drag the slot, or type the fractions in the
-  panel. A **Horizontal** toggle lays the list out in a row. An account that has
-  never moved its list gets no box — EVE's own starting position has never been
+  conventions were captured in-game. Drag the list, or type the fractions in the
+  panel. A **Horizontal** toggle lays it out in a row. An account that has never
+  moved its list gets no box — EVE's own starting position has never been
   captured.
+- **The list is drawn at the size four targets take, and you can change the
+  count.** No settings file records how many things a pilot locks, so the canvas
+  is told: a `Targets drawn` box in the Target list group, 1 to 10, remembered in
+  your preferences. The rectangle grows along the stacking axis, so windows snap
+  against the area the list really covers. With `Detail` on, each slot draws its
+  lock ring and label rows, measured from the same shots as the anchor.
 
 ## [0.25.0] - 2026-07-31
 

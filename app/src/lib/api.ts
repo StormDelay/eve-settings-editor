@@ -206,6 +206,8 @@ export interface LayoutPrefs {
   visible: string[];
   /** Whether the layout canvas draws each rectangle's internals. */
   detail: boolean;
+  /** How many locked targets the canvas draws the target list at. */
+  targets: number;
 }
 export interface Preferences {
   layout: LayoutPrefs;

@@ -42,6 +42,9 @@ function hud(...overrides: HudEntry[]): Hud {
     entry("neocom_width", "int", "37", { scope: "account", default: "37" }),
     entry("badge_x", "int", "2519"),
     entry("badge_y", "int", "131"),
+    entry("target_x", "float", "0.5442122186495176", { scope: "account" }),
+    entry("target_y", "float", "0.5222222222222223", { scope: "account" }),
+    entry("target_horizontal", "bool", "false", { scope: "account" }),
   ];
   const byName = new Map(base.map((e) => [e.name, e]));
   for (const o of overrides) byName.set(o.name, o);
@@ -51,15 +54,16 @@ function hud(...overrides: HudEntry[]): Hud {
 function mount(h: Hud, props: Partial<Parameters<typeof render>[1]> = {}) {
   const onSet = vi.fn();
   const onSelectKind = vi.fn();
+  const onTargets = vi.fn();
   render(HudPanel, {
-    hud: h, readOnly: false, onSet, onSelectKind,
+    hud: h, readOnly: false, onSet, onSelectKind, targets: 4, onTargets,
     // The neocom bar itself is optional (no character file, no bar), but its
     // four callbacks are required props — stub them so mounting a HUD-only
     // fixture doesn't need to know about neocom at all.
     onNeocomReorder: vi.fn(), onNeocomRemove: vi.fn(), onNeocomAdd: vi.fn(), onNeocomReset: vi.fn(),
     ...(props as object),
   });
-  return { onSet, onSelectKind };
+  return { onSet, onSelectKind, onTargets };
 }
 
 /// The panel repeats labels across groups ("x" and "y" belong to both the
@@ -141,9 +145,17 @@ describe("writing a value", () => {
 describe("what the panel refuses to edit", () => {
   test("read-only disables every field", () => {
     mount(hud(), { readOnly: true });
-    for (const input of document.querySelectorAll<HTMLInputElement>(".hud-panel input")) {
+    // `.row:not(.view)` — the target count is a canvas setting, not a field, so
+    // it stays live on a read-only document. The next test is that claim.
+    for (const input of document.querySelectorAll<HTMLInputElement>(".hud-panel .row:not(.view) input")) {
       expect(input.disabled).toBe(true);
     }
+  });
+
+  test("the target count stays editable on a read-only document", () => {
+    mount(hud(), { readOnly: true, accountReadOnly: true });
+    const view = document.querySelector<HTMLInputElement>(".hud-panel .row.view input")!;
+    expect(view.disabled).toBe(false);
   });
 
   test("a field the file cannot hold is disabled on its own", () => {
@@ -197,6 +209,9 @@ describe("what the panel shows", () => {
         entry("fighter_detached", "bool", null, { scope: "account", set: UNAVAILABLE }),
         entry("fighter_shown", "bool", null, { scope: "account", set: UNAVAILABLE }),
         entry("neocom_width", "int", null, { scope: "account", set: UNAVAILABLE }),
+        entry("target_x", "float", null, { scope: "account", set: UNAVAILABLE }),
+        entry("target_y", "float", null, { scope: "account", set: UNAVAILABLE }),
+        entry("target_horizontal", "bool", null, { scope: "account", set: UNAVAILABLE }),
       ),
     );
     expect(document.querySelector(".account-legend")).toBeNull();
