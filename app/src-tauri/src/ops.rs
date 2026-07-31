@@ -2033,6 +2033,11 @@ mod tests {
                     (b("shipuialigntop"), wrapped(Value::Bool(true))),
                     (b("detachFighterUI"), wrapped(Value::Bool(true))),
                     (b("displayFighterUI"), wrapped(Value::Bool(true))),
+                    (
+                        b("targetOrigin"),
+                        wrapped(Value::Tuple(vec![Value::Float(0.75), Value::Float(0.25)])),
+                    ),
+                    (b("alignHorizontally"), wrapped(Value::Bool(true))),
                 ]),
             ),
             (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(72)))])),
@@ -2048,6 +2053,11 @@ mod tests {
                     (b("shipuialigntop"), wrapped(Value::Bool(false))),
                     (b("detachFighterUI"), wrapped(Value::Bool(false))),
                     (b("displayFighterUI"), wrapped(Value::Bool(false))),
+                    (
+                        b("targetOrigin"),
+                        wrapped(Value::Tuple(vec![Value::Float(0.25), Value::Float(0.75)])),
+                    ),
+                    (b("alignHorizontally"), wrapped(Value::Bool(false))),
                 ]),
             ),
             (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(37)))])),
@@ -2075,7 +2085,18 @@ mod tests {
 
         let source = hud_values(&src_char, &src_user);
         let target_before = hud_values(&tgt_char, &tgt_user);
-        assert_eq!(source.len(), 9, "all nine HUD fields");
+        // The target list is projected like every other HUD field but is
+        // deliberately NOT a Layout category — its stored fraction carries the
+        // source client's neocom width in its denominator, and a source that
+        // has never dragged its list would delete the target's position. Named
+        // here so adding it later has to be a deliberate edit to this list
+        // rather than a silent change in what a copy writes. See
+        // docs/small-tasks.md.
+        const NOT_CARRIED: [&str; 3] = ["target_x", "target_y", "target_horizontal"];
+        let carried = |v: &Vec<(String, Option<String>)>| -> Vec<(String, Option<String>)> {
+            v.iter().filter(|(n, _)| !NOT_CARRIED.contains(&n.as_str())).cloned().collect()
+        };
+        assert_eq!(carried(&source).len(), 9, "all nine carried HUD fields");
         for (name, v) in &source {
             assert!(v.is_some(), "{name} must have a value on the SOURCE, or the copy proves nothing");
         }
@@ -2091,7 +2112,12 @@ mod tests {
         settings_model::apply_to_tree(&mut tgt_user, &extract_categories(&src_user, &w.account_categories));
 
         let after = hud_values(&tgt_char, &tgt_user);
-        assert_eq!(source, after, "every one of the nine fields came across");
+        assert_eq!(carried(&source), carried(&after), "every one of the nine carried fields came across");
+        for name in NOT_CARRIED {
+            let before = target_before.iter().find(|(n, _)| *n == name).unwrap();
+            let now = after.iter().find(|(n, _)| *n == name).unwrap();
+            assert_eq!(before, now, "{name} is not a Layout category and must survive the copy untouched");
+        }
     }
 
     #[test]

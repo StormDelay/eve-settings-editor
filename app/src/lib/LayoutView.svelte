@@ -3,7 +3,8 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
+    hudPointFromRect, hudNum, targetFractionFromDelta,
+    NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
@@ -382,7 +383,9 @@
 
   /** The internals of a furniture element. The ship HUD and fighter are
    * constant (measured, not stored); the neocom is drawn from its real button
-   * list. The badge has neither, so it stays a plain box. */
+   * list. The badge and the target-list slot have neither, so they stay plain
+   * boxes — the target slot's ring and label rows are measured
+   * (`format-notes.md`, "Target list anchor") but not drawn yet. */
   const furnitureDetail = (f: FurnitureRect) =>
     f.kind === "shipui" ? shipHudParts()
     : f.kind === "fighter" ? fighterParts()
@@ -582,6 +585,21 @@
         const next = shipOffsetFromX(p.x, layout.reference_w);
         if (next !== shipOffsetFromX(d.f.x, layout.reference_w)) {
           await setHud("ship_offset", String(next));
+        }
+      } else if (d.f.kind === "target" && layout && hud) {
+        // A delta, not a rect conversion: the stored value is a fraction whose
+        // denominator depends on the client that wrote it, and which edge of
+        // the slot the anchor is depends on which half of the screen it is in.
+        // Moving the anchor by the drag's travel sidesteps both — see
+        // targetFractionFromDelta.
+        const fx = hudNum(hud, "target_x");
+        const fy = hudNum(hud, "target_y");
+        if (fx !== null && fy !== null) {
+          const next = targetFractionFromDelta(
+            fx, fy, p.x - d.f.x, p.y - d.f.y, layout.reference_w, layout.reference_h,
+          );
+          if (next.x !== fx) await setHud("target_x", String(next.x));
+          if (next.y !== fy) await setHud("target_y", String(next.y));
         }
       } else if (d.f.kind === "fighter" || d.f.kind === "badge") {
         const prefix = d.f.kind === "fighter" ? "fighter" : "badge";
