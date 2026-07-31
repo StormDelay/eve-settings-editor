@@ -426,7 +426,7 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
-  targetDenominator, targetAnchor, targetFractionFromDelta, targetSize,
+  targetDenominator, targetAnchor, targetFractionFromDelta, targetFractionFromPoint, targetSize,
   TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
@@ -689,6 +689,20 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const crossed = placed(targetFractionFromDelta(TARGET_X, TARGET_Y, -300, 0, 2560, 1440));
   check("crossing the middle flips which side the slot hangs on",
     crossed.x === before.x - 300 && crossed.x === slotBefore.x - 300 + 110);
+}
+
+{
+  // The panel's pixel fields go through targetFractionFromPoint. Same
+  // invariant as the drag, stated absolutely: the anchor lands exactly where
+  // it was put, and the value keeps the denominator it came with.
+  for (const [x, y] of [[1426, 752], [300, 100], [2559, 1439], [72, 0]]) {
+    const next = targetFractionFromPoint(TARGET_X, x, y, 2560, 1440);
+    const back = targetAnchor(next.x, next.y, 2560, 1440);
+    check(`a pixel typed at ${x},${y} round-trips through the fraction`,
+      back.x === x && back.y === y);
+    check(`and keeps the client's own denominator (${x},${y})`,
+      targetDenominator(next.x, 2560) === 2488);
+  }
 }
 
 {

@@ -942,6 +942,8 @@
           onSelectKind={selectFurniture}
           targets={targetCount()}
           onTargets={setTargetCount}
+          referenceW={layout.reference_w}
+          referenceH={layout.reference_h}
           {neocom}
           {neocomBusy}
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
