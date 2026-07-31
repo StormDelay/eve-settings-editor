@@ -3,7 +3,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, hudNum, hudFlag, targetFractionFromDelta,
+    hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetFractionFromPoint,
     NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
@@ -354,9 +354,19 @@
   type Drag =
     | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number; lines: SnapLines }
     | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number; lines: SnapLines }
-    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number }
+    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number;
+        /** The target list only: its ANCHOR at drag start. The rect is placed
+         * relative to that anchor and flips to its other side at the middle of
+         * the screen, so a preview that moved the rect directly could not
+         * follow the flip. Absent for every other piece of furniture. */
+        ax?: number; ay?: number }
     | { kind: "tab"; unit: DrawUnit; tabId: string; startX: number; startY: number; gx: number; gy: number };
   let drag: Drag | null = null;
+  // Where the target list's anchor is RIGHT NOW during a drag of it. Not
+  // $state: nothing renders from it — the preview rect does — and the drop
+  // needs the anchor it ended at, which a rect cannot be inverted back to
+  // unambiguously once it has flipped sides.
+  let targetDragAnchor: { x: number; y: number } | null = null;
 
   // The lines the current drag has locked onto, in data px; null when this axis
   // isn't snapped. Drawn as guides, cleared on drop.
@@ -392,6 +402,16 @@
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
     : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))
     : [];
+
+  /** The target list's committed anchor, from the stored fractions. Null when
+   * the file has no anchor to move (the canvas draws nothing then either). */
+  function committedTargetAnchor(): { x: number; y: number } | null {
+    if (!hud || !layout) return null;
+    const fx = hudNum(hud, "target_x");
+    const fy = hudNum(hud, "target_y");
+    if (fx === null || fy === null) return null;
+    return targetAnchor(fx, fy, layout.reference_w, layout.reference_h);
+  }
 
   /** Pointer position in data px, relative to the canvas origin. */
   function pointerData(e: PointerEvent) {
@@ -453,7 +473,12 @@
     e.stopPropagation();
     if (readOnly || f.drag === "none") return;
     const r = fRectOf(f);
-    drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
+    // The anchor comes from the stored value, not from the rect: inverting a
+    // rect back to an anchor is ambiguous in the band around the middle where
+    // both sides would place it there.
+    const a = f.kind === "target" && hud && layout ? committedTargetAnchor() : null;
+    targetDragAnchor = a;
+    drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y, ax: a?.x, ay: a?.y };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
@@ -508,6 +533,20 @@
     const dy = toData(e.clientY - drag.startY, scale);
     if (drag.kind === "furniture") {
       const f = drag.f;
+      // The target list is placed from its anchor, so the preview moves the
+      // ANCHOR and re-places the box — which is what makes it flip sides the
+      // moment the anchor crosses the middle, instead of jumping on drop.
+      if (drag.ax !== undefined && drag.ay !== undefined && layout) {
+        targetDragAnchor = { x: drag.ax + dx, y: drag.ay + dy };
+        fPreview = {
+          ...fPreview,
+          [f.kind]: targetRect(
+            targetDragAnchor.x, targetDragAnchor.y, f.w, f.h,
+            layout.reference_w, layout.reference_h,
+          ),
+        };
+        return;
+      }
       fPreview = {
         ...fPreview,
         [f.kind]: { x: drag.ox + dx, y: f.drag === "xy" ? drag.oy + dy : drag.oy },
@@ -587,17 +626,15 @@
         if (next !== shipOffsetFromX(d.f.x, layout.reference_w)) {
           await setHud("ship_offset", String(next));
         }
-      } else if (d.f.kind === "target" && layout && hud) {
-        // A delta, not a rect conversion: the stored value is a fraction whose
-        // denominator depends on the client that wrote it, and which edge of
-        // the slot the anchor is depends on which half of the screen it is in.
-        // Moving the anchor by the drag's travel sidesteps both — see
-        // targetFractionFromDelta.
+      } else if (d.f.kind === "target" && layout && hud && targetDragAnchor) {
+        // The ANCHOR the drag ended at, not the rect: the box hangs off
+        // whichever side of the anchor faces the middle, so a rect that
+        // crossed the middle mid-drag no longer says where its anchor is.
         const fx = hudNum(hud, "target_x");
         const fy = hudNum(hud, "target_y");
         if (fx !== null && fy !== null) {
-          const next = targetFractionFromDelta(
-            fx, fy, p.x - d.f.x, p.y - d.f.y, layout.reference_w, layout.reference_h,
+          const next = targetFractionFromPoint(
+            fx, targetDragAnchor.x, targetDragAnchor.y, layout.reference_w, layout.reference_h,
           );
           if (next.x !== fx) await setHud("target_x", String(next.x));
           if (next.y !== fy) await setHud("target_y", String(next.y));

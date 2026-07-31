@@ -426,7 +426,7 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
-  targetDenominator, targetAnchor, targetFractionFromDelta, targetFractionFromPoint, targetSize,
+  targetDenominator, targetAnchor, targetFractionFromPoint, targetSize,
   TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
@@ -647,10 +647,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 {
-  // The drag round trip, through both halves: place a slot, move it, convert
-  // the travel back to fractions, and read the anchor back out. The ANCHOR is
-  // the invariant — it must move by exactly the drag's travel, whatever the
-  // drawn rect then does with it.
+  // The drag round trip, through both halves: place a slot, move its anchor,
+  // convert back to fractions, and read the anchor out again. The ANCHOR is the
+  // invariant — it must land exactly where the drag put it, whatever the drawn
+  // rect then does with it.
   const before = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440);
   const slotBefore = hudRects(fullHud(), layout2560).find((r) => r.kind === "target")!;
   const placed = (next: { x: number; y: number }) =>
@@ -663,7 +663,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     ).find((r) => r.kind === "target")!;
 
   for (const [dx, dy] of [[-1000, 400], [17, 3], [-100, -20], [0, 0]]) {
-    const next = targetFractionFromDelta(TARGET_X, TARGET_Y, dx, dy, 2560, 1440);
+    const next = targetFractionFromPoint(TARGET_X, before.x + dx, before.y + dy, 2560, 1440);
     const after = targetAnchor(next.x, next.y, 2560, 1440);
     check(
       `a ${dx},${dy} drag moves the anchor by exactly that`,
@@ -677,7 +677,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
   // While the anchor stays in the same half of the screen, the drawn slot
   // tracks the drag one-for-one.
-  const near = targetFractionFromDelta(TARGET_X, TARGET_Y, -100, -20, 2560, 1440);
+  const near = targetFractionFromPoint(TARGET_X, before.x - 100, before.y - 20, 2560, 1440);
   const moved = placed(near);
   check("a drag that stays in the same half moves the slot with it",
     moved.x === slotBefore.x - 100 && moved.y === slotBefore.y - 20);
@@ -686,7 +686,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // ambiguous: the anchor moves the full 300px, but the slot is now drawn on
   // the other side of it, so the rect moves 110 less. This is EVE's behaviour
   // — the list always grows toward the centre — not a rounding slip.
-  const crossed = placed(targetFractionFromDelta(TARGET_X, TARGET_Y, -300, 0, 2560, 1440));
+  const crossed = placed(targetFractionFromPoint(TARGET_X, before.x - 300, before.y, 2560, 1440));
   check("crossing the middle flips which side the slot hangs on",
     crossed.x === before.x - 300 && crossed.x === slotBefore.x - 300 + 110);
 }
@@ -706,11 +706,11 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 {
-  // A no-op drag must not dirty the document: the LayoutView commit compares
-  // the converted value with the stored one, so they have to be identical, not
-  // merely close.
-  const same = targetFractionFromDelta(TARGET_X, TARGET_Y, 0, 0, 2560, 1440);
-  check("a zero drag reproduces the stored fractions exactly",
+  // A drag that ends where it started must not dirty the document: the commit
+  // compares the converted value with the stored one, so they have to be
+  // identical, not merely close.
+  const same = targetFractionFromPoint(TARGET_X, 1426, 752, 2560, 1440);
+  check("re-writing the anchor it already has reproduces the fractions exactly",
     same.x === TARGET_X && same.y === TARGET_Y);
 }
 
