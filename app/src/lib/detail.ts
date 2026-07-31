@@ -5,7 +5,7 @@
 // that separation is why this is its own module and not more of layout.ts.
 
 import type { ChatPanel, NeocomBar, OverviewColumns, Stack } from "./api";
-import type { DrawUnit } from "./layout";
+import { HUD_NOMINAL, type DrawUnit } from "./layout.ts";
 
 /**
  * One drawn piece of a rectangle's internals.
@@ -197,6 +197,52 @@ const FIGHTER = {
   /** A carrier's maximum squadron count, and the maximum this can ever draw. */
   cols: 5,
 };
+
+// --- target list ------------------------------------------------------------
+// MEASURED 2026-07-31 off the four native 2560x1440 shots the anchor capture
+// produced (target.png, vertical.png, horizontal.png, horizontal2.png), by
+// bright-pixel clustering — see docs/format-notes.md, "Target list anchor".
+// Offsets are from ONE SLOT's top-left; a slot is HUD_NOMINAL.target, 110x181.
+const TARGET = {
+  /** The lock ring: 79px of bright pixels across, centred 58 in and 40 down.
+   * Two ships at one stored value gave the same extent, and the horizontal
+   * shots put it at the same offset within the slot as the vertical ones. */
+  ringX: 19, ringY: 0, ringD: 79,
+  /** The three label rows under it — two of name, one of distance — at y 102,
+   * 115 and 128 on an 8px height. Their WIDTHS are what the measured names
+   * happened to be (90/68/28 for "Caldari Police / Commissioner / 29 km"), so
+   * they are drawn centred on the ring: a shorter name uses fewer rows and a
+   * longer one wraps differently, and neither is in any file. */
+  labelY: 102, labelPitch: 13, labelH: 8, labelW: [90, 68, 28],
+};
+
+/**
+ * The target list's internals: `count` identical slots, running across when the
+ * account has `alignHorizontally` set and down when it does not.
+ *
+ * Every slot is drawn the same, which is why this does not care WHICH end of
+ * the list the anchor is at — the client fills them from the anchor toward the
+ * middle of the screen, but a slot at one end looks like a slot at the other.
+ */
+export function targetParts(count: number, horizontal: boolean): DetailPart[] {
+  const out: DetailPart[] = [];
+  const slot = HUD_NOMINAL.target; // one source for the slot size, shared with hudRects
+  for (let i = 0; i < Math.max(1, Math.round(count)); i++) {
+    const ox = horizontal ? slot.w * i : 0;
+    const oy = horizontal ? 0 : slot.h * i;
+    out.push({ kind: "ring", x: ox + TARGET.ringX, y: oy + TARGET.ringY, w: TARGET.ringD, h: TARGET.ringD });
+    TARGET.labelW.forEach((w, row) => {
+      out.push({
+        kind: "band",
+        x: ox + TARGET.ringX + (TARGET.ringD - w) / 2,
+        y: oy + TARGET.labelY + TARGET.labelPitch * row,
+        w,
+        h: TARGET.labelH,
+      });
+    });
+  }
+  return out;
+}
 
 /** The fighter panel's internals. Constant, and maxima, for the same reasons
  * as shipHudParts: squadron count is fitting-dependent and no file records it. */

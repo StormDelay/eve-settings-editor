@@ -9,11 +9,12 @@ import { api, errMessage } from "$lib/api";
 import type { Preferences } from "$lib/api";
 import type { ClutterOverrides } from "$lib/windowLabels";
 import { countIn, withoutIn } from "$lib/prefs";
+import { TARGET_COUNT_DEFAULT } from "$lib/layout";
 import { message } from "@tauri-apps/plugin-dialog";
 
 export { countIn, withoutIn } from "$lib/prefs";
 
-let prefs = $state<Preferences>({ layout: { clutter: [], visible: [], detail: false } });
+let prefs = $state<Preferences>({ layout: { clutter: [], visible: [], detail: false, targets: TARGET_COUNT_DEFAULT } });
 
 /** Load once. A failure leaves the defaults in place: preferences are a
  * convenience, and the editor must open without them. */
@@ -105,5 +106,16 @@ export const detailOn = (): boolean => prefs.layout.detail;
 /** Same chained write as setClutterOverride — only the value written changed. */
 export function setDetail(on: boolean): void {
   prefs = { ...prefs, layout: { ...prefs.layout, detail: on } };
+  persist(prefs);
+}
+
+/** How many locked targets the canvas draws the target list at. Clamped on the
+ * way out as well as in: a preferences file is a text file a user can edit, and
+ * a 0 there would otherwise draw the list as a zero-height sliver. */
+export const targetCount = (): number => Math.min(10, Math.max(1, prefs.layout.targets || TARGET_COUNT_DEFAULT));
+
+/** Same chained write as setClutterOverride — only the value written changed. */
+export function setTargetCount(n: number): void {
+  prefs = { ...prefs, layout: { ...prefs.layout, targets: Math.min(10, Math.max(1, Math.round(n))) } };
   persist(prefs);
 }

@@ -426,7 +426,8 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
-  targetDenominator, targetAnchor, targetFractionFromDelta, TARGET_MARGIN, HUD_NOMINAL,
+  targetDenominator, targetAnchor, targetFractionFromDelta, targetSize,
+  TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
@@ -587,10 +588,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 {
-  const rects = hudRects(fullHud(), layout2560);
+  const rects = hudRects(fullHud(), layout2560, 1);
   const t = rects.find((r) => r.kind === "target")!;
-  check("the target slot is the measured 110x181", t.w === 110 && t.h === 181);
-  check("the target slot drags freely", t.drag === "xy");
+  check("one target slot is the measured 110x181", t.w === 110 && t.h === 181);
+  check("the target list drags freely", t.drag === "xy");
   // Anchor (1426, 752): right of centre and below it, so the slot hangs up and
   // to the left, toward the middle of the screen.
   check("the slot hangs inward from its anchor", t.x === 1426 - 110 && t.y === 752 - 181);
@@ -601,6 +602,30 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // screenshot rather than with itself.
   check("the drawn slot straddles the photographed label centre", Math.abs(t.x + t.w / 2 - 1369) <= 3);
   check("and contains the photographed ring band", t.y <= 578 && t.y + t.h >= 644);
+}
+
+{
+  // The count is a view setting, and the rectangle is the area that many
+  // targets really cover — so it grows along the stacking axis and nowhere
+  // else, and the anchored corner stays put.
+  const one = hudRects(fullHud(), layout2560, 1).find((r) => r.kind === "target")!;
+  const four = hudRects(fullHud(), layout2560, 4).find((r) => r.kind === "target")!;
+  check("four targets stack four slots down", four.w === 110 && four.h === 181 * 4);
+  check("and grow away from the anchored corner", four.x === one.x && four.y === one.y - 181 * 3);
+
+  const across = hudRects(
+    fullHud({ target_horizontal: hudEntry("target_horizontal", "true", "bool", "false") }),
+    layout2560, 4,
+  ).find((r) => r.kind === "target")!;
+  check("horizontal runs the same four slots across", across.w === 110 * 4 && across.h === 181);
+  check("and grows leftward from a right-hand anchor",
+    across.y === one.y && across.x === one.x - 110 * 3);
+
+  check("the default count is four", targetSize(TARGET_COUNT_DEFAULT, false).h === 181 * 4);
+  // Not reachable from the number input, but a hand-edited preferences file is
+  // a real source: a zero-height rectangle would be an invisible thing the
+  // canvas still hit-tests.
+  check("a zero count still draws one slot", targetSize(0, false).h === 181);
 }
 
 {

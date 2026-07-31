@@ -3,18 +3,18 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, hudNum, targetFractionFromDelta,
+    hudPointFromRect, hudNum, hudFlag, targetFractionFromDelta,
     NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
-  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail } from "$lib/prefs.svelte";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import DetailParts from "$lib/DetailParts.svelte";
-  import { shipHudParts, fighterParts, neocomParts, windowDetail } from "$lib/detail";
+  import { shipHudParts, fighterParts, neocomParts, targetParts, windowDetail } from "$lib/detail";
   import { confirm, message } from "@tauri-apps/plugin-dialog";
 
   let {
@@ -378,7 +378,7 @@
   // commit landing mid-nudge doesn't clear the preview under it.
   let nudging: string | null = null;
 
-  const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
+  const furniture = $derived(hud && layout ? hudRects(hud, layout, targetCount()) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
 
   /** The internals of a furniture element. The ship HUD and fighter are
@@ -390,6 +390,7 @@
     f.kind === "shipui" ? shipHudParts()
     : f.kind === "fighter" ? fighterParts()
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
+    : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))
     : [];
 
   /** Pointer position in data px, relative to the canvas origin. */
@@ -939,6 +940,8 @@
           {sharedNames}
           selectedKind={selectedFurniture}
           onSelectKind={selectFurniture}
+          targets={targetCount()}
+          onTargets={setTargetCount}
           {neocom}
           {neocomBusy}
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
