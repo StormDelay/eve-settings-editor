@@ -426,7 +426,7 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
-  targetDenominator, targetAnchor, targetFractionFromPoint, targetSize,
+  targetDenominator, targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
   TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
@@ -689,6 +689,21 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const crossed = placed(targetFractionFromPoint(TARGET_X, before.x - 300, before.y, 2560, 1440));
   check("crossing the middle flips which side the slot hangs on",
     crossed.x === before.x - 300 && crossed.x === slotBefore.x - 300 + 110);
+}
+
+{
+  // The marked corner is the one the box hangs from, and it must agree with
+  // where targetRect actually put the box — a marker on the wrong corner is
+  // worse than none.
+  const w = 110, h = 181;
+  for (const [ax, ay, want] of [
+    [1426, 752, "br"], [603, 752, "bl"], [1426, 100, "tr"], [603, 100, "tl"],
+  ] as [number, number, string][]) {
+    check(`an anchor at ${ax},${ay} is marked ${want}`, targetCorner(ax, ay, 2560, 1440) === want);
+    const r = targetRect(ax, ay, w, h, 2560, 1440);
+    check(`and the box really hangs from that corner (${want})`,
+      (want[1] === "r" ? r.x + w : r.x) === ax && (want[0] === "b" ? r.y + h : r.y) === ay);
+  }
 }
 
 {
