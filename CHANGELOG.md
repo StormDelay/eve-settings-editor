@@ -8,253 +8,88 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.26.0] - 2026-07-31
 
-The locked-target list — the last piece of screen furniture the canvas never
-drew. It is now drawn, draggable, and carried by a layout copy.
-
-Nothing in the settings files obviously named it, so this release is mostly a
-capture: an in-game session settled that EVE stores the list's anchor as a
-fraction rather than pixels, that the two axes do not share a convention, and
-that the list grows from its anchor toward the middle of the screen. The
-editor's writes were then smoked against a running client.
-
-**One change writes to your settings files in a new way.** "Window layout" now
-carries the target list as well, so a copy moves it like every other piece of
-screen furniture. Most sources have never dragged theirs — 87 % of accounts —
-and for those the copy puts the target's list back at EVE's default rather than
-leaving it be. That is what makes the two characters match, and it is the same
-rule the fighter panel and the neocom width already follow, but it is a deletion
-and worth knowing about before you run a batch.
+The locked-target list: drawn, draggable, and carried by a layout copy.
 
 ### Changed
-- **"Window layout" carries the locked-target list.** Its position and its
-  vertical/horizontal orientation travel with the rest of the screen furniture.
-  Both live in the account file, so a copy reaches every character on the
-  target's account, as the neocom width already did. Its lock flag is
-  deliberately left behind: that is a per-player preference, and copying a
-  locked state onto someone would leave them unable to drag their own list.
-  One caveat — the stored value is a fraction whose denominator depends on the
-  source client's neocom, so a copy between accounts with different neocom
-  widths can land the list a few tens of pixels out.
+- **"Window layout" now carries the target list**, position and orientation — account-wide, like the neocom width.
+- **A copy from an account that never dragged its own list resets the target's** to EVE's default.
 
 ### Added
-- **The locked-target list is on the layout canvas.** It was the one piece of
-  screen furniture the canvas never drew. EVE stores it as a fraction, not
-  pixels: y over the screen height, x over the width right of the neocom. Both
-  conventions were captured in-game. Drag the list, or type its position in the
-  panel — those fields are screen pixels at the file's reference size, converted
-  to the fraction on the way in. A **Horizontal** toggle lays it out in a row.
-  An account that has never moved its list gets no box: EVE's own starting
-  position has never been captured.
-- **The list is drawn at the size four targets take, and you can change the
-  count.** No settings file records how many things a pilot locks, so the canvas
-  is told: a `Targets drawn` box in the Target list group, 1 to 10, remembered in
-  your preferences. The rectangle grows along the stacking axis, so windows snap
-  against the area the list really covers. A dot marks the stored anchor — the
-  corner the list grows from, and the point a drag actually writes. With
-  `Detail` on, each slot draws its lock ring and label rows, measured from the
-  same shots as the anchor.
+- The locked-target list on the layout canvas.
+- Drag it, or type its position in the panel.
+- A `Horizontal` toggle, laying the list out in a row instead of a column.
+- A `Targets drawn` count, 1–10, sizing the rectangle to the area that many targets cover.
+- A marker on the anchor the list grows from.
+- Each slot's lock ring and labels, with `Detail` on.
 
 ## [0.25.0] - 2026-07-31
 
-The canvas stops drawing blank boxes. Chat splits are newly drawn, and newly
-editable.
+The canvas stops drawing blank boxes.
 
 ### Added
-- **A `Detail` toggle draws what is inside each rectangle.** The ship HUD shows
-  its capacitor ring and module racks, the fighter panel its ability grid and
-  squadron row, the neocom your buttons in your order. Overview windows show
-  their real tabs and columns at their stored widths, chat windows their splits.
-  Columns are drawn as EVE draws them: as many as fit, and one that does not fit
-  is not drawn at all. An over-provisioned column set therefore reads as columns
-  missing, which is what you see in game. Decoration only — nothing here drags,
-  nothing snaps to it.
-- **Edit a chat window's member list and input box.** Selecting a chat window
-  offers both, with the history area they leave shown alongside. One button
-  applies them to every channel in the same stack. **These settings are
-  account-wide**, and the panel names the characters that share them. A width too
-  wide for the window shows a negative history area rather than clamping quietly:
-  one setting can fit one character and overflow another.
-- **Right-click the canvas to pick a window out from under another.** A click
-  lands on the topmost rectangle. Right-click lists everything drawn at that
-  spot, topmost first, furniture last. Picking one selects it and brings it to
-  the front.
+- **A `Detail` toggle draws what is inside each rectangle**: the ship HUD's capacitor and module racks, the fighter panel's ability grid and squadron row, your neocom buttons in your order, each overview window's real tabs and columns, each chat window's splits.
+- **Edit a chat window's member list and input box**, with the history area they leave shown alongside.
+- Apply both to every channel in the same chat stack at once.
+- Those two are account-wide, shared with your other characters on that account.
+- **Right-click the canvas to pick a window out from under another.**
 
 ### Fixed
-- **The ship HUD and fighter panel footprints were the wrong size.** The ship HUD
-  box was 5px too narrow and 16px too short, and sat 16px too low when
-  top-aligned. The fighter panel was 11px too short. Windows snapped to those
-  wrong edges. **Windows you snapped against either element will sit a few pixels
-  differently after this release** — that is the correction, not a regression.
-  Each box had been sized from the parts the editor drew rather than from the
-  element itself. Both are now measured against the element, in both alignments.
+- **The ship HUD and fighter panel footprints were the wrong size.** Windows you snapped against either will sit a few pixels differently after this release.
 
 ## [0.24.0] - 2026-07-30
 
 One feature: the layout canvas can show one game environment at a time.
 
 ### Added
-- **Layout canvas: an `All / Docked / In space` selector.** The canvas mixed
-  every environment into one picture, painting windows that can never be on
-  screen together. EVE stores one geometry per window, so this is a filter, not
-  three saved layouts. The mapping is curated and deliberately partial: a window
-  the editor does not recognise shows in both views.
-- **Docked draws the two Inventory copies as one rectangle.** Inventory is the
-  one window EVE stores per context, and on a real character the copies had
-  drifted 488px apart. **A drag now writes position and size to both
-  `InventoryStation` and `InventoryStructure`.** There is no undo — Discard drops
-  the session's edits, or restore a backup. Driven in the running app, including
-  with one copy closed. Not yet checked against a live dock/undock.
+- **An `All / Docked / In space` selector**, so the canvas stops painting windows that can never be on screen together.
+- **Docked draws the two Inventory copies as one rectangle**, and a drag there moves and resizes both. No undo: Discard, or restore a backup.
 
 ## [0.23.0] - 2026-07-30
 
-A debt-clearing release: the ledger went from 30 open items to 15. Three items
-filed as harmless turned out to be real.
+A debt-clearing release, and a Discard button.
 
 ### Changed
-- **"Window layout" now carries your whole screen.** It moved window positions,
-  the neocom and the ship HUD offset, but left the fighter panel, the badge and
-  the neocom width behind — so a copy landed a character between two layouts.
-  All nine settings travel together now. **The copy writes the account file, so
-  every character on the target's account gets the neocom width and the
-  fighter-UI toggles.** The preview names them. A character with no paired
-  account can no longer receive a layout copy: pair it in the Accounts view
-  first. Where the source sits at EVE's default, the target is reset to that
-  default, which is what makes the two match. Not smoke-tested in-game yet;
-  every file is still backed up before it is written.
-- **Saving an `Everything` preset says what it captures.** The warning that a
-  full preset carries your autofill history — station names, searches, typed
-  text — appeared only when you exported one. It now appears where you tick
-  `Everything`. Nothing blocks, and export is unchanged.
+- **"Window layout" now carries your whole screen** — the fighter panel, the notification badge and the neocom width come along with the rest.
+- **The copy writes the account file, so every character on the target's account gets the neocom width and the fighter-UI toggles.**
+- A character with no paired account can no longer receive a layout copy: pair it in the Accounts view first.
+- **Saving an `Everything` preset now warns that it carries your autofill history** — station names, searches, typed text.
 
 ### Added
-- **A Discard button beside the "unsaved" badges.** One confirmation reloads both
-  files from disk. Your backups are untouched: this re-reads disk, it does not
-  restore.
+- **A Discard button beside the "unsaved" badges**: one confirmation reloads both files from disk.
 
 ### Fixed
-- **Autofill lists are named after what they are.** Most showed a label scraped
-  off EVE's widget path — "Input", "Header Cont", "Edit0". 206 of the corpus's
-  290 paths now get a real name (Market search, Contract description, Bookmark
-  label); the rest derive something readable.
-- **A number field no longer shows a value you did not get.** A refused entry —
-  blank, "abc", or a decimal that rounds back — left the typed text on screen
-  beside a setting that never changed. The field snaps back.
-- **The sidebar says why it is empty.** It now names the case: no character files
-  at all, or the non-standard-name filter hiding them.
-- **A read-only account file greys out the HUD rows that write it.** The neocom
-  width and the fighter-UI toggles live in the account file, and clicking them
-  produced a backend refusal two steps later.
-- **The autofill pairing hint no longer gives false advice.** It suggested
-  pairing an account that was already paired.
-- **A batch selection survives the view opening.** A late scan could land after
-  you had picked your targets and wipe them.
-- **The cycle guard catches a cycle wherever it closes.** A hop count reset on the
-  way into a list or dict, so a cycle through one still overflowed the stack. A
-  real file's many-level sharing still inlines completely.
-- **Two `Everything`-refusal tests were asserting nothing.** Neither paired the
-  target to an account, so nothing was going to be written either way. Both now
-  cover the account side and fail when the guard is neutralised.
-- **A malformed overview pack says which section is wrong.** It used to claim the
-  file contained no pack sections at all.
-- **An embedded stream inlines in its own slot scope.** A `Stream` restarts its
-  slots at 1, so resolving one against the outer table could shadow it. No corpus
-  file contains a stream.
-- **A repeated target in a batch apply is planned once.** The same id twice meant
-  the same file written, and backed up, twice.
-- **A settings file that lost a timestamp is repaired rather than perpetuated.**
-- **Removing an overview window refuses rather than dropping its tabs** when
-  window 0 cannot take them — a tab in no window is invisible in-game. An account
-  with no per-window mapping is now told that.
-- **An overview pack says what it could not apply.** A pack carrying one of its
-  two ship-label sections applied neither, silently. A malformed preset field is
-  left alone rather than emptied.
-- **Importing a preset file whose two sides are identical works.** Such a file
-  stores the second as a reference to the first, and the importer called it
-  "missing its account side".
-- **A preset import that fails partway leaves nothing behind.**
-- **A batch apply scans the settings folders three times instead of five.**
-- **Deleted:** `USER_SETTINGS`, the unreachable Tuple-normalize branch in the
-  neocom bar reader, and three unused crate-root re-exports.
-- **Measured the pre-encode reshare pass and left it alone.** 10ms on the largest
-  real account file against a 3ms decode, so the caching variants on the list are
-  not worth their complexity. `tests/reshare_cost.rs` keeps the baseline.
-- **A HUD write no longer re-shares the whole document.** Only minting an absent
-  key de-shares it; overwriting a value sets one scalar in place.
-- Also: the new-tab selection diffs the index set rather than taking the highest;
-  the HUD panel follows `app.css`'s palette instead of its own greys; `plan_setup`
-  and `setup_apply` gained their untested branches; and the overview authoring
-  tests gained the cases the ledger listed.
+- **Autofill lists are named after what they are** rather than after EVE's widget scaffolding.
+- A number field no longer shows a value you did not get.
+- The sidebar says why it is empty instead of showing a blank list.
+- A read-only account file greys out the HUD rows that write it.
+- The autofill pairing hint no longer suggests pairing an account that is already paired.
+- A batch selection survives the view opening.
+- A malformed overview pack says which section is wrong.
+- An overview pack says what it could not apply, and leaves a malformed field alone rather than emptying it.
+- Removing an overview window refuses rather than dropping its tabs.
+- Importing a preset file whose two sides are identical works.
 
 ## [0.22.0] - 2026-07-28
 
-Everything the live-verification sessions turned up. The two changes that write
-to a settings file were run against a real client first: it kept both edits
-verbatim across a login and logout, re-created no deleted frames, and left every
-live stack intact.
+Everything the live-verification sessions turned up.
 
 ### Changed
-- **The "Window layout" copy option says what it leaves behind.** It carries
-  window positions, the neocom and the ship HUD offset — not the fighter panel or
-  the badge, which EVE keeps elsewhere in the file. What gets copied is unchanged
-  for now; the label just stops implying more than it does.
+- **The "Window layout" copy option says what it leaves behind** — the fighter panel and the notification badge.
 
 ### Added
-- **Delete the empty stack frames a settings file collects.** Unstacking two
-  windows leaves the container EVE minted to hold them, and they accumulate: one
-  real file had eight, each painting an empty rectangle on the canvas. The Layout
-  view removes them all in one action, behind a confirm that names the count.
-  Each frame is 5–6 entries across six lists, which is why hand-deletion was
-  never realistic. Verified in-game.
-- **Turn on per-window overview tabs when EVE has switched them off.** Importing
-  a pack through the client deletes the account's tab-to-window assignment. That
-  state is normal, not damage, so the Overview view says so and offers to set up
-  an explicit assignment. It writes a complete list or refuses: a partial one
-  would hide the tabs it left out.
-- **A warning when a batch apply targets the file you have open.** The copy writes
-  behind the open document, so what is on screen goes stale.
+- **Delete the empty stack frames a settings file collects** — one real file had eight, each painting an empty rectangle on the canvas.
+- **Turn on per-window overview tabs when EVE has switched them off**, which importing a pack through the client does.
+- **A warning when a batch apply targets the file you have open.**
 
 ### Fixed
-- **The "N overridden · clear" counter describes the layout you are looking at.**
-  It counted every clutter override ever set, across every character, and its
-  `clear` wiped the lot. Both are now scoped to the open file's windows. What you
-  mark as clutter is still remembered everywhere.
-- **The editor no longer recommends a stale backup folder.** It ranked folders by
-  what was touched most recently, which the editor's own saves moved — so editing
-  a backup promoted it and kept it there. One machine had nine hand-made folders
-  under a profile, including a " - USE THIS ONE" that was not the one in use.
-  Ranking now uses the files only EVE writes, and the winner is labelled "in use
-  by EVE", the rest "not in use" in a warning colour. A full round of work went
-  into the wrong folder before this was found.
-- **Chat windows show their real names.** Corp, Alliance, Local, Fleet, Militia
-  and named private groups were all a flat "Chat", so a character with seventy of
-  them showed seventy identical rows. The name was in the file all along, read
-  from the wrong place twice over: 1,113 windows across the corpus now get one.
-  The rest are conversations long closed, which the file holds no name for.
-- **The ship HUD and fighter panel cover the space they really occupy.** Both were
-  drawn at invented sizes, and windows snap to their edges. Measured from native
-  screenshots: the ship HUD is anchored on its capacitor, not its centre, and
-  extends far further right than left; the fighter panel is more than twice as
-  tall as it was drawn, because the ability grid above the squadron row was never
-  counted.
-- **The character you have open can be a batch-copy target again.** Switching the
-  source to a preset never lifted its exclusion from its own target list.
-- **The overview's filter list no longer drags.** All 649 group checkboxes were
-  live at once, 400 in one category, so each tick re-evaluated the lot. A
-  category's rows are built only while it is open, and the filter box waits for a
-  pause in typing.
-- **Importing an overview pack no longer strips the timestamp off your column
-  settings.** EVE stores every setting as a `(timestamp, value)` pair — 4,187 of
-  4,187 across five untouched account files. An import wrote the two column lists
-  bare, on the strength of a code comment claiming real files did. They do not, in
-  any snapshot in the corpus. An import now writes them correctly, repairs a file
-  an earlier version wrote, and the same wrapper is used when creating a tab table
-  from scratch.
-- **Delete any node in the raw tree, including one holding a shared object.**
-  Delete was greyed out on any entry whose subtree defined a shared object, which
-  on a real file meant whole keys like `tabsettings_new` could never be deleted.
-  The removal now dissolves the sharing first and rebuilds it after — the same
-  inline-then-edit approach the other editors use. Only removals that need it pay
-  for it.
+- **The "N overridden · clear" counter describes the layout you are looking at**, and clears only its overrides.
+- **The editor no longer recommends a stale backup folder**, and labels the one EVE is really using.
+- **Chat windows show their real names** instead of a flat "Chat".
+- **The ship HUD and fighter panel cover the space they really occupy**, so windows snap to their real edges.
+- **Importing an overview pack no longer strips the timestamp off your column settings**, and repairs a file an earlier version wrote.
+- The character you have open can be a batch-copy target again.
+- The overview's filter list no longer drags while you type.
+- Delete any node in the raw tree, including one holding a shared object.
 
 ## [0.21.0] - 2026-07-27
 
