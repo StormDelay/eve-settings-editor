@@ -650,6 +650,74 @@ harmless — not yet verified).
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
   (details to be confirmed in experiment 3).
 
+### `openWindows` does not predict what the client shows on launch
+
+Established **2026-07-31** against a live character file (`core_char_96821229`,
+Holy Storm), prompted by a report that the editor showed Job Board, Contracts,
+Corporation and Structure Browser as open when none were visible in game.
+
+**There is a class of window the client never restores on launch, whatever
+`openWindows` says.** The flag is not corrupt and the editor reads it correctly
+— the client simply does not consult it for these windows. `openWindows[id]`
+records that the window was open at some persist, which for this class has no
+bearing on what appears when the game starts.
+
+Evidence, all from the live file:
+
+- **Mutually exclusive dialogs are all flagged open at once.** 134 of 381
+  windows read open, among them `ship_name_dialog`, `skill_requirement_dialog`,
+  `contractSelectItemTypeDlg`, `AddToBlockSearch`, `newMessageReceiverSearch`,
+  `createcontract` and `contractdetails`. These are one-at-a-time modals; a
+  player cannot have seven of them open while warping.
+- **The flag sticks across sessions.** The four reported windows read `false` in
+  an April 2025 copy of the same character, flipped to `true` by 2026-07-27, and
+  were still `true` in the 2026-07-31 write — a write the client made within a
+  minute of the screenshot showing those windows absent. So the file is fresh
+  and the flag is simply wrong, rather than the file being stale.
+- **A clean client shutdown does not clear it.** Tested directly: opened
+  `corporation` in game, then quit the client, which rewrote the file
+  (20:05:50 → 20:20:49). *Nothing in the open set moved* — still 134 of 381,
+  with `job_board`, `contracts` and `StructureBrowser` — none of which were
+  opened — still `true`, and every modal above still `true`. This rules out "the
+  client only persists on exit and the file was mid-session", because the exit
+  write itself reports windows as open that certainly were not.
+- **The decisive one: the client ignores the flag on launch, but tracks the
+  window's geometry perfectly.** Restarting the client after that shutdown
+  brought `corporation` up *closed*, despite its `openWindows` reading `true`.
+  Moving it and reopening it, then quitting again, rewrote the file
+  (20:20:49 → 20:24:26) with **the new position recorded — `753,90` → `603,65`,
+  size unchanged** — while the open set did not move at all: still 134 of 381,
+  every id and every other geometry identical.
+
+  That pair is what settles the mechanism. The client is demonstrably watching
+  this window and persisting what it learns, so the flag is not merely stale
+  data nobody maintains. It writes `open=true`, then declines to act on it at
+  startup. So the useful statement is not "the flag is wrong" but "the flag is
+  not what decides whether you see the window".
+- **Nothing else in the file tracks visibility.** The `windows` section has 18
+  keys; `minimizedWindows`, `collapsedWindows` and the geometry all read
+  "normal" for these windows, and the editor already projects every relevant
+  one. There is no better signal to switch to.
+
+**What is NOT yet known.** Which windows belong to the never-restored class.
+The four reported ones and the modals above are in it; the many windows that do
+come back on launch are not. Nothing in the file distinguishes them — it would
+have to be a curated list, like `CLUTTER_IDS`, built by observing the client.
+Worth knowing before anyone tries to derive it from the data.
+
+**Consequence for the editor.** `WindowRect.open` is EVE's flag and can only
+ever be that. The canvas draws open windows, so one of these paints a rectangle
+for a window the client will not show. Two things absorb it in practice:
+the curated clutter tables already cover the transient dialogs
+(`CLUTTER_IDS` in `windowLabels.ts` contains every one listed above), and the
+per-window "Treat as clutter" override covers the rest — which is what an
+ordinary window like `job_board` needs, since it is genuinely a window the
+player placed and must not be table-classified as clutter.
+
+`windowLabels.ts` already recorded the mechanism in a comment; this section is
+the evidence behind it, and the reason the `Open only` filter carries a tooltip
+saying so.
+
 ### Window stacks (experiment 6: tabbed two free windows into a new stack)
 
 Tabbing two free-floating windows together in-game creates a **new stack**
