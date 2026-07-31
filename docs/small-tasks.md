@@ -51,8 +51,10 @@ Workflow:
   of the anchor at the middle of the screen, that offset changes sign under the
   user's hand. In game the handle IS the anchor, which is why it feels right
   there and slightly wrong here. The flip itself is correct (2026-07-31
-  capture); what is missing is a small grab handle drawn at the anchored corner,
-  with the rest of the box selectable but not draggable. Everything needed is
+  capture), and the anchor is now MARKED on that corner, which makes it
+  visible — but the grab target is unchanged, so the feel is not. What is
+  missing is making that marker the handle, with the rest of the box selectable
+  but not draggable. Everything needed is
   already there — `targetRect` places the box from the anchor and the drop
   writes the anchor — so this is a hit-target change, not a geometry one.
   _Added 2026-07-31._
