@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-31
+
+The locked-target list — the last piece of screen furniture the canvas never
+drew. It is now drawn, draggable, and carried by a layout copy.
+
+Nothing in the settings files obviously named it, so this release is mostly a
+capture: an in-game session settled that EVE stores the list's anchor as a
+fraction rather than pixels, that the two axes do not share a convention, and
+that the list grows from its anchor toward the middle of the screen. The
+editor's writes were then smoked against a running client.
+
 **One change writes to your settings files in a new way.** "Window layout" now
 carries the target list as well, so a copy moves it like every other piece of
 screen furniture. Most sources have never dragged theirs — 87 % of accounts —
