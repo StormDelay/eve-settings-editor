@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+**One change writes to your settings files in a new way.** "Window layout" now
+carries the target list as well, so a copy moves it like every other piece of
+screen furniture. Most sources have never dragged theirs — 87 % of accounts —
+and for those the copy puts the target's list back at EVE's default rather than
+leaving it be. That is what makes the two characters match, and it is the same
+rule the fighter panel and the neocom width already follow, but it is a deletion
+and worth knowing about before you run a batch.
+
+### Changed
+- **"Window layout" carries the locked-target list.** Its position and its
+  vertical/horizontal orientation travel with the rest of the screen furniture.
+  Both live in the account file, so a copy reaches every character on the
+  target's account, as the neocom width already did. Its lock flag is
+  deliberately left behind: that is a per-player preference, and copying a
+  locked state onto someone would leave them unable to drag their own list.
+  One caveat — the stored value is a fraction whose denominator depends on the
+  source client's neocom, so a copy between accounts with different neocom
+  widths can land the list a few tens of pixels out.
+
 ### Added
 - **The locked-target list is on the layout canvas.** It was the one piece of
   screen furniture the canvas never drew. EVE stores it as a fraction, not

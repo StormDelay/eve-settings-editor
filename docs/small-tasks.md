@@ -59,6 +59,35 @@ Workflow:
   writes the anchor — so this is a hit-target change, not a geometry one.
   _Added 2026-07-31._
 
+- [ ] **A minted target anchor has to guess the neocom margin, and an old
+  Layout preset deletes the target's list.** Two loose ends from making the
+  target list a Layout category (2026-07-31). First: the stored value is a
+  fraction whose denominator encodes the writing client's neocom width, and a
+  value the editor MINTS has none to recover, so it assumes
+  `TARGET_MARGIN = 72` — the one number in this feature no capture has
+  exercised. Second: a Layout preset saved between 0.23.0 and 0.26.0 has a
+  non-empty `user.dat` but no `targetOrigin`, so applying it reads the absence
+  as "the source is at EVE's default" and removes the target's position. The
+  char side has a shape signal for exactly this class (`prune` building a root
+  `notifications` key); these two keys live under `ui`, which such a preset
+  already has, so there is nothing to test against. Re-saving the preset fixes
+  it. Both are argued in full in `batch.rs::absent_means_default`.
+  _Added 2026-07-31._
+
+- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
+  canvas makes the entire box the grab target, so the cursor sits at an
+  arbitrary offset from the anchor — and when the list flips to the other side
+  of the anchor at the middle of the screen, that offset changes sign under the
+  user's hand. In game the handle IS the anchor, which is why it feels right
+  there and slightly wrong here. The flip itself is correct (2026-07-31
+  capture), and the anchor is now MARKED on that corner, which makes it
+  visible — but the grab target is unchanged, so the feel is not. What is
+  missing is making that marker the handle, with the rest of the box selectable
+  but not draggable. Everything needed is
+  already there — `targetRect` places the box from the anchor and the drop
+  writes the anchor — so this is a hit-target change, not a geometry one.
+  _Added 2026-07-31._
+
 - [ ] **Decide whether a Layout copy should carry the target list, and smoke the
   editor's writes in-game.** The anchor is editable now (`targetOrigin` /
   `alignHorizontally`, both account-scoped), but deliberately **not** a
