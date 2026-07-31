@@ -93,7 +93,7 @@ const check = (name: string, ok: boolean) => {
 // and the direction comes from the account's `alignHorizontally`.
 {
   const one = targetParts(1, false);
-  check("one slot draws one ring and three label rows", one.length === 4);
+  check("one slot draws one ring, three label rows and two effect icons", one.length === 6);
   const ring = one.find((p) => p.kind === "ring")!;
   check("the ring is round and 79 across", ring.w === 79 && ring.h === 79);
   check("the ring sits at the measured offset in the slot", ring.x === 19 && ring.y === 0);
@@ -107,8 +107,24 @@ const check = (name: string, ok: boolean) => {
   check("label rows are centred on the ring",
     labels.every((p, i) => Math.abs(p.x - [13, 25, 44][i]) <= 0.5));
 
+  // The effect icons ride along with the slot they belong to, so a target that
+  // scrolls off the list takes its icons with it.
+  const eff = one.filter((p) => p.kind === "slot");
+  check("the effect icons are the measured 25 across", eff.every((p) => p.w === 25 && p.h === 25));
+  check("the effect row sits at the measured slot y 142", eff.every((p) => p.y === 142));
+  check("the effect icons are on the measured 32 pitch from x 30",
+    eff.map((p) => p.x).join(",") === "30,62");
+  // 142 + 25 = 167, inside the 181 slot. If this ever fails, the slot's own
+  // height is what has to move, not the row.
+  check("the effect row fits inside the slot",
+    eff.every((p) => p.y + p.h <= HUD_NOMINAL.target.h));
+  // Centred on the ring, exactly as the label rows are.
+  const ringMid = 19 + 79 / 2;
+  check("the effect row is centred on the ring",
+    Math.abs((eff[0].x + eff[eff.length - 1].x + 25) / 2 - ringMid) <= 0.5);
+
   const four = targetParts(4, false);
-  check("four targets draw four slots", four.length === 16);
+  check("four targets draw four slots", four.length === 24);
   const rings = four.filter((p) => p.kind === "ring");
   check("vertical stacks the slots down on the 181 pitch",
     rings.map((p) => p.y).join(",") === "0,181,362,543");
@@ -121,7 +137,60 @@ const check = (name: string, ok: boolean) => {
 
   // A count of 0 or a fraction cannot come from the UI, but a hand-edited
   // preferences file can carry one.
-  check("a zero count still draws one slot", targetParts(0, false).length === 4);
+  check("a zero count still draws one slot", targetParts(0, false).length === 6);
+}
+
+// --- ship effects row ------------------------------------------------------
+// MEASURED 2026-07-31: ⌀36 icons on a 48 pitch, centred on the capacitor, 16
+// below a top-aligned element and 10 above a bottom-aligned one. See
+// format-notes.md, "Ship HUD effects row". The centring is what these checks
+// exist for — it is the one rule confirmed at four different counts (1, 2, 10
+// and 11 icons across five shots), and the one a careless edit would break by
+// reaching for the middle of the box instead of the anchor.
+{
+  const effectsOf = (n: number, top = true) => {
+    const base = shipHudParts(0, top).length;
+    return shipHudParts(n, top).slice(base);
+  };
+
+  check("no effects draws no extra parts", effectsOf(0).length === 0);
+  check("each effect draws one icon", effectsOf(5).length === 5);
+  check("the icons are the measured 36 across",
+    effectsOf(5).every((p) => p.w === 36 && p.h === 36));
+  check("the icons are on the measured 48 pitch",
+    effectsOf(4).map((p) => p.x).every((x, i, xs) => i === 0 || x - xs[i - 1] === 48));
+
+  // The measured screen positions, box x 943 in both native shots: the two-icon
+  // shot puts its icons at 1049 and 1097, box-relative 106 and 154 — which this
+  // reproduces exactly, and which is what fixes both the pitch and the centre.
+  check("two effects land on the measured box x 106 / 154",
+    effectsOf(2).map((p) => p.x).join(",") === "106,154");
+  // The one-icon shot reads 1074, box-relative 131, against 130 here. The 1px
+  // is the icon ART, not the layout: that shot's icon is a ⌀34 teal buff and
+  // the two-icon shot's are ⌀36 red debuffs, both centred on the same axis. The
+  // row is modelled at the larger, so a tolerance rather than an exact match.
+  check("one effect lands within a pixel of the measured box x 131",
+    Math.abs(effectsOf(1)[0].x - 131) <= 1);
+
+  // Centred on the capacitor — the element's anchor, NOT the middle of the
+  // 648-wide box (which would be 324).
+  for (const n of [1, 2, 3, 8, 11]) {
+    const row = effectsOf(n);
+    const mid = (row[0].x + row[row.length - 1].x + 36) / 2;
+    check(`a row of ${n} is centred on the capacitor`, mid === 148);
+  }
+
+  // Top-aligned the row hangs BELOW the box (176 + 16 = 192); bottom-aligned it
+  // flips above it and the y goes negative. The flip is the whole reason
+  // `topAligned` is a parameter rather than a constant.
+  check("a top-aligned row sits 16 below the element", effectsOf(3, true).every((p) => p.y === 192));
+  check("a bottom-aligned row sits 10 above it", effectsOf(3, false).every((p) => p.y === -46));
+  check("the bottom-aligned row is entirely outside the box",
+    effectsOf(3, false).every((p) => p.y + p.h <= 0));
+
+  // A hand-edited preferences file is the only way these reach the function.
+  check("a negative count draws nothing", effectsOf(-3).length === 0);
+  check("a fractional count rounds", effectsOf(2.4).length === 2);
 }
 
 // MEASURED 2026-07-30 from fighter.png, native 2560x1440, anchor (329, 289) —
