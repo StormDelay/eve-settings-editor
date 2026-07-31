@@ -84,6 +84,38 @@ function input(groupTitle: string, label: string): HTMLInputElement {
   return row(groupTitle, label).querySelector("input")!;
 }
 
+describe("the target anchor, which is stored as a fraction", () => {
+  // 1354/2488 and 752/1440 on a 2560x1440 reference with a 72px neocom — the
+  // value the 2026-07-31 capture left in Holy Storm's account file.
+  const REF = { referenceW: 2560, referenceH: 1440 };
+
+  test("the rows show pixels, not the stored fraction", () => {
+    mount(hud(), REF);
+    expect(input("Target list", "x").value).toBe("1426");
+    expect(input("Target list", "y").value).toBe("752");
+  });
+
+  test("typing a pixel writes the fraction it lands on", () => {
+    const { onSet } = mount(hud(), REF);
+    fireEvent.change(input("Target list", "x"), { target: { value: "1316" } });
+    // 110px left of 1426, in the same denominator the value already carried:
+    // (1316 - 72) / 2488.
+    expect(onSet).toHaveBeenCalledWith("target_x", String(1244 / 2488));
+  });
+
+  test("editing one axis leaves the other alone", () => {
+    const { onSet } = mount(hud(), REF);
+    fireEvent.change(input("Target list", "y"), { target: { value: "100" } });
+    expect(onSet).toHaveBeenCalledTimes(1);
+    expect(onSet).toHaveBeenCalledWith("target_y", String(100 / 1440));
+  });
+
+  test("with no reference size the raw fraction is shown rather than a pixel computed from nothing", () => {
+    mount(hud());
+    expect(input("Target list", "x").value).toBe("0.5442122186495176");
+  });
+});
+
 describe("writing a value", () => {
   test("an int field rounds a fractional entry before writing", () => {
     const { onSet } = mount(hud());
