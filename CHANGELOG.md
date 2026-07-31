@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The locked-target list is on the layout canvas.** It was the one piece of
+  screen furniture the canvas never drew. EVE stores it as a fraction rather
+  than pixels — y over the screen height, x over the width right of the neocom
+  — and both conventions were captured in-game, along with the slot size and
+  the rule that the list grows from its anchor toward the middle of the screen.
+  Drag it on the canvas or type the fractions in the panel. A **Horizontal**
+  toggle lays the list out in a row instead of a column. An account that has
+  never moved its target list gets no box: EVE's own starting position has
+  never been captured, and a rectangle in the wrong place is worse than none.
+
 ## [0.25.0] - 2026-07-31
 
 The layout canvas stops drawing blank boxes. With the new `Detail` toggle on,

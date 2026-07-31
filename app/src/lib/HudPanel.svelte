@@ -55,6 +55,17 @@
       { name: "badge_x", label: "x" },
       { name: "badge_y", label: "y" },
     ] },
+    // The target list's anchor is stored as a FRACTION of the screen, not in
+    // pixels like every other row here, so that is what these two show. x is a
+    // fraction of the width right of the neocom (see layout.ts) — the labels
+    // say so, because a bare 0.54 next to a 2519 invites the reader to assume
+    // they are the same kind of number. Dragging the slot on the canvas is the
+    // ergonomic path; these are for typing an exact value back.
+    { title: "Target list", kind: "target", rows: [
+      { name: "target_x", label: "x (fraction)" },
+      { name: "target_y", label: "y (fraction)" },
+      { name: "target_horizontal", label: "Horizontal" },
+    ] },
   ];
 
   // Only claim rows are shared when at least one of them is actually writable —

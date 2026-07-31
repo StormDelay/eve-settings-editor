@@ -1105,6 +1105,61 @@ would mint `market_userlistwidth` — a key EVE never reads and nothing ever
 cleans up. Validation of the whole batch completes before the first mutation, so
 a refused write leaves the document byte-identical.
 
+### Target list anchor
+
+**Captured in-game 2026-07-31** (B1 Holy Storm, 2560×1440, UI scale 1.0): three
+positions, both orientations, four native screenshots measured by bright-pixel
+clustering. Full working in `docs/live-verification-target-origin.md`.
+
+Account file (`core_user_<id>.dat`), root **`ui`** section — *not* `windows`:
+
+- `targetOrigin` (`Tuple(Float, Float)`) — the list's anchor, ~13 % of account
+  files.
+- `targetOriginLocked` (`Int` 0/1) — position lock. Written in the same
+  transaction as `targetOrigin`; at 1 the list cannot be dragged in-game.
+- `alignHorizontally` (`Bool`) — false stacks the list vertically, true lays it
+  out in a row.
+
+**Read the section off `bmdump dump-inline`, never `bmdump dump`.** The plain
+dump walks these keys back to `windows`, where `neocomWidth` genuinely lives,
+and two account files were mis-read exactly that way before the inlined tree
+settled it. `tests/hud_corpus.rs::every_account_hud_field_reads_from_a_real_file`
+is the guard, and it does fail on the wrong section (checked, not assumed).
+
+**The pair is a fraction, and the two axes do not share a convention:**
+
+```
+anchor_y = f_y × screenH                    exact in all four known values
+anchor_x = M + f_x × (screenW − M)          M = the neocom's DRAWN width
+```
+
+Every known value is an exact `pixels / denominator` rational, machine-exact:
+2038/2512, 1354/2488, 531/2488, 2053/2523. So **the denominator is recoverable
+from the value itself** — `M = screenW − denominator` — which matters because M
+is *not* `neocomWidth`: the captured account holds `neocomWidth = 37`, untouched
+since 2022, while its own writes moved from M=48 to M=72. 72 is measured, not
+fitted (the neocom occludes the background through x=71).
+`layout.ts::targetDenominator` does the recovery, and trusts only a denominator
+that is UNIQUE in the plausible range — a round fraction divides evenly into
+dozens of candidates and encodes no margin at all.
+
+**The anchor is the list's outer edge; slots run from it toward the screen
+centre**, on each axis independently. Solving three photographed positions for
+scale, origin and slot offset at once put the anchor→first-slot-centre offset at
+55.5px, sign flipping with the side — exactly half the measured 110px pitch,
+which nothing in the fit forced.
+
+Slot pitch is **110 across, 181 down**; the target ring is 79px of bright pixels
+wide; anchor → first ring centre is 141px along the growth axis. Orientation does
+not move the anchor: one stored value photographed vertically and horizontally
+put the anchor slot on the same pixel (label centre x 1369.0, ring band y
+578..644).
+
+**EVE's own default position is still unknown** — 87 % of account files have no
+`targetOrigin`, and no capture has produced one from a virgin account. The canvas
+draws nothing for those rather than guess, and a *minted* value has no
+denominator to recover, so it has to assume M (`layout.ts`'s `TARGET_MARGIN`, 72).
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in
