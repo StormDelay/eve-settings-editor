@@ -187,7 +187,7 @@ export function linkInventory(units: DrawUnit[], env: Env, windows: WindowRect[]
 }
 
 export interface FurnitureRect {
-  kind: "neocom" | "shipui" | "fighter" | "badge";
+  kind: "neocom" | "shipui" | "fighter" | "badge" | "target";
   label: string;
   /** Data px, like WindowRect.geom — the canvas scales it with toCanvas. */
   x: number;
@@ -293,7 +293,128 @@ export const HUD_NOMINAL = {
   shipui: { w: 648, h: 176 },
   fighter: { w: 467, h: 264 },
   badge: { w: 32, h: 32 },
+  // ONE target slot, measured 2026-07-31: the list's slot pitch is 110 across
+  // and 181 down (four label rows apart, in three shots). A list is N of these
+  // in a row or a column — see hudRects, which takes the count, because no file
+  // records how many things a pilot locks.
+  target: { w: 110, h: 181 },
 };
+
+/** How many target slots the canvas draws when nobody has said otherwise. Four
+ * is a common enough lock count to be representative without filling the
+ * screen; the preference behind it is `LayoutPrefs.targets`. */
+export const TARGET_COUNT_DEFAULT = 4;
+
+/** The footprint of a target list of `count` slots. Vertical stacks them down,
+ * horizontal runs them across — `alignHorizontally` picks which. */
+export function targetSize(count: number, horizontal: boolean): { w: number; h: number } {
+  const n = Math.max(1, Math.round(count));
+  const { w, h } = HUD_NOMINAL.target;
+  return horizontal ? { w: w * n, h } : { w, h: h * n };
+}
+
+/**
+ * How much of the screen's left edge the target list's x fraction does NOT
+ * cover — the neocom's drawn width, 72px on the captured client.
+ *
+ * Used only as a fallback. The stored value normally carries its own
+ * denominator (see targetDenominator), which is exact and survives a player
+ * whose neocom is a different width; this number is what a MINTED value has to
+ * assume, and it is the corpus-typical one, not a universal constant. Three
+ * different margins show up across the corpus (37, 48, 72).
+ */
+export const TARGET_MARGIN = 72;
+
+/**
+ * The width the target list's stored x is a fraction OF.
+ *
+ * `targetOrigin.x` is not a fraction of the screen: it spans the width to the
+ * right of the neocom, so the anchor is `(referenceW - denominator) + f *
+ * denominator`. EVE writes an exact `pixels / denominator`, which means the
+ * denominator can be read back out of the value itself — and that is worth
+ * doing, because the margin is a property of the client that wrote it, not of
+ * ours.
+ *
+ * Only a denominator that is UNIQUE in the plausible range is trusted. A round
+ * fraction (0.5, or the 0 default) divides evenly into dozens of candidates and
+ * says nothing about the margin; taking the first hit there would invent a
+ * margin out of a value that never encoded one.
+ */
+export function targetDenominator(f: number, referenceW: number): number {
+  const fallback = Math.max(1, referenceW - TARGET_MARGIN);
+  if (!Number.isFinite(f) || f <= 0 || referenceW <= TARGET_MARGIN) return fallback;
+  let found = 0;
+  // 200px is well past every margin seen (37, 48, 72) without reaching the
+  // half-width aliases a small denominator would also satisfy.
+  for (let d = referenceW - 1; d >= referenceW - 200 && d > 0; d--) {
+    const p = f * d;
+    if (Math.abs(p - Math.round(p)) < 1e-6) {
+      if (found) return fallback; // ambiguous — the value encodes no margin
+      found = d;
+    }
+  }
+  return found || fallback;
+}
+
+/**
+ * Where a target list of `w` x `h` is DRAWN for an anchor at `ax, ay`.
+ *
+ * The anchor is the list's OUTER corner and the slots run toward the middle of
+ * the screen — captured in both orientations and on both sides (2026-07-31) —
+ * so the box hangs off whichever side of the anchor faces the centre, on each
+ * axis independently. Its own function because the canvas needs the same rule
+ * mid-drag, to flip the preview as the anchor crosses the middle rather than
+ * letting it jump on drop.
+ */
+export function targetRect(
+  ax: number, ay: number, w: number, h: number, referenceW: number, referenceH: number,
+): { x: number; y: number } {
+  const c = targetCorner(ax, ay, referenceW, referenceH);
+  return { x: c[1] === "r" ? ax - w : ax, y: c[0] === "b" ? ay - h : ay };
+}
+
+/**
+ * Which corner of the drawn box the anchor is — the one facing away from the
+ * middle of the screen, since the list grows toward it.
+ *
+ * Shares its predicate with targetRect above, deliberately: the canvas marks
+ * this corner so the anchor is visible, and a marker on the wrong corner would
+ * be worse than none. One rule, two readings of it.
+ */
+export function targetCorner(ax: number, ay: number, referenceW: number, referenceH: number): Corner {
+  return `${ay > referenceH / 2 ? "b" : "t"}${ax > referenceW / 2 ? "r" : "l"}` as Corner;
+}
+
+/**
+ * The target list's anchor in data px, from its stored fractions.
+ *
+ * Rounded, unlike the ship HUD's placement: the client's own value is a whole
+ * number of pixels over the denominator, so `f * d` lands a fraction of a
+ * float's-worth away from the integer it means (1354.0000000000002). The ship
+ * HUD leaves its half-pixel in place because its inverse subtracts the same
+ * expression back off; this one's inverse re-derives the anchor through here,
+ * so rounding on both sides cancels rather than accumulates.
+ */
+export function targetAnchor(fx: number, fy: number, referenceW: number, referenceH: number) {
+  const d = targetDenominator(fx, referenceW);
+  return { x: Math.round(referenceW - d + fx * d), y: Math.round(fy * referenceH) };
+}
+
+/**
+ * Stored fractions for an anchor AT data px `x, y` — the exact inverse of
+ * targetAnchor, and what the panel's pixel fields write.
+ *
+ * `fx` is the value being replaced, and is read only for its denominator: that
+ * is the client's own margin, recovered from the number it wrote, and an edit
+ * must not quietly re-base the value onto ours. A minted value has none to
+ * recover and falls back to TARGET_MARGIN.
+ */
+export function targetFractionFromPoint(
+  fx: number, x: number, y: number, referenceW: number, referenceH: number,
+): { x: number; y: number } {
+  const d = targetDenominator(fx, referenceW);
+  return { x: (Math.round(x) - (referenceW - d)) / d, y: Math.round(y) / referenceH };
+}
 
 const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
 
@@ -303,6 +424,13 @@ export function hudNum(hud: Hud, name: string): number | null {
   if (!e || e.set.how === "unavailable") return null;
   const n = parseFloat(e.value ?? e.default);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Whether the file actually holds this field, as opposed to falling back to a
+ * default. Only the target anchor cares: its default is a placeholder. */
+function stored(hud: Hud, name: string): boolean {
+  const e = byName(hud, name);
+  return !!e && e.set.how !== "unavailable" && e.value !== null;
 }
 
 export function hudFlag(hud: Hud, name: string): boolean {
@@ -364,11 +492,20 @@ export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: numb
 
 /**
  * The screen furniture the canvas draws, in data px. Order is fixed
- * (neocom, ship HUD, fighter, badge) so the canvas paints the bar first and
- * tests can index. An element whose values aren't writable is omitted rather
- * than drawn at a guessed position.
+ * (neocom, ship HUD, fighter, badge, target list) so the canvas paints the bar
+ * first and tests can index. An element whose values aren't writable is omitted
+ * rather than drawn at a guessed position.
+ *
+ * `targetCount` is how many locked targets to draw the target list at. It is a
+ * view preference rather than anything read from a file — no settings file
+ * records how many things a pilot locks — and it changes the rectangle's size,
+ * so windows snap against the area the list really covers at that count.
  */
-export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
+export function hudRects(
+  hud: Hud,
+  layout: WindowLayout,
+  targetCount: number = TARGET_COUNT_DEFAULT,
+): FurnitureRect[] {
   const out: FurnitureRect[] = [];
 
   const neocom = hudNum(hud, "neocom_width");
@@ -419,6 +556,29 @@ export function hudRects(hud: Hud, layout: WindowLayout): FurnitureRect[] {
   const by = hudNum(hud, "badge_y");
   if (bx !== null && by !== null) {
     out.push({ kind: "badge", label: "Badge", x: bx, y: by, ...HUD_NOMINAL.badge, drag: "xy" });
+  }
+
+  // The target list. Drawn only when the fractions are actually STORED, not
+  // when they fall back to a default like every other element here: EVE's own
+  // starting position for the list was never captured, 87% of account files
+  // have never had it dragged, and 0 would put the slot in the top-left corner
+  // — a place the list has never been. Nothing is more honest than nothing.
+  const tx = hudNum(hud, "target_x");
+  const ty = hudNum(hud, "target_y");
+  if (tx !== null && ty !== null && stored(hud, "target_x") && stored(hud, "target_y")) {
+    const a = targetAnchor(tx, ty, layout.reference_w, layout.reference_h);
+    const { w, h } = targetSize(targetCount, hudFlag(hud, "target_horizontal"));
+    out.push({
+      kind: "target",
+      label: "Target list",
+      // Placed through targetRect, not inline: the canvas re-places the box
+      // from the same rule mid-drag, and the marker asks targetCorner which
+      // corner it hangs from. Three readings of one predicate, in one place.
+      ...targetRect(a.x, a.y, w, h, layout.reference_w, layout.reference_h),
+      w,
+      h,
+      drag: "xy",
+    });
   }
 
   return out;
