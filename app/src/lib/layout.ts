@@ -357,6 +357,22 @@ export function targetDenominator(f: number, referenceW: number): number {
 }
 
 /**
+ * Where a target list of `w` x `h` is DRAWN for an anchor at `ax, ay`.
+ *
+ * The anchor is the list's OUTER corner and the slots run toward the middle of
+ * the screen — captured in both orientations and on both sides (2026-07-31) —
+ * so the box hangs off whichever side of the anchor faces the centre, on each
+ * axis independently. Its own function because the canvas needs the same rule
+ * mid-drag, to flip the preview as the anchor crosses the middle rather than
+ * letting it jump on drop.
+ */
+export function targetRect(
+  ax: number, ay: number, w: number, h: number, referenceW: number, referenceH: number,
+): { x: number; y: number } {
+  return { x: ax > referenceW / 2 ? ax - w : ax, y: ay > referenceH / 2 ? ay - h : ay };
+}
+
+/**
  * The target list's anchor in data px, from its stored fractions.
  *
  * Rounded, unlike the ship HUD's placement: the client's own value is a whole
@@ -369,28 +385,6 @@ export function targetDenominator(f: number, referenceW: number): number {
 export function targetAnchor(fx: number, fy: number, referenceW: number, referenceH: number) {
   const d = targetDenominator(fx, referenceW);
   return { x: Math.round(referenceW - d + fx * d), y: Math.round(fy * referenceH) };
-}
-
-/**
- * Stored fractions for a target anchor moved by `dx, dy` data px. Inverse of
- * hudRects' target placement, and deliberately a DELTA rather than an absolute
- * rect conversion.
- *
- * Absolute inversion is ambiguous: which edge of the drawn slot the anchor is
- * depends on which half of the screen the anchor is in, and a rect straddling
- * the middle answers that question differently from the anchor that produced
- * it. Moving the anchor itself never has to ask — the side only decides which
- * way the slot is drawn, and hudRects re-derives that after the write.
- *
- * Rounding to whole pixels first is what keeps the value in the exact
- * `pixels / denominator` form EVE writes, so a later read recovers the same
- * denominator instead of falling back.
- */
-export function targetFractionFromDelta(
-  fx: number, fy: number, dx: number, dy: number, referenceW: number, referenceH: number,
-): { x: number; y: number } {
-  const a = targetAnchor(fx, fy, referenceW, referenceH);
-  return targetFractionFromPoint(fx, a.x + dx, a.y + dy, referenceW, referenceH);
 }
 
 /**
