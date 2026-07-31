@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { ErrDto, Mutation, NewValue, TreeNodeData } from "./api";
 
   let {
@@ -17,7 +18,12 @@
   let keyText = $state("");
   let valueKind = $state("str");
   let valueText = $state("");
-  let index = $state(target.children.length);
+  // Defaults to appending, then becomes the user's to change — so a SNAPSHOT,
+  // not a `$derived` of the target's child count. The form is mounted per
+  // insert request (`{#if insertTarget !== null}` in +page), so `target` cannot
+  // change under it; deriving would only serve to slam a typed index back to
+  // the end on an unrelated re-render. `untrack` marks that as deliberate.
+  let index = $state(untrack(() => target.children.length));
 
   function toHex(s: string): string {
     return Array.from(new TextEncoder().encode(s))
