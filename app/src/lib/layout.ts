@@ -305,6 +305,14 @@ export const HUD_NOMINAL = {
  * screen; the preference behind it is `LayoutPrefs.targets`. */
 export const TARGET_COUNT_DEFAULT = 4;
 
+/** How many ship-effect icons the canvas draws when nobody has said otherwise,
+ * and the ceiling the panel and the store clamp to. Two matches the shot the
+ * row was measured from; 16 is comfortably past the 11 seen in the busiest one,
+ * and exists only so a hand-edited preferences file cannot ask for a row a
+ * thousand icons wide. The preference behind it is `LayoutPrefs.effects`. */
+export const EFFECT_COUNT_DEFAULT = 2;
+export const EFFECT_COUNT_MAX = 16;
+
 /** The footprint of a target list of `count` slots. Vertical stacks them down,
  * horizontal runs them across — `alignHorizontally` picks which. */
 export function targetSize(count: number, horizontal: boolean): { w: number; h: number } {
