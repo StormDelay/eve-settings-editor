@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
-  import type { FurnitureRect } from "$lib/layout";
+  import { targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
-    targets, onTargets,
+    targets, onTargets, referenceW = 0, referenceH = 0,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
   }: {
     hud: Hud;
@@ -28,6 +28,12 @@
      * in the row below so it cannot be mistaken for something that writes. */
     targets: number;
     onTargets: (n: number) => void;
+    /** The open file's reference screen size. Only the target anchor uses it:
+     * that pair is stored as a fraction, and the rows show the pixel it lands
+     * on at this size instead. 0 means unknown — the rows then show the raw
+     * fraction rather than a pixel computed from nothing. */
+    referenceW?: number;
+    referenceH?: number;
     /** The neocom bar, when a character file is open. Rendered inside the
      * Neocom group so the bar the user clicks on the canvas and the buttons
      * they edit are the same object. */
@@ -69,8 +75,8 @@
     // they are the same kind of number. Dragging the slot on the canvas is the
     // ergonomic path; these are for typing an exact value back.
     { title: "Target list", kind: "target", rows: [
-      { name: "target_x", label: "x (fraction)" },
-      { name: "target_y", label: "y (fraction)" },
+      { name: "target_x", label: "x" },
+      { name: "target_y", label: "y" },
       { name: "target_horizontal", label: "Horizontal" },
     ] },
   ];
@@ -83,14 +89,33 @@
   );
 
   const find = (name: string): HudEntry | undefined => hud.entries.find((e) => e.name === name);
-  const shown = (name: string) => find(name)?.value ?? find(name)?.default ?? "";
+  const raw = (name: string) => find(name)?.value ?? find(name)?.default ?? "";
+
+  // The target anchor is stored as a FRACTION of the screen — and not even a
+  // fraction of the whole width, since x spans only what is right of the
+  // neocom. Nobody wants to type 0.5442122186495176 to nudge it. These two rows
+  // show the pixel that fraction lands on at the file's own reference size, and
+  // convert back on write through the same pair the canvas drag uses, so the
+  // client's own denominator survives the edit. Everything else here is already
+  // a pixel and passes straight through.
+  const AXIS: Record<string, "x" | "y"> = { target_x: "x", target_y: "y" };
+  const asPixels = $derived(referenceW > 0 && referenceH > 0);
+  const frac = (name: string) => {
+    const n = parseFloat(raw(name));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const anchorPx = () => targetAnchor(frac("target_x"), frac("target_y"), referenceW, referenceH);
+  const shown = (name: string) =>
+    AXIS[name] && asPixels ? String(Math.round(anchorPx()[AXIS[name]])) : raw(name);
   // `readOnly` is the CHARACTER document's flag. An account-scoped row writes
   // the account file, so a read-only account left those four rows clickable and
   // the backend's refusal arrived as a dialog — stricter to say so up front.
   const disabled = (e: HudEntry) =>
     readOnly || e.set.how === "unavailable" || (e.scope === "account" && accountReadOnly);
   const title = (e: HudEntry) =>
-    e.set.how === "unavailable"
+    AXIS[e.name] && asPixels
+      ? `Screen pixels at ${referenceW}x${referenceH}. Stored as a fraction — account-wide.`
+      : e.set.how === "unavailable"
       ? "Not present in this file"
       : e.value === null
         ? `EVE's default (${e.default}) — editing stores a value`
@@ -110,13 +135,27 @@
   // write does land, the parent's re-render overwrites this a moment later.
   const numberEdit = (name: string, kind: HudKind) => (ev: Event) => {
     const el = ev.target as HTMLInputElement;
-    const raw = el.value;
+    const text = el.value;
     const resync = () => { el.value = shown(name); };
-    if (raw.trim() === "" || !Number.isFinite(Number(raw))) {
+    if (text.trim() === "" || !Number.isFinite(Number(text))) {
       resync();
       return;
     }
-    onSet(name, kind === "float" ? raw : String(Math.round(Number(raw))));
+    const axis = AXIS[name];
+    if (axis && asPixels) {
+      // Feed the OTHER axis its current pixel so this edit moves one axis only.
+      const a = anchorPx();
+      const next = targetFractionFromPoint(
+        frac("target_x"),
+        axis === "x" ? Number(text) : a.x,
+        axis === "y" ? Number(text) : a.y,
+        referenceW,
+        referenceH,
+      );
+      onSet(name, String(next[axis]));
+    } else {
+      onSet(name, kind === "float" ? text : String(Math.round(Number(text))));
+    }
     resync();
   };
 </script>
@@ -147,7 +186,7 @@
               <span class="label">{row.label}</span>
               <input
                 type="number"
-                step={e.kind === "float" ? undefined : "1"}
+                step={e.kind === "float" && !AXIS[row.name] ? undefined : "1"}
                 value={shown(row.name)}
                 disabled={disabled(e)}
                 onchange={numberEdit(row.name, e.kind)} />
