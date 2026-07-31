@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows
 - An `Effects drawn` count, 0–16, for how busy that row gets.
 - The effects applied to each locked target, under its labels.
 
+### Changed
+- **The layout canvas hides clutter by default**, so it opens on the windows you placed rather than everything EVE has ever spawned. `reset` returns to that view; the toggle still shows everything.
+- `Open only` now explains itself: EVE's own flag is not what decides whether a window appears in game, so a window can read as open here and not be on screen.
+
 ### Fixed
 - Clearing the `Targets drawn` box no longer reads as a count of zero.
 

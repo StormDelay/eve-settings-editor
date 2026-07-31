@@ -363,7 +363,13 @@
       aria-label="Filter windows"
       bind:this={filterInput}
       bind:value={filter.text} />
-    <label class="toggle">
+    <!-- The one filter whose name overclaims, so it is the one that most needs
+         a tooltip: EVE's flag is sticky, and a window it still calls open may
+         well not be on screen. See docs/format-notes.md, "openWindows is
+         sticky". -->
+    <label
+      class="toggle"
+      title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas.">
       <input type="checkbox" bind:checked={filter.openOnly} />
       Open only
     </label>
