@@ -2,7 +2,7 @@
 // framework — matching layout.test.ts.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DETAIL_NOMINAL, shipHudParts, fighterParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
+import { DETAIL_NOMINAL, shipHudParts, fighterParts, targetParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
 import { HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect, Stack } from "./api.ts";
 import type { DrawUnit } from "./layout.ts";
@@ -87,6 +87,43 @@ const check = (name: string, ok: boolean) => {
 }
 
 // --- fighter UI ------------------------------------------------------------
+// --- target list -----------------------------------------------------------
+// MEASURED 2026-07-31 from the four anchor-capture shots — see format-notes.md,
+// "Target list anchor". One slot is HUD_NOMINAL.target; the list is N of them,
+// and the direction comes from the account's `alignHorizontally`.
+{
+  const one = targetParts(1, false);
+  check("one slot draws one ring and three label rows", one.length === 4);
+  const ring = one.find((p) => p.kind === "ring")!;
+  check("the ring is round and 79 across", ring.w === 79 && ring.h === 79);
+  check("the ring sits at the measured offset in the slot", ring.x === 19 && ring.y === 0);
+  const labels = one.filter((p) => p.kind === "band");
+  check("label rows are on the measured 13 pitch from y 102",
+    labels.map((p) => p.y).join(",") === "102,115,128");
+  // The rows are drawn centred on the ring, which is where the shot puts them:
+  // measured left edges 13/25/44 for widths 90/68/28, each within half a pixel
+  // of centred. (Half, not zero, because the measurement is the text's bright
+  // extent — antialiasing eats the glyph's first column.)
+  check("label rows are centred on the ring",
+    labels.every((p, i) => Math.abs(p.x - [13, 25, 44][i]) <= 0.5));
+
+  const four = targetParts(4, false);
+  check("four targets draw four slots", four.length === 16);
+  const rings = four.filter((p) => p.kind === "ring");
+  check("vertical stacks the slots down on the 181 pitch",
+    rings.map((p) => p.y).join(",") === "0,181,362,543");
+  check("and keeps them in one column", rings.every((p) => p.x === 19));
+
+  const across = targetParts(4, true).filter((p) => p.kind === "ring");
+  check("horizontal runs the slots across on the 110 pitch",
+    across.map((p) => p.x).join(",") === "19,129,239,349");
+  check("and keeps them on one row", across.every((p) => p.y === 0));
+
+  // A count of 0 or a fraction cannot come from the UI, but a hand-edited
+  // preferences file can carry one.
+  check("a zero count still draws one slot", targetParts(0, false).length === 4);
+}
+
 // MEASURED 2026-07-30 from fighter.png, native 2560x1440, anchor (329, 289) —
 // see format-notes.md, "Fighter UI internals". Same story as the ship HUD:
 // everything is round, and a control column was missing entirely.
