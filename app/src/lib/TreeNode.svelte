@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import TreeNodeSelf from "./TreeNode.svelte";
   import type { TreeNodeData, NodePath } from "./api";
 
@@ -29,7 +30,13 @@
     onInsertRequest: (node: TreeNodeData) => void;
   } = $props();
 
-  let expanded = $state(depth < 1);
+  // Top-level nodes start open. A SNAPSHOT rather than a `$derived`: once the
+  // user has clicked the twisty, `expanded` is theirs, and a derived would
+  // reassert `depth < 1` and collapse a node they had opened (or reopen one
+  // they had closed) on any re-render. `depth` is structural anyway — it is
+  // fixed for a given node's position in the tree. The `$effect` below is the
+  // one thing allowed to force it open, and only while a search is filtering.
+  let expanded = $state(untrack(() => depth < 1));
   $effect(() => {
     if (autoExpand) expanded = true;
   });
