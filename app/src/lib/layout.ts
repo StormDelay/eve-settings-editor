@@ -571,12 +571,10 @@ export function hudRects(
     out.push({
       kind: "target",
       label: "Target list",
-      // The anchor is the list's OUTER corner and the slots run toward the
-      // middle of the screen — captured in both orientations and on both sides
-      // (2026-07-31). So the slot hangs off whichever side of the anchor faces
-      // the centre, on each axis independently.
-      x: a.x > layout.reference_w / 2 ? a.x - w : a.x,
-      y: a.y > layout.reference_h / 2 ? a.y - h : a.y,
+      // Placed through targetRect, not inline: the canvas re-places the box
+      // from the same rule mid-drag, and the marker asks targetCorner which
+      // corner it hangs from. Three readings of one predicate, in one place.
+      ...targetRect(a.x, a.y, w, h, layout.reference_w, layout.reference_h),
       w,
       h,
       drag: "xy",
