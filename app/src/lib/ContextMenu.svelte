@@ -6,6 +6,8 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from "svelte";
+
   // A flat right-click menu. Deliberately minimal: no submenus, no icons, no
   // portal — both callers need one list, and nothing more. `WindowPanel` uses
   // it for a row's actions; `LayoutView` uses it to list the rectangles
@@ -34,8 +36,15 @@
   // off-screen — potentially clipping "Copy window id", the escape hatch for
   // reading a raw id. Clamp once the element exists and can be measured;
   // starts at the raw click point and snaps onscreen a frame later.
+  //
+  // `pos` starts as a deliberate SNAPSHOT of the click point rather than a
+  // `$derived` of it: the effect below is what owns this value once the menu
+  // can be measured, and a derived would overwrite the clamp on every read.
+  // `untrack` says that to the compiler, which otherwise warns that this
+  // captures only the initial x/y — which is the point, since the effect
+  // tracks them itself and re-clamps if they ever change.
   let menuEl: HTMLDivElement | undefined = $state();
-  let pos = $state({ x, y });
+  let pos = $state(untrack(() => ({ x, y })));
   $effect(() => {
     if (!menuEl) return;
     const r = menuEl.getBoundingClientRect();

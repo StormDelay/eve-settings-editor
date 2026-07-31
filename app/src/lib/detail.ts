@@ -119,13 +119,62 @@ const CLUSTER = {
 };
 
 /**
- * The ship HUD's internals. Constant: the box is fixed (HUD_NOMINAL.shipui) and
- * none of this is in any settings file.
+ * Effects applied to the ship — the row of round buff/debuff icons that is NOT
+ * part of the element: it sits outside the box, below a top-aligned HUD and
+ * above a bottom-aligned one.
+ *
+ * MEASURED 2026-07-31. `d` and `pitch` come from two native 2560x1440 shots
+ * (`effect.png`, one effect; `effects.jpg`, two) which happen to place the HUD
+ * identically, so they cross-check each other: ⌀36 icons on a 48 pitch, and the
+ * row is CENTRED ON THE CAPACITOR — the element's own anchor, not the middle of
+ * the box. The two-icon shot lands on box x 106 and 154, which this reproduces
+ * exactly and which is what fixes the pitch and the centre together.
+ *
+ * `d` is 36 from that shot's debuff icons; the one-icon shot's buff icon reads
+ * 34 and sits a pixel off what 36 predicts. That is the icon ART differing, not
+ * the layout — both are centred on the same axis — so the row is modelled at
+ * the larger and the test carries a 1px tolerance for the smaller.
+ *
+ * `gapBelow` is from the same pair: the element ends at 176 and the row's first
+ * lit pixel row is 192.
+ *
+ * `gapAbove` is SMALLER, and the asymmetry is measured rather than sloppy. It
+ * comes from three bottom-aligned shots supplied 2026-07-31, which are 2x
+ * upscales of a native capture — icon diameter, UI font cap height and the
+ * capacitor gauge all land on exactly 2.0, which is what licenses dividing by
+ * it. All three put the row's bottom 53 upscaled px above the capacitor's first
+ * lit row, and that lit row is 16 native px below the element's top edge, so
+ * the gap is `53 / 2 - 16 = 10`.
+ *
+ * Those same shots are why the centring is trusted at high counts rather than
+ * extrapolated: holding the capacitor axis fixed, their rows of 11, 10 and 11
+ * icons each solve to a WHOLE number of slots, and the two icons hidden behind
+ * an overlapping window on the left are exactly what makes that arithmetic
+ * close. Nothing else about the row had to be assumed to get integers.
+ *
+ * ponytail: `pitch` is the two-icon figure. The crowded shots put it nearer 43
+ * once halved — EVE tightens the row as it grows, and nothing here models that.
+ * 48 therefore draws a busy row a few percent WIDE, which is the safe direction
+ * for a canvas whose job is to show what a window would collide with. Upgrade
+ * path: one native-resolution shot at a known count settles the rule.
+ */
+const SHIP_EFFECTS = { d: 36, pitch: 48, gapBelow: 16, gapAbove: 10 };
+
+/**
+ * The ship HUD's internals. The capacitor, racks and control cluster are
+ * constant: the box is fixed (HUD_NOMINAL.shipui) and none of it is in any
+ * settings file.
+ *
+ * `effects` is not constant and not in a file either — it is the view
+ * preference `LayoutPrefs.effects`, because how many buffs and debuffs a pilot
+ * is carrying is combat state, not configuration. `topAligned` is the stored
+ * `ship_top`, which decides whether that row hangs below the element or above
+ * it.
  *
  * Order matters only for painting: the capacitor's pieces are emitted outermost
  * first so the core lands on top of the dial.
  */
-export function shipHudParts(): DetailPart[] {
+export function shipHudParts(effects = 0, topAligned = true): DetailPart[] {
   const disc = (r: number, kind: DetailPart["kind"]): DetailPart =>
     ({ kind, x: CAP.cx - r, y: CAP.cy - r, w: r * 2, h: r * 2 });
 
@@ -162,6 +211,22 @@ export function shipHudParts(): DetailPart[] {
         w: CLUSTER.diameter,
         h: CLUSTER.diameter,
       });
+    }
+  }
+
+  // The effects row, last because it is the only part drawn OUTSIDE the box —
+  // negative y when the HUD is bottom-aligned. The canvas has to let the ship
+  // HUD's detail layer overflow for this to be visible at all; see
+  // LayoutView's `.furniture.spills`.
+  const n = Math.max(0, Math.round(effects));
+  if (n > 0) {
+    const { d, pitch, gapBelow, gapAbove } = SHIP_EFFECTS;
+    // Centred on the capacitor, so the row grows symmetrically about the
+    // anchor as effects come and go — which is what the shots show it doing.
+    const x0 = CAP.cx - (pitch * (n - 1) + d) / 2;
+    const y = topAligned ? HUD_NOMINAL.shipui.h + gapBelow : -(gapAbove + d);
+    for (let i = 0; i < n; i++) {
+      out.push({ kind: "slot", x: x0 + pitch * i, y, w: d, h: d });
     }
   }
 
@@ -217,6 +282,26 @@ const TARGET = {
 };
 
 /**
+ * Effects applied to a LOCKED TARGET — the same idea as the ship's row, drawn
+ * under the slot's label rows.
+ *
+ * MEASURED 2026-07-31 from `target_effects.jpg` (native 2560x1440): ⌀25 icons
+ * on a 32 pitch with their tops at slot y 142, centred on the ring's own axis,
+ * which is the axis the three label rows are already centred on. Registered off
+ * the label rows rather than the ring, because the ring's bright extent
+ * includes the lock brackets and the labels' 13 pitch matches TARGET.labelPitch
+ * exactly — two independent things agreeing on where the slot starts.
+ *
+ * The row ENDS at 167, inside the 181-tall slot, so `HUD_NOMINAL.target` needs
+ * no adjustment and the target list's footprint is unchanged.
+ *
+ * `count` is fixed, unlike the ship's: this is per-slot decoration on a list
+ * whose length is already a preference, and a second spinner for how many icons
+ * hang under each of N targets is more knobs than the picture is worth.
+ */
+const TARGET_EFFECTS = { d: 25, pitch: 32, y: 142, count: 2 };
+
+/**
  * The target list's internals: `count` identical slots, running across when the
  * account has `alignHorizontally` set and down when it does not.
  *
@@ -240,6 +325,18 @@ export function targetParts(count: number, horizontal: boolean): DetailPart[] {
         h: TARGET.labelH,
       });
     });
+    // Centred on the ring, the same rule the label rows above use.
+    const ex = TARGET.ringX + TARGET.ringD / 2
+      - (TARGET_EFFECTS.pitch * (TARGET_EFFECTS.count - 1) + TARGET_EFFECTS.d) / 2;
+    for (let e = 0; e < TARGET_EFFECTS.count; e++) {
+      out.push({
+        kind: "slot",
+        x: ox + ex + TARGET_EFFECTS.pitch * e,
+        y: oy + TARGET_EFFECTS.y,
+        w: TARGET_EFFECTS.d,
+        h: TARGET_EFFECTS.d,
+      });
+    }
   }
   return out;
 }

@@ -10,7 +10,7 @@
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
-  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount } from "$lib/prefs.svelte";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import DetailParts from "$lib/DetailParts.svelte";
@@ -398,7 +398,7 @@
    * drawn from its real button list. The badge has neither and stays a plain
    * box. */
   const furnitureDetail = (f: FurnitureRect) =>
-    f.kind === "shipui" ? shipHudParts()
+    f.kind === "shipui" && hud ? shipHudParts(effectCount(), hudFlag(hud, "ship_top"))
     : f.kind === "fighter" ? fighterParts()
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
     : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))
@@ -902,6 +902,7 @@
             class="furniture"
             class:draggable={f.drag !== "none" && !readOnly}
             class:selected={selectedFurniture === f.kind}
+            class:spills={f.kind === "shipui"}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
                    width: {toCanvas(f.w, scale)}px; height: {toCanvas(f.h, scale)}px;"
             onpointerdown={(e) => startFurniture(f, e)}>
@@ -1000,6 +1001,8 @@
           onSelectKind={selectFurniture}
           targets={targetCount()}
           onTargets={setTargetCount}
+          effects={effectCount()}
+          onEffects={setEffectCount}
           referenceW={layout.reference_w}
           referenceH={layout.reference_h}
           {neocom}
@@ -1085,6 +1088,15 @@
   }
   .furniture.draggable {
     cursor: move;
+  }
+  /* The ship HUD is the one element with a part drawn OUTSIDE its box: the
+     effects row hangs below it (or above it, bottom-aligned), because EVE does
+     not count that row as part of the element and neither does
+     HUD_NOMINAL.shipui. Without this the detail layer's overflow clips it away
+     entirely. The canvas still clips at the screen edge, which is right — a row
+     that would fall off-screen should look like it does. */
+  .furniture.spills {
+    overflow: visible;
   }
   /* The same amber as .win.selected, so a selection reads identically whether
      it's a window or furniture; the dashed border still says "not a window". */

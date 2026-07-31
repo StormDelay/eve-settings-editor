@@ -1007,6 +1007,82 @@ The general lesson, and the reason this section exists: **a figure that
 reproduces every measurement you have can still be wrong**, if the measurements
 never touched the thing it describes.
 
+### Ship HUD effects row
+
+Measured **2026-07-31** for the canvas detail layer, from five shots: two native
+2560×1440 top-aligned ones (`effect.png`, one effect; `effects.jpg`, two) and
+three bottom-aligned crops supplied the same day. Offsets are from the element's
+own top-left, i.e. the box `HUD_NOMINAL.shipui` describes.
+
+The buff/debuff icons applied to your ship are drawn in a row that **is not part
+of the element**. It sits outside the box entirely, and `HUD_NOMINAL.shipui.h`
+stays 176.
+
+| Part | Geometry |
+|---|---|
+| Effect icon | ⌀36 round, on a **48** column pitch |
+| Row placement | **centred on the capacitor** — box x 148, the element's own anchor |
+| Gap, top-aligned | row's first lit row at box y **192**, i.e. **16** below the element |
+| Gap, bottom-aligned | row **flips above** the element, **10** above its top edge |
+
+**The row is centred on the anchor, not on the middle of the box.** The two
+native shots place the HUD identically, so they cross-check: box x is 943 in
+both, the two-icon shot's icons sit at screen 1049/1097 (box-relative 106/154),
+and `148 − (48 + 36)/2 = 106` reproduces it exactly. The one-icon shot reads 131
+against a predicted 130 — that is the icon *art*, a ⌀34 teal buff against the
+other shot's ⌀36 red debuffs, not a layout difference.
+
+#### What the bottom-aligned crops settle, and what they do not
+
+They are **2× upscales of a native capture**, not native shots. Three
+independent rulers agree on that factor — icon diameter (73/36), UI font cap
+height (29/14) and a circle fit to the capacitor's gauge band (r 146 against a
+native 74) — which is what licenses dividing by it.
+
+Two things they settle:
+
+- **The row flips above the element when the HUD is bottom-aligned.** It has to:
+  a bottom-aligned element sits 12px off the screen bottom, so a row hanging
+  below it would be off-screen. All three crops put the row's bottom 53 upscaled
+  px above the capacitor's first lit row, and that lit row is 16 native px below
+  the element's top edge, giving `53/2 − 16 = 10`. **The gap is not symmetric
+  with the 16 below** — that asymmetry is measured, not assumed.
+- **The centring holds at high counts.** Holding the capacitor axis fixed, the
+  three rows each solve to a *whole* number of slots — 11, 10 and 11. Nothing
+  else about the row had to be assumed to get integers, and the two icons hidden
+  behind an overlapping window on the left of every crop are exactly what makes
+  the arithmetic close. Without that check the leftmost *visible* icon looks
+  like the row's end, and the row looks off-centre by ~50 native px.
+
+One thing they do **not** settle: **the pitch tightens as the row grows.** At
+2 icons it is 48; those crops give 86 upscaled = 43. Everything else about them
+lands on a clean 2.0, so this is a real behaviour rather than a scale error —
+EVE packs a busy row closer. `detail.ts` models the 48 and does not implement
+the tightening, so a busy row draws a few percent **wide**, which is the safe
+direction for a canvas whose job is to show what a window would collide with.
+A native-resolution shot at a known count would settle the rule.
+
+### Target list effects row
+
+Measured **2026-07-31** from `target_effects.jpg` (native 2560×1440). Offsets
+are from one slot's top-left, the same frame as "Target list anchor" below.
+
+| Part | Geometry |
+|---|---|
+| Effect icon | ⌀25 round, on a **32** column pitch |
+| Row placement | top at slot y **142**, centred on the ring's axis (slot x 58.5) |
+
+Registered off the **label rows**, not the ring: the ring's bright extent
+includes the lock brackets, whereas the labels' measured 13 pitch matches
+`TARGET.labelPitch` exactly — two independent things agreeing on where the slot
+starts. The label text's own centre (2029.5) and the ring's (2030) also agree,
+which is what fixes the horizontal axis.
+
+**The row ends at 167, inside the 181-tall slot**, so `HUD_NOMINAL.target` needs
+no adjustment and the target list's footprint is unchanged. Unlike the ship's
+row, this one is drawn at a fixed count of 2: it is per-slot decoration on a
+list whose length is already a preference.
+
 ### Fighter UI internals
 
 Measured **2026-07-30** from `fighter.png` (native 2560×1440, anchor

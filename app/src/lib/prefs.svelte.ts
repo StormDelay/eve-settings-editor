@@ -9,12 +9,14 @@ import { api, errMessage } from "$lib/api";
 import type { Preferences } from "$lib/api";
 import type { ClutterOverrides } from "$lib/windowLabels";
 import { countIn, withoutIn } from "$lib/prefs";
-import { TARGET_COUNT_DEFAULT } from "$lib/layout";
+import { EFFECT_COUNT_DEFAULT, EFFECT_COUNT_MAX, TARGET_COUNT_DEFAULT } from "$lib/layout";
 import { message } from "@tauri-apps/plugin-dialog";
 
 export { countIn, withoutIn } from "$lib/prefs";
 
-let prefs = $state<Preferences>({ layout: { clutter: [], visible: [], detail: false, targets: TARGET_COUNT_DEFAULT } });
+let prefs = $state<Preferences>({
+  layout: { clutter: [], visible: [], detail: false, targets: TARGET_COUNT_DEFAULT, effects: EFFECT_COUNT_DEFAULT },
+});
 
 /** Load once. A failure leaves the defaults in place: preferences are a
  * convenience, and the editor must open without them. */
@@ -117,5 +119,22 @@ export const targetCount = (): number => Math.min(10, Math.max(1, prefs.layout.t
 /** Same chained write as setClutterOverride — only the value written changed. */
 export function setTargetCount(n: number): void {
   prefs = { ...prefs, layout: { ...prefs.layout, targets: Math.min(10, Math.max(1, Math.round(n))) } };
+  persist(prefs);
+}
+
+/** How many effect icons the canvas draws under the ship HUD. Clamped like
+ * `targetCount`, but the floor is 0 rather than 1: a ship with nothing applied
+ * to it draws no row, and that is the normal state rather than a broken one.
+ * `|| 0` cannot stand in for the default here for the same reason — 0 is a
+ * value someone may have chosen, so an absent field is the backend's problem
+ * and it fills one in. */
+export const effectCount = (): number =>
+  Math.min(EFFECT_COUNT_MAX, Math.max(0, Math.round(prefs.layout.effects ?? EFFECT_COUNT_DEFAULT)));
+
+export function setEffectCount(n: number): void {
+  prefs = {
+    ...prefs,
+    layout: { ...prefs.layout, effects: Math.min(EFFECT_COUNT_MAX, Math.max(0, Math.round(n))) },
+  };
   persist(prefs);
 }

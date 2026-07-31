@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
-  import { targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
+  import { EFFECT_COUNT_MAX, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
-    targets, onTargets, referenceW = 0, referenceH = 0,
+    targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
   }: {
     hud: Hud;
@@ -28,6 +28,10 @@
      * in the row below so it cannot be mistaken for something that writes. */
     targets: number;
     onTargets: (n: number) => void;
+    /** How many ship-effect icons the canvas draws under the HUD. A VIEW
+     * setting for the same reason as `targets`, and badged the same way. */
+    effects: number;
+    onEffects: (n: number) => void;
     /** The open file's reference screen size. Only the target anchor uses it:
      * that pair is stored as a fraction, and the rows show the pixel it lands
      * on at this size instead. 0 means unknown — the rows then show the raw
@@ -124,6 +128,23 @@
           ? "Account-wide: changes every character on this account"
           : "";
 
+  // The two `view` rows' shared handler. They write no settings field, so they
+  // skip numberEdit entirely — but they need its blank guard: `Number("")` is
+  // 0, and for the effect count 0 is a REAL count, so a cleared box would
+  // silently wipe the row instead of leaving it alone. (The target count was
+  // getting away with it only because its floor of 1 clamped the stray 0 back.)
+  //
+  // Resyncs on every commit for the same reason numberEdit does: a refused or
+  // clamped entry must not leave typed text sitting beside a value that is not
+  // it. `current` is read at event time, so a committed edit is overwritten by
+  // the parent's re-render a moment later.
+  const viewEdit = (current: () => number, set: (n: number) => void) => (ev: Event) => {
+    const el = ev.target as HTMLInputElement;
+    const text = el.value;
+    if (text.trim() !== "" && Number.isFinite(Number(text))) set(Number(text));
+    el.value = String(current());
+  };
+
   // Int fields round before writing: <input type="number"> doesn't enforce
   // integrality (typing "1.5" is not blocked), and the backend's Int parser
   // rejects a fractional string outright.
@@ -197,6 +218,22 @@
           </label>
         {/if}
       {/each}
+      {#if g.kind === "shipui"}
+        <!-- Same `view` badge and same reasoning as "Targets drawn" below: no
+             settings file records what is applied to a ship, so the canvas has
+             to be told, and telling it writes nothing. -->
+        <label class="row view" title="How many effect icons the canvas draws under the ship HUD. A view setting — it writes nothing.">
+          <span class="label">Effects drawn</span>
+          <input
+            type="number"
+            min="0"
+            max={EFFECT_COUNT_MAX}
+            step="1"
+            value={effects}
+            onchange={viewEdit(() => effects, onEffects)} />
+          <span class="badge">view</span>
+        </label>
+      {/if}
       {#if g.kind === "target"}
         <!-- `view`, not a field: it stays enabled on a read-only document,
              because changing it writes nothing. HudPanel.spec pins that. -->
@@ -208,12 +245,7 @@
             max="10"
             step="1"
             value={targets}
-            onchange={(ev) => {
-              const el = ev.target as HTMLInputElement;
-              const n = Number(el.value);
-              if (Number.isFinite(n)) onTargets(n);
-              el.value = String(targets);
-            }} />
+            onchange={viewEdit(() => targets, onTargets)} />
           <span class="badge">view</span>
         </label>
       {/if}

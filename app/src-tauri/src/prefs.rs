@@ -27,16 +27,27 @@ pub struct LayoutPrefs {
     /// view setting: no file records how many things a pilot locks, so the
     /// canvas has to be told. See `layout.ts`'s `hudRects`.
     pub targets: u8,
+    /// How many effect icons the canvas draws under the ship HUD. A view
+    /// setting for the same reason as `targets`: buffs and debuffs are combat
+    /// state, and no settings file records them. See `detail.ts`'s
+    /// `shipHudParts`. The target list's own effect icons are a fixed count and
+    /// deliberately not wired here.
+    pub effects: u8,
 }
 
-/// Hand-written rather than derived because `targets` is the one field whose
-/// sensible default is not zero — and container-level `#[serde(default)]`
-/// fills every missing field from here, so a preferences file written before
-/// this field existed loads with 4 rather than a target list drawn as a
-/// zero-height sliver.
+/// Hand-written rather than derived because `targets` is a field whose sensible
+/// default is not zero — and container-level `#[serde(default)]` fills every
+/// missing field from here, so a preferences file written before that field
+/// existed loads with 4 rather than a target list drawn as a zero-height
+/// sliver.
+///
+/// `effects` defaults to 2 on the same reasoning as `targets`' 4: enough to
+/// show the row's shape and where it lands without pretending a pilot is
+/// permanently in a heavy fight. Unlike `targets` it may legitimately be 0 —
+/// a ship with nothing applied draws no row at all, which is the common case.
 impl Default for LayoutPrefs {
     fn default() -> Self {
-        Self { clutter: Vec::new(), visible: Vec::new(), detail: false, targets: 4 }
+        Self { clutter: Vec::new(), visible: Vec::new(), detail: false, targets: 4, effects: 2 }
     }
 }
 

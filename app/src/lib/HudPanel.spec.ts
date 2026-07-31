@@ -55,15 +55,16 @@ function mount(h: Hud, props: Partial<Parameters<typeof render>[1]> = {}) {
   const onSet = vi.fn();
   const onSelectKind = vi.fn();
   const onTargets = vi.fn();
+  const onEffects = vi.fn();
   render(HudPanel, {
-    hud: h, readOnly: false, onSet, onSelectKind, targets: 4, onTargets,
+    hud: h, readOnly: false, onSet, onSelectKind, targets: 4, onTargets, effects: 2, onEffects,
     // The neocom bar itself is optional (no character file, no bar), but its
     // four callbacks are required props — stub them so mounting a HUD-only
     // fixture doesn't need to know about neocom at all.
     onNeocomReorder: vi.fn(), onNeocomRemove: vi.fn(), onNeocomAdd: vi.fn(), onNeocomReset: vi.fn(),
     ...(props as object),
   });
-  return { onSet, onSelectKind, onTargets };
+  return { onSet, onSelectKind, onTargets, onEffects };
 }
 
 /// The panel repeats labels across groups ("x" and "y" belong to both the
@@ -174,20 +175,49 @@ describe("writing a value", () => {
   });
 });
 
+describe("the effect count, which is a view setting rather than a field", () => {
+  test("typing a count reports it and writes no settings field", () => {
+    const { onEffects, onSet } = mount(hud());
+    fireEvent.change(input("Ship HUD", "Effects drawn"), { target: { value: "7" } });
+    expect(onEffects).toHaveBeenCalledWith(7);
+    expect(onSet).not.toHaveBeenCalled();
+  });
+
+  test("zero is a real count, not a blank", () => {
+    // A ship with nothing applied is the COMMON case, so 0 has to reach the
+    // store rather than being treated as an empty box the way a field would.
+    const { onEffects } = mount(hud());
+    fireEvent.change(input("Ship HUD", "Effects drawn"), { target: { value: "0" } });
+    expect(onEffects).toHaveBeenCalledWith(0);
+  });
+
+  test("a non-numeric entry reports nothing and snaps back", () => {
+    const { onEffects } = mount(hud());
+    const el = input("Ship HUD", "Effects drawn");
+    fireEvent.change(el, { target: { value: "" } });
+    expect(onEffects).not.toHaveBeenCalled();
+    expect(el.value).toBe("2");
+  });
+});
+
 describe("what the panel refuses to edit", () => {
   test("read-only disables every field", () => {
     mount(hud(), { readOnly: true });
-    // `.row:not(.view)` — the target count is a canvas setting, not a field, so
-    // it stays live on a read-only document. The next test is that claim.
+    // `.row:not(.view)` — the target and effect counts are canvas settings, not
+    // fields, so they stay live on a read-only document. The next test is that
+    // claim.
     for (const input of document.querySelectorAll<HTMLInputElement>(".hud-panel .row:not(.view) input")) {
       expect(input.disabled).toBe(true);
     }
   });
 
-  test("the target count stays editable on a read-only document", () => {
+  test("both view counts stay editable on a read-only document", () => {
     mount(hud(), { readOnly: true, accountReadOnly: true });
-    const view = document.querySelector<HTMLInputElement>(".hud-panel .row.view input")!;
-    expect(view.disabled).toBe(false);
+    // Every `.view` row, not just the first: there are two of them now, and
+    // asserting on one would let the other regress silently.
+    const views = document.querySelectorAll<HTMLInputElement>(".hud-panel .row.view input");
+    expect(views.length).toBe(2);
+    for (const v of views) expect(v.disabled).toBe(false);
   });
 
   test("a field the file cannot hold is disabled on its own", () => {
