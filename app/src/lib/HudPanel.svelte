@@ -68,12 +68,10 @@
       { name: "badge_x", label: "x" },
       { name: "badge_y", label: "y" },
     ] },
-    // The target list's anchor is stored as a FRACTION of the screen, not in
-    // pixels like every other row here, so that is what these two show. x is a
-    // fraction of the width right of the neocom (see layout.ts) — the labels
-    // say so, because a bare 0.54 next to a 2519 invites the reader to assume
-    // they are the same kind of number. Dragging the slot on the canvas is the
-    // ergonomic path; these are for typing an exact value back.
+    // These two read and write like every other pixel row here, but the file
+    // stores them as a FRACTION — see `shown`/`numberEdit` below, which convert
+    // both ways. Dragging on the canvas is the ergonomic path; these are for
+    // typing an exact position.
     { title: "Target list", kind: "target", rows: [
       { name: "target_x", label: "x" },
       { name: "target_y", label: "y" },
@@ -113,7 +111,10 @@
   const disabled = (e: HudEntry) =>
     readOnly || e.set.how === "unavailable" || (e.scope === "account" && accountReadOnly);
   const title = (e: HudEntry) =>
-    AXIS[e.name] && asPixels
+    // The pixel note replaces only the account-wide line: "not present in this
+    // file" and "EVE's default" still have to win, or the two anchor rows would
+    // claim to be editable pixels while reading nothing.
+    AXIS[e.name] && asPixels && e.set.how !== "unavailable" && e.value !== null
       ? `Screen pixels at ${referenceW}x${referenceH}. Stored as a fraction — account-wide.`
       : e.set.how === "unavailable"
       ? "Not present in this file"

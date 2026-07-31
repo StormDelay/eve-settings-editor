@@ -393,11 +393,10 @@
   const furniture = $derived(hud && layout ? hudRects(hud, layout, targetCount()) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
 
-  /** The internals of a furniture element. The ship HUD and fighter are
-   * constant (measured, not stored); the neocom is drawn from its real button
-   * list. The badge and the target-list slot have neither, so they stay plain
-   * boxes — the target slot's ring and label rows are measured
-   * (`format-notes.md`, "Target list anchor") but not drawn yet. */
+  /** The internals of a furniture element. The ship HUD, the fighter panel and
+   * the target list's slots are constant (measured, not stored); the neocom is
+   * drawn from its real button list. The badge has neither and stays a plain
+   * box. */
   const furnitureDetail = (f: FurnitureRect) =>
     f.kind === "shipui" ? shipHudParts()
     : f.kind === "fighter" ? fighterParts()
