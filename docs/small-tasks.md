@@ -45,6 +45,18 @@ Workflow:
   from the same session: whether the chat input box spans the full window
   width or only the message pane — the editor draws the latter.
   _Added 2026-07-30._
+- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
+  canvas makes the entire box the grab target, so the cursor sits at an
+  arbitrary offset from the anchor — and when the list flips to the other side
+  of the anchor at the middle of the screen, that offset changes sign under the
+  user's hand. In game the handle IS the anchor, which is why it feels right
+  there and slightly wrong here. The flip itself is correct (2026-07-31
+  capture); what is missing is a small grab handle drawn at the anchored corner,
+  with the rest of the box selectable but not draggable. Everything needed is
+  already there — `targetRect` places the box from the anchor and the drop
+  writes the anchor — so this is a hit-target change, not a geometry one.
+  _Added 2026-07-31._
+
 - [ ] **Decide whether a Layout copy should carry the target list, and smoke the
   editor's writes in-game.** The anchor is editable now (`targetOrigin` /
   `alignHorizontally`, both account-scoped), but deliberately **not** a
