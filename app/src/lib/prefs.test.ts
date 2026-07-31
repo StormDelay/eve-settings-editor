@@ -9,7 +9,7 @@ const check = (name: string, ok: boolean) => {
 
 // Counting is about the document you are looking at, not the preferences file.
 {
-  const stored = { clutter: ["market", "chatchannel_corp"], visible: ["overview"], detail: false };
+  const stored = { clutter: ["market", "chatchannel_corp"], visible: ["overview"], detail: false, targets: 4 };
   const open = new Set(["market", "overview", "somethingElse"]);
   check("counts only overrides naming a window this document has", countIn(stored, open) === 2);
   check(
@@ -20,7 +20,7 @@ const check = (name: string, ok: boolean) => {
 
 // The data-loss half: clearing must not touch another character's overrides.
 {
-  const stored = { clutter: ["market", "chatchannel_corp"], visible: ["overview"], detail: false };
+  const stored = { clutter: ["market", "chatchannel_corp"], visible: ["overview"], detail: false, targets: 4 };
   const next = withoutIn(stored, new Set(["market", "overview"]));
   check("clearing drops the in-scope clutter override", !next.clutter.includes("market"));
   check("clearing drops the in-scope visible override", !next.visible.includes("overview"));
@@ -34,10 +34,11 @@ const check = (name: string, ok: boolean) => {
 // object. Both `withoutIn` and `setClutterOverride` construct a fresh literal;
 // without a spread, clearing overrides would silently turn Detail off.
 {
-  const stored = { clutter: ["a", "b"], visible: ["c"], detail: true };
+  const stored = { clutter: ["a", "b"], visible: ["c"], detail: true, targets: 7 };
   const out = withoutIn(stored, new Set(["a"]));
   check("withoutIn drops only the in-scope ids", out.clutter.join(",") === "b");
   check("withoutIn preserves the detail flag", out.detail === true);
+  check("withoutIn preserves the target count", out.targets === 7);
 }
 
 console.log("prefs.test.ts: all checks passed");

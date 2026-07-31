@@ -132,6 +132,13 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
                 account_categories.push(Category::HudFighterDetached);
                 account_categories.push(Category::HudFighterShown);
                 account_categories.push(Category::HudNeocomWidth);
+                // The target list. Most sources have never dragged theirs, and
+                // absence means "at EVE's default" here as it does for the
+                // four above — so most copies move the target's list back to
+                // the default rather than leaving it be. That is what makes
+                // the two characters match; see Category::absent_means_default.
+                account_categories.push(Category::HudTargetOrigin);
+                account_categories.push(Category::HudTargetAlign);
             }
             Aspect::Overview => {
                 char_categories.push(Category::OverviewWidths);
@@ -1982,7 +1989,9 @@ mod tests {
                 Category::HudShipTop,
                 Category::HudFighterDetached,
                 Category::HudFighterShown,
-                Category::HudNeocomWidth
+                Category::HudNeocomWidth,
+                Category::HudTargetOrigin,
+                Category::HudTargetAlign
             ]
         );
         assert!(w.writes_account(), "layout writes the account file now");
@@ -2033,6 +2042,11 @@ mod tests {
                     (b("shipuialigntop"), wrapped(Value::Bool(true))),
                     (b("detachFighterUI"), wrapped(Value::Bool(true))),
                     (b("displayFighterUI"), wrapped(Value::Bool(true))),
+                    (
+                        b("targetOrigin"),
+                        wrapped(Value::Tuple(vec![Value::Float(0.75), Value::Float(0.25)])),
+                    ),
+                    (b("alignHorizontally"), wrapped(Value::Bool(true))),
                 ]),
             ),
             (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(72)))])),
@@ -2048,6 +2062,11 @@ mod tests {
                     (b("shipuialigntop"), wrapped(Value::Bool(false))),
                     (b("detachFighterUI"), wrapped(Value::Bool(false))),
                     (b("displayFighterUI"), wrapped(Value::Bool(false))),
+                    (
+                        b("targetOrigin"),
+                        wrapped(Value::Tuple(vec![Value::Float(0.25), Value::Float(0.75)])),
+                    ),
+                    (b("alignHorizontally"), wrapped(Value::Bool(false))),
                 ]),
             ),
             (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(37)))])),
@@ -2075,7 +2094,13 @@ mod tests {
 
         let source = hud_values(&src_char, &src_user);
         let target_before = hud_values(&tgt_char, &tgt_user);
-        assert_eq!(source.len(), 9, "all nine HUD fields");
+        // Every projected HUD field is carried, the target list included since
+        // 0.26.0. `target_x` is the one worth naming: it is a FRACTION whose
+        // denominator encodes the SOURCE client's neocom width, so a copy
+        // between accounts with different neocoms lands the list a few tens of
+        // pixels off. That is a known, accepted cost of matching the source —
+        // see Category::absent_means_default.
+        assert_eq!(source.len(), 12, "every HUD field is carried");
         for (name, v) in &source {
             assert!(v.is_some(), "{name} must have a value on the SOURCE, or the copy proves nothing");
         }
@@ -2091,7 +2116,33 @@ mod tests {
         settings_model::apply_to_tree(&mut tgt_user, &extract_categories(&src_user, &w.account_categories));
 
         let after = hud_values(&tgt_char, &tgt_user);
-        assert_eq!(source, after, "every one of the nine fields came across");
+        assert_eq!(source, after, "every one of the twelve fields came across");
+    }
+
+    #[test]
+    fn a_layout_copy_from_a_source_at_the_target_lists_default_removes_the_targets() {
+        // The common case, and the one that surprises: 87% of real accounts
+        // have never dragged their target list, so most Layout copies DELETE
+        // the target's position rather than leaving it alone. That is what
+        // makes the two characters match — but it is a deletion, so it gets a
+        // test of its own rather than riding on the equality above.
+        let w = aspect_writes(&[Aspect::Layout]);
+        let mut tgt_user = hud_target_user_doc();
+        let before = settings_model::project_hud(&hud_target_char_doc(), Some(&tgt_user));
+        assert!(
+            before.entries.iter().any(|e| e.name == "target_x" && e.value.is_some()),
+            "the target starts with a target list of its own, or this proves nothing"
+        );
+
+        // A source that has simply never moved its list: `ui` exists, the key
+        // does not.
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
+        settings_model::apply_to_tree(&mut tgt_user, &extract_categories(&source, &w.account_categories));
+
+        let after = settings_model::project_hud(&hud_target_char_doc(), Some(&tgt_user));
+        let val = |n: &str| after.entries.iter().find(|e| e.name == n).unwrap().value.clone();
+        assert_eq!(val("target_x"), None, "the target's anchor is put back to EVE's default");
+        assert_eq!(val("target_horizontal"), None, "and so is its orientation");
     }
 
     #[test]
@@ -2139,7 +2190,7 @@ mod tests {
     #[test]
     fn an_account_side_of_only_removals_is_not_suppressed_as_a_no_op() {
         // source_side_empty feeds setup_preview's no-op suppression. A source
-        // storing none of the four account HUD keys yields four REMOVALS, which
+        // storing none of the account HUD keys yields one REMOVAL each, which
         // is real work — counting only present values here would silently kill
         // the removal path and half-apply the copy again. Routed through the
         // real function (not just extract_categories) so a "tidy-up" that
@@ -2148,7 +2199,7 @@ mod tests {
         let w = aspect_writes(&[Aspect::Layout]);
         let source_without_hud = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
         let extracted = extract_categories(&source_without_hud, &w.account_categories);
-        assert_eq!(extracted.len(), 4, "four removals");
+        assert_eq!(extracted.len(), 6, "one removal per account-side HUD key");
 
         let path = temp_file("hud-removals-only", &encode(&source_without_hud).unwrap());
         assert!(

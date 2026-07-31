@@ -3,17 +3,18 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
+    hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetCorner, targetFractionFromPoint,
+    NO_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
-  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail } from "$lib/prefs.svelte";
+  import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import DetailParts from "$lib/DetailParts.svelte";
-  import { shipHudParts, fighterParts, neocomParts, windowDetail } from "$lib/detail";
+  import { shipHudParts, fighterParts, neocomParts, targetParts, windowDetail } from "$lib/detail";
   import { confirm, message } from "@tauri-apps/plugin-dialog";
 
   let {
@@ -353,9 +354,21 @@
   type Drag =
     | { kind: "move"; unit: DrawUnit; startX: number; startY: number; ox: number; oy: number; lines: SnapLines }
     | { kind: "resize"; unit: DrawUnit; corner: Corner; startX: number; startY: number; ox: number; oy: number; ow: number; oh: number; lines: SnapLines }
-    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number }
+    | { kind: "furniture"; f: FurnitureRect; startX: number; startY: number; ox: number; oy: number;
+        /** The target list only: its ANCHOR at drag start. The rect is placed
+         * relative to that anchor and flips to its other side at the middle of
+         * the screen, so a preview that moved the rect directly could not
+         * follow the flip. Absent for every other piece of furniture. */
+        ax?: number; ay?: number }
     | { kind: "tab"; unit: DrawUnit; tabId: string; startX: number; startY: number; gx: number; gy: number };
   let drag: Drag | null = null;
+  // Where the target list's anchor is RIGHT NOW during a drag of it, and null
+  // when no such drag is in flight. $state because the anchor marker renders
+  // from it — a marker left on the committed corner while the preview flipped
+  // would point at the wrong one. The drop reads it too: it needs the anchor
+  // the drag ended at, which a rect cannot be inverted back to unambiguously
+  // once it has crossed the middle.
+  let targetDragAnchor = $state<{ x: number; y: number } | null>(null);
 
   // The lines the current drag has locked onto, in data px; null when this axis
   // isn't snapped. Drawn as guides, cleared on drop.
@@ -377,17 +390,38 @@
   // commit landing mid-nudge doesn't clear the preview under it.
   let nudging: string | null = null;
 
-  const furniture = $derived(hud && layout ? hudRects(hud, layout) : []);
+  const furniture = $derived(hud && layout ? hudRects(hud, layout, targetCount()) : []);
   const fRectOf = (f: FurnitureRect) => fPreview[f.kind] ?? { x: f.x, y: f.y };
 
-  /** The internals of a furniture element. The ship HUD and fighter are
-   * constant (measured, not stored); the neocom is drawn from its real button
-   * list. The badge has neither, so it stays a plain box. */
+  /** The internals of a furniture element. The ship HUD, the fighter panel and
+   * the target list's slots are constant (measured, not stored); the neocom is
+   * drawn from its real button list. The badge has neither and stays a plain
+   * box. */
   const furnitureDetail = (f: FurnitureRect) =>
     f.kind === "shipui" ? shipHudParts()
     : f.kind === "fighter" ? fighterParts()
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
+    : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))
     : [];
+
+  /** Which corner of the target list's box its anchor is — what the marker is
+   * drawn on. Follows the drag while one is in flight, so the marker moves to
+   * the other corner exactly when the box flips sides. */
+  const targetMarkerCorner = $derived.by(() => {
+    if (!layout) return null;
+    const a = targetDragAnchor ?? committedTargetAnchor();
+    return a ? targetCorner(a.x, a.y, layout.reference_w, layout.reference_h) : null;
+  });
+
+  /** The target list's committed anchor, from the stored fractions. Null when
+   * the file has no anchor to move (the canvas draws nothing then either). */
+  function committedTargetAnchor(): { x: number; y: number } | null {
+    if (!hud || !layout) return null;
+    const fx = hudNum(hud, "target_x");
+    const fy = hudNum(hud, "target_y");
+    if (fx === null || fy === null) return null;
+    return targetAnchor(fx, fy, layout.reference_w, layout.reference_h);
+  }
 
   /** Pointer position in data px, relative to the canvas origin. */
   function pointerData(e: PointerEvent) {
@@ -449,7 +483,12 @@
     e.stopPropagation();
     if (readOnly || f.drag === "none") return;
     const r = fRectOf(f);
-    drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y };
+    // The anchor comes from the stored value, not from the rect: inverting a
+    // rect back to an anchor is ambiguous in the band around the middle where
+    // both sides would place it there.
+    const a = f.kind === "target" && hud && layout ? committedTargetAnchor() : null;
+    targetDragAnchor = a;
+    drag = { kind: "furniture", f, startX: e.clientX, startY: e.clientY, ox: r.x, oy: r.y, ax: a?.x, ay: a?.y };
     canvasEl?.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
@@ -504,6 +543,20 @@
     const dy = toData(e.clientY - drag.startY, scale);
     if (drag.kind === "furniture") {
       const f = drag.f;
+      // The target list is placed from its anchor, so the preview moves the
+      // ANCHOR and re-places the box — which is what makes it flip sides the
+      // moment the anchor crosses the middle, instead of jumping on drop.
+      if (drag.ax !== undefined && drag.ay !== undefined && layout) {
+        targetDragAnchor = { x: drag.ax + dx, y: drag.ay + dy };
+        fPreview = {
+          ...fPreview,
+          [f.kind]: targetRect(
+            targetDragAnchor.x, targetDragAnchor.y, f.w, f.h,
+            layout.reference_w, layout.reference_h,
+          ),
+        };
+        return;
+      }
       fPreview = {
         ...fPreview,
         [f.kind]: { x: drag.ox + dx, y: f.drag === "xy" ? drag.oy + dy : drag.oy },
@@ -583,6 +636,19 @@
         if (next !== shipOffsetFromX(d.f.x, layout.reference_w)) {
           await setHud("ship_offset", String(next));
         }
+      } else if (d.f.kind === "target" && layout && hud && targetDragAnchor) {
+        // The ANCHOR the drag ended at, not the rect: the box hangs off
+        // whichever side of the anchor faces the middle, so a rect that
+        // crossed the middle mid-drag no longer says where its anchor is.
+        const fx = hudNum(hud, "target_x");
+        const fy = hudNum(hud, "target_y");
+        if (fx !== null && fy !== null) {
+          const next = targetFractionFromPoint(
+            fx, targetDragAnchor.x, targetDragAnchor.y, layout.reference_w, layout.reference_h,
+          );
+          if (next.x !== fx) await setHud("target_x", String(next.x));
+          if (next.y !== fy) await setHud("target_y", String(next.y));
+        }
       } else if (d.f.kind === "fighter" || d.f.kind === "badge") {
         const prefix = d.f.kind === "fighter" ? "fighter" : "badge";
         // Route through hudPointFromRect (see layout.ts) rather than writing
@@ -594,6 +660,9 @@
         if (stored.x !== d.f.x) await setHud(`${prefix}_x`, String(stored.x));
         if (stored.y !== d.f.y) await setHud(`${prefix}_y`, String(stored.y));
       }
+      // Only while a drag is in flight: the marker falls back to the stored
+      // anchor, which the write above has just refreshed.
+      if (!drag) targetDragAnchor = null;
       // A re-grab on the same furniture piece may have started during the
       // async write and now owns fPreview — don't wipe it out from under the
       // new drag. (The cast: TS narrowed `drag` to null above and can't see
@@ -839,6 +908,14 @@
             {#if detailOn()}
               <DetailParts parts={furnitureDetail(f)} {scale} />
             {/if}
+            <!-- The anchor is what the file stores and what a drag writes; the
+                 box is just what the list covers from there. In game the anchor
+                 is also the only thing you can grab, and this canvas lets you
+                 drag the whole box — so mark the corner rather than leave the
+                 user to infer it from which way the box grew. -->
+            {#if f.kind === "target" && targetMarkerCorner}
+              <span class="anchor-dot {targetMarkerCorner}" title="The stored anchor. The list grows from here toward the middle of the screen."></span>
+            {/if}
             <span class="furniture-label">{f.label}</span>
           </div>
         {/each}
@@ -921,6 +998,10 @@
           {sharedNames}
           selectedKind={selectedFurniture}
           onSelectKind={selectFurniture}
+          targets={targetCount()}
+          onTargets={setTargetCount}
+          referenceW={layout.reference_w}
+          referenceH={layout.reference_h}
           {neocom}
           {neocomBusy}
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
@@ -1013,6 +1094,22 @@
     color: #fde68a;
     z-index: 1;
   }
+  .anchor-dot {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    /* Straddles the corner, so it reads as ON the point rather than inside the
+       box — the point is what moves, and it is often outside the drawn list. */
+    margin: -5px;
+    background: #f59e0b;
+    border: 1px solid #1c1917;
+    pointer-events: none;
+  }
+  .anchor-dot.tl { top: 0; left: 0; }
+  .anchor-dot.tr { top: 0; right: 0; }
+  .anchor-dot.bl { bottom: 0; left: 0; }
+  .anchor-dot.br { bottom: 0; right: 0; }
   .furniture-label {
     padding: 1px 3px;
     pointer-events: none;
