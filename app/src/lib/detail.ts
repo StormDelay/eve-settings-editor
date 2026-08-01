@@ -44,9 +44,6 @@ export interface DetailPart {
  * 195px off its real position for three releases.
  */
 export const DETAIL_NOMINAL = {
-  /** The EVE-menu button at the top of the neocom. It is not in
-   *  neocomButtonRawData, so the button column starts below it. */
-  neocomTop: 40,
   /** Width for an overview column whose width key is absent. This one is not a
    *  screenshot away: it is EVE's own built-in default, which the file does not
    *  record and the client never shows as a number. */
@@ -378,6 +375,19 @@ export function fighterParts(): DetailPart[] {
 }
 
 // --- neocom -----------------------------------------------------------------
+// MEASURED 2026-08-01 off the 2026-07-28 shots (neocom_docked.png,
+// hud_battleship.png, hud_frigate.png, native 2560x1440) by row profile — see
+// docs/format-notes.md, "Neocom top tiles".
+
+/**
+ * Tiles above the button column, counted in bar widths: the EVE menu and the
+ * character portrait. Neither is in `neocomButtonRawData` — the catalog has no
+ * id for either — and both are one bar-width SQUARE, like the buttons, so the
+ * reserve scales with the bar. All three shots carry a 48px bar and put the
+ * first button at 96. This was an invented flat 40 until it was measured, which
+ * put every button on a default-width bar more than a button too high.
+ */
+const NEOCOM_TOP_TILES = 2;
 
 /**
  * The real buttons on the neocom, top-down. `w` is the bar's own width
@@ -390,7 +400,7 @@ export function fighterParts(): DetailPart[] {
  */
 export function neocomParts(bar: NeocomBar, w: number, h: number): DetailPart[] {
   const out: DetailPart[] = [];
-  let y = DETAIL_NOMINAL.neocomTop;
+  let y = NEOCOM_TOP_TILES * w;
   for (const b of bar.buttons) {
     if (y + w > h) break;
     out.push({ kind: "button", x: 0, y, w, h: w, label: b.id });
@@ -488,30 +498,33 @@ export function overviewParts(
  * part is OMITTED rather than drawn at a guessed default — a split that is not
  * in the file is a split the canvas has nothing to say about.
  *
- * The input band spans the message pane only, not the full window width. That
- * is the one thing here NOT confirmed against the client (format-notes.md,
- * "Chat window splits") — the live smoke settles it, and it is a one-line
- * change either way.
+ * The input band spans the FULL window width and the member list stops on top
+ * of it. MEASURED 2026-08-01 off hud_battleship.png: the member splitter ends
+ * on the input separator, and that separator runs the window's whole width
+ * (format-notes.md, "Chat window splits"). The editor drew the input under the
+ * message pane only until then — the shape this file had flagged as its one
+ * unconfirmed guess, and it was the wrong one.
  */
 export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): DetailPart[] {
   const out: DetailPart[] = [];
+  const input = panel.input_height ?? 0;
   const members = panel.userlist_width;
   if (members !== null) {
-    out.push({ kind: "band", x: rect.w - members, y: 0, w: members, h: rect.h, label: "Members" });
-  }
-  if (panel.input_height !== null) {
     out.push({
       kind: "band",
-      x: 0,
-      y: rect.h - panel.input_height,
-      // Clamped: a stored userlist_width can exceed the window's own width
-      // (real stored data, not invented), which would otherwise go negative.
-      // CSS silently drops a negative width, so the band would vanish with no
+      x: rect.w - members,
+      y: 0,
+      w: members,
+      // Clamped: a stored input_height can exceed the window's own height (real
+      // stored data, not invented), which would otherwise go negative. CSS
+      // silently drops a negative height, so the band would vanish with no
       // signal — clamp to 0 instead so it stays visible as "no room".
-      w: Math.max(0, rect.w - (members ?? 0)),
-      h: panel.input_height,
-      label: "Input",
+      h: Math.max(0, rect.h - input),
+      label: "Members",
     });
+  }
+  if (panel.input_height !== null) {
+    out.push({ kind: "band", x: 0, y: rect.h - input, w: rect.w, h: input, label: "Input" });
   }
   return out;
 }
