@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - Clearing the `Targets drawn` box no longer reads as a count of zero.
+- A chat window's input box spans the whole window, and its member list stops above it, as they do in game.
+- The neocom's buttons start below the character portrait, so they line up with the real bar at any width.
 
 ## [0.26.0] - 2026-07-31
 

@@ -1234,9 +1234,18 @@ member list renders, not how wide it is, and its key naming is inconsistent —
 `chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
 prefix and one without.
 
-Whether the input box spans the full window width or only the message pane is
-NOT captured — the editor draws it under the message pane only, pending a live
-smoke.
+**The input box spans the FULL window width**, and the member list stops on top
+of it. Measured 2026-08-01 off `hud_battleship.png` (native 2560×1440): the
+window spans x 41–294, the member splitter sits at x 190 and STOPS at the input
+separator on row 1376, which itself runs the window's whole width. The editor
+drew the input under the message pane only until then — it was the one shape
+here that had never been confirmed, and it was the wrong one.
+
+The shot also puts the two keys in the right units: the splitter at 190 leaves
+104px of member list and the band below 1376 is 62px tall, both of which are
+values the corpus table above carries for these keys. That is consistency, not
+proof — the char file behind this screenshot was not pulled, so nothing here
+pins a stored number to a measured one.
 
 **Both keys are now written**, by `chat.rs::set_chat_splits`. An existing key is
 overwritten in place; an absent one is minted as `(Long(0), Int(v))` under `ui`,
@@ -1574,6 +1583,22 @@ question the capture would have.
   wrapped `(timestamp, List[Instance])`. Note the asymmetry with `neocomWidth`
   (account-side — see "HUD anchors" above): the *bar* is per character, its
   *width* is per account.
+
+#### Neocom top tiles
+
+**Two tiles sit above the button column and neither is in the key:** the EVE
+menu (the hamburger) and the character portrait. Measured 2026-08-01 off
+`neocom_docked.png`, `hud_battleship.png` and `hud_frigate.png` (native
+2560×1440, all three carrying a 48px bar): the menu tile is rows 0–47, the
+portrait 48–95, and the first real button starts at 96. Both are one bar-width
+SQUARE, the same rule the buttons follow, so **the reserve is 2 × `neocomWidth`
+and scales with the bar** — the canvas invented a flat 40 until this was
+measured. Neither tile has an id in `neocom-buttons.json`, which is the corpus's
+own confirmation that they are chrome rather than entries.
+
+Only one bar width has been observed across the shots, so "2 × width" is read
+off the tiles being square rather than off two widths disagreeing with a
+constant. A shot at a different `neocomWidth` would settle it outright.
 - **Class:** always `utillib.KeyVal` — 43,430/43,430, no other class observed.
 - **Keyset:** on the *live bar*, exactly `btnType, children, iconPath, id` on
   every instance, 43,430/43,430, with no variation at all. Authoring one is a
