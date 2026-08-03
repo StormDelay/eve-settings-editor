@@ -71,6 +71,20 @@ describe("editing", () => {
     expect(lastSet().probes[1]).toEqual([1e9, 2e9, 3e9]);
   });
 
+  test("typing a negative range is rejected, not sent to set_probe_formation", async () => {
+    // A range of zero or less is meaningless in EVE and would otherwise be
+    // written straight to the user's real settings file — and it drives a
+    // range-circle radius in the visualiser panes, which is invalid SVG if
+    // negative (probes.ts/ProbeFormationsView.svelte, review fix round 1).
+    await open();
+    const range = await screen.findByLabelText("formation range");
+    await fireEvent.input(range, { target: { value: "-5" } });
+    await fireEvent.blur(range);
+
+    expect(lastSet().range).toBeGreaterThan(0);
+    expect(lastSet().range).toBe(74798935350); // the loaded value, untouched
+  });
+
   test("New selects the newly minted formation even when its id fills a gap", async () => {
     // next_id fills the lowest free gap (probes.rs), so with ids {0, 2} the
     // new formation lands at id 1 — the MIDDLE of the sorted response, not
