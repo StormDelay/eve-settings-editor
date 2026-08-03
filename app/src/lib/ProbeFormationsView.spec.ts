@@ -83,23 +83,43 @@ describe("editing", () => {
     calls.never("set_probe_formation");
   });
 
-  test("typing a negative range is rejected, not sent to set_probe_formation", async () => {
-    // A range of zero or less is meaningless in EVE and would otherwise be
-    // written straight to the user's real settings file — and it drives a
-    // range-circle radius in the visualiser panes, which is invalid SVG if
-    // negative (probes.ts/ProbeFormationsView.svelte, review fix round 1).
-    //
-    // The rejected input never updates the draft, so the draft is left
-    // exactly as loaded — and a blur that changes nothing must not commit at
-    // all (a blur-always-commits bug fixed in the same review round this test
-    // is pinned against), so the negative value never has a path to the
-    // backend.
+  test("range offers EVE's slider stops and nothing else", async () => {
+    // In-game the scan range is a slider with fixed stops, so a free-text field
+    // could write a range the client has no way to represent. A picker also
+    // makes a zero-or-negative range — meaningless in EVE, and an invalid SVG
+    // radius in the panes — unwritable by construction rather than by a guard.
+    await open();
+    const range = (await screen.findByLabelText("formation range")) as HTMLSelectElement;
+    const offered = [...range.options].map((o) => o.text);
+    expect(offered).toEqual([
+      "0.25 AU", "0.5 AU", "1 AU", "2 AU", "4 AU", "8 AU", "16 AU", "32 AU", "64 AU",
+    ]);
+    // Always AU: the km toggle governs probe positions, not the range.
+    expect(offered.some((t) => t.includes("km"))).toBe(false);
+  });
+
+  test("choosing a range sends that stop's metres", async () => {
     await open();
     const range = await screen.findByLabelText("formation range");
-    await fireEvent.input(range, { target: { value: "-5" } });
-    await fireEvent.blur(range);
+    // 1 AU, one stop above the loaded 0.5 AU.
+    await fireEvent.change(range, { target: { value: String(149597870700) } });
 
-    calls.never("set_probe_formation");
+    expect(lastSet().range).toBe(149597870700);
+  });
+
+  test("a range the slider cannot produce is shown, not snapped to a neighbour", async () => {
+    // Same rule mixed_range follows: a file we did not author is displayed as
+    // it is rather than quietly rewritten to the nearest thing we understand.
+    const odd = 12345678901;
+    calls.stub("probe_formations", {
+      formations: [{ ...FORMATIONS.formations[0], ranges: [odd, odd], range: odd }],
+      selected: 0,
+    } satisfies Formations);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+
+    const range = (await screen.findByLabelText("formation range")) as HTMLSelectElement;
+    expect(range.value).toBe(String(odd));
+    expect(range.selectedOptions[0].text).toMatch(/not a slider stop/);
   });
 
   test("New selects the newly minted formation even when its id fills a gap", async () => {
@@ -130,7 +150,7 @@ describe("editing", () => {
     } satisfies Formations);
     render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
     const range = await screen.findByLabelText("formation range");
-    expect((range as HTMLInputElement).disabled).toBe(true);
+    expect((range as HTMLSelectElement).disabled).toBe(true);
     // And it says WHICH row differs, not just that one does.
     expect(await screen.findByText(/probes 2/)).toBeTruthy();
     // The whole formation is read-only, not just the range field — the

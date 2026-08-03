@@ -15,6 +15,14 @@ export const M_PER_KM = 1000;
  * formation starts at. Mirrors `probes.rs`'s `DEFAULT_RANGE`. */
 export const DEFAULT_RANGE_M = 74798935350;
 
+/** EVE's probe scan ranges, in AU. The in-game control is a slider with these
+ * fixed stops, not a free value — so the editor offers exactly these and cannot
+ * write a range the client has no way to represent. */
+export const RANGE_STEPS_AU = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64] as const;
+
+/** The scan-range stops in metres, which is what the file stores. */
+export const RANGE_STEPS_M = RANGE_STEPS_AU.map((au) => au * M_PER_AU);
+
 /** A formation holds 1 to 8 probes. Mirrors `probes.rs`'s `MAX_PROBES`. */
 export const MAX_PROBES = 8;
 
@@ -70,9 +78,10 @@ export function cubeFormation(range: number): [number, number, number][] {
  * precision that a probe 10 000 km out never reads as "0.00" in AU. */
 export function formatUnit(metres: number, u: Unit): string {
   const v = toUnit(metres, u);
-  if (v === 0) return "0";
-  const decimals = u === "au" ? 6 : 3;
-  return String(Number(v.toFixed(decimals)));
+  // AU needs six places or a probe 10 000 km out reads as "0.000000"; km needs
+  // none, because a formation is millions of km across and the metres behind
+  // the display are what actually get saved.
+  return String(Number(v.toFixed(u === "au" ? 6 : 0)));
 }
 
 /** Which two axes a pane shows. EVE's X and Z are the horizontal plane, Y is
