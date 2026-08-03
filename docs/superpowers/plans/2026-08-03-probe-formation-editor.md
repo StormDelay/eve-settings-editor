@@ -206,9 +206,7 @@ Put this ABOVE the test module in `crates/settings-model/src/probes.rs`:
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{
-    collect_shared, effective, find_child, inline_all, is_bytes, section, text, SharedTable,
-};
+use crate::treewalk::{collect_shared, effective, find_child, section, text, SharedTable};
 
 const KEY: &[u8] = b"probescanning.customFormations";
 const SELECTED_KEY: &[u8] = b"probescanning.selectedFormationID";
@@ -382,7 +380,7 @@ and after the `pub use neocom::{...};` line:
 pub use probes::{project_formations, Formation, Formations, ProbeError, DEFAULT_RANGE, MAX_PROBES};
 ```
 
-The `inline_all` and `is_bytes` imports are unused until Task 2; add `#[allow(unused_imports)]` is NOT the fix — instead, leave them out of the `use` list in this task and add them in Task 2.
+`inline_all` and `is_bytes` are deliberately absent from that `use` list — they are unused until Task 2, which adds them. Do not add them here and do not silence the warning with `#[allow(unused_imports)]`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
