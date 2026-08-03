@@ -15,6 +15,9 @@ export const M_PER_KM = 1000;
  * formation starts at. Mirrors `probes.rs`'s `DEFAULT_RANGE`. */
 export const DEFAULT_RANGE_M = 74798935350;
 
+/** A formation holds 1 to 8 probes. Mirrors `probes.rs`'s `MAX_PROBES`. */
+export const MAX_PROBES = 8;
+
 export type Unit = "au" | "km";
 
 const scale = (u: Unit) => (u === "au" ? M_PER_AU : M_PER_KM);

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage, type Formation, type Formations } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
-           DEFAULT_RANGE_M, paneScale, project, DRIFTER, drifterHole,
+           DEFAULT_RANGE_M, MAX_PROBES, paneScale, project, DRIFTER, drifterHole,
            type Unit, type Plane } from "./probes";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -66,13 +66,27 @@
   }
   function blurField() {
     focusedField = null;
-    commit();
+    if (draftChanged()) commit();
   }
   function shown(key: string, computed: string): string {
     return focusedField === key ? (rawText[key] ?? computed) : computed;
   }
 
   const current = $derived(loaded?.formations.find((f) => f.id === selectedId) ?? null);
+
+  /** Whether the draft differs from the loaded formation. A blur that changed
+   * nothing must not write the file or light the "unsaved" badge — and since
+   * reading accepts `List | Tuple` for the probe list but writing always emits
+   * `List`, a no-op commit could otherwise normalise a shape the client wrote. */
+  function draftChanged(): boolean {
+    if (!current) return false;
+    return (
+      draftName !== current.name ||
+      draftRange !== current.range ||
+      draftProbes.length !== current.probes.length ||
+      draftProbes.some((p, i) => p.some((v, j) => v !== current.probes[i][j]))
+    );
+  }
 
   /** The probes whose range differs from the first, 1-based to match the table.
    * `ranges` is the file's own per-probe values, which is why this can name
@@ -96,7 +110,8 @@
       else { error = errMessage(e); loaded = null; return; }
     }
     if (!loaded.formations.some((f) => f.id === selectedId)) {
-      select(loaded.formations[0] ?? null);
+      const l = loaded; // narrowed non-null; `loaded` itself doesn't narrow inside a closure
+      select(l.formations.find((f) => f.id === l.selected) ?? l.formations[0] ?? null);
     }
   }
   $effect(() => { void userOpen; void userId; reload(); });
@@ -164,7 +179,7 @@
   }
 
   function addProbe() {
-    if (draftProbes.length >= 8) return;
+    if (draftProbes.length >= MAX_PROBES) return;
     draftProbes = [...draftProbes, [draftRange / 2, 0, 0]];
     lastAngles = [...lastAngles, { az: 0, el: 0 }];
   }
@@ -235,7 +250,7 @@
             <input value={draftName}
                    disabled={current.mixed_range}
                    oninput={(e) => (draftName = e.currentTarget.value)}
-                   onblur={() => commit()} />
+                   onblur={blurField} />
           </label>
           <label>
             Range
@@ -329,10 +344,10 @@
           </tbody>
         </table>
         <button onclick={() => { addProbe(); commit(); }}
-                disabled={draftProbes.length >= 8 || current.mixed_range}>
+                disabled={draftProbes.length >= MAX_PROBES || current.mixed_range}>
           + probe
         </button>
-        <span class="meta">{draftProbes.length} of 8</span>
+        <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
 
         <label class="drifter-toggle">
           <input type="checkbox" bind:checked={showDrifter} />

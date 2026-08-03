@@ -26,6 +26,19 @@ pub enum Category {
     /// `probescanning.customFormations` is part of the key NAME, so this is a
     /// two-level path under `ui`, not three levels through a `probescanning`
     /// section (probes.rs, spec §2.1).
+    ///
+    /// Two deliberate disagreements with the editor path in `probes.rs`, both
+    /// harmless on corpus data:
+    /// - This category copies the formations dict but never
+    ///   `selectedFormationID`, so a copy can leave the target's selection
+    ///   naming a formation that no longer exists. `probes.rs::remove_formation`
+    ///   goes out of its way to prevent exactly that state on its own path,
+    ///   calling it "the one outcome that could confuse the client" — the two
+    ///   paths disagree about how much it matters. Near-zero in practice: the
+    ///   corpus's `selectedFormationID` is `0` everywhere.
+    /// - A whole-section splice overwrites the target's `-4` scratch slot,
+    ///   which `probes.rs` never touches on any write path by explicit design.
+    ///   Harmless, since the client regenerates it.
     ProbeFormations,
     NeocomButtons,
     // The HUD's individual keys. `hud.rs`'s FIELDS table is the source of
@@ -313,14 +326,6 @@ mod tests {
             Category::ProbeFormations.key_path(),
             &[b"ui".as_slice(), b"probescanning.customFormations".as_slice()],
         );
-    }
-
-    #[test]
-    fn an_absent_formation_set_never_deletes_the_targets() {
-        // Whole-section categories skip on absence. Only the leaf HUD keys read
-        // absence as "EVE's default" and delete; a source that has never saved
-        // a formation must not wipe the target's.
-        assert!(!Category::ProbeFormations.absent_means_default());
     }
 
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
@@ -681,6 +686,7 @@ mod tests {
             Category::Overview,
             Category::OverviewWidths,
             Category::Keybinds,
+            Category::ProbeFormations,
             Category::NeocomButtons,
         ] {
             assert!(!cat.absent_means_default(), "{cat:?} must never delete on the target");
