@@ -8,6 +8,7 @@
   import OverviewView from "$lib/OverviewView.svelte";
   import AutofillView from "$lib/AutofillView.svelte";
   import KeybindsView from "$lib/KeybindsView.svelte";
+  import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile, PresetInfo } from "$lib/api";
@@ -43,14 +44,14 @@
   // Which file the raw Tree view shows; a Tree-local switch flips it to the
   // account file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
-  type View = "tree" | "layout" | "overview" | "autofill" | "keybinds";
+  type View = "tree" | "layout" | "overview" | "autofill" | "keybinds" | "probes";
   let view = $state<View>("tree");
   // The active document is a consequence of the current view — NOT a manual
   // toggle: Autofill edits the account file, the Tree view honors its file
   // switch, everything else (Layout, Overview, search, backups) follows the
   // character.
   const active = $derived<Slot>(
-    (view === "autofill" || view === "keybinds") && slots.user?.status === "opened"
+    (view === "autofill" || view === "keybinds" || view === "probes") && slots.user?.status === "opened"
       ? "user"
       : view === "tree" && treeFile === "user" && slots.user?.status === "opened"
         ? "user"
@@ -86,7 +87,8 @@
     (v === "layout" && layoutAvailable) ||
     (v === "overview" && (openCharId !== null || slots.user?.status === "opened")) ||
     (v === "autofill" && (openCharId !== null || slots.user?.status === "opened")) ||
-    (v === "keybinds" && (openCharId !== null || slots.user?.status === "opened"));
+    (v === "keybinds" && (openCharId !== null || slots.user?.status === "opened")) ||
+    (v === "probes" && (openCharId !== null || slots.user?.status === "opened"));
   // Selected canvas window, lifted here so it survives Tree/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // Bound down through LayoutView -> WindowPanel, where the filter input
@@ -529,6 +531,7 @@
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
             {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "keybinds"} onclick={() => (view = "keybinds")}>Keybinds</button>{/if}
+            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "probes"} onclick={() => (view = "probes")}>Probes</button>{/if}
           </span>
         {/if}
         <span class="spacer"></span>
@@ -587,6 +590,15 @@
             sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
             onShowBatch={() => (mainView = "batch")}
+            onUserDirty={() => (dirtySlots.user = true)} />
+        </div>
+      {:else if view === "probes"}
+        <div class="tree-area">
+          <ProbeFormationsView
+            userOpen={slots.user?.status === "opened"}
+            userId={openUserId}
+            sharedLabel={sharedLabel}
+            onShowAccounts={() => (mainView = "accounts")}
             onUserDirty={() => (dirtySlots.user = true)} />
         </div>
       {:else}
