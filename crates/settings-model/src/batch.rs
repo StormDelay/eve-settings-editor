@@ -22,6 +22,11 @@ pub enum Category {
     Overview,
     OverviewWidths,
     Keybinds,
+    /// Custom probe scanner formations, account-side. The dot in
+    /// `probescanning.customFormations` is part of the key NAME, so this is a
+    /// two-level path under `ui`, not three levels through a `probescanning`
+    /// section (probes.rs, spec §2.1).
+    ProbeFormations,
     NeocomButtons,
     // The HUD's individual keys. `hud.rs`'s FIELDS table is the source of
     // truth for these paths; `Aspect::Layout` carries all of them so a layout
@@ -55,6 +60,7 @@ impl Category {
             Category::Overview => &[b"overview"],
             Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
             Category::Keybinds => &[b"cmd", b"customCmds"],
+            Category::ProbeFormations => &[b"ui", b"probescanning.customFormations"],
             // Character-side: the neocom BAR is per account (neocomWidth), its
             // BUTTONS are per character. Original is deliberately not a category
             // — it is the target's own client baseline.
@@ -298,6 +304,24 @@ fn descend_mut<'a>(root: &'a mut Entries, keys: &[&[u8]]) -> Option<&'a mut Entr
 mod tests {
     use super::*;
     use blue_marshal::{decode, encode};
+
+    #[test]
+    fn the_probe_formation_category_is_a_two_level_ui_key() {
+        // The dot is part of the key NAME. A three-level path through a
+        // `probescanning` section finds nothing and silently copies nothing.
+        assert_eq!(
+            Category::ProbeFormations.key_path(),
+            &[b"ui".as_slice(), b"probescanning.customFormations".as_slice()],
+        );
+    }
+
+    #[test]
+    fn an_absent_formation_set_never_deletes_the_targets() {
+        // Whole-section categories skip on absence. Only the leaf HUD keys read
+        // absence as "EVE's default" and delete; a source that has never saved
+        // a formation must not wipe the target's.
+        assert!(!Category::ProbeFormations.absent_means_default());
+    }
 
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
     fn ts() -> Value { Value::Long(vec![0u8; 8]) }

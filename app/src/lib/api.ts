@@ -318,7 +318,7 @@ export interface BatchTargetResult {
   error: string | null;
 }
 
-export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "everything";
+export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "probe_formations" | "everything";
 export interface CharWrite {
   char_id: number;
   path: string;
