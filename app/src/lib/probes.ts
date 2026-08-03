@@ -71,3 +71,28 @@ export function formatUnit(metres: number, u: Unit): string {
   const decimals = u === "au" ? 6 : 3;
   return String(Number(v.toFixed(decimals)));
 }
+
+/** Which two axes a pane shows. EVE's X and Z are the horizontal plane, Y is
+ * up, so "top" is a map and "side" is an elevation. */
+export type Plane = "top" | "side";
+
+/** Drop the third axis. */
+export function project(p: [number, number, number], plane: Plane): [number, number] {
+  return plane === "top" ? [p[0], p[2]] : [p[0], p[1]];
+}
+
+/** Data metres per pane pixel, sized so every probe's whole range sphere fits.
+ *
+ * Both panes take the same scale from the same call, so a distance that looks
+ * longer in one is longer. */
+export function paneScale(
+  probes: [number, number, number][],
+  range: number,
+  size: number,
+): number {
+  const reach = Math.max(0, ...probes.flatMap((p) => p.map(Math.abs))) + Math.abs(range);
+  // A formation with every probe at the centre and no range has nothing to
+  // scale to; any positive number draws it as a dot at the origin.
+  if (reach === 0) return 1;
+  return reach / (size / 2);
+}
