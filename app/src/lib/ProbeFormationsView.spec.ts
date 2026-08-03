@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
 import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
 import { calls } from "$lib/test/setup";
-import type { Formations } from "$lib/api";
+import type { Formation, Formations } from "$lib/api";
 
 const noop = () => {};
 
@@ -66,6 +66,26 @@ describe("editing", () => {
 
     const p = lastSet().probes[0];
     for (let i = 0; i < 3; i++) expect(p[i]).toBeCloseTo(before[i] * 2, 0);
+    // The scenario the "untouched coordinate" test's comment describes: edit
+    // ONE probe, and a DIFFERENT one must not move at all.
+    expect(lastSet().probes[1]).toEqual([1e9, 2e9, 3e9]);
+  });
+
+  test("New selects the newly minted formation even when its id fills a gap", async () => {
+    // next_id fills the lowest free gap (probes.rs), so with ids {0, 2} the
+    // new formation lands at id 1 — the MIDDLE of the sorted response, not
+    // its end. Selecting by position would land on id 2 ("b") instead.
+    const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350], range: 74798935350, mixed_range: false };
+    const b: Formation = { id: 2, name: "b", probes: [[4, 5, 6]], ranges: [74798935350], range: 74798935350, mixed_range: false };
+    const created: Formation = { id: 1, name: "New formation", probes: [[0, 0, 0]], ranges: [74798935350], range: 74798935350, mixed_range: false };
+    calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);
+    calls.stub("set_probe_formation", { formations: [a, created, b], selected: 1 } satisfies Formations);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+    await screen.findByDisplayValue("a");
+
+    await fireEvent.click(screen.getByText("New"));
+
+    expect(await screen.findByDisplayValue("New formation")).toBeTruthy();
   });
 
   test("a mixed-range formation does not offer an edit that would flatten it", async () => {
@@ -82,5 +102,31 @@ describe("editing", () => {
     expect((range as HTMLInputElement).disabled).toBe(true);
     // And it says WHICH row differs, not just that one does.
     expect(await screen.findByText(/probes 2/)).toBeTruthy();
+    // The whole formation is read-only, not just the range field — the
+    // editor writes one range for the whole formation, so any other edit
+    // would flatten the mix just as surely as the range field would.
+    const nameField = await screen.findByDisplayValue("close");
+    expect((nameField as HTMLInputElement).disabled).toBe(true);
+    const x = await screen.findByLabelText("probe 1 X");
+    expect((x as HTMLInputElement).disabled).toBe(true);
+  });
+
+  test("Copy with uniform range creates a new formation, leaving the mixed original untouched", async () => {
+    const mixed: Formation = {
+      ...FORMATIONS.formations[0],
+      ranges: [74798935350, 37399467675],
+      mixed_range: true,
+    };
+    const copy: Formation = { ...mixed, id: 1, name: "close copy", ranges: [74798935350, 74798935350], mixed_range: false };
+    calls.stub("probe_formations", { formations: [mixed], selected: 0 } satisfies Formations);
+    calls.stub("set_probe_formation", { formations: [mixed, copy], selected: 1 } satisfies Formations);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+    await screen.findByDisplayValue("close");
+
+    await fireEvent.click(screen.getByText("Copy with uniform range"));
+
+    const args = lastSet();
+    expect(args.id).toBe(null); // a create, never a write onto the mixed original
+    expect(await screen.findByDisplayValue("close copy")).toBeTruthy();
   });
 });

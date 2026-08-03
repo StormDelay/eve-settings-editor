@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage, type Formation, type Formations } from "./api";
-  import { toUnit, fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
+  import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, type Unit } from "./probes";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -28,6 +28,28 @@
   /** Which probe row is focused, so a row and its dots highlight together in
    * both panes (Task 7). */
   let selectedProbe = $state<number | null>(null);
+
+  /** While a field has focus, show exactly what's typed rather than a fresh
+   * formatted re-derivation of the committed value on every keystroke —
+   * otherwise reformatting (trailing-zero stripping, a forced decimal place)
+   * fights the user's own typing and displaces the caret. `rawText` holds
+   * what's currently in the box; `focusedField` which key, if any, is live. */
+  let focusedField = $state<string | null>(null);
+  let rawText = $state<Record<string, string>>({});
+  function focusField(key: string, computedNow: string) {
+    focusedField = key;
+    rawText[key] = computedNow;
+  }
+  function typeField(key: string, text: string) {
+    rawText[key] = text;
+  }
+  function blurField() {
+    focusedField = null;
+    commit();
+  }
+  function shown(key: string, computed: string): string {
+    return focusedField === key ? (rawText[key] ?? computed) : computed;
+  }
 
   const current = $derived(loaded?.formations.find((f) => f.id === selectedId) ?? null);
 
@@ -67,13 +89,23 @@
   }
 
   async function commit(id: number | null = selectedId) {
+    // `next_id` fills the lowest free gap, not the end of the list, so a
+    // freshly minted id can land in the MIDDLE of the sorted response — never
+    // identify it by position.
+    const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
     try {
       loaded = await api.setProbeFormation(id, draftName, draftProbes, draftRange);
       onUserDirty();
-      if (id === null) select(loaded.formations[loaded.formations.length - 1] ?? null);
+      if (id === null) select(loaded.formations.find((f) => !before.has(f.id)) ?? null);
     } catch (e) {
       await message(errMessage(e), { title: "Could not save the formation", kind: "error" });
       await reload();
+      // `reload` only re-selects when `selectedId` vanished. On an id===null
+      // failure (createNew/duplicate/copy) selectedId is still the pre-existing
+      // formation that was never touched, but the draft is left holding the
+      // failed attempt's name/probes — re-sync it here so the NEXT blur can't
+      // commit that draft over the still-selected, untouched formation.
+      select(loaded?.formations.find((f) => f.id === selectedId) ?? null);
     }
   }
 
@@ -180,19 +212,22 @@
           <label>
             Name
             <input value={draftName}
+                   disabled={current.mixed_range}
                    oninput={(e) => (draftName = e.currentTarget.value)}
                    onblur={() => commit()} />
           </label>
           <label>
             Range
             <input aria-label="formation range"
-                   value={formatUnit(draftRange, unit)}
+                   value={shown("range", formatUnit(draftRange, unit))}
                    disabled={current.mixed_range}
                    oninput={(e) => {
+                     typeField("range", e.currentTarget.value);
                      const v = Number(e.currentTarget.value);
                      if (Number.isFinite(v)) draftRange = fromUnit(v, unit);
                    }}
-                   onblur={() => commit()} />
+                   onfocus={() => focusField("range", formatUnit(draftRange, unit))}
+                   onblur={blurField} />
           </label>
           <span class="units">
             <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
@@ -203,8 +238,11 @@
         {#if current.mixed_range}
           <p class="warn">
             This formation's probes carry different ranges
-            ({mixedProbeLabel}). Editing the range here would flatten them, so it is
-            locked. No formation EVE has been seen to save does this.
+            ({mixedProbeLabel}). The editor writes one range for the whole
+            formation, so it is shown read-only here rather than silently
+            flattening them on your next edit.
+            <button class="link" onclick={duplicate}>Copy with uniform range</button>
+            to get a copy you can edit — the original is left untouched.
           </p>
         {/if}
 
@@ -223,39 +261,52 @@
                 {#each [0, 1, 2] as axis}
                   <td>
                     <input aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
-                           value={formatUnit(p[axis], unit)}
-                           oninput={(e) => setAxis(n, axis as 0 | 1 | 2, e.currentTarget.value)}
-                           onblur={() => commit()} />
+                           value={shown(`${n}:${axis}`, formatUnit(p[axis], unit))}
+                           disabled={current.mixed_range}
+                           oninput={(e) => { typeField(`${n}:${axis}`, e.currentTarget.value);
+                             setAxis(n, axis as 0 | 1 | 2, e.currentTarget.value); }}
+                           onfocus={() => focusField(`${n}:${axis}`, formatUnit(p[axis], unit))}
+                           onblur={blurField} />
                   </td>
                 {/each}
                 <td>
                   <input aria-label={`probe ${n + 1} distance`}
-                         value={formatUnit(s.r, unit)}
-                         oninput={(e) => setDistance(n, e.currentTarget.value)}
-                         onblur={() => commit()} />
+                         value={shown(`${n}:dist`, formatUnit(s.r, unit))}
+                         disabled={current.mixed_range}
+                         oninput={(e) => { typeField(`${n}:dist`, e.currentTarget.value);
+                           setDistance(n, e.currentTarget.value); }}
+                         onfocus={() => focusField(`${n}:dist`, formatUnit(s.r, unit))}
+                         onblur={blurField} />
                 </td>
                 <td>
                   <input aria-label={`probe ${n + 1} azimuth`}
-                         value={s.az.toFixed(1)}
-                         oninput={(e) => setAngle(n, "az", e.currentTarget.value)}
-                         onblur={() => commit()} />
+                         value={shown(`${n}:az`, s.az.toFixed(1))}
+                         disabled={current.mixed_range}
+                         oninput={(e) => { typeField(`${n}:az`, e.currentTarget.value);
+                           setAngle(n, "az", e.currentTarget.value); }}
+                         onfocus={() => focusField(`${n}:az`, s.az.toFixed(1))}
+                         onblur={blurField} />
                 </td>
                 <td>
                   <input aria-label={`probe ${n + 1} elevation`}
-                         value={s.el.toFixed(1)}
-                         oninput={(e) => setAngle(n, "el", e.currentTarget.value)}
-                         onblur={() => commit()} />
+                         value={shown(`${n}:el`, s.el.toFixed(1))}
+                         disabled={current.mixed_range}
+                         oninput={(e) => { typeField(`${n}:el`, e.currentTarget.value);
+                           setAngle(n, "el", e.currentTarget.value); }}
+                         onfocus={() => focusField(`${n}:el`, s.el.toFixed(1))}
+                         onblur={blurField} />
                 </td>
                 <td>
                   <button class="mini" title="Remove this probe"
-                          disabled={draftProbes.length <= 1}
+                          disabled={draftProbes.length <= 1 || current.mixed_range}
                           onclick={() => { removeProbe(n); commit(); }}>×</button>
                 </td>
               </tr>
             {/each}
           </tbody>
         </table>
-        <button onclick={() => { addProbe(); commit(); }} disabled={draftProbes.length >= 8}>
+        <button onclick={() => { addProbe(); commit(); }}
+                disabled={draftProbes.length >= 8 || current.mixed_range}>
           + probe
         </button>
         <span class="meta">{draftProbes.length} of 8</span>
