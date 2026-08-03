@@ -11,8 +11,6 @@ import {
   formatUnit,
   paneScale,
   project,
-  DRIFTER,
-  drifterHole,
 } from "./probes.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -91,7 +89,3 @@ check("an all-centre formation still yields a finite scale", (() => {
   const s = paneScale([[0, 0, 0]], 0, 200);
   return Number.isFinite(s) && s > 0;
 })());
-
-check("the drifter hole sits 89 km out", near(Math.hypot(...drifterHole()), 89_000, 1e-6));
-check("the drifter hole is below the warp-in", drifterHole()[1] < 0);
-check("the jump sphere is 16 km across", DRIFTER.jumpRange === 16_000);

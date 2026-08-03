@@ -13,7 +13,6 @@ All notable changes to this project are documented here. The format follows
 - The effects applied to each locked target, under its labels.
 - Edit the probe scanner's custom formations, in AU or km.
 - Copy probe formations between accounts in the batch tool.
-- A drifter wormhole overlay on the formation views, checking whether a formation covers the hole when dropped on the beacon.
 
 ### Changed
 - **The layout canvas hides clutter by default**, so it opens on the windows you placed rather than everything EVE has ever spawned. `reset` returns to that view; the toggle still shows everything.
