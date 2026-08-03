@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage, type Formation, type Formations } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
-           DEFAULT_RANGE_M, type Unit } from "./probes";
+           DEFAULT_RANGE_M, paneScale, project, type Unit, type Plane } from "./probes";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
@@ -28,6 +28,23 @@
   /** Which probe row is focused, so a row and its dots highlight together in
    * both panes (Task 7). */
   let selectedProbe = $state<number | null>(null);
+
+  const PANE = 320; // px, both panes square and identical
+  // One scale for both panes, so a distance that looks longer in one pane
+  // genuinely is longer — never derive each pane's scale separately.
+  const scale = $derived(paneScale(draftProbes, draftRange, PANE));
+
+  /** Pane pixel coordinates for a probe, origin at the pane centre. SVG y
+   * grows downward, so the vertical data axis is negated. */
+  const at = (p: [number, number, number], plane: Plane) => {
+    const [a, b] = project(p, plane);
+    return { cx: PANE / 2 + a / scale, cy: PANE / 2 - b / scale };
+  };
+
+  const PANES: { plane: Plane; label: string }[] = [
+    { plane: "top", label: "top-down (X/Z)" },
+    { plane: "side", label: "side (X/Y)" },
+  ];
 
   /** While a field has focus, show exactly what's typed rather than a fresh
    * formatted re-derivation of the committed value on every keystroke —
@@ -310,6 +327,24 @@
           + probe
         </button>
         <span class="meta">{draftProbes.length} of 8</span>
+
+        <div class="panes">
+          {#each PANES as { plane, label } (plane)}
+            <figure class="pane">
+              <figcaption>{label}</figcaption>
+              <svg viewBox="0 0 {PANE} {PANE}" width={PANE} height={PANE} role="img"
+                   aria-label="{label} view of the formation">
+                <line x1={PANE / 2} y1="0" x2={PANE / 2} y2={PANE} class="axis" />
+                <line x1="0" y1={PANE / 2} x2={PANE} y2={PANE / 2} class="axis" />
+                {#each draftProbes as p, n}
+                  {@const c = at(p, plane)}
+                  <circle cx={c.cx} cy={c.cy} r={draftRange / scale} class="range" />
+                  <circle cx={c.cx} cy={c.cy} r="4" class="probe" class:selected={selectedProbe === n} />
+                {/each}
+              </svg>
+            </figure>
+          {/each}
+        </div>
       </section>
     {:else}
       <p class="hint">This account has no custom probe formations yet.</p>
@@ -351,4 +386,13 @@
     margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
     color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
   }
+
+  .panes { display: flex; gap: 1rem; margin-top: 0.75rem; }
+  .pane { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .pane figcaption { font-size: 0.85em; color: var(--fg-dim); }
+  .pane svg { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 3px; }
+  .axis { stroke: var(--border); stroke-width: 1; }
+  .range { fill: rgba(79, 156, 240, 0.08); stroke: rgba(79, 156, 240, 0.4); stroke-width: 1; }
+  .probe { fill: var(--accent); }
+  .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
 </style>
