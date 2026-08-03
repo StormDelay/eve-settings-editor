@@ -143,8 +143,9 @@ pub struct Formation {
     pub id: i64,
     pub name: String,
     pub probes: Vec<[f64; 3]>,   // metres, formation-centre relative
-    pub range: f64,              // metres
-    pub mixed_range: bool,       // the entries disagreed; range is the first
+    pub ranges: Vec<f64>,        // metres, one per probe — the file's own values
+    pub range: f64,              // metres — the first, what the single field edits
+    pub mixed_range: bool,       // the entries disagreed
 }
 
 pub struct Formations {
