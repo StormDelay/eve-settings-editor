@@ -96,3 +96,36 @@ export function paneScale(
   if (reach === 0) return 1;
   return reach / (size / 2);
 }
+
+/** Drifter wormhole k-space geometry, relative to the warp-in beacon.
+ *
+ * SOURCED, NOT MEASURED, and the sources disagree:
+ *
+ * | source                                    | warp-in to hole |
+ * |-------------------------------------------|-----------------|
+ * | jambeeno.com/uni                          | exactly 89 km, 14 deg outside / 26.5 deg in, 16 km jump sphere |
+ * | wiki.eveuniversity.org/Wormholes          | ~80 km |
+ * | patch-note summary, March 2026            | 75 km k-space side, was 88 km |
+ * | randomevestuff.wordpress.com              | ~100 km, one measured at 91 km |
+ *
+ * Jambeeno's is taken: the only full 3D geometry and the most recent. The
+ * direction of the 14 degrees is an assumption — the source says "a slight
+ * downward angle" without saying from which end.
+ *
+ * ponytail: hardcoded k-space drifter geometry, unverified in-client. Make it a
+ * measured or user-entered scenario if a second site is ever wanted. */
+export const DRIFTER = {
+  /** Metres from the warp-in beacon to the hole's centre. */
+  distance: 89_000,
+  /** Degrees below the horizontal, from the beacon. */
+  elevation: -14,
+  /** Metres. A hole has a 3 km radius and a 5 km jump range, so it is enterable
+   * from anywhere in a 16 km-wide sphere centred on its icon. */
+  jumpRange: 16_000,
+} as const;
+
+/** The hole's position, with the warp-in beacon (and the formation centre) at
+ * the origin. Azimuth 0 is arbitrary: nothing orients a formation to a site. */
+export function drifterHole(): [number, number, number] {
+  return toCartesian({ r: DRIFTER.distance, az: 0, el: DRIFTER.elevation });
+}
