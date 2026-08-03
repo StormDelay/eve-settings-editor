@@ -8,6 +8,7 @@ const LABELS: Record<Aspect, string> = {
   overview: "Overview",
   autofill: "Autofill",
   keybinds: "Keybinds",
+  probe_formations: "Probe formations",
   everything: "Everything",
 };
 

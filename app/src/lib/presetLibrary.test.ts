@@ -24,6 +24,11 @@ check("overview label", aspectLabel("overview") === "Overview");
 check("autofill label", aspectLabel("autofill") === "Autofill");
 check("keybinds label", aspectLabel("keybinds") === "Keybinds");
 check("everything label", aspectLabel("everything") === "Everything");
+check("probe formations label", aspectLabel("probe_formations") === "Probe formations");
+check(
+  "probe formations summarise alongside others",
+  summarise(info("P", ["keybinds", "probe_formations"])) === "Keybinds · Probe formations",
+);
 
 // A full preset says so once, rather than listing every aspect it implies.
 check(
