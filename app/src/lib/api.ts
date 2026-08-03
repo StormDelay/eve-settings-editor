@@ -287,6 +287,20 @@ export interface RememberedList {
   entries: string[];
 }
 
+export type Formation = {
+  id: number;
+  /** Metre offsets from the formation centre. X and Z are horizontal, Y is up. */
+  probes: [number, number, number][];
+  name: string;
+  /** Metres, one per probe, positionally matching `probes`. The file's own
+   * values; the editor writes one range back for the whole formation. */
+  ranges: number[];
+  /** Metres. The first probe's range — what the single range field edits. */
+  range: number;
+  mixed_range: boolean;
+};
+export type Formations = { formations: Formation[]; selected: number | null };
+
 export type KeybindEntry = {
   command: string;
   /** null = unbound. Otherwise [17?, 18?, 16?, key]. */
@@ -467,6 +481,16 @@ export const api = {
   neocomAdd: (id: string, btnType: number, iconPath: string) =>
     invoke<NeocomBar>("neocom_add", { id, btnType, iconPath }),
   neocomReset: () => invoke<NeocomBar>("neocom_reset"),
+  probeFormations: () => invoke<Formations>("probe_formations"),
+  /** `id: null` creates at the next free id. */
+  setProbeFormation: (
+    id: number | null,
+    name: string,
+    probes: [number, number, number][],
+    range: number,
+  ) => invoke<Formations>("set_probe_formation", { id, name, probes, range }),
+  removeProbeFormation: (id: number) =>
+    invoke<Formations>("remove_probe_formation", { id }),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
