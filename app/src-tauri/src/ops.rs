@@ -75,6 +75,7 @@ pub enum Aspect {
     Overview,
     Autofill,
     Keybinds,
+    ProbeFormations,
     Everything,
 }
 
@@ -146,6 +147,7 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
             }
             Aspect::Autofill => account_categories.push(Category::Autofill),
             Aspect::Keybinds => account_categories.push(Category::Keybinds),
+            Aspect::ProbeFormations => account_categories.push(Category::ProbeFormations),
             Aspect::Everything => unreachable!("handled above"),
         }
     }
@@ -1407,6 +1409,65 @@ pub fn neocom_reset(state: &AppState) -> Result<NeocomBar, ErrDto> {
     edit_char_neocom(state, settings_model::neocom_reset)
 }
 
+fn probe_err(e: settings_model::ProbeError) -> ErrDto {
+    let v = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("probes"), e.to_string())
+}
+
+pub fn probe_formations(state: &AppState) -> Result<settings_model::Formations, ErrDto> {
+    let guard = state.user.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    settings_model::project_formations(&doc.value).map_err(probe_err)
+}
+
+/// Edit the USER slot's formations, reshare, then re-project them. Mirrors
+/// `edit_char_neocom`, on the account side.
+fn edit_user_probes<F>(state: &AppState, edit: F) -> Result<settings_model::Formations, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), settings_model::ProbeError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(probe_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    probe_formations(state)
+}
+
+/// `id: None` creates at the next free id. Resolving it here rather than in the
+/// frontend keeps id allocation in one place, next to the rule that produced it.
+pub fn set_probe_formation(
+    state: &AppState,
+    id: Option<i64>,
+    name: &str,
+    probes: Vec<[f64; 3]>,
+    range: f64,
+) -> Result<settings_model::Formations, ErrDto> {
+    let id = match id {
+        Some(i) => i,
+        None => match probe_formations(state) {
+            Ok(f) => settings_model::next_formation_id(&f),
+            // No key yet: `set_formation` mints it below, and 0 is the first
+            // free id — this is the only create path, so a bare `?` here would
+            // fail every first-ever formation on an account with none saved.
+            Err(e) if e.code == "no_formations" => 0,
+            Err(e) => return Err(e),
+        },
+    };
+    edit_user_probes(state, |v| settings_model::set_formation(v, id, name, &probes, range))
+}
+
+pub fn remove_probe_formation(
+    state: &AppState,
+    id: i64,
+) -> Result<settings_model::Formations, ErrDto> {
+    edit_user_probes(state, |v| settings_model::remove_formation(v, id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2222,6 +2283,30 @@ mod tests {
         assert!(w.char_categories.is_empty());
         assert_eq!(w.account_categories, vec![Category::Keybinds]);
         assert!(w.writes_account() && !w.writes_char());
+    }
+
+    #[test]
+    fn probe_formations_write_the_account_side_only() {
+        let w = aspect_writes(&[Aspect::ProbeFormations]);
+        assert_eq!(w.account_categories, vec![Category::ProbeFormations]);
+        assert!(w.char_categories.is_empty());
+        assert!(!w.char_full_copy && !w.account_full_copy);
+    }
+
+    #[test]
+    fn set_probe_formation_with_no_key_mints_it_at_id_zero() {
+        // 61 of 175 corpus account files have no formations key at all — this
+        // is the only create path, so the first-ever formation on one of them
+        // must not fail before reaching `set_formation`, which mints the key.
+        let bytes = encode(&Value::Dict(vec![(b("ui"), Value::Dict(vec![]))])).unwrap();
+        let path = temp_file("probes-no-key", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let f = set_probe_formation(&state, None, "first", vec![[1.0, 0.0, 0.0]], 1000.0).unwrap();
+        assert_eq!(f.formations.len(), 1);
+        assert_eq!(f.formations[0].id, 0, "0 is the first free id when none exist yet");
+        assert_eq!(f.formations[0].name, "first");
     }
 
     fn store_2accounts() -> accounts::AccountsStore {
