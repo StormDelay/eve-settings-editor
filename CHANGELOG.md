@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format follows
 - They move above the HUD when it is aligned to the bottom of the screen, as they do in game.
 - An `Effects drawn` count, 0–16, for how busy that row gets.
 - The effects applied to each locked target, under its labels.
+- Edit the probe scanner's custom formations, in AU or km.
+- Copy probe formations between accounts in the batch tool.
+- A drifter wormhole overlay on the formation views, checking whether a formation covers the hole when dropped on the beacon.
 
 ### Changed
 - **The layout canvas hides clutter by default**, so it opens on the windows you placed rather than everything EVE has ever spawned. `reset` returns to that view; the toggle still shows everything.
