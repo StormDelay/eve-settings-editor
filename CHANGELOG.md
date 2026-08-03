@@ -6,13 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-04
+
+The probe scanner's custom formations: editable, drawn, and carried by a batch
+copy.
+
 ### Added
 - The effects applied to your ship, under the HUD on the layout canvas, with `Detail` on.
 - They move above the HUD when it is aligned to the bottom of the screen, as they do in game.
 - An `Effects drawn` count, 0–16, for how busy that row gets.
 - The effects applied to each locked target, under its labels.
-- Edit the probe scanner's custom formations, in AU or km.
-- Copy probe formations between accounts in the batch tool.
+- Edit the probe scanner's custom formations, with probe positions in AU or km.
+- Move a probe by its coordinates, by its distance from the formation's centre, or by its angles.
+- See a formation drawn from above and from the side, with each probe's scan range.
+- Copy probe formations between accounts in the batch tool, and save them in a preset.
 
 ### Changed
 - **The layout canvas hides clutter by default**, so it opens on the windows you placed rather than everything EVE has ever spawned. `reset` returns to that view; the toggle still shows everything.
