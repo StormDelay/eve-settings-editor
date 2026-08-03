@@ -336,6 +336,9 @@ fn derive_aspects(char_doc: &Value, user_doc: &Value, full: bool) -> Vec<Aspect>
     if has_category(user_doc, Category::Keybinds) {
         out.push(Aspect::Keybinds);
     }
+    if has_category(user_doc, Category::ProbeFormations) {
+        out.push(Aspect::ProbeFormations);
+    }
     if full {
         out.push(Aspect::Everything);
     }
