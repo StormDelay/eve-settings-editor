@@ -56,7 +56,7 @@
   const offered = $derived<Aspect[]>(
     sourceKind === "preset"
       ? (preset?.aspects ?? [])
-      : ["layout", "overview", "autofill", "keybinds", "everything"],
+      : ["layout", "overview", "autofill", "keybinds", "probe_formations", "everything"],
   );
 
   const batchSource = $derived<BatchSource | null>(
@@ -71,6 +71,7 @@
     { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
     { key: "autofill", label: "Autofill (remembered text)", account: true },
     { key: "keybinds", label: "Keybindings", account: true },
+    { key: "probe_formations", label: "Probe formations (custom scan formations)", account: true },
     { key: "everything", label: "Everything (full clone of both files)", account: true },
   ];
   let selected = $state<Set<Aspect>>(new Set());

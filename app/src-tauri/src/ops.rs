@@ -75,6 +75,7 @@ pub enum Aspect {
     Overview,
     Autofill,
     Keybinds,
+    ProbeFormations,
     Everything,
 }
 
@@ -146,6 +147,7 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
             }
             Aspect::Autofill => account_categories.push(Category::Autofill),
             Aspect::Keybinds => account_categories.push(Category::Keybinds),
+            Aspect::ProbeFormations => account_categories.push(Category::ProbeFormations),
             Aspect::Everything => unreachable!("handled above"),
         }
     }
@@ -2274,6 +2276,14 @@ mod tests {
         assert!(w.char_categories.is_empty());
         assert_eq!(w.account_categories, vec![Category::Keybinds]);
         assert!(w.writes_account() && !w.writes_char());
+    }
+
+    #[test]
+    fn probe_formations_write_the_account_side_only() {
+        let w = aspect_writes(&[Aspect::ProbeFormations]);
+        assert_eq!(w.account_categories, vec![Category::ProbeFormations]);
+        assert!(w.char_categories.is_empty());
+        assert!(!w.char_full_copy && !w.account_full_copy);
     }
 
     fn store_2accounts() -> accounts::AccountsStore {

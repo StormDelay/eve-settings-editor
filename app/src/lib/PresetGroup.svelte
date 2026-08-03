@@ -18,6 +18,7 @@
     { key: "overview", label: "Overview", needsUser: true },
     { key: "autofill", label: "Autofill", needsUser: true },
     { key: "keybinds", label: "Keybindings", needsUser: true },
+    { key: "probe_formations", label: "Probe formations", needsUser: true },
     { key: "everything", label: "Everything", needsUser: true },
   ];
 
