@@ -241,7 +241,9 @@
                    oninput={(e) => {
                      typeField("range", e.currentTarget.value);
                      const v = Number(e.currentTarget.value);
-                     if (Number.isFinite(v)) draftRange = fromUnit(v, unit);
+                     // A range of zero or less is meaningless in EVE and would
+                     // otherwise be written straight to the user's settings file.
+                     if (Number.isFinite(v) && v > 0) draftRange = fromUnit(v, unit);
                    }}
                    onfocus={() => focusField("range", formatUnit(draftRange, unit))}
                    onblur={blurField} />
@@ -338,7 +340,7 @@
                 <line x1="0" y1={PANE / 2} x2={PANE} y2={PANE / 2} class="axis" />
                 {#each draftProbes as p, n}
                   {@const c = at(p, plane)}
-                  <circle cx={c.cx} cy={c.cy} r={draftRange / scale} class="range" />
+                  <circle cx={c.cx} cy={c.cy} r={Math.max(0, draftRange) / scale} class="range" />
                   <circle cx={c.cx} cy={c.cy} r="4" class="probe" class:selected={selectedProbe === n} />
                 {/each}
               </svg>
