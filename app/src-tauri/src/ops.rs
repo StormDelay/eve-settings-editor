@@ -1449,7 +1449,14 @@ pub fn set_probe_formation(
 ) -> Result<settings_model::Formations, ErrDto> {
     let id = match id {
         Some(i) => i,
-        None => settings_model::next_formation_id(&probe_formations(state)?),
+        None => match probe_formations(state) {
+            Ok(f) => settings_model::next_formation_id(&f),
+            // No key yet: `set_formation` mints it below, and 0 is the first
+            // free id — this is the only create path, so a bare `?` here would
+            // fail every first-ever formation on an account with none saved.
+            Err(e) if e.code == "no_formations" => 0,
+            Err(e) => return Err(e),
+        },
     };
     edit_user_probes(state, |v| settings_model::set_formation(v, id, name, &probes, range))
 }
@@ -2284,6 +2291,22 @@ mod tests {
         assert_eq!(w.account_categories, vec![Category::ProbeFormations]);
         assert!(w.char_categories.is_empty());
         assert!(!w.char_full_copy && !w.account_full_copy);
+    }
+
+    #[test]
+    fn set_probe_formation_with_no_key_mints_it_at_id_zero() {
+        // 61 of 175 corpus account files have no formations key at all — this
+        // is the only create path, so the first-ever formation on one of them
+        // must not fail before reaching `set_formation`, which mints the key.
+        let bytes = encode(&Value::Dict(vec![(b("ui"), Value::Dict(vec![]))])).unwrap();
+        let path = temp_file("probes-no-key", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        let f = set_probe_formation(&state, None, "first", vec![[1.0, 0.0, 0.0]], 1000.0).unwrap();
+        assert_eq!(f.formations.len(), 1);
+        assert_eq!(f.formations[0].id, 0, "0 is the first free id when none exist yet");
+        assert_eq!(f.formations[0].name, "first");
     }
 
     fn store_2accounts() -> accounts::AccountsStore {
