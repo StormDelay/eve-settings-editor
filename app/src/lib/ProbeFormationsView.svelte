@@ -1,8 +1,8 @@
 <script lang="ts">
   import { api, errMessage, type Formation, type Formations } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
-           DEFAULT_RANGE_M, MAX_PROBES, paneScale, project,
-           type Unit, type Plane } from "./probes";
+           DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
+           paneScale, project, type Unit, type Plane } from "./probes";
   import { message } from "@tauri-apps/plugin-dialog";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
@@ -14,6 +14,8 @@
   let error = $state<string | null>(null);
   let selectedId = $state<number | null>(null);
   let unit = $state<Unit>("au");
+  /** The unit as it reads in a column header. */
+  const unitLabel = $derived(unit === "au" ? "AU" : "km");
 
   // THE EDIT BUFFER, IN METRES. Every displayed number is derived from this;
   // nothing derived is ever read back into it. A field the user has not typed
@@ -251,20 +253,29 @@
           </label>
           <label>
             Range
-            <input aria-label="formation range"
-                   value={shown("range", formatUnit(draftRange, unit))}
-                   disabled={current.mixed_range}
-                   oninput={(e) => {
-                     typeField("range", e.currentTarget.value);
-                     const v = Number(e.currentTarget.value);
-                     // A range of zero or less is meaningless in EVE and would
-                     // otherwise be written straight to the user's settings file.
-                     if (Number.isFinite(v) && v > 0) draftRange = fromUnit(v, unit);
-                   }}
-                   onfocus={() => focusField("range", formatUnit(draftRange, unit))}
-                   onblur={blurField} />
+            <!-- Always AU, and always one of EVE's slider stops: the in-game
+                 control has no free value, so neither does this. A picker also
+                 makes a non-positive range unwritable by construction. -->
+            <select aria-label="formation range"
+                    disabled={current.mixed_range}
+                    value={draftRange}
+                    onchange={(e) => {
+                      draftRange = Number(e.currentTarget.value);
+                      commit();
+                    }}>
+              {#each RANGE_STEPS_M as m, i}
+                <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
+              {/each}
+              {#if !RANGE_STEPS_M.includes(draftRange)}
+                <!-- A range this file holds that EVE's slider cannot produce.
+                     Offered so the value is shown rather than silently snapped
+                     to a neighbour — the same rule mixed_range follows. -->
+                <option value={draftRange}>{formatUnit(draftRange, "au")} AU (not a slider stop)</option>
+              {/if}
+            </select>
           </label>
           <span class="units">
+            <span class="meta">probe positions in</span>
             <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
             <button class:active={unit === "km"} onclick={() => (unit = "km")}>km</button>
           </span>
@@ -284,8 +295,10 @@
         <table>
           <thead>
             <tr>
-              <th>#</th><th>X</th><th>Y</th><th>Z</th>
-              <th>dist</th><th>az°</th><th>el°</th><th></th>
+              <th>#</th>
+              <th>X</th><th>Y</th><th>Z</th>
+              <th>distance</th><th>azimuth</th><th>elevation</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -294,7 +307,7 @@
               <tr class:selected={selectedProbe === n} onfocusin={() => (selectedProbe = n)}>
                 <td>{n + 1}</td>
                 {#each [0, 1, 2] as axis}
-                  <td>
+                  <td class="u" data-unit={unitLabel}>
                     <input aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
                            value={shown(`${n}:${axis}`, formatUnit(p[axis], unit))}
                            disabled={current.mixed_range}
@@ -304,7 +317,7 @@
                            onblur={blurField} />
                   </td>
                 {/each}
-                <td>
+                <td class="u" data-unit={unitLabel}>
                   <input aria-label={`probe ${n + 1} distance`}
                          value={shown(`${n}:dist`, formatUnit(s.r, unit))}
                          disabled={current.mixed_range}
@@ -313,7 +326,7 @@
                          onfocus={() => focusField(`${n}:dist`, formatUnit(s.r, unit))}
                          onblur={blurField} />
                 </td>
-                <td>
+                <td class="u" data-unit="°">
                   <input aria-label={`probe ${n + 1} azimuth`}
                          value={shown(`${n}:az`, s.az.toFixed(1))}
                          disabled={current.mixed_range}
@@ -322,7 +335,7 @@
                          onfocus={() => focusField(`${n}:az`, s.az.toFixed(1))}
                          onblur={blurField} />
                 </td>
-                <td>
+                <td class="u" data-unit="°">
                   <input aria-label={`probe ${n + 1} elevation`}
                          value={shown(`${n}:el`, s.el.toFixed(1))}
                          disabled={current.mixed_range}
@@ -332,7 +345,7 @@
                          onblur={blurField} />
                 </td>
                 <td>
-                  <button class="mini" title="Remove this probe"
+                  <button class="mini-visible" title="Remove this probe"
                           disabled={draftProbes.length <= 1 || current.mixed_range}
                           onclick={() => { removeProbe(n); commit(); }}>×</button>
                 </td>
@@ -373,7 +386,7 @@
 <style>
   /* Native controls render light in the dark WebView2 shell unless told
      otherwise — see the dark-native-controls note in the repo memory. */
-  input {
+  input, select {
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit;
   }
@@ -394,11 +407,32 @@
   .units button { padding: 1px 8px; font-size: 0.85em; }
   .units button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .warn { color: var(--warn); font-size: 0.85em; }
-  table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-  th, td { padding: 2px 6px; text-align: left; }
-  th { color: var(--fg-dim); font-weight: 400; font-size: 0.85em; }
+  /* `width: auto` and not 100%: a full-width table spreads the leftover space
+     between the columns, which put the X/Y/Z fields an inch apart. Let the
+     columns hug their inputs instead. */
+  table { border-collapse: collapse; width: auto; margin: 0.5rem 0; }
+  th, td { padding: 2px 4px; text-align: left; }
+  th { color: var(--fg-dim); font-weight: 400; font-size: 0.85em; white-space: nowrap; }
   tr.selected td { background: rgba(79, 156, 240, 0.12); }
-  td input { width: 8rem; }
+  td input { width: 7rem; }
+  /* The angle columns hold at most "-180.0". */
+  td:nth-child(6) input, td:nth-child(7) input { width: 5.5rem; }
+  /* The unit rides inside the field, dimmed, as a pseudo-element: it cannot be
+     selected or clicked, so it never lands in a copied value or steals focus
+     from the input it labels. `padding-right` keeps the digits clear of it. */
+  td.u { position: relative; }
+  td.u::after {
+    content: attr(data-unit);
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    color: var(--fg-dim); font-size: 0.85em;
+    pointer-events: none; user-select: none;
+  }
+  td.u input { padding-right: 2.1rem; }
+  td.u[data-unit="°"] input { padding-right: 1.3rem; }
+  /* `.mini` is opacity 0 unless it sits inside a `.node .row`, which only the
+     tree view has — so the remove button was invisible here. `.mini-visible`
+     is the codebase's own always-shown variant; it just lacks the danger tint. */
+  td .mini-visible:hover { border-color: var(--danger); color: var(--danger); }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
   .shared-banner {
     margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
