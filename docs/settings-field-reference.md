@@ -551,8 +551,30 @@ include this in an export or a shared pack.
 `activeProbeScannerFilter` (`Str`), `scannerShowAnomalies`, `scan_angleSlider`
 (`Float`), `scanner_rangeEditMode`, `dir_scanrange`,
 `probescanning.resultFilter.{filters,activeFilterSet,showingAnomalies}`,
-`probescanning.customFormations`, `probescanning.selectedFormationID`,
 `scanner_presetInUse` — **which is an overview preset name** (129/129 resolve).
+
+**Custom probe formations.** `probescanning.customFormations` (114/175) is a dict
+`{Int formationID: (name, List[((Float x, Float y, Float z), Float range)])}` — the
+saved probe arrangements from the scanner's formation menu.
+`probescanning.selectedFormationID` (114/175) `Int` is the id of the active one,
+`0` in every file that has it.
+
+- **Every formation holds exactly 8 probe entries** (123 formations, 984 entries,
+  no other length).
+- `range` is `74798935350.0` in all 984 entries — exactly 0.5 AU in metres. The
+  corpus has no evidence a formation can carry mixed or non-default ranges.
+- The coordinates are metre offsets from the formation centre, not absolute
+  positions. `"close"` spans ~±22e9 m (~0.15 AU); `"on grid"` ~±10e6 m
+  (~10 000 km).
+- Ids are **small and reused, not minted per formation**: `0` is `"close"` in all
+  114 files, `1` is `"on grid"` in 5. `"close"`'s coordinates differ in the low
+  bits between files (3 distinct signatures across the 114) — the same authored
+  formation re-saved through `Float`/`Float32` rounding, not three formations.
+- **Id `-4` is a scratch slot, and its name is `Bytes`, not `Str`.** 4 files carry
+  `-4: (b"tempFormation", …)` alongside `0`, holding coordinates within rounding
+  distance of `"close"` — the client's copy of the formation being edited. So the
+  ids are signed, negative ids are not user formations, and anything reading the
+  name must handle both `Bytes` and `Str` (§3 trap 5).
 
 **Fleet.** `listenBroadcast_{HealArmor,HealShield,HealCapacitor,Target,HoldPosition,InPosition,NeedBackup}`
 (`Int` 0/1), `fleet_broadcastcolor_<type>`, `fleetHistoryFilter`,
