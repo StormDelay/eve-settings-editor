@@ -28,7 +28,8 @@ This slice ships four things:
 4. **A batch category** — copy one account's whole formation set onto other
    accounts, in the existing batch-apply tool.
 
-A drifter-wormhole context overlay is a fifth, last phase (§7).
+A drifter-wormhole context overlay was attempted as a fifth, last phase and cut
+in review (§8).
 
 ## 2. The formation model (confirmed from the corpus)
 
@@ -347,17 +348,33 @@ selection alone. Near-zero on real data: the corpus's `selectedFormationID` is
 Preset support needs no separate work: `presets::prune` builds its parent dicts
 from `Category::key_path`, so listing the category in the aspect is sufficient.
 
-## 8. Drifter-wormhole overlay (last phase)
+## 8. Drifter-wormhole overlay — built, then cut
 
-An optional overlay on both panes, drawing the probe formation against the
-geometry of a drifter wormhole warp-in, so a formation can be checked for
-whether it covers the hole when dropped on the beacon.
+Phase 5 (§9) built this; the branch's final review round cut it. Left in place
+rather than deleted so the reasoning and the sourced-not-measured geometry are
+not lost to a diff nobody rereads.
 
-**Hardcoded, single scenario, no configuration.** Warp-in at the formation
-centre; the hole at **89 km** on a **14°** downward axis; its **16 km** jump
-sphere drawn.
+The overlay drew the warp-in beacon at the formation centre, the hole 89 km out
+on a 14° downward axis, and its 16 km jump sphere, on the same two panes that
+draw the formation — the idea being that "does this formation cover the hole
+when dropped on the beacon?" could be judged by eye.
 
-These numbers are sourced, not measured, and the sources disagree:
+**Why it was cut: the two things it drew are not at comparable scales.** A
+formation's range is ~0.5 AU — 74.8 million km; the drifter site is 89 km
+across. That is roughly an 840,000:1 gap. The panes scale to the formation
+(`paneScale`), so at that scale the hole rendered about 1.5 × 10⁻⁴ px from the
+pane centre and its 16 km jump sphere at a radius of about 2.6 × 10⁻⁵ px — both
+far below one screen pixel. Ticking the checkbox painted a dot on top of a dot.
+The coverage question the overlay existed to answer read as unconditionally
+true regardless of the actual formation, which is worse than not answering it
+at all. (The shipped hint text claimed the drifter geometry was "about 800
+times" narrower than a formation; the real ratio is roughly three orders of
+magnitude further off than that.)
+
+These numbers are sourced, not measured, and the sources disagree — kept here
+because that disagreement is still useful to whoever picks this back up, and
+says nothing here should be read as measured fact regardless of which number a
+future attempt uses:
 
 | source | warp-in → hole |
 |---|---|
@@ -366,13 +383,20 @@ These numbers are sourced, not measured, and the sources disagree:
 | patch-note summary, March 2026 | 75 km k-space side, was 88 km |
 | [Random Eve Stuff](https://randomevestuff.wordpress.com/unidentified-wormholes/) | ~100 km, one measured at 91 km |
 
-Jambeeno's is taken because it is the only full 3D geometry and the most
-recent. The disagreement is recorded in a comment beside the constants, with a
-`ponytail:` marker: *hardcoded k-space drifter geometry, unverified in-client;
-make it a measured or editable scenario if a second site is ever wanted.*
+Jambeeno's was taken because it is the only full 3D geometry and the most
+recent. The direction of the 14° was flagged as an assumption to check
+in-client — the source says "a slight downward angle" without stating from
+which end. Both points are moot until a future attempt has a view that can
+actually show the geometry.
 
-The direction of the 14° is an assumption to check in-client: the source says
-"a slight downward angle" without stating from which end.
+**What a future attempt needs:** a separate, drifter-scaled view — its own
+pane, not the formation panes reused, because a formation is always orders of
+magnitude bigger than an 89 km site and no single scale shows both. That view
+would plot the probes' *positions* relative to the beacon at drifter scale,
+without their range circles: every corpus range is 0.5 AU, millions of km, so
+a range circle drawn at drifter scale is the same problem this phase hit —
+too large to read next to an 89 km hole. Position, not reach, is the only part
+of a formation small enough to judge by eye at that scale.
 
 ## 9. Phasing
 
@@ -382,10 +406,10 @@ The direction of the 14° is an assumption to check in-client: the source says
 | 2 | IPC (`ops.rs`, `lib.rs`, `api.ts`) and the editor view — list, edit, create, duplicate, delete, AU/km, spherical fields |
 | 3 | The two SVG panes |
 | 4 | Batch category and aspect |
-| 5 | Drifter overlay |
+| 5 | Drifter overlay — built, then **cut** in the final review round (§8) |
 
 Phases 1–2 are the usable product; 3 makes it judgeable; 4 makes it worth
-having across eight accounts; 5 is the stretch.
+having across eight accounts; 5 shipped and was removed — see §8.
 
 Own branch (`probe-formation-editor`) per the branch policy: this is a
 behaviour change, not corrective work riding an existing branch.
