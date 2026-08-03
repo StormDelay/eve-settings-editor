@@ -724,6 +724,29 @@ fn user_modern() -> Value {
         // Probe scanner filter naming an overview preset — the cross-container
         // reference `rename_preset` does not currently retarget.
         (b("scanner_presetInUse"), w(b("hostile"))),
+        // Custom probe formations, in their real shape: a dict of id to
+        // (Str name, 8 entries), plus the -4 scratch slot whose name is Bytes.
+        // The gate in tests/probes_corpus.rs needs a file carrying the key on
+        // CI, where testdata/ is absent by design.
+        (b("probescanning.customFormations"), w(Value::Dict(vec![
+            (i(0), tup(vec![
+                Value::Str("close".into()),
+                list((0..8).map(|n| tup(vec![
+                    tup(vec![f(1.0e9 * n as f64), f(-115136512.0), f(-415997952.0)]),
+                    f(74_798_935_350.0),
+                ])).collect()),
+            ])),
+            // The client's scratch copy of the formation being edited: a
+            // negative id AND a Bytes name, both of which a reader must skip.
+            (i(-4), tup(vec![
+                b("tempFormation"),
+                list((0..8).map(|n| tup(vec![
+                    tup(vec![f(1.0e9 * n as f64), f(-115136512.0), f(-415997952.0)]),
+                    f(74_798_935_350.0),
+                ])).collect()),
+            ])),
+        ]))),
+        (b("probescanning.selectedFormationID"), w(i(0))),
         (b("suppress"), w(i(1))),
         (b("windowTransparency"), w(f(0.0))),
         // Type instability: Int where the modern client writes Bool.
