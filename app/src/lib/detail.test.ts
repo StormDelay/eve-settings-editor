@@ -264,26 +264,28 @@ const check = (name: string, ok: boolean) => {
     original: [],
   });
 
-  // Bar 37 wide, 1440 tall: 40 reserved at the top, then 37px squares.
+  // Bar 37 wide, 1440 tall: two 37px tiles reserved at the top, then 37px
+  // squares. The reserve SCALES with the bar — that is what a flat 40 got wrong.
   const parts = neocomParts(bar(5), 37, 1440);
   check("one part per button", parts.length === 5);
   check("buttons are square, the bar's own width", parts[0].w === 37 && parts[0].h === 37);
-  check("the column starts below the EVE menu cell", parts[0].y === DETAIL_NOMINAL.neocomTop);
+  check("the column starts below the EVE menu and the portrait", parts[0].y === 74);
+  check("the reserve scales with the bar", neocomParts(bar(1), 48, 1440)[0].y === 96);
   check("buttons stack by their own height", parts[1].y - parts[0].y === 37);
   check("buttons are labelled with their id", parts[2].label === "btn2");
 
   // A bar taller than the screen draws truncated, which is what EVE does.
   const short = neocomParts(bar(50), 37, 200);
-  check("the column stops at the bar's height", short.length === 4);
+  check("the column stops at the bar's height", short.length === 3);
   check(
     "no button is drawn past the bottom edge",
     short.every((p) => p.y + p.h <= 200),
   );
 
   // The break is `y + w > h`, so a button that exactly fills the remaining
-  // space is drawn and one pixel over is not. Top cell 40 + 4 x 40 = 200.
-  check("a button that exactly fills the bar is drawn", neocomParts(bar(9), 40, 200).length === 4);
-  check("one pixel short drops it", neocomParts(bar(9), 40, 199).length === 3);
+  // space is drawn and one pixel over is not. Two 40px tiles + 3 x 40 = 200.
+  check("a button that exactly fills the bar is drawn", neocomParts(bar(9), 40, 200).length === 3);
+  check("one pixel short drops it", neocomParts(bar(9), 40, 199).length === 2);
 }
 
 // --- overview columns ------------------------------------------------------
@@ -355,13 +357,14 @@ const check = (name: string, ok: boolean) => {
 
   const members = parts[0];
   check("the member list is right-anchored", members.x === 256 - 135 && members.w === 135);
-  check("the member list is full height", members.y === 0 && members.h === 424);
+  check("the member list stops on the input band", members.y === 0 && members.h === 424 - 64);
 
   const input = parts[1];
   check("the input is bottom-anchored", input.y === 424 - 64 && input.h === 64);
-  // Drawn under the message pane only, not under the member list. NOT captured
-  // in-game — the live smoke settles it.
-  check("the input spans the message pane only", input.x === 0 && input.w === 256 - 135);
+  // Measured in-game 2026-08-01: the separator runs the window's whole width
+  // and the member splitter ends on it. This drew the message pane's width
+  // until then.
+  check("the input spans the full window width", input.x === 0 && input.w === 256);
 
   // Absent means "never resized". Inventing a default would draw a split that
   // is not there.
@@ -374,12 +377,12 @@ const check = (name: string, ok: boolean) => {
   const neither: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
   check("nothing drawn when neither is stored", chatParts(neither, rect).length === 0);
 
-  // A stored userlist_width can exceed the window's own width (real stored
-  // data, not invented) — the input band's width must clamp at 0 rather than
-  // go negative, which CSS would silently drop with no visible signal.
-  const overflow: ChatPanel = { window_id: "c", userlist_width: 300, input_height: 64 };
+  // A stored input_height can exceed the window's own height (real stored data,
+  // not invented) — the member band's height must clamp at 0 rather than go
+  // negative, which CSS would silently drop with no visible signal.
+  const overflow: ChatPanel = { window_id: "c", userlist_width: 135, input_height: 500 };
   const of = chatParts(overflow, rect);
-  check("an oversized member list clamps the input band width to 0", of[1].w === 0);
+  check("an oversized input clamps the member band height to 0", of[0].h === 0);
 }
 
 // --- id dispatch -----------------------------------------------------------
