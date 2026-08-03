@@ -13,6 +13,23 @@ Workflow:
 
 ## Open
 
+- [ ] **Confirm in-client that a probe formation with fewer than 8 probes loads.**
+  The formation editor accepts 1–8 probes, but every one of the 123 corpus
+  formations holds exactly 8 — so a short formation is a shape this project
+  writes and has never seen the client read back. It was accepted deliberately,
+  on the grounds that EVE lets a player launch fewer than 8 probes in-game. This
+  is the one thing on the feature that cannot be measured offline: save a
+  4-probe formation, reopen the client, and check it appears in the scanner's
+  formation menu intact. If it does not, restrict the editor to exactly 8 and
+  amend §2.4 of the design. _Added 2026-08-03 (probe formation editor)._
+
+- [ ] **The `.mini` button is invisible outside a `.row`.** `app.css` gives
+  `.mini { opacity: 0 }`, revealed only by `.row:hover .mini`. Any `.mini`
+  button not inside something classed `row` is therefore permanently invisible
+  though still clickable — the probe editor's per-probe delete button sits in a
+  `<tr>` and hits this, and `AutofillView.svelte` has the same shape. Repo-wide
+  cascade trap, not one view's bug. _Added 2026-08-03 (probe formation editor)._
+
 - [ ] **Draggable splits and column edges on the canvas.** The chat splits are
   now editable as numeric fields on the selected window (2026-07-30), but not by
   dragging the splitter on the canvas, and the overview column widths are still

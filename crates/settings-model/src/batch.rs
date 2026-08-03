@@ -22,6 +22,24 @@ pub enum Category {
     Overview,
     OverviewWidths,
     Keybinds,
+    /// Custom probe scanner formations, account-side. The dot in
+    /// `probescanning.customFormations` is part of the key NAME, so this is a
+    /// two-level path under `ui`, not three levels through a `probescanning`
+    /// section (probes.rs, spec §2.1).
+    ///
+    /// Two deliberate disagreements with the editor path in `probes.rs`, both
+    /// harmless on corpus data:
+    /// - This category copies the formations dict but never
+    ///   `selectedFormationID`, so a copy can leave the target's selection
+    ///   naming a formation that no longer exists. `probes.rs::remove_formation`
+    ///   goes out of its way to prevent exactly that state on its own path,
+    ///   calling it "the one outcome that could confuse the client" — the two
+    ///   paths disagree about how much it matters. Near-zero in practice: the
+    ///   corpus's `selectedFormationID` is `0` everywhere.
+    /// - A whole-section splice overwrites the target's `-4` scratch slot,
+    ///   which `probes.rs` never touches on any write path by explicit design.
+    ///   Harmless, since the client regenerates it.
+    ProbeFormations,
     NeocomButtons,
     // The HUD's individual keys. `hud.rs`'s FIELDS table is the source of
     // truth for these paths; `Aspect::Layout` carries all of them so a layout
@@ -55,6 +73,7 @@ impl Category {
             Category::Overview => &[b"overview"],
             Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
             Category::Keybinds => &[b"cmd", b"customCmds"],
+            Category::ProbeFormations => &[b"ui", b"probescanning.customFormations"],
             // Character-side: the neocom BAR is per account (neocomWidth), its
             // BUTTONS are per character. Original is deliberately not a category
             // — it is the target's own client baseline.
@@ -298,6 +317,16 @@ fn descend_mut<'a>(root: &'a mut Entries, keys: &[&[u8]]) -> Option<&'a mut Entr
 mod tests {
     use super::*;
     use blue_marshal::{decode, encode};
+
+    #[test]
+    fn the_probe_formation_category_is_a_two_level_ui_key() {
+        // The dot is part of the key NAME. A three-level path through a
+        // `probescanning` section finds nothing and silently copies nothing.
+        assert_eq!(
+            Category::ProbeFormations.key_path(),
+            &[b"ui".as_slice(), b"probescanning.customFormations".as_slice()],
+        );
+    }
 
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
     fn ts() -> Value { Value::Long(vec![0u8; 8]) }
@@ -657,6 +686,7 @@ mod tests {
             Category::Overview,
             Category::OverviewWidths,
             Category::Keybinds,
+            Category::ProbeFormations,
             Category::NeocomButtons,
         ] {
             assert!(!cat.absent_means_default(), "{cat:?} must never delete on the target");
