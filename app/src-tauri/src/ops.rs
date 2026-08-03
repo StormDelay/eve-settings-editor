@@ -1407,6 +1407,58 @@ pub fn neocom_reset(state: &AppState) -> Result<NeocomBar, ErrDto> {
     edit_char_neocom(state, settings_model::neocom_reset)
 }
 
+fn probe_err(e: settings_model::ProbeError) -> ErrDto {
+    let v = serde_json::to_value(&e).unwrap_or_default();
+    ErrDto::new(v.get("code").and_then(|c| c.as_str()).unwrap_or("probes"), e.to_string())
+}
+
+pub fn probe_formations(state: &AppState) -> Result<settings_model::Formations, ErrDto> {
+    let guard = state.user.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+    settings_model::project_formations(&doc.value).map_err(probe_err)
+}
+
+/// Edit the USER slot's formations, reshare, then re-project them. Mirrors
+/// `edit_char_neocom`, on the account side.
+fn edit_user_probes<F>(state: &AppState, edit: F) -> Result<settings_model::Formations, ErrDto>
+where
+    F: FnOnce(&mut blue_marshal::Value) -> Result<(), settings_model::ProbeError>,
+{
+    {
+        let mut guard = state.user.lock().unwrap();
+        let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no account file open"))?;
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            return Err(ErrDto::new("read_only", reason.clone()));
+        }
+        edit(&mut doc.value).map_err(probe_err)?;
+        doc.value = blue_marshal::reshare(&doc.value);
+    }
+    probe_formations(state)
+}
+
+/// `id: None` creates at the next free id. Resolving it here rather than in the
+/// frontend keeps id allocation in one place, next to the rule that produced it.
+pub fn set_probe_formation(
+    state: &AppState,
+    id: Option<i64>,
+    name: &str,
+    probes: Vec<[f64; 3]>,
+    range: f64,
+) -> Result<settings_model::Formations, ErrDto> {
+    let id = match id {
+        Some(i) => i,
+        None => settings_model::next_formation_id(&probe_formations(state)?),
+    };
+    edit_user_probes(state, |v| settings_model::set_formation(v, id, name, &probes, range))
+}
+
+pub fn remove_probe_formation(
+    state: &AppState,
+    id: i64,
+) -> Result<settings_model::Formations, ErrDto> {
+    edit_user_probes(state, |v| settings_model::remove_formation(v, id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
