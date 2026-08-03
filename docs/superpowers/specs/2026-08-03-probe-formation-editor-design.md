@@ -335,6 +335,15 @@ copying it would be a no-op on today's data and an override of a per-account
 preference on any data where it is not. The formations move; which one is
 active stays the target's own.
 
+One consequence of that choice: a batch copy can replace the target's whole
+formation dict while leaving its `selectedFormationID` pointing at an id that
+no longer exists in it. `probes.rs`'s own `remove_formation` goes out of its
+way to prevent exactly that state on its own write path, calling it "the one
+outcome that could confuse the client" — the two paths disagree about how much
+it matters. This one accepts the risk as the cost of leaving the target's
+selection alone. Near-zero on real data: the corpus's `selectedFormationID` is
+`0` everywhere.
+
 Preset support needs no separate work: `presets::prune` builds its parent dicts
 from `Category::key_path`, so listing the category in the aspect is sufficient.
 
