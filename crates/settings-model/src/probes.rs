@@ -20,7 +20,9 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{collect_shared, effective, find_child, section, text, SharedTable};
+use crate::treewalk::{
+    collect_shared, effective, find_child, inline_all, is_bytes, section, text, SharedTable,
+};
 
 const KEY: &[u8] = b"probescanning.customFormations";
 const SELECTED_KEY: &[u8] = b"probescanning.selectedFormationID";
@@ -181,6 +183,140 @@ pub fn project_formations(v: &Value) -> Result<Formations, ProbeError> {
     Ok(Formations { formations, selected })
 }
 
+/// The formations dict, mutable, minting a `(zero Long, Dict)` wrapper when the
+/// key is absent — the `overview_states.rs` rule. EVE re-stamps on its next
+/// save. The document must already be inlined, so no `Shared` survives here.
+fn formations_mut(v: &mut Value) -> Result<&mut Vec<(Value, Value)>, ProbeError> {
+    let Value::Dict(top) = v else { return Err(ProbeError::NoUi) };
+    let (_, ui) = top.iter_mut().find(|(k, _)| is_bytes(k, b"ui")).ok_or(ProbeError::NoUi)?;
+    let Value::Dict(entries) = ui else { return Err(ProbeError::NoUi) };
+    if !entries.iter().any(|(k, _)| is_bytes(k, KEY)) {
+        entries.push((
+            Value::Bytes(KEY.to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
+    }
+    let (_, raw) = entries
+        .iter_mut()
+        .find(|(k, _)| is_bytes(k, KEY))
+        .expect("just ensured present");
+    // The length check is split out of the match so the arm below is an
+    // unguarded reborrow — a guarded arm does not borrow-check against a
+    // move-catch-all on a `&mut` scrutinee (the neocom.rs note).
+    let wrapped = matches!(raw, Value::Tuple(t) if t.len() == 2 && matches!(t[0], Value::Long(_)));
+    let payload = if wrapped {
+        let Value::Tuple(t) = raw else { unreachable!() };
+        &mut t[1]
+    } else {
+        raw
+    };
+    match payload {
+        Value::Dict(d) => Ok(d),
+        _ => Err(ProbeError::NoFormations),
+    }
+}
+
+/// Point `selectedFormationID` at `id`, preserving an existing stamp and
+/// minting a zero one when the key is absent. The document must be inlined.
+fn set_selected(v: &mut Value, id: i64) -> Result<(), ProbeError> {
+    let Value::Dict(top) = v else { return Err(ProbeError::NoUi) };
+    let (_, ui) = top.iter_mut().find(|(k, _)| is_bytes(k, b"ui")).ok_or(ProbeError::NoUi)?;
+    let Value::Dict(entries) = ui else { return Err(ProbeError::NoUi) };
+    match entries.iter_mut().find(|(k, _)| is_bytes(k, SELECTED_KEY)) {
+        Some((_, slot)) => match slot {
+            // Replace whichever element is not the stamp, rather than assuming
+            // position — hunting for the Long and taking "the other one" is the
+            // overview_states.rs idiom, and it cannot produce a malformed
+            // (Long, Int, Int) the way pushing would.
+            Value::Tuple(items) => match items.iter_mut().find(|e| !matches!(e, Value::Long(_))) {
+                Some(inner) => *inner = Value::Int(id),
+                None => *slot = Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(id)]),
+            },
+            other => *other = Value::Int(id),
+        },
+        None => entries.push((
+            Value::Bytes(SELECTED_KEY.to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(id)]),
+        )),
+    }
+    Ok(())
+}
+
+/// Replace the formation at `id`, or create it there.
+///
+/// `range` is written to every probe: the format carries one per entry, but all
+/// 984 corpus entries agree, and the editor offers a single control (spec §2.3).
+pub fn set_formation(
+    v: &mut Value,
+    id: i64,
+    name: &str,
+    probes: &[[f64; 3]],
+    range: f64,
+) -> Result<(), ProbeError> {
+    // Validate BEFORE inlining, so a rejected write leaves the document
+    // byte-for-byte as it was (the tests assert exactly this).
+    if id < 0 {
+        return Err(ProbeError::NoSuchFormation); // never the -4 scratch slot
+    }
+    if name.trim().is_empty() {
+        return Err(ProbeError::BadName);
+    }
+    if probes.is_empty() || probes.len() > MAX_PROBES {
+        return Err(ProbeError::BadProbeCount);
+    }
+    inline_all(v);
+    let d = formations_mut(v)?;
+    let entry = Value::Tuple(vec![
+        Value::Str(name.to_string()),
+        Value::List(
+            probes
+                .iter()
+                .map(|p| {
+                    Value::Tuple(vec![
+                        Value::Tuple(vec![Value::Float(p[0]), Value::Float(p[1]), Value::Float(p[2])]),
+                        Value::Float(range),
+                    ])
+                })
+                .collect(),
+        ),
+    ]);
+    match d.iter_mut().find(|(k, _)| matches!(k, Value::Int(i) if *i == id)) {
+        Some((_, slot)) => *slot = entry,
+        None => d.push((Value::Int(id), entry)),
+    }
+    Ok(())
+}
+
+/// Delete a formation, repointing `selectedFormationID` when it named this one.
+/// Leaving the selection on a deleted formation is the one outcome that could
+/// confuse the client.
+pub fn remove_formation(v: &mut Value, id: i64) -> Result<(), ProbeError> {
+    if id < 0 {
+        return Err(ProbeError::NoSuchFormation);
+    }
+    let before = project_formations(v)?;
+    if !before.formations.iter().any(|f| f.id == id) {
+        return Err(ProbeError::NoSuchFormation);
+    }
+    inline_all(v);
+    {
+        let d = formations_mut(v)?;
+        d.retain(|(k, _)| !matches!(k, Value::Int(i) if *i == id));
+    }
+    if before.selected == Some(id) {
+        if let Some(next) = before.formations.iter().map(|f| f.id).filter(|i| *i != id).min() {
+            set_selected(v, next)?;
+        }
+    }
+    Ok(())
+}
+
+/// The smallest unused id `>= 0`. Corpus ids are small and reused rather than
+/// minted, so this fills gaps rather than counting up from the maximum.
+pub fn next_id(f: &Formations) -> i64 {
+    (0i64..).find(|c| !f.formations.iter().any(|x| x.id == *c)).expect("i64 has a free id")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +440,189 @@ mod tests {
             ])])),
         ]))]);
         assert_eq!(project_formations(&d).unwrap().selected, None);
+    }
+
+    /// The formations dict as stored, for asserting on raw shape.
+    fn stored(v: &Value) -> &Vec<(Value, Value)> {
+        let Value::Dict(top) = v else { panic!("not a dict") };
+        let (_, ui) = top.iter().find(|(k, _)| is_bytes(k, b"ui")).expect("ui");
+        let Value::Dict(entries) = ui else { panic!("ui is not a dict") };
+        let (_, raw) = entries.iter().find(|(k, _)| is_bytes(k, KEY)).expect("the key");
+        let Value::Tuple(t) = raw else { panic!("not wrapped") };
+        let Value::Dict(d) = &t[1] else { panic!("payload is not a dict") };
+        d
+    }
+
+    /// The `(timestamp, _)` stamp on the formations key, for wrapper assertions.
+    fn stamp(v: &Value) -> Value {
+        let Value::Dict(top) = v else { panic!("not a dict") };
+        let (_, ui) = top.iter().find(|(k, _)| is_bytes(k, b"ui")).expect("ui");
+        let Value::Dict(entries) = ui else { panic!("ui is not a dict") };
+        let (_, raw) = entries.iter().find(|(k, _)| is_bytes(k, KEY)).expect("the key");
+        let Value::Tuple(t) = raw else { panic!("not wrapped") };
+        t[0].clone()
+    }
+
+    fn seeded() -> Value {
+        // A distinguishable non-zero stamp, so a test can tell "the original
+        // survived" from "a fresh zero one was minted".
+        let mut d = doc();
+        let Value::Dict(top) = &mut d else { unreachable!() };
+        let (_, ui) = top.iter_mut().find(|(k, _)| is_bytes(k, b"ui")).unwrap();
+        let Value::Dict(entries) = ui else { unreachable!() };
+        let (_, raw) = entries.iter_mut().find(|(k, _)| is_bytes(k, KEY)).unwrap();
+        let Value::Tuple(t) = raw else { unreachable!() };
+        t[0] = Value::Long(vec![7, 0, 0, 0, 0, 0, 0, 0]);
+        d
+    }
+
+    #[test]
+    fn set_replaces_an_existing_formation_and_keeps_the_stamp() {
+        let mut v = seeded();
+        set_formation(&mut v, 0, "closer", &[[1.0, 2.0, 3.0]], DEFAULT_RANGE).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.formations[0].name, "closer");
+        assert_eq!(p.formations[0].probes, vec![[1.0, 2.0, 3.0]]);
+        assert_eq!(
+            stamp(&v),
+            Value::Long(vec![7, 0, 0, 0, 0, 0, 0, 0]),
+            "the ORIGINAL timestamp must survive the edit, not be replaced",
+        );
+    }
+
+    #[test]
+    fn set_creates_a_formation_at_a_new_id() {
+        let mut v = doc();
+        set_formation(&mut v, 2, "new", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.formations.len(), 3);
+        assert_eq!(p.formations[2].id, 2);
+        assert_eq!(p.formations[2].name, "new");
+    }
+
+    #[test]
+    fn a_written_name_is_str_never_bytes() {
+        // The only Bytes name in the corpus is the scratch slot. Writing Bytes
+        // would make a user formation look like one.
+        let mut v = doc();
+        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        let d = stored(&v);
+        let (_, entry) = d.iter().find(|(k, _)| matches!(k, Value::Int(0))).unwrap();
+        let Value::Tuple(t) = entry else { panic!("not a formation tuple") };
+        assert_eq!(t[0], Value::Str("close".into()));
+    }
+
+    #[test]
+    fn the_range_is_written_to_every_probe() {
+        let mut v = doc();
+        let probes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        set_formation(&mut v, 0, "even", &probes, 123.0).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.formations[0].range, 123.0);
+        assert!(!p.formations[0].mixed_range);
+        assert_eq!(p.formations[0].probes.len(), 3);
+    }
+
+    #[test]
+    fn the_scratch_slot_survives_a_write() {
+        let mut v = doc();
+        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        let d = stored(&v);
+        assert!(
+            d.iter().any(|(k, _)| matches!(k, Value::Int(-4))),
+            "the client's -4 scratch slot must be left untouched",
+        );
+    }
+
+    #[test]
+    fn a_key_absent_from_the_file_is_minted_wrapped() {
+        let mut v = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("other"), Value::Int(1))]))]);
+        set_formation(&mut v, 0, "first", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        assert_eq!(
+            stamp(&v),
+            Value::Long(vec![0u8; 8]),
+            "a freshly minted key must carry a zero Long stamp, not a bare dict",
+        );
+        assert_eq!(project_formations(&v).unwrap().formations.len(), 1);
+    }
+
+    #[test]
+    fn a_rejected_write_leaves_the_document_untouched() {
+        let before = doc();
+        let mut v = doc();
+        assert_eq!(set_formation(&mut v, 0, "x", &[], DEFAULT_RANGE), Err(ProbeError::BadProbeCount));
+        assert_eq!(set_formation(&mut v, 0, "  ", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE), Err(ProbeError::BadName));
+        let nine = [[1.0, 0.0, 0.0]; 9];
+        assert_eq!(set_formation(&mut v, 0, "x", &nine, DEFAULT_RANGE), Err(ProbeError::BadProbeCount));
+        assert_eq!(set_formation(&mut v, -4, "x", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE), Err(ProbeError::NoSuchFormation));
+        assert_eq!(v, before, "a rejected write must not inline or otherwise touch the document");
+    }
+
+    #[test]
+    fn one_and_eight_probes_are_both_accepted() {
+        let mut v = doc();
+        set_formation(&mut v, 0, "one", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        assert_eq!(project_formations(&v).unwrap().formations[0].probes.len(), 1);
+        let eight = [[1.0, 0.0, 0.0]; 8];
+        set_formation(&mut v, 0, "eight", &eight, DEFAULT_RANGE).unwrap();
+        assert_eq!(project_formations(&v).unwrap().formations[0].probes.len(), 8);
+    }
+
+    #[test]
+    fn remove_drops_the_formation() {
+        let mut v = doc();
+        remove_formation(&mut v, 1).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.formations.len(), 1);
+        assert_eq!(p.formations[0].id, 0);
+    }
+
+    #[test]
+    fn removing_the_selected_formation_repoints_the_selection() {
+        let mut v = doc(); // selected = 0
+        remove_formation(&mut v, 0).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.selected, Some(1), "the selection must never name a deleted formation");
+    }
+
+    #[test]
+    fn removing_an_unselected_formation_leaves_the_selection_alone() {
+        let mut v = doc(); // selected = 0
+        remove_formation(&mut v, 1).unwrap();
+        assert_eq!(project_formations(&v).unwrap().selected, Some(0));
+    }
+
+    #[test]
+    fn removing_the_last_formation_leaves_the_selection_alone() {
+        let mut v = doc();
+        remove_formation(&mut v, 1).unwrap();
+        remove_formation(&mut v, 0).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert!(p.formations.is_empty());
+        assert_eq!(p.selected, Some(0), "nothing to repoint at, so leave the key as it was");
+    }
+
+    #[test]
+    fn remove_refuses_an_unknown_or_negative_id() {
+        let mut v = doc();
+        assert_eq!(remove_formation(&mut v, 9), Err(ProbeError::NoSuchFormation));
+        assert_eq!(remove_formation(&mut v, -4), Err(ProbeError::NoSuchFormation));
+        assert!(stored(&v).iter().any(|(k, _)| matches!(k, Value::Int(-4))));
+    }
+
+    #[test]
+    fn next_id_fills_the_lowest_gap() {
+        let p = project_formations(&doc()).unwrap(); // ids 0 and 1
+        assert_eq!(next_id(&p), 2);
+        let empty = Formations { formations: Vec::new(), selected: None };
+        assert_eq!(next_id(&empty), 0);
+        let gapped = Formations {
+            formations: vec![
+                Formation { id: 0, name: "a".into(), probes: vec![[0.0; 3]], ranges: vec![1.0], range: 1.0, mixed_range: false },
+                Formation { id: 2, name: "b".into(), probes: vec![[0.0; 3]], ranges: vec![1.0], range: 1.0, mixed_range: false },
+            ],
+            selected: None,
+        };
+        assert_eq!(next_id(&gapped), 1, "ids are reused in the corpus, not counted upward");
     }
 }
