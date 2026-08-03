@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, errMessage, type Formation, type Formations } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
-           DEFAULT_RANGE_M, MAX_PROBES, paneScale, project, DRIFTER, drifterHole,
+           DEFAULT_RANGE_M, MAX_PROBES, paneScale, project,
            type Unit, type Plane } from "./probes";
   import { message } from "@tauri-apps/plugin-dialog";
 
@@ -14,9 +14,6 @@
   let error = $state<string | null>(null);
   let selectedId = $state<number | null>(null);
   let unit = $state<Unit>("au");
-  /** Off by default: a hardcoded, single-scenario overlay, not a feature the
-   * user asked to configure. */
-  let showDrifter = $state(false);
 
   // THE EDIT BUFFER, IN METRES. Every displayed number is derived from this;
   // nothing derived is ever read back into it. A field the user has not typed
@@ -349,18 +346,6 @@
         </button>
         <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
 
-        <label class="drifter-toggle">
-          <input type="checkbox" bind:checked={showDrifter} />
-          Drifter wormhole
-        </label>
-        {#if showDrifter}
-          <p class="hint">
-            The drifter geometry is 89 km across; a 0.5 AU formation is about
-            800 times wider — the panes stay scaled to the probes, so the
-            overlay draws near the origin rather than resizing to it.
-          </p>
-        {/if}
-
         <div class="panes">
           {#each PANES as { plane, label } (plane)}
             <figure class="pane">
@@ -374,13 +359,6 @@
                   <circle cx={c.cx} cy={c.cy} r={Math.max(0, draftRange) / scale} class="range" />
                   <circle cx={c.cx} cy={c.cy} r="4" class="probe" class:selected={selectedProbe === n} />
                 {/each}
-                {#if showDrifter}
-                  {@const h = at(drifterHole(), plane)}
-                  <circle cx={PANE / 2} cy={PANE / 2} r="5" class="warp-in" />
-                  <line x1={PANE / 2} y1={PANE / 2} x2={h.cx} y2={h.cy} class="drifter-axis" />
-                  <circle cx={h.cx} cy={h.cy} r={DRIFTER.jumpRange / scale} class="jump-range" />
-                  <circle cx={h.cx} cy={h.cy} r="4" class="hole" />
-                {/if}
               </svg>
             </figure>
           {/each}
@@ -435,22 +413,4 @@
   .range { fill: rgba(79, 156, 240, 0.08); stroke: rgba(79, 156, 240, 0.4); stroke-width: 1; }
   .probe { fill: var(--accent); }
   .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
-
-  .formation .drifter-toggle {
-    display: flex; flex-direction: row; align-items: center; gap: 0.4rem;
-    margin-top: 0.5rem; font-size: 0.85em; color: var(--fg-dim); width: fit-content;
-  }
-  /* The beacon a formation is dropped on: a hollow ring at the origin, so it
-     reads as "you are here" rather than a probe. */
-  .warp-in { fill: none; stroke: var(--ok); stroke-width: 1.5; }
-  /* The (assumed) downward line from the beacon to the hole — dashed so it
-     never reads as one of the solid crosshair axes. */
-  .drifter-axis { stroke: var(--fg-dim); stroke-width: 1; stroke-dasharray: 3 2; }
-  /* The hole's 16 km jump sphere — same idea as .range but in the danger
-     colour and dashed, so a probe's range circle is never mistaken for it. */
-  .jump-range {
-    fill: rgba(224, 108, 96, 0.08); stroke: rgba(224, 108, 96, 0.5);
-    stroke-width: 1; stroke-dasharray: 3 2;
-  }
-  .hole { fill: var(--danger); stroke: var(--fg); stroke-width: 1; }
 </style>
