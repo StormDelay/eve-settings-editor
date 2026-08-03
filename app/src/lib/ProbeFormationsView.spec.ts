@@ -71,18 +71,35 @@ describe("editing", () => {
     expect(lastSet().probes[1]).toEqual([1e9, 2e9, 3e9]);
   });
 
+  test("blurring a field without changing it does not commit", async () => {
+    // The blur handler used to commit unconditionally, so tabbing through a
+    // formation without editing anything still wrote it back to the file and
+    // lit the "unsaved" badge.
+    await open();
+    const nameField = await screen.findByDisplayValue("close");
+    await fireEvent.focus(nameField);
+    await fireEvent.blur(nameField);
+
+    calls.never("set_probe_formation");
+  });
+
   test("typing a negative range is rejected, not sent to set_probe_formation", async () => {
     // A range of zero or less is meaningless in EVE and would otherwise be
     // written straight to the user's real settings file — and it drives a
     // range-circle radius in the visualiser panes, which is invalid SVG if
     // negative (probes.ts/ProbeFormationsView.svelte, review fix round 1).
+    //
+    // The rejected input never updates the draft, so the draft is left
+    // exactly as loaded — and a blur that changes nothing must not commit at
+    // all (a blur-always-commits bug fixed in the same review round this test
+    // is pinned against), so the negative value never has a path to the
+    // backend.
     await open();
     const range = await screen.findByLabelText("formation range");
     await fireEvent.input(range, { target: { value: "-5" } });
     await fireEvent.blur(range);
 
-    expect(lastSet().range).toBeGreaterThan(0);
-    expect(lastSet().range).toBe(74798935350); // the loaded value, untouched
+    calls.never("set_probe_formation");
   });
 
   test("New selects the newly minted formation even when its id fills a gap", async () => {
