@@ -26,25 +26,40 @@ Workflow:
   `set_overview_width` into the Layout view is the smaller, independent half.
   _Added 2026-07-30, narrowed from the detail layer's original entry._
 
-- [ ] **The overview and chat internals have never been measured.** Most of
-  `detail.ts`'s `DETAIL_NOMINAL` is invented, but not all of it: the ability
-  and squadron cell WIDTHS alone are pinned by the measured panel width
-  (`70 + 86x4 + 53 = 467` for the ability grid, `43 + 86x4 + 80 = 467` for the
-  squadron row), and `detail.test.ts` asserts both reach the panel's right edge
-  — so correcting either would need to fail that test first. Their HEIGHTS are
-  guessed, same as the module slot cell, which is invented in both dimensions
-  — nothing pins its width the way the fighter cells' widths are pinned, and
-  its own `detail.test.ts` coverage is a bounds check, not an edge-exact one.
-  What is genuinely guessed, in full: the module slot cell (both dimensions),
-  the ability and squadron cell heights, the ability row pitch, the neocom's
-  top EVE-menu cell, the overview tab-strip and header-band heights, and the
-  fallback width for a column with no stored width. The HUD and fighter
-  PITCHES around all of this are measured (`format-notes.md`, "HUD anchors");
-  only what is drawn inside them is guessed. One screenshot session like the
-  2026-07-28 one settles all of it, and each is a one-line edit. Also open
-  from the same session: whether the chat input box spans the full window
-  width or only the message pane — the editor draws the latter.
-  _Added 2026-07-30._
+- [x] **The overview and chat internals have never been measured.** _Closed
+  2026-08-01. The entry was stale the day after it was written, and the premise
+  it rested on was wrong._ It called for "one screenshot session like the
+  2026-07-28 one" — but that session's shots were full-screen captures, so the
+  overview window, the chat window and the neocom were already IN them. Nothing
+  here ever needed a new capture, only a measuring pass over files already on
+  disk.
+
+  Five of the seven guesses it lists were measured on 2026-07-30, the same day
+  it was filed: the module slot cell (⌀44 on a 51 column pitch), the ability and
+  squadron cell heights (⌀44 and ⌀81 — both round, not rectangular), the ability
+  row pitch (50), and the overview tab-strip (30) and header-band (26) heights,
+  which were both roughly 60 % short. `DETAIL_NOMINAL` is down to two entries.
+
+  The remaining two were settled 2026-08-01 off `hud_battleship.png` and
+  `neocom_docked.png` by pixel profile, no client involved:
+  - **The chat input band spans the FULL window width**, not the message pane —
+    the member splitter stops on the input separator and that separator runs
+    edge to edge. The editor drew the other shape, which `detail.ts` had itself
+    flagged as its one unconfirmed guess. Fixed, with the member band now
+    stopping on the input.
+  - **The neocom reserves TWO bar-width tiles above the button column**, not a
+    flat 40: the EVE menu and the character portrait, each square, first button
+    at 96 on the 48px bar all three shots carry. Neither has an id in
+    `neocom-buttons.json`. So the reserve scales with `neocomWidth`, and every
+    button on a wider-than-40 bar was drawn too high.
+
+  **What is genuinely left is ONE number, and it is not a screenshot away:** the
+  fallback width for an overview column whose width key is absent
+  (`DETAIL_NOMINAL.columnWidth = 80`). It is EVE's own built-in default — the
+  file does not record it and the client never shows it as a number. Recovering
+  it means finding an account whose file omits a width, measuring that column
+  on screen, and trusting the pairing; filed as its own entry when someone wants
+  it. _Added 2026-07-30; closed 2026-08-01._
 - [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
   canvas makes the entire box the grab target, so the cursor sits at an
   arbitrary offset from the anchor — and when the list flips to the other side
@@ -74,52 +89,20 @@ Workflow:
   it. Both are argued in full in `batch.rs::absent_means_default`.
   _Added 2026-07-31._
 
-- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
-  canvas makes the entire box the grab target, so the cursor sits at an
-  arbitrary offset from the anchor — and when the list flips to the other side
-  of the anchor at the middle of the screen, that offset changes sign under the
-  user's hand. In game the handle IS the anchor, which is why it feels right
-  there and slightly wrong here. The flip itself is correct (2026-07-31
-  capture), and the anchor is now MARKED on that corner, which makes it
-  visible — but the grab target is unchanged, so the feel is not. What is
-  missing is making that marker the handle, with the rest of the box selectable
-  but not draggable. Everything needed is
-  already there — `targetRect` places the box from the anchor and the drop
-  writes the anchor — so this is a hit-target change, not a geometry one.
-  _Added 2026-07-31._
-
-- [ ] **Decide whether a Layout copy should carry the target list, and smoke the
-  editor's writes in-game.** The anchor is editable now (`targetOrigin` /
-  `alignHorizontally`, both account-scoped), but deliberately **not** a
-  `batch::Category` — a Layout copy leaves the target account's list where it
-  is. Two reasons to think before adding it: the stored value is a fraction
-  whose denominator encodes the *source* client's neocom width, so a copy across
-  accounts with different neocoms lands up to ~35px off; and `absent_means_default`
-  would make a copy from any of the 87 % of accounts that have never dragged
-  their list **delete** the target's position. Neither is fatal — both match how
-  the other HUD keys already behave — but it changes what a copy writes, so it
-  is the developer's call.
+- [x] **Decide whether a Layout copy should carry the target list, and smoke the
+  editor's writes in-game.** _Closed 2026-07-31 — shipped in 0.26.0._ The answer
+  was yes: `targetOrigin` and `alignHorizontally` are a `batch::Category`, so
+  "Window layout" carries the list's position and orientation, account-wide like
+  the neocom width. Both reservations were accepted rather than solved, and the
+  release notes say so outright — a copy across accounts with different neocom
+  widths lands up to ~35px off, and `absent_means_default` makes a copy from an
+  account that never dragged its own list reset the target's to EVE's default.
   **The write side is smoked** (2026-07-31): edits made in the editor landed
   where the canvas drew them in a running client, position and direction both.
   What that session did NOT cover is a *minted* value — it edited an anchor the
-  file already had, so the denominator was recovered rather than assumed, and
-  `TARGET_MARGIN = 72` is still the one number no capture has exercised.
-
-- [ ] **A drawing layer for the canvas: module slots, fighter abilities, overview
-  columns.** The furniture boxes now cover the right area (2026-07-28) but are
-  still blank rectangles, and a blank rectangle does not tell a player what they
-  are positioning against — recognising the thing is half of why the footprint
-  mattered. The ship-HUD and fighter geometry needed for it is already measured
-  and tabulated in `format-notes.md` ("HUD anchors"): capacitor centre at x 148
-  from the box origin with a ~158px ring, module slot rows starting at x 245 on
-  a 50px pitch, up to 8 columns × 3 rows; fighter ability grid at x 70 on an
-  86px pitch, up to 5 columns × 3 rows, with the squadron row at x 43 / y ~178.
-  All offsets are from each element's own top-left, so they can be expressed as
-  percentages of the drawn box and rescale with the canvas for free. Overview
-  columns would need their own measuring pass — nothing is captured for them yet.
-  Decoration only: it must not reach `hudRects`, the snap lines, or any drag.
-  Split out of the HUD-footprint task, which shipped the sizing half.
-  _Added 2026-07-28._
+  file already had, so the denominator was recovered rather than assumed. That
+  gap and the old-preset case are the open entry above, which is where
+  `TARGET_MARGIN = 72` now lives.
 
 - [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
@@ -535,7 +518,10 @@ Workflow:
   the missing arms turned out to matter — a fixture keying the tab name as
   `Bytes` had been reading back as "Tab 0", with an `ops.rs` assertion pinning
   that as expected. Real files key it `StrTable(52)`, so no character was
-  affected. Items (4)-(7) remain open ((5) and (7) are UI work).
+  affected. **Only (7) remains** — (4) and (6) were done 2026-07-29 and (5) closed
+  2026-07-30 with no change, all struck through above — so what is left of this
+  bundle is a fresh look at the tab-management UI, which is no longer waiting on
+  the slices it was deferred behind.
 
 - [ ] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
   review).** (a) **Per-window placement on a windowless account:** creating a tab
@@ -558,48 +544,31 @@ Workflow:
 ## Promoted to milestones
 
 Graduated out of the small-tasks pen into planned milestones on 2026-07-17.
-Ordering (**re-sequenced 2026-07-18**): M4 batch apply (shipped v0.5.0) and **M5
-character-centric batch apply (shipped v0.6.0)** are both done. Next is the
-**codec/refactor (Shared/Ref) foundation**, *then* the **layout-canvas window
-stacks** milestone — reordered because window-stack membership editing is the
-heaviest structural editor yet and should sit on a correct encoder rather than
-on the inline-first hack it would otherwise have to be un-built from. (M5
-absorbed the two carried-in M4 items — the resolution-differ preview warning and
-the target-list folder-label disambiguation — both now under Shipped 0.6.0.)
+**All four have shipped — nothing here is pending.** Kept as the record of where
+these items went.
 
-**Codec/refactor (Shared/Ref) foundation — NEXT.** Designed 2026-07-18:
-`docs/superpowers/specs/2026-07-18-codec-reshare-foundation-design.md`. Goal: a
-`blue_marshal::reshare` canonicalization pass (immutable-only dedup) that the
-inline-first editors run before encode, so any editor can inline → edit →
-reshare → encode and ship a compact, self-contained file instead of a ~1.5× one
-the client re-deduplicates. Byte-identity to the client and dropping the
-`Shared`/`Ref` fidelity tags are explicit non-goals (CCP's slot numbering is
-opaque). This subsumes both items below:
+- **M4 batch apply** (v0.5.0) and **M5 character-centric batch apply** (v0.6.0).
+  M5 absorbed the two carried-in M4 items — the resolution-differ preview warning
+  and the target-list folder-label disambiguation — both under Shipped 0.6.0.
 
-- **Re-share correctly instead of inlining on overview save.** Overview column
-  edits currently inline every `Shared`/`Ref` before encoding to avoid dangling
-  refs (`RefBeforeStore`), which produces a valid but ~1.5x larger file that no
-  longer matches what the EVE client would write. Re-derive a correct canonical
-  `Shared`/`Ref` numbering after edits (encoder-side auto-dedup, sharing
-  structurally-equal values in emit order) so the saved file matches the client's
-  dedup. _Added 2026-07-16 (M3c)._
+- **Codec/refactor (Shared/Ref) foundation.** Designed 2026-07-18 in
+  `docs/superpowers/specs/2026-07-18-codec-reshare-foundation-design.md`; shipped
+  as `blue_marshal::reshare`, an immutable-only canonicalization the inline-first
+  editors run before encode, so an editor can inline → edit → reshare → encode
+  and write a compact file instead of the ~1.5× one the client re-deduplicates.
+  Byte-identity to the client was an explicit non-goal. Both items promoted under
+  it are closed with it: the overview save re-shares instead of inlining, and
+  `overview.rs`'s private `inline_user` is gone in favour of
+  `treewalk::inline_all`. Its cost was measured 2026-07-30 (reshare 10 ms on the
+  largest real account file) — see Shipped.
 
-- **Dedup `inline_user` into `treewalk::inline_all`.** The autofill milestone
-  added `treewalk::inline_all` (drop all `Shared`/`Ref` sharing); `overview.rs`'s
-  private `inline_user` is now functionally identical. Delete the private copy and
-  have `overview.rs` call the shared helper. Do it as its own change gated by the
-  overview Shared/Ref encode tests — `overview.rs` is delicate. _Added 2026-07-17._
-
-**Layout-canvas window stacks — AFTER the codec foundation.** Design worked out
-and written up 2026-07-18 in
-`docs/superpowers/specs/2026-07-18-layout-canvas-window-stacks-design.md`
-(includes the corpus-verified stack model: `stacksWindows` member→container +
-`preferredIdxInStack3` tab order; stack ids are window-id refs, never ints, so
-the current Int-only stack field is dead). Scope: model stacks, draw one tabbed
-rectangle per open stack, coherent move/resize, and membership editing
-(unstack / add-to-existing / reorder); new-stack creation gated on a live
-capture experiment. Membership editing depends on the codec foundation above.
-_Added 2026-07-17; designed 2026-07-18._
+- **Layout-canvas window stacks.** Designed 2026-07-18 in
+  `docs/superpowers/specs/2026-07-18-layout-canvas-window-stacks-design.md`
+  (corpus-verified model: `stacksWindows` member→container +
+  `preferredIdxInStack3` tab order; stack ids are window-id refs, never ints).
+  Shipped as stacks you build by Shift-dragging, with membership editing and tab
+  reorder. One question from it is still open, filed above: what a one-member
+  stack should do.
 
 ## Shipped
 
