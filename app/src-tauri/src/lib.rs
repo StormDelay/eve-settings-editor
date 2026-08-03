@@ -346,6 +346,30 @@ fn neocom_reset(state: tauri::State<'_, AppState>) -> Result<settings_model::Neo
 }
 
 #[tauri::command]
+fn probe_formations(state: tauri::State<'_, AppState>) -> Result<settings_model::Formations, ErrDto> {
+    ops::probe_formations(&state)
+}
+
+#[tauri::command]
+fn set_probe_formation(
+    state: tauri::State<'_, AppState>,
+    id: Option<i64>,
+    name: String,
+    probes: Vec<[f64; 3]>,
+    range: f64,
+) -> Result<settings_model::Formations, ErrDto> {
+    ops::set_probe_formation(&state, id, &name, probes, range)
+}
+
+#[tauri::command]
+fn remove_probe_formation(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<settings_model::Formations, ErrDto> {
+    ops::remove_probe_formation(&state, id)
+}
+
+#[tauri::command]
 fn hud_layout(state: tauri::State<'_, AppState>) -> Result<settings_model::Hud, ErrDto> {
     ops::hud_layout(&state)
 }
@@ -496,6 +520,7 @@ pub fn run() {
             settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
+            probe_formations, set_probe_formation, remove_probe_formation,
             hud_layout, set_hud_value,
             preferences, set_preferences
         ])
