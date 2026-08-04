@@ -3,7 +3,7 @@ import { describe, expect, test, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
 import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
 import { calls } from "$lib/test/setup";
-import { message } from "@tauri-apps/plugin-dialog";
+import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { Formation, Formations, FormationSpec } from "$lib/api";
 
 // The view raises dialogs on every failure path; jsdom has no Tauri to answer
@@ -308,5 +308,65 @@ describe("clipboard sharing", () => {
     window.dispatchEvent(ev);
 
     calls.never("probe_parse_yaml");
+  });
+});
+
+describe("file sharing", () => {
+  test("Export writes the formations that were ticked, drafts included", async () => {
+    await open();
+    vi.mocked(saveDialog).mockResolvedValueOnce("C:/tmp/formations.yaml");
+    const name = await screen.findByDisplayValue("close");
+    await fireEvent.input(name, { target: { value: "closer" } });
+
+    await fireEvent.click(screen.getByText("Export…"));
+    await screen.findByText("Export 1");
+    await fireEvent.click(screen.getByText("Export 1"));
+
+    await vi.waitFor(() => expect(calls.of("probe_export")).toHaveLength(1));
+    const sent = calls.of("probe_export")[0].args as { path: string; formations: FormationSpec[] };
+    expect(sent.path).toBe("C:/tmp/formations.yaml");
+    expect(sent.formations.map((f) => f.name)).toEqual(["closer"]);
+  });
+
+  test("cancelling the save dialog opens no picker and writes nothing", async () => {
+    await open();
+    vi.mocked(saveDialog).mockResolvedValueOnce(null);
+    await fireEvent.click(screen.getByText("Export…"));
+    await vi.waitFor(() => expect(vi.mocked(saveDialog)).toHaveBeenCalled());
+    expect(screen.queryByTestId("picker-backdrop")).toBeNull();
+    calls.never("probe_export");
+  });
+
+  test("Import adds only the formations that were ticked", async () => {
+    await open();
+    vi.mocked(openDialog).mockResolvedValueOnce("C:/tmp/fleet.yaml");
+    calls.stub("probe_import", [
+      { name: "a", probes: [[1, 0, 0]], ranges: [74798935350] },
+      { name: "b", probes: [[2, 0, 0]], ranges: [74798935350] },
+    ] satisfies FormationSpec[]);
+    calls.stub("add_probe_formations", FORMATIONS);
+
+    await fireEvent.click(screen.getByText("Import…"));
+    await screen.findByText("Import 2");
+    await fireEvent.click(screen.getByLabelText("b"));
+    await fireEvent.click(screen.getByText("Import 1"));
+
+    await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
+    const sent = calls.of("add_probe_formations")[0].args as { formations: FormationSpec[] };
+    expect(sent.formations.map((f) => f.name)).toEqual(["a"]);
+  });
+
+  test("an unreadable file is reported and opens no picker", async () => {
+    await open();
+    vi.mocked(openDialog).mockResolvedValueOnce("C:/tmp/overview.yaml");
+    calls.stub("probe_import", () => {
+      throw { code: "not_formations", message: "This file contains no probe formations." };
+    });
+
+    await fireEvent.click(screen.getByText("Import…"));
+
+    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
+    expect(screen.queryByTestId("picker-backdrop")).toBeNull();
+    calls.never("add_probe_formations");
   });
 });

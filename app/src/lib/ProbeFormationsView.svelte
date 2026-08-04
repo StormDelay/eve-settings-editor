@@ -3,8 +3,9 @@
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import ProbeViewer from "./ProbeViewer.svelte";
+  import FormationPicker from "./FormationPicker.svelte";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
@@ -296,6 +297,78 @@
     await pasteText(text);
   }
 
+  /** The open picker, or null. `items` is what to choose from; `confirm` runs
+   * with the chosen formations. One slot for both flows, because only one
+   * picker is ever open. */
+  let picker = $state<{
+    title: string;
+    items: FormationSpec[];
+    label: string;
+    confirm: (chosen: FormationSpec[]) => Promise<void>;
+  } | null>(null);
+
+  async function exportFormations() {
+    if (!visible.length) return;
+    const path = await saveDialog({
+      defaultPath: "probe-formations.yaml",
+      filters: [{ name: "Probe formations", extensions: ["yaml"] }],
+    });
+    if (!path) return;
+    picker = {
+      title: "Export formations",
+      items: visible,
+      label: "Export",
+      confirm: async (chosen) => {
+        await api.probeExport(path, chosen);
+        await message(`Exported ${chosen.length} formation(s).`, { title: "Export formations" });
+      },
+    };
+  }
+
+  async function importFormations() {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "Probe formations", extensions: ["yaml", "yml"] }],
+    });
+    if (typeof picked !== "string") return;
+    let items: FormationSpec[];
+    try {
+      items = await api.probeImport(picked);
+    } catch (e) {
+      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      return;
+    }
+    if (!items.length) {
+      await message("That file contains no formations.", { title: "Import formations" });
+      return;
+    }
+    picker = {
+      title: `Import formations from ${picked.split(/[\\/]/).pop()}`,
+      items,
+      label: "Import",
+      confirm: async (chosen) => {
+        await addShared(chosen);
+        await message(
+          `Imported ${chosen.length} formation(s). Save to write them to the account file.`,
+          { title: "Import formations" },
+        );
+      },
+    };
+  }
+
+  /** Close the picker, THEN run its action — a dialog raised by the action
+   * would otherwise stack on top of a modal the user can no longer reach. */
+  async function runPicker(indices: number[]) {
+    const p = picker;
+    picker = null;
+    if (!p) return;
+    try {
+      await p.confirm(indices.map((i) => p.items[i]));
+    } catch (e) {
+      await message(errMessage(e), { title: p.title, kind: "error" });
+    }
+  }
+
   /** True when the event came from somewhere the OS clipboard must keep
    * behaving normally. A tab full of coordinate fields is exactly where Ctrl-C
    * has to go on copying the digits the user just selected. */
@@ -359,6 +432,9 @@
         <button onclick={duplicate} disabled={!current}>Duplicate</button>
         <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
         <button class="danger" onclick={remove} disabled={!current}>Delete</button>
+        <button onclick={exportFormations} disabled={!visible.length}
+                title="Write formations out as a shareable file">Export…</button>
+        <button onclick={importFormations} title="Add formations from a shared file">Import…</button>
       </div>
     </aside>
 
@@ -487,6 +563,11 @@
     {/if}
   </div>
   </div>
+{/if}
+
+{#if picker}
+  <FormationPicker title={picker.title} items={picker.items} confirmLabel={picker.label}
+                   onconfirm={runPicker} oncancel={() => (picker = null)} />
 {/if}
 
 <style>

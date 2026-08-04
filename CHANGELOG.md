@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Copy a probe formation to the clipboard and paste it back, with Ctrl+C and Ctrl+V.
+- Export any number of probe formations to a file, and import any number from one.
+
 ## [0.28.0] - 2026-08-04
 
 The probe formation, in 3D and draggable — and a scan range on every probe.
