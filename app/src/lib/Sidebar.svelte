@@ -7,6 +7,7 @@
   import { byResolvedName, resolvedName } from "./filesort.svelte";
   import { primaryProfileDir, profileLabels, profileNote } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
+  import AboutPanel from "./AboutPanel.svelte";
 
   let {
     onOpen,
@@ -36,6 +37,7 @@
   let error: string | null = $state(null);
   let flash: string | null = $state(null);
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let aboutOpen = $state(false);
   let namesBusy = $state(false);
   // Hide user-made backups / anomalous names, keeping only EVE's own working
   // file names (core_char_<id>.dat / core_user_<id>.dat). On by default.
@@ -126,6 +128,7 @@
         >Accounts</button>
       <button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first"
         >Batch apply</button>
+      <button onclick={() => (aboutOpen = true)} title="Version and licence">About</button>
     </div>
     <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
       >«</button>
@@ -173,6 +176,8 @@
     {/if}
   {/each}
 </aside>
+
+{#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
 
 <style>
   .toggle {
