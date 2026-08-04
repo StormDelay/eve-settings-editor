@@ -165,8 +165,17 @@ fn read_spec(y: &Yaml) -> Result<FormationSpec, ProbeError> {
 /// Read shared YAML text. Every entry must be readable: skipping a malformed
 /// one silently would hand the user a partial import they did not ask for.
 pub fn parse_formations(text: &str) -> Result<Vec<FormationSpec>, ProbeError> {
+    // `yaml-rust2` strips a BOM only on its byte-reading path, which this does
+    // not use, and neither does `fs::read_to_string` — left in, U+FEFF is
+    // scanned into the first key and `formations` misses, reporting a valid
+    // file as the wrong one. Several editors and PowerShell write one.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let docs = YamlLoader::load_from_str(text)
         .map_err(|e| ProbeError::BadYaml { message: e.to_string() })?;
+    // Reading the first and dropping the rest would be a silent partial import.
+    if docs.len() > 1 {
+        return Err(bad("this holds several YAML documents; keep the formations in one, with no '---' separator"));
+    }
     let Some(Yaml::Hash(top)) = docs.into_iter().next() else {
         return Err(ProbeError::NotFormations);
     };
@@ -319,6 +328,39 @@ formations:
         assert!(matches!(parse_formations(no_range), Err(ProbeError::BadYaml { .. })));
         let no_name = "formations:\n  - range: 1\n    probes:\n      - [1, 2, 3]\n";
         assert!(matches!(parse_formations(no_name), Err(ProbeError::BadYaml { .. })));
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_make_a_valid_file_the_wrong_file() {
+        // PowerShell's `Out-File`/`Set-Content -Encoding utf8` and several
+        // editors write one, so this is reachable the moment a shared file is
+        // edited outside this app — and a BOM lands inside the first KEY, so
+        // the `formations` lookup misses and the user is told they picked the
+        // wrong file.
+        let text = "\u{feff}formations:\n  - name: c\n    range: 100\n    probes:\n      - [1, 2, 3]\n";
+        let out = parse_formations(text).unwrap();
+        assert_eq!(out[0].name, "c");
+        assert_eq!(out[0].probes, vec![[1.0, 2.0, 3.0]]);
+    }
+
+    #[test]
+    fn a_multi_document_stream_is_rejected_not_half_read() {
+        // Taking the first document and discarding the rest is a silent partial
+        // import, which the format forbids outright.
+        let text = "\
+formations:
+  - name: a
+    range: 100
+    probes:
+      - [1, 2, 3]
+---
+formations:
+  - name: b
+    range: 100
+    probes:
+      - [4, 5, 6]
+";
+        assert!(matches!(parse_formations(text), Err(ProbeError::BadYaml { .. })));
     }
 
     #[test]
