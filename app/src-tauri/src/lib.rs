@@ -4,6 +4,7 @@ mod names;
 mod ops;
 mod prefs;
 mod presets;
+mod scenes;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;

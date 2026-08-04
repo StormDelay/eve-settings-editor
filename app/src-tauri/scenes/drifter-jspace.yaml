@@ -1,0 +1,40 @@
+# Drifter wormhole — J-space side, looking back at the hole you came in through.
+#
+# Positions are relative to the FORMATION CENTRE, which is where your ship sits
+# when it launches probes. This scene assumes you are sitting on the J-space
+# side warp-in at 0 and launching from there.
+#
+# Axes are EVE's: X and Z are the horizontal plane, Y is up. +X is west and +Z
+# is north — measured in-game, see NORTH_AZ_DEG in probes.ts.
+#
+# HOW GOOD ARE THESE NUMBERS? Worse than the K-space file's. This file is
+# yours — if you measure better ones, edit it.
+#
+#   87.5 km    From the same player-made diagram, which gives both sides the
+#              same distance.
+#   bearing    West, per the same diagram. Unverified.
+#   +30        ABOVE. NOTHING HERE IS MEASURED — unlike the K-space side, no
+#              capture of this geometry was available, so both the angle and its
+#              sign are the diagram's word. The sign is at least consistent with
+#              the K-space side, where it WAS measured and where every published
+#              source had it backwards.
+#   16 km      The jump sphere. Sourced from a player guide, not measured.
+scene:
+  name: 'Drifter wormhole — J-space side'
+  objects:
+    - label: 'Warp-in'
+      km: 0
+    - label: 'Wormhole'
+      km: 87.5
+      bearing: 270
+      elevation: 30
+      radius_km: 16
+
+    # Coordinates work too, if that is how your source gives them. Give every
+    # object EXACTLY ONE of `km`, `xyz_km` or `xyz_m` — never two, never none.
+    #
+    # - label: 'Something you measured'
+    #   xyz_km: [12.5, 3, -8]
+    #
+    # - label: 'Something measured in metres'
+    #   xyz_m: [12500, 3000, -8000]
