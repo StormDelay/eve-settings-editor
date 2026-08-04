@@ -12,11 +12,15 @@ import ProbeViewer from "$lib/ProbeViewer.svelte";
 const noop = () => {};
 const SIZE = 520; // must match the component's own viewport constant
 const CENTRE = SIZE / 2;
+const CUBE_PX = 15; // likewise — a cube corner is at most 13 px from its centre
 
 /** Two probes well off the origin, so "did the camera re-target" is a large,
- * unambiguous movement rather than a rounding difference. */
+ * unambiguous movement rather than a rounding difference. They differ in Z as
+ * well as laterally, so in the opening side view they sit at genuinely
+ * different depths — which is what makes the cube-shape check below mean
+ * something. */
 const PROBES: [number, number, number][] = [
-  [2e10, 0, 0],
+  [2e10, 0, 1e10],
   [0, 2e10, 0],
 ];
 const RANGES = [74798935350, 74798935350];
@@ -130,6 +134,31 @@ describe("double-click camera shortcuts", () => {
     // Focused on the probe at +X, still in the side view: the +Y probe stays
     // above the middle of the view. A flip to top would put it level with it.
     expect(at(marker(c, 2)).y).toBeLessThan(CENTRE);
+  });
+
+  test("every probe's cube is drawn identically, wherever it sits in the frame", async () => {
+    // A cube is a marker, not a photographed object. Projecting its eight
+    // world corners the way the rest of the scene is projected makes its
+    // apparent turn depend on where it lands in the frame — so cubes away from
+    // the centre skew, and the skew slides about as the camera moves, which
+    // reads as each cube spinning on the spot. Parallel projection instead:
+    // orientation from the camera alone, so orbiting reveals faces and nothing
+    // turns.
+    //
+    // Two probes deliberately far apart and at different depths. Their cubes
+    // must come out as the same shape, offset only by where each probe is.
+    const c = mount();
+    const shapes = (n: number) => {
+      const o = at(marker(c, n));
+      return [...c.querySelectorAll("polygon.probe-face")]
+        .map((p) => p.getAttribute("points")!.split(" ").map((q) => q.split(",").map(Number)))
+        .filter((pts) => Math.hypot(pts[0][0] - o.x, pts[0][1] - o.y) < CUBE_PX)
+        .map((pts) => pts.map(([x, y]) => `${(x - o.x).toFixed(4)},${(y - o.y).toFixed(4)}`).join(" "))
+        .sort();
+    };
+
+    expect(shapes(1)).toHaveLength(3); // three faces, never more: the other three point away
+    expect(shapes(1)).toEqual(shapes(2));
   });
 
   test("every probe carries its own handles, not just the selected one", async () => {
