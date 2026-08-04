@@ -6,9 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-04
+
+Probe formations you can hand to someone else — and a version number you can read.
+
 ### Added
 - Copy a probe formation to the clipboard and paste it back, with Ctrl+C and Ctrl+V.
 - Export any number of probe formations to a file, and import any number from one.
+- An `About` button in the sidebar, showing which version is running.
 
 ## [0.28.0] - 2026-08-04
 
