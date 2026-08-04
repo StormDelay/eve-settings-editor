@@ -255,6 +255,7 @@
   function startAxis(e: PointerEvent, n: number, comp: 0 | 1 | 2) {
     if (e.button !== 0 || !probes[n]) return;
     e.stopPropagation();
+    pressed = n;
     // Grabbing a probe's handle is a way of picking that probe, so the table
     // row follows the drag rather than staying on whatever was chosen before.
     onselect(n);
@@ -271,6 +272,7 @@
   function startPlane(e: PointerEvent, n: number, lock: 0 | 1 | 2) {
     if (e.button !== 0 || !probes[n]) return;
     e.stopPropagation();
+    pressed = n;
     onselect(n);
     // The press point is recorded for the same reason the axis drag records
     // one: the probe moves by how far the pointer travelled across the plane,
@@ -317,6 +319,12 @@
     // The deselect happens on pointerUP and only if nothing moved: orbiting is
     // how you get at a gizmo arrow pointing at the camera, so a left-drag must
     // not drop the selection it exists to serve.
+    // Only a press that landed on the background itself clears what a double
+    // click would mean. The centre marker deliberately lets its press through
+    // to here so the camera can still be orbited from it, and must not be
+    // forgotten on the way.
+    const t = e.target as Element;
+    if (t === svgEl || t.classList.contains("bg")) pressed = null;
     camDrag = { button: e.button, x: e.clientX, y: e.clientY,
                 ox: e.clientX, oy: e.clientY, moved: false };
     svgEl?.setPointerCapture(e.pointerId);
@@ -392,17 +400,28 @@
    * away the view you just built. */
   const focusOn = (t: Vec3) => (cam = { ...cam, target: [t[0], t[1], t[2]] });
 
-  /** Double-clicking empty space flips between the two views the flat panes
-   * used to show. It fires on the background alone: the probes, the centre
-   * marker and the gizmo handles all have their own meaning for a double
-   * click, and the pointer capture taken on press is released before the click
-   * lands, so the target here is the real element under the pointer. */
-  function onDblClick(e: MouseEvent) {
-    const t = e.target as Element;
-    if (t !== svgEl && !t.classList.contains("bg")) return;
+  /** What the last press landed on, and so what a double click means.
+   *
+   * A double click cannot be read from its own event target here. Grabbing a
+   * cube face or the background takes pointer capture on the svg, and a
+   * captured pointer retargets the click that follows to the capture element —
+   * so an `ondblclick` on the face never fires, and the svg's sees only itself
+   * and cannot tell a cube from empty space. The press, which happens before
+   * any capture is taken, is the only reliable witness. */
+  let pressed: number | "centre" | null = null;
+
+  /** Double click: on a probe or the formation centre it becomes what the
+   * camera orbits around; on empty space it flips between the two views the
+   * flat panes used to show.
+   *
+   * All three are decided here from `pressed` rather than from the event's own
+   * target, for the reason given there. */
+  function onDblClick() {
     // This is the second click of the pair, so cancel the deselect the first
-    // one queued: flipping the view is not a reason to lose your probe.
+    // one queued: neither focusing nor flipping is a reason to lose a probe.
     clearTimeout(deselectTimer);
+    if (pressed === "centre") return focusOn([0, 0, 0]);
+    if (typeof pressed === "number" && probes[pressed]) return focusOn(probes[pressed]);
     cam = { ...cam, ...(Math.abs(cam.pitch) < 45 ? TOP_VIEW : SIDE_VIEW) };
   }
 
@@ -469,9 +488,9 @@
             onpointerdown={(e) => {
               if (e.button !== 0) return;
               e.stopPropagation();
+              pressed = d.i;
               onselect(d.i);
-            }}
-            ondblclick={() => focusOn(d.p)} />
+            }} />
       <!-- The cube's faces ARE the plane handles: drag a face and the probe
            moves in that face's plane, which is how the client does it. A
            separate quad floating beside each axis was the old arrangement and
@@ -481,8 +500,7 @@
                  class="probe-face" class:live={planeLive(d.i, f.lock)}
                  role="button" tabindex="-1"
                  aria-label={`drag probe ${d.i + 1} in plane`}
-                 onpointerdown={(e) => startPlane(e, d.i, f.lock)}
-                 ondblclick={() => focusOn(d.p)} />
+                 onpointerdown={(e) => startPlane(e, d.i, f.lock)} />
       {/each}
     {/each}
 
@@ -494,9 +512,12 @@
     {#if origin}
       <circle cx={origin.x} cy={origin.y} r="6.5" class="centre" />
       <circle cx={origin.x} cy={origin.y} r="1.6" class="centre-dot" />
+      <!-- No stopPropagation: the press falls through to the camera so the
+           view can still be orbited from here. It only records what a double
+           click would mean. -->
       <circle cx={origin.x} cy={origin.y} r="10" class="centre-grab"
               role="button" tabindex="-1" aria-label="formation centre"
-              ondblclick={() => focusOn([0, 0, 0])} />
+              onpointerdown={(e) => { if (e.button === 0) pressed = "centre"; }} />
     {/if}
 
     {#if !vectors}
@@ -596,7 +617,7 @@
      keyboard affordance here; it is pure noise. What the ring was badly trying
      to say — which handle you are on — is said properly by `.live` below.
      The numeric table remains the keyboard path. */
-  .probe-grab:focus, .centre-grab:focus, .grab:focus, .handle:focus { outline: none; }
+  .probe-face:focus, .probe-grab:focus, .centre-grab:focus, .grab:focus { outline: none; }
   .viewer-actions { display: flex; gap: 4px; align-items: center; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
@@ -621,9 +642,4 @@
      invisible. */
   .arm.live { stroke-width: 3.5; filter: brightness(1.5); }
   .tip.live { r: 5; filter: brightness(1.5); }
-  .handle { fill-opacity: 0.25; stroke-width: 1; cursor: move; }
-  /* A plane handle hit-tests itself, so :hover carries it — but a drag holds
-     pointer capture on the svg, and :hover stops matching the moment the
-     pointer leaves the quad. `.live` is what keeps it lit for the whole drag. */
-  .handle:hover, .handle.live { fill-opacity: 0.55; stroke-width: 2; }
 </style>
