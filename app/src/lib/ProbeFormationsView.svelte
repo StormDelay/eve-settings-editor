@@ -22,7 +22,7 @@
   // into therefore keeps its exact f64 from the file, which is the whole reason
   // this is not bound straight to the inputs (spec §4.2).
   let draftName = $state("");
-  let draftRange = $state(0);
+  let draftRanges = $state<number[]>([]);
   let draftProbes = $state<[number, number, number][]>([]);
   /** Last angles entered per probe, so a probe pulled to r == 0 and back does
    * not silently snap onto the X axis. */
@@ -35,7 +35,7 @@
   const PANE = 320; // px, both panes square and identical
   // One scale for both panes, so a distance that looks longer in one pane
   // genuinely is longer — never derive each pane's scale separately.
-  const scale = $derived(paneScale(draftProbes, draftRange, PANE));
+  const scale = $derived(paneScale(draftProbes, Math.max(0, ...draftRanges), PANE));
 
   /** Pane pixel coordinates for a probe, origin at the pane centre. SVG y
    * grows downward, so the vertical data axis is negated. */
@@ -73,6 +73,12 @@
 
   const current = $derived(loaded?.formations.find((f) => f.id === selectedId) ?? null);
 
+  /** The range every probe shares, or `null` when they differ — the header
+   * picker shows blank rather than claiming one of the values applies to all. */
+  const uniformRange = $derived(
+    draftRanges.length && draftRanges.every((r) => r === draftRanges[0]) ? draftRanges[0] : null,
+  );
+
   /** Whether the draft differs from the loaded formation. A blur that changed
    * nothing must not write the file or light the "unsaved" badge — and since
    * reading accepts `List | Tuple` for the probe list but writing always emits
@@ -81,20 +87,11 @@
     if (!current) return false;
     return (
       draftName !== current.name ||
-      draftRange !== current.range ||
       draftProbes.length !== current.probes.length ||
+      draftRanges.some((r, i) => r !== current.ranges[i]) ||
       draftProbes.some((p, i) => p.some((v, j) => v !== current.probes[i][j]))
     );
   }
-
-  /** The probes whose range differs from the first, 1-based to match the table.
-   * `ranges` is the file's own per-probe values, which is why this can name
-   * rows rather than just reporting that they disagree (spec §4.3). */
-  const mixedProbeLabel = $derived.by(() => {
-    const rs = current?.ranges ?? [];
-    const odd = rs.map((r, n) => (r === rs[0] ? null : n + 1)).filter((n) => n !== null);
-    return odd.length ? `probes ${odd.join(", ")}` : "";
-  });
 
   async function reload() {
     if (!userOpen) { loaded = null; return; }
@@ -118,8 +115,8 @@
   function select(f: Formation | null) {
     selectedId = f?.id ?? null;
     draftName = f?.name ?? "";
-    draftRange = f?.range ?? 0;
     draftProbes = f ? f.probes.map((p) => [...p] as [number, number, number]) : [];
+    draftRanges = f ? [...f.ranges] : [];
     lastAngles = draftProbes.map((p) => { const s = toSpherical(p); return { az: s.az, el: s.el }; });
   }
 
@@ -129,7 +126,7 @@
     // identify it by position.
     const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
     try {
-      loaded = await api.setProbeFormation(id, draftName, draftProbes, draftRange);
+      loaded = await api.setProbeFormation(id, draftName, draftProbes, draftRanges);
       onUserDirty();
       if (id === null) select(loaded.formations.find((f) => !before.has(f.id)) ?? null);
     } catch (e) {
@@ -177,22 +174,41 @@
     draftProbes = next;
   }
 
+  /** One probe's scan range. */
+  function setRange(i: number, metres: number) {
+    draftRanges = draftRanges.map((r, j) => (j === i ? metres : r));
+    commit();
+  }
+
+  /** Every probe's scan range — uniform is the common case, and eight pickers
+   * would be a regression on the single field this replaces. */
+  function setAllRanges(metres: number) {
+    draftRanges = draftRanges.map(() => metres);
+    commit();
+  }
+
   function addProbe() {
     if (draftProbes.length >= MAX_PROBES) return;
-    draftProbes = [...draftProbes, [draftRange / 2, 0, 0]];
+    // The new probe inherits the last probe's range rather than the default:
+    // a formation is normally uniform, and inheriting keeps it that way
+    // without the user having to notice a picker.
+    const r = draftRanges[draftRanges.length - 1] ?? DEFAULT_RANGE_M;
+    draftProbes = [...draftProbes, [r / 2, 0, 0]];
+    draftRanges = [...draftRanges, r];
     lastAngles = [...lastAngles, { az: 0, el: 0 }];
   }
 
   function removeProbe(i: number) {
     if (draftProbes.length <= 1) return;
     draftProbes = draftProbes.filter((_, j) => j !== i);
+    draftRanges = draftRanges.filter((_, j) => j !== i);
     lastAngles = lastAngles.filter((_, j) => j !== i);
   }
 
   async function createNew() {
     draftName = "New formation";
-    draftRange = DEFAULT_RANGE_M;
     draftProbes = cubeFormation(DEFAULT_RANGE_M);
+    draftRanges = draftProbes.map(() => DEFAULT_RANGE_M);
     lastAngles = draftProbes.map((p) => { const s = toSpherical(p); return { az: s.az, el: s.el }; });
     await commit(null);
   }
@@ -247,31 +263,20 @@
           <label>
             Name
             <input value={draftName}
-                   disabled={current.mixed_range}
                    oninput={(e) => (draftName = e.currentTarget.value)}
                    onblur={blurField} />
           </label>
           <label>
-            Range
+            Range (all probes)
             <!-- Always AU, and always one of EVE's slider stops: the in-game
                  control has no free value, so neither does this. A picker also
                  makes a non-positive range unwritable by construction. -->
-            <select aria-label="formation range"
-                    disabled={current.mixed_range}
-                    value={draftRange}
-                    onchange={(e) => {
-                      draftRange = Number(e.currentTarget.value);
-                      commit();
-                    }}>
+            <select aria-label="range for every probe"
+                    value={uniformRange}
+                    onchange={(e) => setAllRanges(Number(e.currentTarget.value))}>
               {#each RANGE_STEPS_M as m, i}
                 <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
               {/each}
-              {#if !RANGE_STEPS_M.includes(draftRange)}
-                <!-- A range this file holds that EVE's slider cannot produce.
-                     Offered so the value is shown rather than silently snapped
-                     to a neighbour — the same rule mixed_range follows. -->
-                <option value={draftRange}>{formatUnit(draftRange, "au")} AU (not a slider stop)</option>
-              {/if}
             </select>
           </label>
           <span class="units">
@@ -281,23 +286,13 @@
           </span>
         </div>
 
-        {#if current.mixed_range}
-          <p class="warn">
-            This formation's probes carry different ranges
-            ({mixedProbeLabel}). The editor writes one range for the whole
-            formation, so it is shown read-only here rather than silently
-            flattening them on your next edit.
-            <button class="link" onclick={duplicate}>Copy with uniform range</button>
-            to get a copy you can edit — the original is left untouched.
-          </p>
-        {/if}
-
         <table>
           <thead>
             <tr>
               <th>#</th>
               <th>X</th><th>Y</th><th>Z</th>
               <th>distance</th><th>azimuth</th><th>elevation</th>
+              <th>range</th>
               <th></th>
             </tr>
           </thead>
@@ -310,7 +305,6 @@
                   <td class="u" data-unit={unitLabel}>
                     <input aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
                            value={shown(`${n}:${axis}`, formatUnit(p[axis], unit))}
-                           disabled={current.mixed_range}
                            oninput={(e) => { typeField(`${n}:${axis}`, e.currentTarget.value);
                              setAxis(n, axis as 0 | 1 | 2, e.currentTarget.value); }}
                            onfocus={() => focusField(`${n}:${axis}`, formatUnit(p[axis], unit))}
@@ -320,7 +314,6 @@
                 <td class="u" data-unit={unitLabel}>
                   <input aria-label={`probe ${n + 1} distance`}
                          value={shown(`${n}:dist`, formatUnit(s.r, unit))}
-                         disabled={current.mixed_range}
                          oninput={(e) => { typeField(`${n}:dist`, e.currentTarget.value);
                            setDistance(n, e.currentTarget.value); }}
                          onfocus={() => focusField(`${n}:dist`, formatUnit(s.r, unit))}
@@ -329,7 +322,6 @@
                 <td class="u" data-unit="°">
                   <input aria-label={`probe ${n + 1} azimuth`}
                          value={shown(`${n}:az`, s.az.toFixed(1))}
-                         disabled={current.mixed_range}
                          oninput={(e) => { typeField(`${n}:az`, e.currentTarget.value);
                            setAngle(n, "az", e.currentTarget.value); }}
                          onfocus={() => focusField(`${n}:az`, s.az.toFixed(1))}
@@ -338,15 +330,31 @@
                 <td class="u" data-unit="°">
                   <input aria-label={`probe ${n + 1} elevation`}
                          value={shown(`${n}:el`, s.el.toFixed(1))}
-                         disabled={current.mixed_range}
                          oninput={(e) => { typeField(`${n}:el`, e.currentTarget.value);
                            setAngle(n, "el", e.currentTarget.value); }}
                          onfocus={() => focusField(`${n}:el`, s.el.toFixed(1))}
                          onblur={blurField} />
                 </td>
                 <td>
+                  <select aria-label={`probe ${n + 1} range`}
+                          value={draftRanges[n]}
+                          onchange={(e) => setRange(n, Number(e.currentTarget.value))}>
+                    {#each RANGE_STEPS_M as m, i}
+                      <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
+                    {/each}
+                    {#if !RANGE_STEPS_M.includes(draftRanges[n])}
+                      <!-- A range this file holds that EVE's slider cannot
+                           produce. Offered so the value is shown rather than
+                           silently snapped to a neighbour. -->
+                      <option value={draftRanges[n]}>
+                        {formatUnit(draftRanges[n], "au")} AU (not a slider stop)
+                      </option>
+                    {/if}
+                  </select>
+                </td>
+                <td>
                   <button class="mini-visible" title="Remove this probe"
-                          disabled={draftProbes.length <= 1 || current.mixed_range}
+                          disabled={draftProbes.length <= 1}
                           onclick={() => { removeProbe(n); commit(); }}>×</button>
                 </td>
               </tr>
@@ -354,7 +362,7 @@
           </tbody>
         </table>
         <button onclick={() => { addProbe(); commit(); }}
-                disabled={draftProbes.length >= MAX_PROBES || current.mixed_range}>
+                disabled={draftProbes.length >= MAX_PROBES}>
           + probe
         </button>
         <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
@@ -369,7 +377,7 @@
                 <line x1="0" y1={PANE / 2} x2={PANE} y2={PANE / 2} class="axis" />
                 {#each draftProbes as p, n}
                   {@const c = at(p, plane)}
-                  <circle cx={c.cx} cy={c.cy} r={Math.max(0, draftRange) / scale} class="range" />
+                  <circle cx={c.cx} cy={c.cy} r={Math.max(0, draftRanges[n] ?? 0) / scale} class="range" />
                   <circle cx={c.cx} cy={c.cy} r="4" class="probe" class:selected={selectedProbe === n} />
                 {/each}
               </svg>
@@ -406,7 +414,6 @@
   .units { display: flex; gap: 2px; }
   .units button { padding: 1px 8px; font-size: 0.85em; }
   .units button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-  .warn { color: var(--warn); font-size: 0.85em; }
   /* `width: auto` and not 100%: a full-width table spreads the leftover space
      between the columns, which put the X/Y/Z fields an inch apart. Let the
      columns hug their inputs instead. */
