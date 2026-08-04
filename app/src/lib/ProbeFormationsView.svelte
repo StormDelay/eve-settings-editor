@@ -98,6 +98,9 @@
 
   function select(f: Formation | null) {
     selectedId = f?.id ?? null;
+    // Index into the OLD formation. Left standing it drops the drag gizmo onto
+    // an arbitrary probe of the one just opened.
+    selectedProbe = null;
     draftName = f?.name ?? "";
     draftProbes = f ? f.probes.map((p) => [...p] as [number, number, number]) : [];
     draftRanges = f ? [...f.ranges] : [];
@@ -195,6 +198,7 @@
     draftProbes = draftProbes.filter((_, j) => j !== i);
     draftRanges = draftRanges.filter((_, j) => j !== i);
     lastAngles = lastAngles.filter((_, j) => j !== i);
+    selectedProbe = null; // every index at or past `i` just shifted under it
   }
 
   async function createNew() {
@@ -359,7 +363,8 @@
         </button>
         <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
 
-        <ProbeViewer probes={draftProbes} ranges={draftRanges} selected={selectedProbe}
+        <ProbeViewer probes={draftProbes} ranges={draftRanges} formationId={selectedId}
+                     selected={selectedProbe}
                      onselect={(i) => (selectedProbe = i)}
                      onmove={moveProbe}
                      oncommit={() => { if (draftChanged()) commit(); }} />

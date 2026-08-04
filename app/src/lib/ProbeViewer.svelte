@@ -7,13 +7,16 @@
   // everything drawn goes through one depth sort.
   import {
     cameraBasis, projectPoint, silhouette, fitDistance, worldPerPixel,
-    axisScreen, axisDrag, planeHit,
-    PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type Vec3,
+    axisScreen, dragPosition,
+    PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type HandleDrag, type Vec3,
   } from "./probes";
 
-  let { probes, ranges, selected, onselect, onmove, oncommit }: {
+  let { probes, ranges, formationId, selected, onselect, onmove, oncommit }: {
     probes: Vec3[];
     ranges: number[];
+    /** The formation on show. The re-fit key: a different formation is a
+     * different subject and gets framed, a retyped number is not. */
+    formationId: number | null;
     selected: number | null;
     onselect: (i: number | null) => void;
     onmove: (i: number, p: Vec3) => void;
@@ -30,19 +33,25 @@
   let cam = $state<Camera>({ ...SIDE_VIEW, dist: 1, target: [0, 0, 0] });
   const basis = $derived(cameraBasis(cam));
 
-  /** Frame the whole formation. Also the opening view, so it starts where the
-   * two panes it replaces used to. */
+  /** Frame the probes — NOT their range spheres. Also the opening view, so it
+   * starts where the two panes it replaces used to.
+   *
+   * The spheres are context, and framing both is impossible when they differ by
+   * orders of magnitude: "on grid" is ±10 000 km at 0.5 AU range, so framing the
+   * spheres shrinks the formation to 0.03 px. The trade is that at this distance
+   * the eye is inside every sphere and no circles draw (`silhouette` returns
+   * null) until the user wheels out — absent context beats an invisible subject. */
   function fit() {
-    cam = { ...cam, target: [0, 0, 0], dist: fitDistance(probes, ranges) };
+    cam = { ...cam, target: [0, 0, 0], dist: fitDistance(probes) };
   }
-  // Re-fit whenever the formation being shown changes shape, but never on a
-  // drag: `onmove` mutates a probe's position, and re-fitting mid-drag would
-  // move the camera out from under the pointer.
-  let fitKey = $derived(`${probes.length}:${ranges.join()}`);
-  let lastFitKey = "";
+  // Re-fit when the formation being shown changes, and only then: editing a
+  // number must not move the camera, and neither must a drag — `onmove` mutates
+  // a probe's position, and re-fitting mid-drag would move the camera out from
+  // under the pointer.
+  let lastFitId: number | null | undefined = undefined;
   $effect(() => {
-    if (fitKey !== lastFitKey) {
-      lastFitKey = fitKey;
+    if (formationId !== lastFitId) {
+      lastFitId = formationId;
       fit();
     }
   });
@@ -52,7 +61,7 @@
     probes
       .map((p, i) => {
         const s = projectPoint(p, basis, SIZE);
-        return s === null ? null : { i, p, s, r: silhouette(s.dist, ranges[i] ?? 0, SIZE) };
+        return s === null ? null : { i, s, r: silhouette(s.dist, ranges[i] ?? 0, SIZE) };
       })
       .filter((d) => d !== null)
       .sort((a, b) => b.s.depth - a.s.depth),
@@ -127,15 +136,9 @@
     return { arms, quads };
   });
 
-  /** A handle drag in progress. `p0` is the probe's position at pointerdown —
-   * the source for every locked component, so a drag never rewrites an axis it
-   * does not own (spec §4.7). */
-  let handleDrag = $state<
-    | { kind: "axis"; i: number; comp: 0 | 1 | 2; p0: Vec3; sx: number; sy: number;
-        a: { dx: number; dy: number; pxPerM: number } }
-    | { kind: "plane"; i: number; lock: 0 | 1 | 2; p0: Vec3 }
-    | null
-  >(null);
+  /** A handle drag in progress. The maths lives in `probes.ts`; this file keeps
+   * only the event plumbing. */
+  let handleDrag = $state<HandleDrag | null>(null);
 
   /** Pointer position in viewport units. The SVG is square and scales with its
    * box, so client pixels convert by the box's own width. */
@@ -170,43 +173,34 @@
   function dragTo(e: PointerEvent) {
     if (!handleDrag) return;
     const l = local(e);
-    if (handleDrag.kind === "axis") {
-      const { i, comp, p0, a } = handleDrag;
-      const m = axisDrag(a, l.x - handleDrag.sx, l.y - handleDrag.sy);
-      const next: Vec3 = [...p0];
-      next[comp] = p0[comp] + m; // ONLY this component
-      onmove(i, next);
-    } else {
-      const { i, lock, p0 } = handleDrag;
-      const n: Vec3 = [0, 0, 0];
-      n[lock] = 1;
-      const hit = planeHit(l.x, l.y, basis, SIZE, p0, n);
-      if (!hit) return; // plane edge-on this frame
-      const next: Vec3 = [...hit];
-      // The locked component comes from p0, NOT from the intersection: the
-      // maths returns it with float noise on top, which would displace the
-      // probe along an axis nobody dragged, on every single drag.
-      next[lock] = p0[lock];
-      onmove(i, next);
-    }
+    const next = dragPosition(handleDrag, l.x, l.y, basis, SIZE);
+    if (next) onmove(handleDrag.i, next); // null: the plane went edge-on this frame
   }
 
   // --- camera controls -----------------------------------------------------
   // Left-drag orbits, right-drag pans, wheel zooms — the client's own bindings.
 
   let svgEl = $state<SVGSVGElement | undefined>();
-  /** Which button started the current camera drag, or null. */
-  let camDrag = $state<{ button: number; x: number; y: number } | null>(null);
+  /** The current camera drag: which button started it, the last pointer
+   * position (for the per-frame delta), where it started, and whether it has
+   * travelled far enough to count as a drag rather than a click. */
+  let camDrag = $state<
+    { button: number; x: number; y: number; ox: number; oy: number; moved: boolean } | null
+  >(null);
+  /** How far a press may wander and still deselect. A click is rarely still. */
+  const CLICK_SLOP = 4; // px
 
   function onBackgroundDown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 2) return;
-    // Every probe marker's own handler stops propagation on its way here, so
-    // any left press that reaches this one has already landed on empty space
-    // — no target check needed. (A future handle added to this view must keep
-    // that contract: stopPropagation on its own left-button press, or it
-    // deselects through it.)
-    if (e.button === 0) onselect(null);
-    camDrag = { button: e.button, x: e.clientX, y: e.clientY };
+    // Every probe marker's and gizmo handle's own handler stops propagation on
+    // its way here, so any left press that reaches this one has already landed
+    // on empty space — no target check needed. (A future handle added to this
+    // view must keep that contract, or it starts a camera drag through it.)
+    // The deselect happens on pointerUP and only if nothing moved: orbiting is
+    // how you get at a gizmo arrow pointing at the camera, so a left-drag must
+    // not drop the selection it exists to serve.
+    camDrag = { button: e.button, x: e.clientX, y: e.clientY,
+                ox: e.clientX, oy: e.clientY, moved: false };
     svgEl?.setPointerCapture(e.pointerId);
   }
 
@@ -218,7 +212,9 @@
     if (!camDrag) return;
     const dx = e.clientX - camDrag.x;
     const dy = e.clientY - camDrag.y;
-    camDrag = { ...camDrag, x: e.clientX, y: e.clientY };
+    const moved = camDrag.moved ||
+      Math.abs(e.clientX - camDrag.ox) + Math.abs(e.clientY - camDrag.oy) > CLICK_SLOP;
+    camDrag = { ...camDrag, x: e.clientX, y: e.clientY, moved };
     if (camDrag.button === 0) {
       cam = {
         ...cam,
@@ -245,6 +241,10 @@
     // The file is written once, at the end of the drag — the same rule the
     // table's fields follow on blur.
     if (handleDrag) oncommit();
+    // A left click on empty space — press and release without travelling — is
+    // the deselect. A handle drag or a marker press never sets `camDrag`, so
+    // neither can reach this.
+    else if (camDrag?.button === 0 && !camDrag.moved) onselect(null);
     handleDrag = null;
     camDrag = null;
     svgEl?.releasePointerCapture(e.pointerId);
@@ -252,6 +252,9 @@
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    // Mid-drag the pixels-per-metre captured at pointerdown is what the drag
+    // converts through; zooming now would leave it stale for the rest of it.
+    if (handleDrag) return;
     // Exponential, so one wheel step feels the same at every scale — and the
     // scales here span orders of magnitude.
     cam = { ...cam, dist: cam.dist * Math.exp(Math.sign(e.deltaY) * 0.15) };
@@ -276,11 +279,6 @@
       </marker>
     </defs>
 
-    {#each axisMarks as a}
-      <line x1={a.o.x} y1={a.o.y} x2={a.e.x} y2={a.e.y} class="axis" />
-      <text x={a.e.x} y={a.e.y} class="axis-label">{a.label}</text>
-    {/each}
-
     {#if vectors}
       {@const o = projectPoint([0, 0, 0], basis, SIZE)}
       {#if o}
@@ -295,9 +293,14 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
+      <!-- tabindex="-1", like the gizmo handles below: the <svg role="img">
+           makes this whole subtree presentational, so a tab stop here is one
+           nothing can activate (these are pointer-only). Out of the tab order,
+           but still a role the linter and the pointer contract both want. The
+           numeric table is the keyboard path. -->
       <rect x={d.s.x - 5} y={d.s.y - 5} width="10" height="10"
             class="probe" class:selected={selected === d.i}
-            role="button" tabindex="0"
+            role="button" tabindex="-1"
             aria-label={`probe ${d.i + 1}`}
             onpointerdown={(e) => {
               if (e.button !== 0) return;
@@ -325,6 +328,14 @@
         {/each}
       </g>
     {/if}
+
+    <!-- Last, so it paints over the translucent range circles: this indicator
+         is the whole mitigation for the top view's +Z pointing down the screen
+         (spec §4.5), and it has to be legible to do that job. -->
+    {#each axisMarks as a}
+      <line x1={a.o.x} y1={a.o.y} x2={a.e.x} y2={a.e.y} class="axis" />
+      <text x={a.e.x} y={a.e.y} class="axis-label">{a.label}</text>
+    {/each}
   </svg>
 
   <div class="viewer-actions">
@@ -347,6 +358,11 @@
     cursor: grab;
   }
   .bg { fill: var(--bg-panel); }
+  /* Nothing decorative hit-tests. A range circle's fill is a paint even at
+     alpha 0.06, so SVG's default `visiblePainted` would hit-test it — and at
+     any fitted zoom the circles blanket the markers, so a click meant for a
+     probe would land on a circle, bubble to the background and deselect. */
+  .axis, .axis-label, .range, .vec, .vec-head { pointer-events: none; }
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }
