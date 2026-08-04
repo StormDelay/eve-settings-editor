@@ -600,11 +600,13 @@ saved probe arrangements from the scanner's formation menu.
   "stored origin is not the probe centroid" bullet below raises, seen from the
   other side.
 
-  **Not established: whether the frame is world-fixed at launch.** If the client
-  rotated a formation's offsets by the ship's heading, there would be no north
-  axis at all. Two launches agreed, but both were probably at a similar heading,
-  so this is consistent-with rather than tested. To settle it: recall, turn the
-  ship ~90°, relaunch, and check the cardinals have not moved.
+  **The frame is world-fixed, and there was never another possibility.** EVE has
+  no ship-relative frame for a formation to be rotated into: ships are spheres
+  with a position and no orientation the physics uses, so "the ship's heading"
+  is not a thing the client could apply. Corroborated by the 42 AU round-trip
+  above — it came back an **axis-aligned** box quantised per axis on powers of
+  two, which a frame converted from ship-relative coordinates at launch would
+  have smeared across axes instead.
 - **A formation saved in-game does not always come back as it was authored, and
   what it loses depends on where the ship was.** Measured in-game 2026-08-04, one
   authored cube of ±2 309 401 m per axis (4000 km from centre), 8 Sisters Combat

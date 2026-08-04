@@ -23,9 +23,13 @@ below as the record of what was tried, not as the recommended shape.
 Result: `+Z` north, `−X` east, `−Z` south, `+X` west, `+Y` up.
 `NORTH_AZ_DEG = 90`, `EAST_SIGN = 1`.
 
-**§2.3's rotation control was not run.** Two launches agreed, but both were
-probably at a similar heading, so a world-fixed frame is consistent-with rather
-than tested. It stays open in `docs/settings-field-reference.md`.
+**§2.1's third unknown was never a real one, and §2.3's rotation control is
+dropped.** EVE has no ship-relative frame for a formation to be rotated into —
+ships are spheres with a position and no orientation the physics uses — so the
+frame is world-fixed by construction, not by measurement. The control was
+designed against a possibility that does not exist in the game. Both are struck
+through below rather than deleted, so the reasoning that produced them stays
+readable.
 
 Builds on `2026-08-04-probe-3d-viewer-design.md`, referred to below as **the
 viewer spec**. Nothing here changes the file format, the exchange format, or what
@@ -60,16 +64,23 @@ Three things, and one screenshot pair settles all three:
 1. **Which direction is north** in the formation's frame.
 2. **Which way bearings increase** from it — whether east lies at
    `north + 90°` or `north − 90°` in `toSpherical`'s az convention.
-3. **Whether the frame is world-fixed at all.** If the client rotates a
+3. ~~**Whether the frame is world-fixed at all.** If the client rotates a
    formation's offsets by the ship's heading when the probes launch, there is no
-   north axis, the question is malformed, and §3 does not get built.
+   north axis, the question is malformed, and §3 does not get built.~~
 
-(3) is the one that matters most and the one nothing in the repo answers.
-`docs/settings-field-reference.md` records that a formation re-saved at 42 AU came
-back as an **axis-aligned box** with per-axis power-of-two quantisation — which is
-circumstantial evidence for a world-fixed frame, because a frame rotated to an
-arbitrary heading would have smeared the quantisation across axes instead of
-landing it cleanly on each. Circumstantial is not measured.
+~~(3) is the one that matters most and the one nothing in the repo answers.~~
+
+**(3) was a phantom.** EVE has no ship-relative frame to rotate into: ships are
+spheres with a position and no orientation the physics uses, so there is no
+heading for the client to apply. The frame is world-fixed by construction. This
+was pointed out by the developer after the fact, and it is a domain fact the
+spec's author did not have.
+
+The repo's own corroboration was already there and was undervalued as
+"circumstantial": `docs/settings-field-reference.md` records a formation re-saved
+at 42 AU coming back as an **axis-aligned box** with per-axis power-of-two
+quantisation, which a frame converted from ship-relative coordinates at launch
+would have smeared across axes rather than landing cleanly on each.
 
 ### 2.2 The marker formation
 
@@ -121,13 +132,11 @@ measurement.
    authored offsets as the client is capable of.
 2. Launch the marker formation. Tactical overlay on. Screenshot, with the
    overview visible so the distance column identifies each bracket.
-3. **The control.** Recall the probes, turn the ship roughly 90°, relaunch the
-   same formation, screenshot again.
-   - Bearings unchanged → frame is world-fixed. Read north off shot 1 and build
-     §3.
-   - Bearings rotated with the ship → frame is ship-relative. **Stop.** Record
-     the finding in the field reference and close this spec unbuilt; a compass
-     would be a decoration that lies.
+3. ~~**The control.** Recall the probes, turn the ship roughly 90°, relaunch the
+   same formation, screenshot again. Bearings unchanged → frame is world-fixed;
+   bearings rotated with the ship → **stop**, a compass would be a decoration
+   that lies.~~ **Dropped** — see the status note: there is no ship heading in
+   EVE for the client to apply, so this control tests nothing.
 
 Scale is not load-bearing: a bracket's bearing is a direction and reads at any
 distance. If 200–900 km clusters too tightly against the overlay ring to separate,
