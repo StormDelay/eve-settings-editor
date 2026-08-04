@@ -7,6 +7,10 @@ import {
   fromUnit,
   toSpherical,
   toCartesian,
+  cardinals,
+  horizonRing,
+  NORTH_AZ_DEG,
+  EAST_SIGN,
   cubeFormation,
   formatUnit,
   cameraBasis,
@@ -51,6 +55,49 @@ check("a probe on +X is azimuth 0, elevation 0", (() => {
 check("a probe on +Z is azimuth 90", near(toSpherical([0, 0, 100]).az, 90));
 check("a probe straight up is elevation 90", near(toSpherical([0, 100, 0]).el, 90));
 check("a probe straight down is elevation -90", near(toSpherical([0, -100, 0]).el, -90));
+
+// --- compass ---------------------------------------------------------------
+// The in-game measurement (2026-08-04), restated as assertions: launch three
+// probes on +X, two on +Y and one on −Z, and the tactical overlay puts them
+// west, up and south. Everything below fails if a constant or the trig flips.
+const axis = (label: string) => cardinals().find((c) => c.label === label)!.v;
+check("north is +Z", (() => {
+  const v = axis("N");
+  return near(v[0], 0) && near(v[1], 0) && near(v[2], 1);
+})());
+check("west is +X — the three-probe cluster the overlay put west", (() => {
+  const v = axis("W");
+  return near(v[0], 1) && near(v[1], 0) && near(v[2], 0);
+})());
+check("south is -Z — the lone probe the overlay put south", (() => {
+  const v = axis("S");
+  return near(v[0], 0) && near(v[1], 0) && near(v[2], -1);
+})());
+check("east is -X", (() => {
+  const v = axis("E");
+  return near(v[0], -1) && near(v[1], 0) && near(v[2], 0);
+})());
+check("north sits at NORTH_AZ_DEG in the table's own azimuth",
+  near(toSpherical(axis("N")).az, NORTH_AZ_DEG));
+check("east is 90 degrees from north, on EAST_SIGN's side", (() => {
+  const az = toSpherical(axis("E")).az; // atan2 range is (-180, 180]
+  return near(((az - NORTH_AZ_DEG) * EAST_SIGN + 360) % 360, 90);
+})());
+check("the four cardinals are unit, horizontal and 90 degrees apart", (() => {
+  const c = cardinals();
+  if (c.length !== 4) return false;
+  return c.every(({ v }, i) => {
+    const nxt = c[(i + 1) % 4].v;
+    // Perpendicular neighbours + unit length is the whole invariant.
+    return near(Math.hypot(v[0], v[1], v[2]), 1) && near(v[1], 0)
+      && near(v[0] * nxt[0] + v[2] * nxt[2], 0);
+  });
+})());
+check("the horizon ring is horizontal and at the asked radius", (() => {
+  const pts = horizonRing(2500, 16);
+  return pts.length === 16
+    && pts.every((p) => near(p[1], 0) && near(Math.hypot(p[0], p[2]), 2500, 1e-9));
+})());
 
 check("cartesian round-trips through spherical", (() => {
   const p: [number, number, number] = [-1199120384, -115136512, -415997952];
