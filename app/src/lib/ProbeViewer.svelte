@@ -576,15 +576,21 @@
 </div>
 
 <style>
-  .viewer { display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; width: 100%; }
+  /* Fills whatever height the parent column leaves it — the buttons and the
+     hint line below stay in view, which a fixed box did not manage. */
+  .viewer {
+    display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start;
+    width: 100%; flex: 1; min-height: 0;
+  }
   .viewer svg {
-    /* Takes the width it is given and stays square, so a maximised window
-       gets a big view instead of a stamp in the corner. Capped against the
-       WINDOW height, not the container's: a square that fills a wide panel
-       would otherwise be taller than the screen and push the table off it. */
-    width: 100%;
-    max-width: min(100%, 72vh);
+    /* Square, sized off the leftover HEIGHT rather than the width: the panel
+       is far wider than it is tall, so width-first would run off the bottom.
+       max-width keeps it honest on a narrow window, where width binds first. */
+    flex: 1;
+    min-height: 220px;
     aspect-ratio: 1;
+    width: auto;
+    max-width: 100%;
     border: 1px solid var(--border); border-radius: 3px;
     touch-action: none; /* or a drag scrolls the page instead of orbiting */
     /* An orbit that crosses the axis labels would otherwise start selecting

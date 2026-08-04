@@ -357,11 +357,14 @@
             {/each}
           </tbody>
         </table>
-        <button onclick={() => { addProbe(); commit(); }}
-                disabled={draftProbes.length >= MAX_PROBES}>
-          + probe
-        </button>
-        <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
+        <!-- Wrapped, so the column layout below keeps these two on one line. -->
+        <div class="probe-actions">
+          <button onclick={() => { addProbe(); commit(); }}
+                  disabled={draftProbes.length >= MAX_PROBES}>
+            + probe
+          </button>
+          <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
+        </div>
 
         <ProbeViewer probes={draftProbes} ranges={draftRanges} formationId={selectedId}
                      selected={selectedProbe}
@@ -392,7 +395,15 @@
   .formation-list li button.active { background: var(--accent); color: var(--bg); border-radius: 3px; }
   .list-actions { display: flex; flex-wrap: wrap; gap: 4px; }
   .list-actions .danger { border-color: #a33; }
-  .formation { flex: 1; min-width: 0; }
+  /* A column, so the viewer can take exactly the height the table leaves it
+     rather than a fixed box that runs off the bottom of the window. Everything
+     above it keeps its natural height; only the viewer flexes. */
+  .formation {
+    flex: 1; min-width: 0; align-self: stretch;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .formation > :not(:last-child) { flex: none; }
+  .probe-actions { display: flex; align-items: center; }
   .formation .row { display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 0.5rem; }
   .formation label { display: flex; flex-direction: column; gap: 2px; font-size: 0.85em; color: var(--fg-dim); }
   .units { display: flex; gap: 2px; }
