@@ -148,6 +148,13 @@
   // another (spec §4.6).
   const ARM_PX = 46;   // arrow half-length
   const PLANE_PX = 18; // plane-handle side, offset from the probe by the same
+  /** Each arrow stops short of the probe by this much, leaving the middle
+   * clear. Two reasons, and the second is not cosmetic: a single line through
+   * the centre puts all three arrows' fat grab strokes on top of the probe, so
+   * the first click of a double click selects it and the SECOND lands on an
+   * arrow — no `dblclick` ever reaches the probe. Wider than the probe's own
+   * 22 px grab square, so the two never overlap. */
+  const GAP_PX = 14;
 
   const UNIT: Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const AXIS_CLASS = ["gx", "gy", "gz"];
@@ -170,9 +177,24 @@
     if (!c) return null;
     const w = worldPerPixel(c.depth, SIZE);
     const arms = UNIT.map((axis, i) => {
-      const pos = projectPoint(step(p0, axis, w * ARM_PX), basis, SIZE);
-      const neg = projectPoint(step(p0, axis, -w * ARM_PX), basis, SIZE);
-      return pos && neg ? { i, pos, neg, cls: AXIS_CLASS[i] } : null;
+      // Each arrow is two segments with the probe in the gap between them,
+      // never one line through it. The gap is measured in SCREEN pixels, not
+      // stepped in world space: an axis tilted towards the camera foreshortens,
+      // so a world-space gap collapses on screen exactly when the arrow lies
+      // over the probe and the clearance matters most.
+      const halves = [1, -1].map((s) => {
+        const out = projectPoint(step(p0, axis, s * w * ARM_PX), basis, SIZE);
+        if (!out) return null;
+        const dx = out.x - c.x;
+        const dy = out.y - c.y;
+        const len = Math.hypot(dx, dy);
+        // Foreshortened to shorter than the gap: the whole half would be a
+        // stub sitting on the probe. Drop it — this is the same edge-on case
+        // `axisScreen` refuses to drag.
+        if (len <= GAP_PX) return null;
+        return { inner: { x: c.x + (dx / len) * GAP_PX, y: c.y + (dy / len) * GAP_PX }, outer: out };
+      }).filter((h) => h !== null);
+      return halves.length ? { i, halves, cls: AXIS_CLASS[i] } : null;
     }).filter((a) => a !== null);
     const quads = PLANES.map(({ a, b, lock }) => {
       const o = w * PLANE_PX;
@@ -386,16 +408,6 @@
       {/if}
     {/if}
 
-    <!-- The formation centre: what every probe coordinate is an offset from,
-         and the camera's home. Before the probes, so a probe sitting on top of
-         it wins both the paint and the click. -->
-    {#if origin}
-      <circle cx={origin.x} cy={origin.y} r="4" class="centre" />
-      <circle cx={origin.x} cy={origin.y} r="11" class="centre-grab"
-              role="button" tabindex="-1" aria-label="formation centre"
-              ondblclick={() => focusOn([0, 0, 0])} />
-    {/if}
-
     {#each drawn as d (d.i)}
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
@@ -426,6 +438,19 @@
             ondblclick={() => focusOn(d.p)} />
     {/each}
 
+    <!-- The formation centre: what every probe coordinate is an offset from,
+         and the camera's home. AFTER the probes, so it is not buried under a
+         cube — a marker you cannot find is a marker you cannot double-click —
+         but BEFORE the gizmo, so a selected probe's handles still win the
+         clicks near it. -->
+    {#if origin}
+      <circle cx={origin.x} cy={origin.y} r="6.5" class="centre" />
+      <circle cx={origin.x} cy={origin.y} r="1.6" class="centre-dot" />
+      <circle cx={origin.x} cy={origin.y} r="10" class="centre-grab"
+              role="button" tabindex="-1" aria-label="formation centre"
+              ondblclick={() => focusOn([0, 0, 0])} />
+    {/if}
+
     {#if gizmo && !vectors}
       <g class="gizmo">
         {#each gizmo.quads as q}
@@ -434,18 +459,19 @@
                    onpointerdown={(e) => startPlane(e, q.lock)} />
         {/each}
         {#each gizmo.arms as a}
-          <line x1={a.neg.x} y1={a.neg.y} x2={a.pos.x} y2={a.pos.y}
-                class="arm {a.cls}" class:live={axisLive(a.i)} />
-          <!-- The grab target is a fat transparent line over the thin visible
-               one, so a 1 px arrow is still catchable with a mouse. It also
-               carries the hover, because the arm it covers cannot. -->
-          <line x1={a.neg.x} y1={a.neg.y} x2={a.pos.x} y2={a.pos.y} class="grab"
-                role="button" tabindex="-1" aria-label={`drag probe along ${"XYZ"[a.i]}`}
-                onpointerdown={(e) => startAxis(e, a.i as 0 | 1 | 2)}
-                onpointerenter={() => (hoveredAxis = a.i)}
-                onpointerleave={() => { if (hoveredAxis === a.i) hoveredAxis = null; }} />
-          <circle cx={a.pos.x} cy={a.pos.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
-          <circle cx={a.neg.x} cy={a.neg.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
+          {#each a.halves as h}
+            <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y}
+                  class="arm {a.cls}" class:live={axisLive(a.i)} />
+            <!-- The grab target is a fat transparent line over the thin visible
+                 one, so a 1 px arrow is still catchable with a mouse. It also
+                 carries the hover, because the arm it covers cannot. -->
+            <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y} class="grab"
+                  role="button" tabindex="-1" aria-label={`drag probe along ${"XYZ"[a.i]}`}
+                  onpointerdown={(e) => startAxis(e, a.i as 0 | 1 | 2)}
+                  onpointerenter={() => (hoveredAxis = a.i)}
+                  onpointerleave={() => { if (hoveredAxis === a.i) hoveredAxis = null; }} />
+            <circle cx={h.outer.x} cy={h.outer.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
+          {/each}
         {/each}
       </g>
     {/if}
@@ -504,7 +530,11 @@
      as one flat blob. */
   .probe-face { pointer-events: none; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.6; stroke-linejoin: round; }
   .probe-grab { fill: transparent; cursor: pointer; }
-  .centre { fill: none; stroke: var(--fg-dim); stroke-width: 1.5; pointer-events: none; }
+  /* A ring, not a disc, so a probe sitting on the formation centre still reads
+     through it. Brighter than the axis stubs it sits among, or it is lost in
+     the place they all meet. */
+  .centre { fill: none; stroke: var(--fg); stroke-width: 1.3; opacity: 0.75; pointer-events: none; }
+  .centre-dot { fill: var(--fg); opacity: 0.75; pointer-events: none; }
   .centre-grab { fill: transparent; cursor: pointer; }
   /* Pressing a handle focuses it, and the UA then outlines its BOUNDING BOX —
      which for a diagonal arrow is a large rectangle across the scene. These
