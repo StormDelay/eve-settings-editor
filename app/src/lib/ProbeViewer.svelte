@@ -80,19 +80,18 @@
   // placeable by eye — so a probe draws as a shaded cube, as the client's own
   // view does.
   //
-  // The cube is projected in PARALLEL: its orientation comes from the camera
-  // basis alone, and its corners are laid out in screen space around the
-  // probe's own perspective-correct position. So every cube presents the same
-  // face at the same angle, orbiting reveals faces, and no cube ever turns on
-  // the spot.
+  // A cube is an object sitting in the scene, and it is rendered as one: eight
+  // corners in WORLD space, axis-aligned to EVE's axes, each projected like
+  // anything else. Its orientation is fixed in the world — the +Y face is the
+  // up face from every camera — and moving the camera simply shows the scene
+  // from somewhere else.
   //
-  // The obvious alternative — projecting the eight world corners like anything
-  // else in the scene — was tried and is wrong here. It makes a cube's apparent
-  // turn depend on where it happens to sit in the frame, so cubes away from
-  // the centre skew, and the skew slides around as the camera moves: they read
-  // as spinning rather than as sitting still. That skew is a property of the
-  // LENS, and nothing here is photographing anything. The probes' POSITIONS
-  // carry the scene; a cube only has to say which way is up.
+  // A parallel projection was tried here (orientation from the camera basis,
+  // corners laid out in screen space) on the theory that off-axis perspective
+  // skew was reading as the cubes spinning. It was worse: taking a cube's
+  // orientation from the camera is precisely what makes it turn on the spot
+  // rather than sit still, so the cubes stopped agreeing with the scene they
+  // were in. Do not reintroduce it.
 
   /** Cube width in screen px — the same for every probe however far away it
    * is, so a distant probe stays as clickable as a near one. */
@@ -104,44 +103,44 @@
   const CUBE_RGB = [79, 156, 240]; // --accent
   const CUBE_SEL_RGB = [217, 164, 65]; // --warn
 
-  /** The cube every probe draws, as screen-space corner offsets from its
-   * centre — back-face culled, since only three of the six can face the
-   * camera. One shape serves the whole formation, so this is computed once a
-   * frame rather than once a probe. */
-  const cubeTemplate = $derived.by(() => {
-    const half = CUBE_PX / 2;
-    // Each world axis as a screen vector, plus how much it points at the eye.
-    // SVG's y grows downward, hence the negated up term.
-    const ax = UNIT.map((e) => ({
-      x: (e[0] * basis.right[0] + e[1] * basis.right[1] + e[2] * basis.right[2]) * half,
-      y: -(e[0] * basis.up[0] + e[1] * basis.up[1] + e[2] * basis.up[2]) * half,
-      toward: -(e[0] * basis.fwd[0] + e[1] * basis.fwd[1] + e[2] * basis.fwd[2]),
-    }));
-    return [0, 1, 2].map((k) => {
+  /** One probe's cube as its visible faces, back-face culled — only three of
+   * the six can ever face the camera — each with its own shade.
+   *
+   * The half-side is taken from this probe's own depth, which cancels the
+   * perspective shrink and leaves every cube the same number of pixels across
+   * however far away it is. That is a deliberate readability choice, not a
+   * depth cue: a distant probe still has to be findable and clickable. It does
+   * not affect orientation — scaling a cube about its own centre changes its
+   * size and nothing else. */
+  function cubeFaces(p: Vec3, depth: number, sel: boolean) {
+    const h = worldPerPixel(depth, SIZE) * (CUBE_PX / 2);
+    const rgb = sel ? CUBE_SEL_RGB : CUBE_RGB;
+    const faces: { pts: string; fill: string }[] = [];
+    for (let k = 0; k < 3; k++) {
       const u = (k + 1) % 3;
       const v = (k + 2) % 3;
-      const s = ax[k].toward >= 0 ? 1 : -1; // the face on the camera's side
+      // Of the two faces on this axis, the one the eye is on the side of.
+      const s = basis.eye[k] - p[k] > 0 ? 1 : -1;
+      const proj = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, c]) => {
+        const q = [p[0], p[1], p[2]];
+        q[k] += s * h;
+        q[u] += a * h;
+        q[v] += c * h;
+        return projectPoint(q as Vec3, basis, SIZE);
+      });
+      if (proj.some((q) => q === null)) continue;
       // Wrap lighting, not plain lambert: a face pointing away from the light
       // would otherwise sit at flat ambient, and so would the two beside it —
       // three identical greys, which is exactly the flatness this is here to
       // fix. Wrapping keeps all six distinct from every angle.
       const shade = AMBIENT + (1 - AMBIENT) * (0.5 + 0.5 * s * LIGHT[k]);
-      return {
-        shade,
-        corners: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => ({
-          x: s * ax[k].x + a * ax[u].x + b * ax[v].x,
-          y: s * ax[k].y + a * ax[u].y + b * ax[v].y,
-        })),
-      };
-    });
-  });
-
-  /** A face's polygon, placed at a probe's projected centre. */
-  const facePoints = (f: { corners: { x: number; y: number }[] }, cx: number, cy: number) =>
-    f.corners.map((q) => `${cx + q.x},${cy + q.y}`).join(" ");
-
-  const faceFill = (shade: number, sel: boolean) =>
-    `rgb(${(sel ? CUBE_SEL_RGB : CUBE_RGB).map((ch) => Math.round(ch * shade)).join(",")})`;
+      faces.push({
+        pts: proj.map((q) => `${q!.x},${q!.y}`).join(" "),
+        fill: `rgb(${rgb.map((ch) => Math.round(ch * shade)).join(",")})`,
+      });
+    }
+    return faces;
+  }
 
   /** The three axis stubs, so a free camera's orientation is readable in the
    * picture — the fixed panes carried it in their captions (spec §4.5). */
@@ -356,10 +355,12 @@
     if (camDrag.button === 0) {
       cam = {
         ...cam,
-        // Negated, so dragging left swings the formation left with the
-        // pointer rather than against it — you are turning the object, not
-        // walking around it.
-        yaw: cam.yaw - dx * 0.4,
+        // PLUS, so the scene turns WITH the pointer: drag right and the near
+        // side of the formation goes right, like spinning a globe under your
+        // finger. This was briefly negated on the theory that it read as
+        // turning the object rather than walking around it; measured, the
+        // negation did the opposite and moved the scene against the pointer.
+        yaw: cam.yaw + dx * 0.4,
         pitch: Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, cam.pitch - dy * 0.4)),
       };
     } else {
@@ -466,9 +467,8 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
-      {#each cubeTemplate as f}
-        <polygon points={facePoints(f, d.s.x, d.s.y)}
-                 fill={faceFill(f.shade, selected === d.i)} class="probe-face" />
+      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
+        <polygon points={f.pts} fill={f.fill} class="probe-face" />
       {/each}
       <!-- The grab target is a fat transparent square over the small visible
            one, the same way `.grab` fattens the gizmo's arrows: a 10 px marker
