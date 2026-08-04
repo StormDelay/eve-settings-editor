@@ -1447,6 +1447,12 @@ pub fn set_probe_formation(
     probes: Vec<[f64; 3]>,
     ranges: Vec<f64>,
 ) -> Result<settings_model::Formations, ErrDto> {
+    // ponytail: this create path allocates from the PROJECTION, which drops any
+    // entry `read_formation` rejects — so a create can land on, and overwrite,
+    // an entry the user was never shown. `next_free_id` (probes.rs) is the fix,
+    // but it needs the document, and this resolves the id OUTSIDE
+    // `edit_user_probes`. Restructure to allocate inside the edit closure, as
+    // `add_probe_formations` does, if this becomes a real report.
     let id = match id {
         Some(i) => i,
         None => match probe_formations(state) {
@@ -1468,6 +1474,77 @@ pub fn remove_probe_formation(
     edit_user_probes(state, |v| settings_model::remove_formation(v, id))
 }
 
+/// Emit the shared YAML for a set of formations.
+///
+/// The FRONTEND supplies the data rather than naming ids for a lookup here:
+/// Copy and Export send what the user currently sees, uncommitted drafts
+/// included (sharing spec §5.1), and only the view holds that.
+pub fn probe_yaml(formations: &[settings_model::FormationSpec]) -> String {
+    settings_model::emit_formations(formations)
+}
+
+pub fn probe_parse_yaml(text: &str) -> Result<Vec<settings_model::FormationSpec>, ErrDto> {
+    settings_model::parse_formations(text).map_err(probe_err)
+}
+
+pub fn probe_export(
+    path: &str,
+    formations: &[settings_model::FormationSpec],
+) -> Result<(), ErrDto> {
+    std::fs::write(path, settings_model::emit_formations(formations))
+        .map_err(|e| ErrDto::new("io", format!("{path}: {e}")))
+}
+
+pub fn probe_import(path: &str) -> Result<Vec<settings_model::FormationSpec>, ErrDto> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| ErrDto::new("io", format!("{path}: {e}")))?;
+    probe_parse_yaml(&text)
+}
+
+/// Add formations at fresh ids, suffixing any name the account already holds.
+///
+/// One command rather than N `set_probe_formation` calls: each of those
+/// reshares the whole document (sharing spec §4.1). It is also the single place
+/// the collision rule lives, so Paste and Import cannot disagree about it.
+pub fn add_probe_formations(
+    state: &AppState,
+    formations: Vec<settings_model::FormationSpec>,
+) -> Result<settings_model::Formations, ErrDto> {
+    edit_user_probes(state, |v| {
+        // The WHOLE batch, before the first write. A bad entry halfway down
+        // would otherwise leave half an import applied (spec §4.2).
+        for f in &formations {
+            settings_model::check_formation(&f.name, &f.probes, &f.ranges)?;
+        }
+        for f in formations {
+            // Re-projected per formation because each write changes both the
+            // free ids and the taken names.
+            //
+            // ponytail: O(n²) over a batch of at most a handful of formations.
+            // Thread a running Formations through the loop if a source of
+            // hundreds ever appears.
+            let now = settings_model::project_formations(v).unwrap_or(settings_model::Formations {
+                // No key yet — the first-ever formation on this account. Any
+                // real problem with the document resurfaces from set_formation.
+                formations: Vec::new(),
+                selected: None,
+            });
+            // From the STORED dict, not the projection: an entry the projection
+            // could not read keeps its key, and `set_formation` REPLACES an id
+            // it finds. An import is additive (spec §4.3), so it must not land
+            // on one. The collision names still come from the projection —
+            // that is the only place a name can be read from safely, and a
+            // clash with an unreadable entry is cosmetic rather than
+            // destructive.
+            let id = settings_model::next_free_id(v);
+            let held: Vec<String> = now.formations.into_iter().map(|x| x.name).collect();
+            let name = settings_model::unique_name(&held, &f.name);
+            settings_model::set_formation(v, id, &name, &f.probes, &f.ranges)?;
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1476,7 +1553,14 @@ mod tests {
     fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}", std::process::id()));
+        // A counter, not just pid+name: `state_with_close` (below) calls this
+        // with the same name from three tests that run concurrently by
+        // default, and two threads racing remove_dir_all/create_dir_all on one
+        // shared directory intermittently deletes it out from under the other
+        // (observed as a NotFound on the write below).
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("app-ops-{}-{name}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let p = dir.join("core_user_5.dat");
@@ -2308,6 +2392,84 @@ mod tests {
         assert_eq!(f.formations[0].id, 0, "0 is the first free id when none exist yet");
         assert_eq!(f.formations[0].name, "first");
         assert_eq!(f.formations[0].ranges, vec![1000.0]);
+    }
+
+    fn spec(name: &str, x: f64) -> settings_model::FormationSpec {
+        settings_model::FormationSpec {
+            name: name.into(),
+            probes: vec![[x, 0.0, 0.0]],
+            ranges: vec![74_798_935_350.0],
+        }
+    }
+
+    /// An account file holding one formation named "close" at id 0.
+    fn state_with_close() -> (AppState, PathBuf) {
+        let bytes = encode(&Value::Dict(vec![(b("ui"), Value::Dict(vec![]))])).unwrap();
+        let path = temp_file("probes-add", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        set_probe_formation(&state, None, "close", vec![[1.0, 0.0, 0.0]], vec![74_798_935_350.0])
+            .unwrap();
+        (state, path)
+    }
+
+    #[test]
+    fn add_probe_formations_allocates_a_distinct_id_for_each() {
+        // next_id fills the lowest free gap, so allocating them all up front
+        // from one projection would hand every member of the batch the same id.
+        let (state, _p) = state_with_close();
+        let f = add_probe_formations(&state, vec![spec("a", 2.0), spec("b", 3.0)]).unwrap();
+        let ids: Vec<i64> = f.formations.iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![0, 1, 2]);
+        let names: Vec<&str> = f.formations.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["close", "a", "b"]);
+    }
+
+    #[test]
+    fn add_probe_formations_suffixes_a_colliding_name() {
+        let (state, _p) = state_with_close();
+        let f = add_probe_formations(&state, vec![spec("close", 2.0), spec("close", 3.0)]).unwrap();
+        let names: Vec<&str> = f.formations.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["close", "close copy", "close copy 2"]);
+        assert_eq!(f.formations[0].probes, vec![[1.0, 0.0, 0.0]], "the original must not move");
+    }
+
+    #[test]
+    fn an_invalid_member_writes_none_of_the_batch() {
+        // Half an import is worse than none: the user would have to work out
+        // which half (sharing spec §4.2).
+        let (state, _p) = state_with_close();
+        let empty = settings_model::FormationSpec {
+            name: "bad".into(),
+            probes: vec![],
+            ranges: vec![],
+        };
+        let err = add_probe_formations(&state, vec![spec("good", 2.0), empty]).unwrap_err();
+        assert_eq!(err.code, "bad_probe_count");
+        let after = probe_formations(&state).unwrap();
+        assert_eq!(after.formations.len(), 1, "nothing from the batch may survive");
+        assert_eq!(after.formations[0].name, "close");
+    }
+
+    #[test]
+    fn probe_export_then_import_round_trips_a_file() {
+        let dir = std::env::temp_dir().join(format!("app-ops-{}-probe-yaml", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("formations.yaml");
+        let specs = vec![spec("close", -1199120384.7)];
+        probe_export(path.to_str().unwrap(), &specs).unwrap();
+        assert_eq!(probe_import(path.to_str().unwrap()).unwrap(), specs);
+    }
+
+    #[test]
+    fn probe_import_of_a_missing_file_is_an_io_error() {
+        let missing = std::env::temp_dir().join("app-ops-no-such-formations.yaml");
+        assert_eq!(probe_import(missing.to_str().unwrap()).unwrap_err().code, "io");
+    }
+
+    #[test]
+    fn probe_parse_yaml_reports_the_wrong_file() {
+        assert_eq!(probe_parse_yaml("presets:\n  - a\n").unwrap_err().code, "not_formations");
     }
 
     fn store_2accounts() -> accounts::AccountsStore {
