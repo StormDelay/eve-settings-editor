@@ -181,7 +181,11 @@
   function startPlane(e: PointerEvent, lock: 0 | 1 | 2) {
     if (e.button !== 0 || selected === null) return;
     e.stopPropagation();
-    handleDrag = { kind: "plane", i: selected, lock, p0: probes[selected] };
+    // The press point is recorded for the same reason the axis drag records
+    // one: the probe moves by how far the pointer travelled across the plane,
+    // not to wherever the pointer happens to be on it.
+    const l = local(e);
+    handleDrag = { kind: "plane", i: selected, lock, p0: probes[selected], sx: l.x, sy: l.y };
     svgEl?.setPointerCapture(e.pointerId);
   }
 

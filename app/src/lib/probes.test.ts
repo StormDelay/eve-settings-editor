@@ -271,11 +271,27 @@ check("an axis drag moves one component and leaves the other two bit-identical",
 check("a plane drag moves two components and returns the locked one bit-identical", (() => {
   // The XY plane through p0, face-on from the side camera; Z is locked.
   const b = cameraBasis(sideCam(1e10));
-  const d: HandleDrag = { kind: "plane", i: 0, lock: 2, p0: DRAG_P0 };
-  const next = dragPosition(d, SIZE / 2 + 30, SIZE / 2 - 10, b, SIZE);
+  const d: HandleDrag = { kind: "plane", i: 0, lock: 2, p0: DRAG_P0, sx: 200, sy: 200 };
+  const next = dragPosition(d, 230, 190, b, SIZE);
   return next !== null &&
     next[0] !== DRAG_P0[0] &&
     next[1] !== DRAG_P0[1] &&
+    Object.is(next[2], DRAG_P0[2]);
+})());
+
+check("a plane drag with no pointer travel does not move the probe at all", (() => {
+  // The regression that shipped: the plane branch returned the ray-plane
+  // intersection itself, so the probe teleported UNDER THE CURSOR on the first
+  // frame — and the plane quads are drawn offset from the probe, so the jump
+  // was guaranteed, in the saved coordinates and not merely on screen. A drag
+  // that has not travelled must be a no-op, on all three axes.
+  const b = cameraBasis(sideCam(1e10));
+  const grabbed: [number, number] = [200 + 18, 200 - 18]; // a quad, offset like the real ones
+  const d: HandleDrag = { kind: "plane", i: 0, lock: 2, p0: DRAG_P0, sx: grabbed[0], sy: grabbed[1] };
+  const next = dragPosition(d, grabbed[0], grabbed[1], b, SIZE);
+  return next !== null &&
+    Object.is(next[0], DRAG_P0[0]) &&
+    Object.is(next[1], DRAG_P0[1]) &&
     Object.is(next[2], DRAG_P0[2]);
 })());
 
@@ -283,6 +299,6 @@ check("a plane drag gone edge-on returns null rather than a position", (() => {
   // The only null path: an axis drag's scale is captured at pointerdown and
   // cannot diverge mid-drag, but the camera can orbit a plane to edge-on.
   const b = cameraBasis(sideCam(1000));
-  const d: HandleDrag = { kind: "plane", i: 0, lock: 0, p0: [0, 0, 0] };
+  const d: HandleDrag = { kind: "plane", i: 0, lock: 0, p0: [0, 0, 0], sx: SIZE / 2, sy: SIZE / 2 };
   return dragPosition(d, SIZE / 2, SIZE / 2, b, SIZE) === null;
 })());
