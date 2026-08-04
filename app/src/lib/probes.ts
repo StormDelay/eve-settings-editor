@@ -192,13 +192,19 @@ export function silhouette(dist: number, radius: number, size: number): number |
   return (focal(size) * radius) / Math.sqrt(dist * dist - radius * radius);
 }
 
-/** The camera distance that frames every probe together with its range sphere.
- * A sphere of radius `reach` fits the vertical field of view exactly at
- * `reach / sin(fov/2)`. */
-export function fitDistance(probes: Vec3[], ranges: number[]): number {
+/** The camera distance that frames every probe, and — when `ranges` is given —
+ * its range sphere too. A sphere of radius `reach` fits the vertical field of
+ * view exactly at `reach / sin(fov/2)`.
+ *
+ * The viewer omits `ranges`: framing both is impossible when they differ by
+ * orders of magnitude. "on grid" is ±10 000 km with a 0.5 AU range, so framing
+ * the spheres projects the whole formation into 0.03 px. An invisible formation
+ * is worse than absent context — the probes are the subject, and the user
+ * wheels out to see coverage. */
+export function fitDistance(probes: Vec3[], ranges?: number[]): number {
   const reach = Math.max(
     0,
-    ...probes.map((p, i) => Math.hypot(p[0], p[1], p[2]) + Math.abs(ranges[i] ?? 0)),
+    ...probes.map((p, i) => Math.hypot(p[0], p[1], p[2]) + Math.abs(ranges?.[i] ?? 0)),
   );
   // Every probe at the centre with no range has nothing to frame; any positive
   // distance draws it as a dot.
@@ -273,4 +279,40 @@ export function planeHit(
   const t = dot(sub(p0, b.eye), n) / den;
   if (t <= 0) return null;
   return add(b.eye, mul(dir, t));
+}
+
+/** A gizmo drag in progress. `p0` is the probe's position at pointerdown — the
+ * source for every component the drag does not own (spec §4.7). `i` is the
+ * probe being dragged; `sx`/`sy` the pointerdown position in viewport pixels
+ * and `a` the axis's screen scale captured with it. */
+export type HandleDrag =
+  | { kind: "axis"; i: number; comp: 0 | 1 | 2; p0: Vec3; sx: number; sy: number;
+      a: { dx: number; dy: number; pxPerM: number } }
+  | { kind: "plane"; i: number; lock: 0 | 1 | 2; p0: Vec3 };
+
+/** The dragged probe's new position for a pointer at (`lx`, `ly`) in viewport
+ * units, or `null` when this frame has no answer (a plane gone edge-on).
+ *
+ * THE precision rule: an axis drag writes exactly one component, a plane drag
+ * exactly two, and the untouched ones are copied verbatim from `p0`. The
+ * intersection returns the locked component with float noise on top, which
+ * would displace the probe along an axis nobody dragged, on every drag. */
+export function dragPosition(
+  d: HandleDrag,
+  lx: number,
+  ly: number,
+  b: Basis,
+  size: number,
+): Vec3 | null {
+  if (d.kind === "axis") {
+    const next: Vec3 = [...d.p0];
+    next[d.comp] = d.p0[d.comp] + axisDrag(d.a, lx - d.sx, ly - d.sy); // ONLY this component
+    return next;
+  }
+  const n: Vec3 = [0, 0, 0];
+  n[d.lock] = 1;
+  const hit = planeHit(lx, ly, b, size, d.p0, n);
+  if (!hit) return null;
+  hit[d.lock] = d.p0[d.lock]; // from p0, NOT from the intersection
+  return hit;
 }
