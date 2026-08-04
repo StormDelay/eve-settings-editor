@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Edit the probe formation in 3D: orbit, pan and zoom a free camera, with `Top`, `Side` and `Fit` shortcuts.
+- Drag a probe by its arrows to move it along one axis, or by a face of its cube to move it in that plane.
+- Double-click a probe or the formation's centre to orbit around it, or empty space to flip between the top and side views.
+- Show each probe as a vector from the formation's centre.
+- Set scan range per probe, as the game does.
+
+### Changed
+- The formation's two flat previews are now one 3D view.
+- A formation whose probes carry different scan ranges is editable, instead of read-only.
+
 ## [0.27.0] - 2026-08-04
 
 The probe scanner's custom formations: editable, drawn, and carried by a batch

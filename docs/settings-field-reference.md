@@ -562,7 +562,10 @@ saved probe arrangements from the scanner's formation menu.
 - **Every formation holds exactly 8 probe entries** (123 formations, 984 entries,
   no other length).
 - `range` is `74798935350.0` in all 984 entries — exactly 0.5 AU in metres. The
-  corpus has no evidence a formation can carry mixed or non-default ranges.
+  corpus has no evidence a formation can carry mixed or non-default ranges. The
+  *format* nonetheless carries a range per entry rather than one per formation,
+  and the client sets scan range per probe, so the editor edits them per probe —
+  the uniform 0.5 AU is a measurement of these files, not a constraint.
 - The coordinates are metre offsets from the formation centre, not absolute
   positions. `"close"` spans ~±22e9 m (~0.15 AU); `"on grid"` ~±10e6 m
   (~10 000 km).

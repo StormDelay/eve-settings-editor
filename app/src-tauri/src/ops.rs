@@ -1445,7 +1445,7 @@ pub fn set_probe_formation(
     id: Option<i64>,
     name: &str,
     probes: Vec<[f64; 3]>,
-    range: f64,
+    ranges: Vec<f64>,
 ) -> Result<settings_model::Formations, ErrDto> {
     let id = match id {
         Some(i) => i,
@@ -1458,7 +1458,7 @@ pub fn set_probe_formation(
             Err(e) => return Err(e),
         },
     };
-    edit_user_probes(state, |v| settings_model::set_formation(v, id, name, &probes, range))
+    edit_user_probes(state, |v| settings_model::set_formation(v, id, name, &probes, &ranges))
 }
 
 pub fn remove_probe_formation(
@@ -2303,10 +2303,11 @@ mod tests {
         let state = AppState::new();
         open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
 
-        let f = set_probe_formation(&state, None, "first", vec![[1.0, 0.0, 0.0]], 1000.0).unwrap();
+        let f = set_probe_formation(&state, None, "first", vec![[1.0, 0.0, 0.0]], vec![1000.0]).unwrap();
         assert_eq!(f.formations.len(), 1);
         assert_eq!(f.formations[0].id, 0, "0 is the first free id when none exist yet");
         assert_eq!(f.formations[0].name, "first");
+        assert_eq!(f.formations[0].ranges, vec![1000.0]);
     }
 
     fn store_2accounts() -> accounts::AccountsStore {

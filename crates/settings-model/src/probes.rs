@@ -47,6 +47,8 @@ pub enum ProbeError {
     NoSuchFormation,
     /// A write with no probes, or more than `MAX_PROBES`.
     BadProbeCount,
+    /// A write whose range count does not match its probe count.
+    BadRangeCount,
     /// A name that is empty once trimmed.
     BadName,
 }
@@ -58,6 +60,7 @@ impl std::fmt::Display for ProbeError {
             ProbeError::NoFormations => write!(f, "This account has no custom probe formations."),
             ProbeError::NoSuchFormation => write!(f, "That probe formation no longer exists."),
             ProbeError::BadProbeCount => write!(f, "A formation needs between 1 and 8 probes."),
+            ProbeError::BadRangeCount => write!(f, "Every probe needs a scan range."),
             ProbeError::BadName => write!(f, "A formation needs a name."),
         }
     }
@@ -70,16 +73,11 @@ pub struct Formation {
     /// Metre offsets from the formation centre. EVE's axes: X and Z are the
     /// horizontal plane, Y is up.
     pub probes: Vec<[f64; 3]>,
-    /// Metres, one per probe, positionally matching `probes` — the file's own
-    /// values, kept whole. The editor writes ONE range back (spec §2.3), but
-    /// reading has to stay faithful or a mixed formation could not be shown as
-    /// what it is.
+    /// Metres, one per probe, positionally matching `probes`. The format
+    /// carries one range per entry because the client sets scan range per
+    /// probe; every corpus entry agreeing on 0.5 AU is a fact about players,
+    /// not about the format (spec §2.1).
     pub ranges: Vec<f64>,
-    /// Metres. The first probe's range — what the single range field edits.
-    pub range: f64,
-    /// The probes did not agree on a range. No corpus formation does this; the
-    /// flag exists so the UI can show the file rather than flatten it.
-    pub mixed_range: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -142,14 +140,11 @@ fn read_formation(id: i64, v: &Value, sh: &SharedTable) -> Option<Formation> {
     if read.len() != list.len() || read.is_empty() {
         return None;
     }
-    let range = read[0].1;
     Some(Formation {
         id,
         name,
-        mixed_range: read.iter().any(|(_, r)| *r != range),
         probes: read.iter().map(|(p, _)| *p).collect(),
         ranges: read.iter().map(|(_, r)| *r).collect(),
-        range,
     })
 }
 
@@ -244,14 +239,14 @@ fn set_selected(v: &mut Value, id: i64) -> Result<(), ProbeError> {
 
 /// Replace the formation at `id`, or create it there.
 ///
-/// `range` is written to every probe: the format carries one per entry, but all
-/// 984 corpus entries agree, and the editor offers a single control (spec §2.3).
+/// `ranges` is one scan range per probe, positionally matching `probes` — the
+/// format carries one per entry and the client sets one per probe (spec §2.1).
 pub fn set_formation(
     v: &mut Value,
     id: i64,
     name: &str,
     probes: &[[f64; 3]],
-    range: f64,
+    ranges: &[f64],
 ) -> Result<(), ProbeError> {
     // Validate BEFORE inlining, so a rejected write leaves the document
     // byte-for-byte as it was (the tests assert exactly this).
@@ -264,6 +259,9 @@ pub fn set_formation(
     if probes.is_empty() || probes.len() > MAX_PROBES {
         return Err(ProbeError::BadProbeCount);
     }
+    if ranges.len() != probes.len() {
+        return Err(ProbeError::BadRangeCount);
+    }
     inline_all(v);
     let d = formations_mut(v)?;
     let entry = Value::Tuple(vec![
@@ -271,10 +269,11 @@ pub fn set_formation(
         Value::List(
             probes
                 .iter()
-                .map(|p| {
+                .zip(ranges)
+                .map(|(p, r)| {
                     Value::Tuple(vec![
                         Value::Tuple(vec![Value::Float(p[0]), Value::Float(p[1]), Value::Float(p[2])]),
-                        Value::Float(range),
+                        Value::Float(*r),
                     ])
                 })
                 .collect(),
@@ -376,8 +375,7 @@ mod tests {
         // displace every probe in the file the moment the editor saved.
         let p = project_formations(&doc()).unwrap();
         assert_eq!(p.formations[0].probes[0], [-1199120384.0, -115136512.0, -415997952.0]);
-        assert_eq!(p.formations[0].range, DEFAULT_RANGE);
-        assert!(!p.formations[0].mixed_range);
+        assert_eq!(p.formations[0].ranges[0], DEFAULT_RANGE);
     }
 
     #[test]
@@ -392,7 +390,11 @@ mod tests {
     }
 
     #[test]
-    fn a_mixed_range_formation_is_flagged_not_flattened() {
+    fn per_probe_ranges_round_trip() {
+        // The client sets scan range per probe. A corpus that only ever shows a
+        // uniform range says how players use the control, not what it permits
+        // (spec §2.1) — so a mixed formation is ordinary data, not a file to
+        // lock read-only.
         let d = Value::Dict(vec![(b("ui"), Value::Dict(vec![
             (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
                 (Value::Int(0), formation(Value::Str("odd".into()), vec![
@@ -402,13 +404,7 @@ mod tests {
             ])])),
         ]))]);
         let p = project_formations(&d).unwrap();
-        assert!(p.formations[0].mixed_range, "differing ranges must be reported");
-        assert_eq!(p.formations[0].range, DEFAULT_RANGE, "range reports the first entry");
-        assert_eq!(
-            p.formations[0].ranges,
-            vec![DEFAULT_RANGE, DEFAULT_RANGE / 2.0],
-            "the per-probe ranges must survive whole, so the view can name which rows differ",
-        );
+        assert_eq!(p.formations[0].ranges, vec![DEFAULT_RANGE, DEFAULT_RANGE / 2.0]);
     }
 
     #[test]
@@ -479,7 +475,7 @@ mod tests {
     #[test]
     fn set_replaces_an_existing_formation_and_keeps_the_stamp() {
         let mut v = seeded();
-        set_formation(&mut v, 0, "closer", &[[1.0, 2.0, 3.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "closer", &[[1.0, 2.0, 3.0]], &[DEFAULT_RANGE]).unwrap();
         let p = project_formations(&v).unwrap();
         assert_eq!(p.formations[0].name, "closer");
         assert_eq!(p.formations[0].probes, vec![[1.0, 2.0, 3.0]]);
@@ -493,7 +489,7 @@ mod tests {
     #[test]
     fn set_creates_a_formation_at_a_new_id() {
         let mut v = doc();
-        set_formation(&mut v, 2, "new", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 2, "new", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]).unwrap();
         let p = project_formations(&v).unwrap();
         assert_eq!(p.formations.len(), 3);
         assert_eq!(p.formations[2].id, 2);
@@ -505,7 +501,7 @@ mod tests {
         // The only Bytes name in the corpus is the scratch slot. Writing Bytes
         // would make a user formation look like one.
         let mut v = doc();
-        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]).unwrap();
         let d = stored(&v);
         let (_, entry) = d.iter().find(|(k, _)| matches!(k, Value::Int(0))).unwrap();
         let Value::Tuple(t) = entry else { panic!("not a formation tuple") };
@@ -513,20 +509,44 @@ mod tests {
     }
 
     #[test]
-    fn the_range_is_written_to_every_probe() {
+    fn a_uniform_range_is_written_to_every_probe() {
         let mut v = doc();
         let probes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        set_formation(&mut v, 0, "even", &probes, 123.0).unwrap();
+        set_formation(&mut v, 0, "even", &probes, &[123.0; 3]).unwrap();
         let p = project_formations(&v).unwrap();
-        assert_eq!(p.formations[0].range, 123.0);
-        assert!(!p.formations[0].mixed_range);
+        assert_eq!(p.formations[0].ranges, vec![123.0; 3]);
         assert_eq!(p.formations[0].probes.len(), 3);
+    }
+
+    #[test]
+    fn each_probe_keeps_its_own_written_range() {
+        let mut v = doc();
+        let probes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        set_formation(&mut v, 0, "spread", &probes, &[100.0, 200.0, 300.0]).unwrap();
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.formations[0].ranges, vec![100.0, 200.0, 300.0]);
+    }
+
+    #[test]
+    fn a_range_count_that_does_not_match_the_probes_is_rejected() {
+        let before = doc();
+        let mut v = doc();
+        let probes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        assert_eq!(
+            set_formation(&mut v, 0, "x", &probes, &[100.0]),
+            Err(ProbeError::BadRangeCount),
+        );
+        assert_eq!(
+            set_formation(&mut v, 0, "x", &probes, &[100.0, 200.0, 300.0]),
+            Err(ProbeError::BadRangeCount),
+        );
+        assert_eq!(v, before, "a rejected write must not inline or otherwise touch the document");
     }
 
     #[test]
     fn the_scratch_slot_survives_a_write() {
         let mut v = doc();
-        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "close", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]).unwrap();
         let d = stored(&v);
         assert!(
             d.iter().any(|(k, _)| matches!(k, Value::Int(-4))),
@@ -537,7 +557,7 @@ mod tests {
     #[test]
     fn a_key_absent_from_the_file_is_minted_wrapped() {
         let mut v = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("other"), Value::Int(1))]))]);
-        set_formation(&mut v, 0, "first", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "first", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]).unwrap();
         assert_eq!(
             stamp(&v),
             Value::Long(vec![0u8; 8]),
@@ -550,21 +570,21 @@ mod tests {
     fn a_rejected_write_leaves_the_document_untouched() {
         let before = doc();
         let mut v = doc();
-        assert_eq!(set_formation(&mut v, 0, "x", &[], DEFAULT_RANGE), Err(ProbeError::BadProbeCount));
-        assert_eq!(set_formation(&mut v, 0, "  ", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE), Err(ProbeError::BadName));
+        assert_eq!(set_formation(&mut v, 0, "x", &[], &[]), Err(ProbeError::BadProbeCount));
+        assert_eq!(set_formation(&mut v, 0, "  ", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]), Err(ProbeError::BadName));
         let nine = [[1.0, 0.0, 0.0]; 9];
-        assert_eq!(set_formation(&mut v, 0, "x", &nine, DEFAULT_RANGE), Err(ProbeError::BadProbeCount));
-        assert_eq!(set_formation(&mut v, -4, "x", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE), Err(ProbeError::NoSuchFormation));
+        assert_eq!(set_formation(&mut v, 0, "x", &nine, &[DEFAULT_RANGE; 9]), Err(ProbeError::BadProbeCount));
+        assert_eq!(set_formation(&mut v, -4, "x", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]), Err(ProbeError::NoSuchFormation));
         assert_eq!(v, before, "a rejected write must not inline or otherwise touch the document");
     }
 
     #[test]
     fn one_and_eight_probes_are_both_accepted() {
         let mut v = doc();
-        set_formation(&mut v, 0, "one", &[[1.0, 0.0, 0.0]], DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "one", &[[1.0, 0.0, 0.0]], &[DEFAULT_RANGE]).unwrap();
         assert_eq!(project_formations(&v).unwrap().formations[0].probes.len(), 1);
         let eight = [[1.0, 0.0, 0.0]; 8];
-        set_formation(&mut v, 0, "eight", &eight, DEFAULT_RANGE).unwrap();
+        set_formation(&mut v, 0, "eight", &eight, &[DEFAULT_RANGE; 8]).unwrap();
         assert_eq!(project_formations(&v).unwrap().formations[0].probes.len(), 8);
     }
 
@@ -618,8 +638,8 @@ mod tests {
         assert_eq!(next_id(&empty), 0);
         let gapped = Formations {
             formations: vec![
-                Formation { id: 0, name: "a".into(), probes: vec![[0.0; 3]], ranges: vec![1.0], range: 1.0, mixed_range: false },
-                Formation { id: 2, name: "b".into(), probes: vec![[0.0; 3]], ranges: vec![1.0], range: 1.0, mixed_range: false },
+                Formation { id: 0, name: "a".into(), probes: vec![[0.0; 3]], ranges: vec![1.0] },
+                Formation { id: 2, name: "b".into(), probes: vec![[0.0; 3]], ranges: vec![1.0] },
             ],
             selected: None,
         };

@@ -292,12 +292,9 @@ export type Formation = {
   /** Metre offsets from the formation centre. X and Z are horizontal, Y is up. */
   probes: [number, number, number][];
   name: string;
-  /** Metres, one per probe, positionally matching `probes`. The file's own
-   * values; the editor writes one range back for the whole formation. */
+  /** Metres, one per probe, positionally matching `probes`. The client sets
+   * scan range per probe, so these are edited per row. */
   ranges: number[];
-  /** Metres. The first probe's range — what the single range field edits. */
-  range: number;
-  mixed_range: boolean;
 };
 export type Formations = { formations: Formation[]; selected: number | null };
 
@@ -482,13 +479,13 @@ export const api = {
     invoke<NeocomBar>("neocom_add", { id, btnType, iconPath }),
   neocomReset: () => invoke<NeocomBar>("neocom_reset"),
   probeFormations: () => invoke<Formations>("probe_formations"),
-  /** `id: null` creates at the next free id. */
+  /** `id: null` creates at the next free id. `ranges` is one per probe. */
   setProbeFormation: (
     id: number | null,
     name: string,
     probes: [number, number, number][],
-    range: number,
-  ) => invoke<Formations>("set_probe_formation", { id, name, probes, range }),
+    ranges: number[],
+  ) => invoke<Formations>("set_probe_formation", { id, name, probes, ranges }),
   removeProbeFormation: (id: number) =>
     invoke<Formations>("remove_probe_formation", { id }),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
