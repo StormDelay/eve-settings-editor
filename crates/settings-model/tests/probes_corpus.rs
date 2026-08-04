@@ -3,17 +3,17 @@
 //! matched `Value::Bytes` directly would pass every hand-built unit test in
 //! `probes.rs` and still read nothing from a real file.
 //!
-//! It also locks in the measurements the editor's design rests on (spec §2):
-//! every formation holds 8 probes and one uniform range. If a future client
-//! changes either, this fails loudly rather than the editor quietly writing a
-//! shape nobody checked.
+//! It also locks in the measurement the editor's design rests on (spec §2.4):
+//! every formation holds 8 probes. It does NOT lock in a uniform scan range —
+//! the client sets range per probe, so a formation with differing ranges is
+//! legitimate data the editor must keep working on (3d-viewer spec §2.1).
 //!
 //! Runs against the committed synthetic corpus always, and the real corpus when
 //! testdata/ is checked out.
 
 mod common;
 
-use settings_model::{project_formations, ProbeError, DEFAULT_RANGE, MAX_PROBES};
+use settings_model::{project_formations, ProbeError, MAX_PROBES};
 
 #[test]
 fn every_corpus_account_file_projects_or_reports_no_formations() {
@@ -54,10 +54,10 @@ fn every_corpus_account_file_projects_or_reports_no_formations() {
 }
 
 #[test]
-fn every_real_formation_holds_eight_probes_at_one_uniform_range() {
-    // The two measurements the editor's single range field and its 1-8 probe
-    // range rest on (spec §2.3, §2.4). Real corpus only: the synthetic fixture
-    // is authored to these values, so asserting on it proves nothing.
+fn every_real_formation_holds_eight_probes() {
+    // The measurement the editor's 1-8 probe range rests on (editor spec §2.4).
+    // Real corpus only: the synthetic fixture is authored to these values, so
+    // asserting on it proves nothing.
     if !common::real_corpus_present() {
         return;
     }
@@ -75,15 +75,10 @@ fn every_real_formation_holds_eight_probes_at_one_uniform_range() {
                 "{}: formation {} holds {} probes, not 8 — the corpus has only ever shown 8",
                 f.path.display(), form.id, form.probes.len(),
             );
-            assert!(
-                !form.mixed_range,
-                "{}: formation {} has mixed probe ranges — no corpus formation did when this was designed",
-                f.path.display(), form.id,
-            );
             assert_eq!(
-                form.range, DEFAULT_RANGE,
-                "{}: formation {} is at {} m, not the 0.5 AU every corpus formation carries",
-                f.path.display(), form.id, form.range,
+                form.ranges.len(), form.probes.len(),
+                "{}: formation {} projected {} ranges for {} probes — they must match positionally",
+                f.path.display(), form.id, form.ranges.len(), form.probes.len(),
             );
         }
     }
