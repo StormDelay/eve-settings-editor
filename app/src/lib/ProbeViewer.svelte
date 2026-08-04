@@ -22,6 +22,11 @@
 
   const SIZE = 520; // px, square viewport
 
+  /** The client's Alt view: each probe as a vector from the formation centre.
+   * A checkbox rather than a held key — a modifier the camera also wants is a
+   * bad trade in a window you type numbers into (spec §3). */
+  let vectors = $state(false);
+
   let cam = $state<Camera>({ ...SIDE_VIEW, dist: 1, target: [0, 0, 0] });
   const basis = $derived(cameraBasis(cam));
 
@@ -119,7 +124,7 @@
         points: corners.map((q) => `${q!.x},${q!.y}`).join(" "),
       };
     }).filter((q) => q !== null);
-    return { c, arms, quads };
+    return { arms, quads };
   });
 
   /** A handle drag in progress. `p0` is the probe's position at pointerdown —
@@ -264,10 +269,27 @@
        oncontextmenu={(e) => e.preventDefault()}>
     <rect x="0" y="0" width={SIZE} height={SIZE} class="bg" />
 
+    <defs>
+      <marker id="probe-vec-head" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" class="vec-head" />
+      </marker>
+    </defs>
+
     {#each axisMarks as a}
       <line x1={a.o.x} y1={a.o.y} x2={a.e.x} y2={a.e.y} class="axis" />
       <text x={a.e.x} y={a.e.y} class="axis-label">{a.label}</text>
     {/each}
+
+    {#if vectors}
+      {@const o = projectPoint([0, 0, 0], basis, SIZE)}
+      {#if o}
+        {#each drawn as d (d.i)}
+          <line x1={o.x} y1={o.y} x2={d.s.x} y2={d.s.y} class="vec"
+                marker-end="url(#probe-vec-head)" />
+        {/each}
+      {/if}
+    {/if}
 
     {#each drawn as d (d.i)}
       {#if d.r !== null}
@@ -284,7 +306,7 @@
             }} />
     {/each}
 
-    {#if gizmo}
+    {#if gizmo && !vectors}
       <g class="gizmo">
         {#each gizmo.quads as q}
           <polygon points={q.points} class="handle {q.cls}"
@@ -309,6 +331,10 @@
     <button onclick={() => (cam = { ...cam, ...TOP_VIEW })}>Top</button>
     <button onclick={() => (cam = { ...cam, ...SIDE_VIEW })}>Side</button>
     <button onclick={fit}>Fit</button>
+    <label class="toggle">
+      <input type="checkbox" bind:checked={vectors} />
+      Vectors
+    </label>
     <span class="meta">drag to orbit · right-drag to pan · wheel to zoom</span>
   </div>
 </div>
@@ -328,6 +354,9 @@
   .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
   .viewer-actions { display: flex; gap: 4px; align-items: center; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
+  .vec-head { fill: var(--accent); stroke: none; }
+  .toggle { display: flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--fg-dim); }
 
   /* Axis colours, the near-universal convention: X red, Y green, Z blue. */
   .gx { stroke: #e06c6c; fill: #e06c6c; }
@@ -335,7 +364,7 @@
   .gz { stroke: #6c9ce0; fill: #6c9ce0; }
   .arm { stroke-width: 1.5; pointer-events: none; }
   .tip { stroke: none; pointer-events: none; }
-  .grab { stroke: transparent; stroke-width: 12; cursor: move; }
+  .grab { stroke: transparent; stroke-width: 12; stroke-linecap: round; cursor: move; }
   .handle { fill-opacity: 0.25; stroke-width: 1; cursor: move; }
   .handle:hover { fill-opacity: 0.5; }
 </style>
