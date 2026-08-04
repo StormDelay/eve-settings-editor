@@ -108,3 +108,125 @@ export function paneScale(
   if (reach === 0) return 1;
   return reach / (size / 2);
 }
+
+// --- camera, projection and drag -------------------------------------------
+//
+// A perspective camera written as pure functions so it stays node --test-able,
+// which is also why there is no 3D library here: the scene is SVG elements, so
+// picking is the browser's job and nothing needs a raycaster (spec §4.1).
+
+export type Vec3 = [number, number, number];
+
+/** An orbit camera. `yaw` and `pitch` are degrees; the eye sits `dist` metres
+ * from `target` and always looks at it. */
+export interface Camera {
+  yaw: number;
+  pitch: number;
+  dist: number;
+  target: Vec3;
+}
+
+/** The camera's orthonormal axes and its position, all in world metres. */
+export interface Basis {
+  right: Vec3;
+  up: Vec3;
+  fwd: Vec3;
+  eye: Vec3;
+}
+
+/** Vertical field of view, degrees. */
+export const FOV_DEG = 50;
+
+/** Pitch never reaches ±90: the up vector degenerates when the view direction
+ * is parallel to Y, and the whole basis comes back NaN. */
+export const PITCH_LIMIT = 89.9;
+
+/** X to the right, Y up — the old side (X/Y) pane. */
+export const SIDE_VIEW = { yaw: 90, pitch: 0 };
+/** Looking down. X to the right, +Z toward the bottom of the screen, which is
+ * what a camera above the formation actually sees (spec §4.2). */
+export const TOP_VIEW = { yaw: 90, pitch: PITCH_LIMIT };
+
+const RAD = Math.PI / 180;
+
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: Vec3, b: Vec3): Vec3 =>
+  [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const mul = (a: Vec3, k: number): Vec3 => [a[0] * k, a[1] * k, a[2] * k];
+const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const norm = (a: Vec3): Vec3 => {
+  const m = Math.hypot(a[0], a[1], a[2]);
+  // Only reachable if the pitch clamp is bypassed. Returning a valid axis beats
+  // seeding NaN through every coordinate downstream.
+  return m === 0 ? [1, 0, 0] : [a[0] / m, a[1] / m, a[2] / m];
+};
+
+/** The camera's axes and eye position. Clamps pitch itself, so no caller can
+ * produce the degenerate basis. */
+export function cameraBasis(c: Camera): Basis {
+  const p = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, c.pitch)) * RAD;
+  const y = c.yaw * RAD;
+  const cp = Math.cos(p);
+  // Unit vector from the target toward the eye.
+  const out: Vec3 = [cp * Math.cos(y), Math.sin(p), cp * Math.sin(y)];
+  const fwd = mul(out, -1);
+  const right = norm(cross(fwd, [0, 1, 0]));
+  return { right, up: cross(right, fwd), fwd, eye: add(c.target, mul(out, c.dist)) };
+}
+
+/** Focal length in pixels for a viewport `size` px tall. */
+export const focal = (size: number) => size / 2 / Math.tan((FOV_DEG * RAD) / 2);
+
+/** World metres per screen pixel at a given camera-space depth. What makes a
+ * screen-sized gizmo handle possible: its world length is this times its
+ * pixel length. */
+export const worldPerPixel = (depth: number, size: number) => depth / focal(size);
+
+/** A world point in viewport pixels, or `null` when it is at or behind the eye
+ * plane — reachable by panning, and a point that projected anyway would draw
+ * mirrored through the centre.
+ *
+ * `depth` is the camera-space forward distance, for painter's-order sorting;
+ * `dist` is the true distance to the eye, which is what `silhouette` needs. */
+export function projectPoint(
+  p: Vec3,
+  b: Basis,
+  size: number,
+): { x: number; y: number; depth: number; dist: number } | null {
+  const d = sub(p, b.eye);
+  const z = dot(d, b.fwd);
+  if (z <= 1e-9) return null;
+  const f = focal(size);
+  return {
+    x: size / 2 + (f * dot(d, b.right)) / z,
+    y: size / 2 - (f * dot(d, b.up)) / z, // SVG's y grows downward
+    depth: z,
+    dist: Math.hypot(d[0], d[1], d[2]),
+  };
+}
+
+/** The projected radius of a sphere's silhouette, or `null` when the eye is
+ * inside it. A sphere's silhouette is a circle from every viewpoint, so this
+ * is the shape and not an approximation of it (spec §4.4).
+ *
+ * With eight 0.5 AU spheres, an eye inside one is the normal state at any
+ * useful zoom — hence the null rather than a NaN radius. */
+export function silhouette(dist: number, radius: number, size: number): number | null {
+  if (!(dist > radius)) return null;
+  return (focal(size) * radius) / Math.sqrt(dist * dist - radius * radius);
+}
+
+/** The camera distance that frames every probe together with its range sphere.
+ * A sphere of radius `reach` fits the vertical field of view exactly at
+ * `reach / sin(fov/2)`. */
+export function fitDistance(probes: Vec3[], ranges: number[]): number {
+  const reach = Math.max(
+    0,
+    ...probes.map((p, i) => Math.hypot(p[0], p[1], p[2]) + Math.abs(ranges[i] ?? 0)),
+  );
+  // Every probe at the centre with no range has nothing to frame; any positive
+  // distance draws it as a dot.
+  if (!(reach > 0)) return 1;
+  return reach / Math.sin((FOV_DEG * RAD) / 2);
+}

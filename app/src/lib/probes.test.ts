@@ -11,6 +11,16 @@ import {
   formatUnit,
   paneScale,
   project,
+  cameraBasis,
+  projectPoint,
+  silhouette,
+  fitDistance,
+  focal,
+  FOV_DEG,
+  SIDE_VIEW,
+  TOP_VIEW,
+  type Camera,
+  type Vec3,
 } from "./probes.ts";
 
 const check = (name: string, ok: boolean) => {
@@ -89,3 +99,85 @@ check("an all-centre formation still yields a finite scale", (() => {
   const s = paneScale([[0, 0, 0]], 0, 200);
   return Number.isFinite(s) && s > 0;
 })());
+
+// --- camera and projection -------------------------------------------------
+// EVE's axes: X and Z are the horizontal plane, Y is up. The `side` camera
+// (yaw 90, pitch 0) is the one that puts +X to the right and +Y up, matching
+// the side pane this replaces.
+
+const SIZE = 400;
+const sideCam = (dist = 1000): Camera => ({ ...SIDE_VIEW, dist, target: [0, 0, 0] });
+
+check("the camera basis is orthonormal", (() => {
+  for (const c of [
+    { yaw: 0, pitch: 0, dist: 10, target: [0, 0, 0] as Vec3 },
+    { yaw: 37, pitch: -22, dist: 1e10, target: [1, 2, 3] as Vec3 },
+    { yaw: 200, pitch: 80, dist: 5, target: [0, 0, 0] as Vec3 },
+  ]) {
+    const b = cameraBasis(c);
+    const dot = (u: Vec3, v: Vec3) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    const unit = (u: Vec3) => near(dot(u, u), 1, 1e-9);
+    if (!unit(b.right) || !unit(b.up) || !unit(b.fwd)) return false;
+    if (!near(dot(b.right, b.up), 0, 1e-9)) return false;
+    if (!near(dot(b.right, b.fwd), 0, 1e-9)) return false;
+    if (!near(dot(b.up, b.fwd), 0, 1e-9)) return false;
+  }
+  return true;
+})());
+
+check("a pitch of 90 does not produce NaN", (() => {
+  // The up vector degenerates when the view direction is parallel to Y, so the
+  // basis clamps rather than trusting its caller to.
+  const b = cameraBasis({ yaw: 0, pitch: 90, dist: 10, target: [0, 0, 0] });
+  return [...b.right, ...b.up, ...b.fwd, ...b.eye].every(Number.isFinite);
+})());
+
+check("the target projects to the viewport centre", (() => {
+  const p = projectPoint([0, 0, 0], cameraBasis(sideCam()), SIZE);
+  return p !== null && near(p.x, SIZE / 2, 1e-6) && near(p.y, SIZE / 2, 1e-6);
+})());
+
+check("in the side view +X is to the right", (() => {
+  const p = projectPoint([100, 0, 0], cameraBasis(sideCam()), SIZE);
+  return p !== null && p.x > SIZE / 2 && near(p.y, SIZE / 2, 1e-6);
+})());
+
+check("in the side view +Y is above centre", (() => {
+  // SVG's y grows downward, so "above" is a SMALLER y.
+  const p = projectPoint([0, 100, 0], cameraBasis(sideCam()), SIZE);
+  return p !== null && p.y < SIZE / 2 && near(p.x, SIZE / 2, 1e-6);
+})());
+
+check("in the top view +Z is below centre", (() => {
+  // The old top-down pane drew +Z upward, the map convention. A camera above
+  // the formation sees the opposite, and this is a camera (spec §4.2).
+  const b = cameraBasis({ ...TOP_VIEW, dist: 1000, target: [0, 0, 0] });
+  const p = projectPoint([0, 0, 100], b, SIZE);
+  return p !== null && p.y > SIZE / 2;
+})());
+
+check("a point behind the eye does not project", (() => {
+  // Reachable by panning, not theoretical. A projection that returned a point
+  // anyway would draw it mirrored through the centre.
+  const b = cameraBasis(sideCam(1000));
+  return projectPoint([0, 0, 5000], b, SIZE) === null;
+})());
+
+check("the silhouette radius matches the closed form", (() => {
+  // A sphere of radius R at distance d subtends a circle of projected radius
+  // f*R/sqrt(d^2 - R^2).
+  const r = silhouette(1000, 600, SIZE);
+  const want = (focal(SIZE) * 600) / Math.sqrt(1000 * 1000 - 600 * 600);
+  return r !== null && near(r, want, 1e-9);
+})());
+
+check("a sphere containing the eye has no silhouette", silhouette(500, 600, SIZE) === null);
+
+check("fit frames the furthest probe plus its range", (() => {
+  // A sphere of radius `reach` fits the vertical field of view exactly at
+  // dist = reach / sin(fov/2).
+  const d = fitDistance([[300, 0, 0]], [700]);
+  return near(d, 1000 / Math.sin((FOV_DEG * Math.PI) / 360), 1e-6);
+})());
+
+check("fit survives a formation with nothing to frame", fitDistance([[0, 0, 0]], [0]) > 0);
