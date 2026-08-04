@@ -12,7 +12,6 @@ import ProbeViewer from "$lib/ProbeViewer.svelte";
 const noop = () => {};
 const SIZE = 520; // must match the component's own viewport constant
 const CENTRE = SIZE / 2;
-const CUBE_PX = 15; // likewise — a cube corner is at most 13 px from its centre
 
 /** Two probes well off the origin, so "did the camera re-target" is a large,
  * unambiguous movement rather than a rounding difference. They differ in Z as
@@ -42,6 +41,23 @@ function mount(selected: number | null = null, probes = PROBES) {
 const marker = (c: Element, n: number) =>
   c.querySelector(`[aria-label="probe ${n}"]`) as SVGRectElement;
 
+/** Double-click an element the way a browser produces one: two press/release
+ * pairs on it, then the `dblclick`.
+ *
+ * The presses are not decoration. Grabbing a cube face or the background takes
+ * pointer capture on the svg, and a captured pointer retargets the click that
+ * follows to the capture element — so the viewer reads a double click from
+ * what was PRESSED, not from the event's own target. Firing a bare `dblclick`
+ * tests a path the browser never takes, and hid exactly this bug.
+ */
+async function doubleClick(el: Element) {
+  for (let i = 0; i < 2; i++) {
+    await fireEvent.pointerDown(el, { button: 0, pointerId: 1 });
+    await fireEvent.pointerUp(el, { button: 0, pointerId: 1 });
+  }
+  await fireEvent.dblClick(el);
+}
+
 /** The centre of a grab square, in viewport units. */
 const at = (r: SVGRectElement) => ({
   x: Number(r.getAttribute("x")) + Number(r.getAttribute("width")) / 2,
@@ -56,7 +72,7 @@ describe("double-click camera shortcuts", () => {
     const before = at(marker(c, 1));
     expect(Math.hypot(before.x - CENTRE, before.y - CENTRE)).toBeGreaterThan(20);
 
-    await fireEvent.dblClick(marker(c, 1));
+    await doubleClick(marker(c, 1));
 
     const after = at(marker(c, 1));
     expect(after.x).toBeCloseTo(CENTRE, 0);
@@ -68,10 +84,10 @@ describe("double-click camera shortcuts", () => {
     const centre = () => c.querySelector('[aria-label="formation centre"]') as SVGCircleElement;
     expect(centre()).not.toBeNull();
 
-    await fireEvent.dblClick(marker(c, 1)); // camera is now on the probe
+    await doubleClick(marker(c, 1)); // camera is now on the probe
     expect(Number(centre().getAttribute("cx"))).not.toBeCloseTo(CENTRE, 0);
 
-    await fireEvent.dblClick(centre());
+    await doubleClick(centre());
     expect(Number(centre().getAttribute("cx"))).toBeCloseTo(CENTRE, 1);
     expect(Number(centre().getAttribute("cy"))).toBeCloseTo(CENTRE, 1);
   });
@@ -86,11 +102,11 @@ describe("double-click camera shortcuts", () => {
 
     expect(at(marker(c, 2)).y).toBeLessThan(CENTRE - 20); // opens on the side view
 
-    await fireEvent.dblClick(bg);
+    await doubleClick(bg);
     const top = at(marker(c, 2));
     expect(Math.hypot(top.x - CENTRE, top.y - CENTRE)).toBeLessThan(2);
 
-    await fireEvent.dblClick(bg);
+    await doubleClick(bg);
     expect(at(marker(c, 2)).y).toBeLessThan(CENTRE - 20); // and back
   });
 
@@ -129,7 +145,7 @@ describe("double-click camera shortcuts", () => {
     // ignore a double click that a probe or the centre marker already meant
     // something by, or focusing a probe would spin the camera as well.
     const c = mount();
-    await fireEvent.dblClick(marker(c, 1));
+    await doubleClick(marker(c, 1));
 
     // Focused on the probe at +X, still in the side view: the +Y probe stays
     // above the middle of the view. A flip to top would put it level with it.
@@ -153,7 +169,7 @@ describe("double-click camera shortcuts", () => {
       );
 
     const above = mount();
-    await fireEvent.dblClick(above.querySelector(".bg") as SVGRectElement); // side -> top
+    await doubleClick(above.querySelector(".bg") as SVGRectElement); // side -> top
     const fromAbove = brightest(above);
 
     const below = mount();
@@ -227,7 +243,7 @@ describe("selection is not collateral damage", () => {
       await fireEvent.pointerDown(bg, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
       await fireEvent.pointerUp(bg, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
     }
-    if (times > 1) await fireEvent.dblClick(bg);
+    if (times > 1) await doubleClick(bg);
   }
 
   function mountWithSpy() {
