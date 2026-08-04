@@ -25,9 +25,9 @@ const PROBES: [number, number, number][] = [
 ];
 const RANGES = [74798935350, 74798935350];
 
-function mount(selected: number | null = null) {
+function mount(selected: number | null = null, probes = PROBES) {
   const { container } = render(ProbeViewer, {
-    probes: PROBES,
+    probes,
     ranges: RANGES,
     selected,
     formationId: 0,
@@ -136,29 +136,55 @@ describe("double-click camera shortcuts", () => {
     expect(at(marker(c, 2)).y).toBeLessThan(CENTRE);
   });
 
-  test("every probe's cube is drawn identically, wherever it sits in the frame", async () => {
-    // A cube is a marker, not a photographed object. Projecting its eight
-    // world corners the way the rest of the scene is projected makes its
-    // apparent turn depend on where it lands in the frame — so cubes away from
-    // the centre skew, and the skew slides about as the camera moves, which
-    // reads as each cube spinning on the spot. Parallel projection instead:
-    // orientation from the camera alone, so orbiting reveals faces and nothing
-    // turns.
+  test("a cube's up face is the world up face, seen only from above", async () => {
+    // The cubes are objects in the scene with a FIXED world orientation: the
+    // +Y face is the up face from every camera, and moving the camera just
+    // shows the scene from somewhere else. The light is world-fixed and comes
+    // from above, so the up face is the brightest of the six — which makes
+    // brightness a direct read on whether it is the face being shown.
     //
-    // Two probes deliberately far apart and at different depths. Their cubes
-    // must come out as the same shape, offset only by where each probe is.
-    const c = mount();
-    const shapes = (n: number) => {
-      const o = at(marker(c, n));
-      return [...c.querySelectorAll("polygon.probe-face")]
-        .map((p) => p.getAttribute("points")!.split(" ").map((q) => q.split(",").map(Number)))
-        .filter((pts) => Math.hypot(pts[0][0] - o.x, pts[0][1] - o.y) < CUBE_PX)
-        .map((pts) => pts.map(([x, y]) => `${(x - o.x).toFixed(4)},${(y - o.y).toFixed(4)}`).join(" "))
-        .sort();
-    };
+    // No magic numbers: the two cameras are compared against each other.
+    const brightest = (c: Element) =>
+      Math.max(
+        ...[...c.querySelectorAll("polygon.probe-face")].map((p) => {
+          const [r, g, b] = p.getAttribute("fill")!.match(/\d+/g)!.map(Number);
+          return r + g + b;
+        }),
+      );
 
-    expect(shapes(1)).toHaveLength(3); // three faces, never more: the other three point away
-    expect(shapes(1)).toEqual(shapes(2));
+    const above = mount();
+    await fireEvent.dblClick(above.querySelector(".bg") as SVGRectElement); // side -> top
+    const fromAbove = brightest(above);
+
+    const below = mount();
+    const svg = below.querySelector("svg") as SVGSVGElement;
+    // Drag far enough down to swing the camera under the formation.
+    await fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    await fireEvent.pointerMove(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 400 });
+    await fireEvent.pointerUp(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 400 });
+    const fromBelow = brightest(below);
+
+    expect(fromAbove).toBeGreaterThan(fromBelow);
+  });
+
+  test("dragging right turns the scene right", async () => {
+    // Which way the scene follows the pointer has been flipped once in each
+    // direction by eye. It is a one-character change and nothing else in the
+    // suite would notice, so it is pinned here: drag right, and a probe on the
+    // near side of the formation travels right, like spinning a globe.
+    // A probe on +Z: the near side of the formation in the opening side view.
+    // It has to be the near side and not, say, +X — a probe out on the axis
+    // the camera swings around travels toward the middle whichever way you
+    // turn, so it cannot tell the two directions apart.
+    const c = mount(null, [[0, 0, 2e10], [0, 2e10, 0]]);
+    const svg = c.querySelector("svg") as SVGSVGElement;
+    const before = at(marker(c, 1));
+
+    await fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    await fireEvent.pointerMove(svg, { button: 0, pointerId: 1, clientX: 40, clientY: 0 });
+    await fireEvent.pointerUp(svg, { button: 0, pointerId: 1, clientX: 40, clientY: 0 });
+
+    expect(at(marker(c, 1)).x).toBeGreaterThan(before.x);
   });
 
   test("every probe carries its own handles, not just the selected one", async () => {
