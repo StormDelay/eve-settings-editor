@@ -30,4 +30,7 @@ tauri-plugin-clipboard-manager = "2"
 settings-model = { path = "../../crates/settings-model" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 blue-marshal = { path = "../../crates/blue-marshal" }
+# Scene files (`scenes.rs`). Already this workspace's YAML reader — it is what
+# settings-model's probe_pack.rs parses exchange formats with.
+yaml-rust2 = "0.10"
 
