@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage, type Formation, type Formations } from "./api";
+  import { api, errMessage, type Formation, type Formations, type FormationSpec } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
@@ -56,6 +56,22 @@
   }
 
   const current = $derived(loaded?.formations.find((f) => f.id === selectedId) ?? null);
+
+  /** The formation set as the user currently sees it: the loaded projection
+   * with the selected formation's uncommitted draft substituted in.
+   *
+   * Copy, Export and the export picker all read this, so what leaves the app is
+   * what is on screen (spec §5.1). Reading the backend's projection instead
+   * would race the blur-commit that the Copy button's own click fires, and
+   * could return either side of it depending on timing. */
+  const visible = $derived<FormationSpec[]>(
+    (loaded?.formations ?? []).map((f) =>
+      f.id === selectedId
+        ? { name: draftName, probes: draftProbes, ranges: draftRanges }
+        : { name: f.name, probes: f.probes, ranges: f.ranges },
+    ),
+  );
+  const visibleIndex = $derived(loaded?.formations.findIndex((f) => f.id === selectedId) ?? -1);
 
   /** The range every probe shares, or `null` when they differ — the header
    * picker shows blank rather than claiming one of the values applies to all. */
@@ -225,7 +241,84 @@
       await message(errMessage(e), { title: "Could not delete the formation", kind: "error" });
     }
   }
+
+  /** Add formations from shared text — the one path Paste and Import both end
+   * on, so the collision rule (in Rust, spec §4.3) applies to both. Throws;
+   * each caller reports under its own title. */
+  async function addShared(specs: FormationSpec[]) {
+    if (specs.length === 0) return;
+    const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
+    loaded = await api.addProbeFormations(specs);
+    onUserDirty();
+    // next_id fills the lowest free gap, so an added formation can land in the
+    // MIDDLE of the sorted response — diff the ids rather than reading the end.
+    const added = loaded.formations.filter((f) => !before.has(f.id));
+    if (added.length) select(added[added.length - 1]);
+  }
+
+  async function copyFormation() {
+    if (visibleIndex < 0) return;
+    try {
+      await navigator.clipboard.writeText(await api.probeYaml([visible[visibleIndex]]));
+    } catch (e) {
+      await message(errMessage(e), { title: "Could not copy the formation", kind: "error" });
+    }
+  }
+
+  async function pasteText(text: string) {
+    if (!text.trim()) return;
+    try {
+      await addShared(await api.probeParseYaml(text));
+    } catch (e) {
+      await message(errMessage(e), { title: "Could not paste the formation", kind: "error" });
+    }
+  }
+
+  async function pasteFormation() {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      // WebView2 can refuse a clipboard READ without showing a prompt. Ctrl-V
+      // needs no permission — the keypress is the grant — so point the user at
+      // it rather than reporting a failure they cannot act on (spec §5.4).
+      await message("Press Ctrl+V to paste a formation instead.", {
+        title: "The clipboard could not be read",
+      });
+      return;
+    }
+    await pasteText(text);
+  }
+
+  /** True when the event came from somewhere the OS clipboard must keep
+   * behaving normally. A tab full of coordinate fields is exactly where Ctrl-C
+   * has to go on copying the digits the user just selected. */
+  function inAField(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    const tag = el?.tagName;
+    return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!el?.isContentEditable;
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    // Ctrl-V needs no branch here: the browser fires `paste`, which carries the
+    // data and asks no permission.
+    if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || inAField(e.target)) return;
+    e.preventDefault();
+    void copyFormation();
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    if (inAField(e.target)) return;
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text.trim()) return;
+    e.preventDefault();
+    void pasteText(text);
+  }
 </script>
+
+<!-- The Probes tab is conditionally mounted (+page.svelte), so this listener
+     does not exist while another view is open and cannot leak into it. -->
+<svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 {#if !userOpen}
   <p class="hint">
@@ -253,6 +346,7 @@
       <div class="list-actions">
         <button onclick={createNew}>New</button>
         <button onclick={duplicate} disabled={!current}>Duplicate</button>
+        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
         <button class="danger" onclick={remove} disabled={!current}>Delete</button>
       </div>
     </aside>
@@ -284,6 +378,7 @@
             <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
             <button class:active={unit === "km"} onclick={() => (unit = "km")}>km</button>
           </span>
+          <button onclick={copyFormation} title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
         </div>
 
         <table>
