@@ -17,7 +17,9 @@
 #              capture of this geometry was available, so both the angle and its
 #              sign are the diagram's word. The sign is at least consistent with
 #              the K-space side, where it WAS measured and where every published
-#              source had it backwards.
+#              source had it backwards. A player guide gives 26.5 degrees for
+#              this side; nothing here distinguishes that figure from the 30
+#              this file uses.
 #   16 km      The jump sphere. Sourced from a player guide, not measured.
 scene:
   name: 'Drifter wormhole — J-space side'
