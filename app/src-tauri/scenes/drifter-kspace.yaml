@@ -18,10 +18,11 @@
 #   +17.45     ABOVE the beacon, not below. THE SIGN IS MEASURED: on the
 #              tactical overlay the hole projects 82.8 px from the ship where an
 #              object at its own 87 km range lying in the horizontal plane would
-#              sit at 53.8 px. Every published source says ~14 degrees BELOW and
-#              is wrong about it. The 17.45 itself is the diagram's, and one
-#              frame cannot pin it — it comes out at 13 degrees if the camera
-#              pitch was 15, 17.5 at 20, and 33 at 30.
+#              sit at 53.8 px. Published sources agree on BELOW — one of them
+#              (Jambeeno's guide) at ~14 degrees, the others without a number —
+#              and the direction is what's wrong. The 17.45 itself is the
+#              diagram's, and one frame cannot pin it — it comes out at 13
+#              degrees if the camera pitch was 15, 17.5 at 20, and 33 at 30.
 #   16 km      The jump sphere. Sourced from a player guide, not measured.
 scene:
   name: 'Drifter wormhole — K-space side'
