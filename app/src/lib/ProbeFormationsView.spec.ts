@@ -19,6 +19,9 @@ const noop = () => {};
 // A coordinate with bits well below what any rounded AU display can carry.
 const AWKWARD: [number, number, number] = [-1199120384.7, -115136512.3, -415997952.9];
 
+/** A minimal shared document, for every test that needs some text to paste. */
+const SHARED = "formations:\n  - name: close\n    range: 74798935350\n    probes:\n      - [1, 0, 0]\n";
+
 const FORMATIONS: Formations = {
   formations: [
     {
@@ -127,6 +130,33 @@ describe("editing", () => {
     expect(await screen.findByDisplayValue("New formation")).toBeTruthy();
   });
 
+  test("switching account resyncs the drafts even when the id stays valid", async () => {
+    // The corpus puts formations at ids 0 and 1, so switching accounts normally
+    // leaves `selectedId` pointing at something that still exists — and the
+    // re-select that resyncs the buffer only fired when it had vanished. The
+    // Name field then showed account A's formation over account B's list, and a
+    // blur with no typing at all wrote A's formation into B's file.
+    calls.stub("probe_formations", {
+      formations: [{ id: 0, name: "close", probes: [[111, 0, 0]], ranges: [74798935350] }],
+      selected: 0,
+    } satisfies Formations);
+    calls.stub("set_probe_formation", FORMATIONS);
+    const { rerender } = render(ProbeFormationsView, {
+      userOpen: true, userId: 1, onUserDirty: noop,
+    });
+    await screen.findByDisplayValue("close");
+
+    calls.stub("probe_formations", {
+      formations: [{ id: 0, name: "grid", probes: [[999, 0, 0]], ranges: [74798935350] }],
+      selected: 0,
+    } satisfies Formations);
+    await rerender({ userOpen: true, userId: 2, onUserDirty: noop });
+
+    const name = await screen.findByDisplayValue("grid");
+    await fireEvent.focus(name);
+    await fireEvent.blur(name);
+    calls.never("set_probe_formation");
+  });
 });
 
 describe("per-probe range", () => {
@@ -204,8 +234,6 @@ describe("clipboard sharing", () => {
     });
   });
 
-  const SHARED = "formations:\n  - name: close\n    range: 74798935350\n    probes:\n      - [1, 0, 0]\n";
-
   test("Copy sends the draft, not the saved projection", async () => {
     // The whole reason Copy passes data rather than an id: what the user sees
     // is the draft, and blur-commit is async (spec §5.1).
@@ -250,6 +278,20 @@ describe("clipboard sharing", () => {
     expect(sent.formations[0].name).toBe("close");
     // Never set_probe_formation: the collision rule lives in the batch command.
     expect(calls.of("set_probe_formation")).toHaveLength(0);
+  });
+
+  test("a paste that parses to no formations says so", async () => {
+    // Import has its own message for an empty-but-valid file; without one here
+    // the paste is indistinguishable from a button that does nothing.
+    await open();
+    readable = "formations: []\n";
+    calls.stub("probe_parse_yaml", [] satisfies FormationSpec[]);
+
+    await fireEvent.click(screen.getByText("Paste"));
+
+    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
+    expect(vi.mocked(message).mock.calls[0][0]).toMatch(/no formations/);
+    calls.never("add_probe_formations");
   });
 
   test("a refused clipboard read does not fail silently", async () => {
@@ -354,6 +396,24 @@ describe("file sharing", () => {
     await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
     const sent = calls.of("add_probe_formations")[0].args as { formations: FormationSpec[] };
     expect(sent.formations.map((f) => f.name)).toEqual(["a"]);
+  });
+
+  test("a paste behind the open picker is ignored", async () => {
+    // The overlay is CSS, not a real modal, so window events still land on the
+    // view's listeners. A paste here would add formations the picker's `items`
+    // snapshot does not hold, and the Export that follows would write a set one
+    // paste out of date.
+    await open();
+    vi.mocked(saveDialog).mockResolvedValueOnce("C:/tmp/formations.yaml");
+    await fireEvent.click(screen.getByText("Export…"));
+    await screen.findByText("Export 1");
+
+    const ev = new Event("paste", { bubbles: true });
+    Object.defineProperty(ev, "clipboardData", { value: { getData: () => SHARED } });
+    window.dispatchEvent(ev);
+
+    calls.never("probe_parse_yaml");
+    calls.never("add_probe_formations");
   });
 
   test("an unreadable file is reported and opens no picker", async () => {

@@ -30,6 +30,13 @@
    * not silently snap onto the X axis. */
   let lastAngles = $state<{ az: number; el: number }[]>([]);
 
+  /** The account the edit buffer belongs to. Switching accounts must resync the
+   * drafts even when the new account happens to hold the same formation id —
+   * otherwise the next blur writes the OLD account's formation into the NEW
+   * account's file. Deliberately not `$state`: `reload` runs inside an
+   * `$effect`, and a reactive read here would join that effect's dependencies. */
+  let draftUserId: number | null = null;
+
   /** Which probe row is focused, so a row and its dots highlight together in
    * both panes (Task 7). */
   let selectedProbe = $state<number | null>(null);
@@ -112,10 +119,16 @@
       if (code === "no_formations") { loaded = { formations: [], selected: null }; }
       else { error = errMessage(e); loaded = null; return; }
     }
-    if (!loaded.formations.some((f) => f.id === selectedId)) {
+    // A different account, or a selection that vanished — either way the drafts
+    // describe a formation that is no longer on screen. Ids 0 and 1 are the
+    // corpus's own, so a plain account switch normally keeps `selectedId` valid
+    // and would otherwise leave the previous account's name and probes in the
+    // buffer for the next blur to commit here.
+    if (userId !== draftUserId || !loaded.formations.some((f) => f.id === selectedId)) {
       const l = loaded; // narrowed non-null; `loaded` itself doesn't narrow inside a closure
       select(l.formations.find((f) => f.id === l.selected) ?? l.formations[0] ?? null);
     }
+    draftUserId = userId;
   }
   $effect(() => { void userOpen; void userId; reload(); });
 
@@ -275,7 +288,15 @@
   async function pasteText(text: string) {
     if (!text.trim()) return;
     try {
-      await addShared(await api.probeParseYaml(text));
+      const specs = await api.probeParseYaml(text);
+      // `addShared` returns silently on an empty set, and Import has its own
+      // message for the same case — without one here a valid-but-empty paste is
+      // indistinguishable from a button that does nothing.
+      if (!specs.length) {
+        await message("That text contains no formations.", { title: "Paste formations" });
+        return;
+      }
+      await addShared(specs);
     } catch (e) {
       await message(errMessage(e), { title: "Could not paste the formation", kind: "error" });
     }
@@ -378,7 +399,12 @@
     return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!el?.isContentEditable;
   }
 
+  /** The picker is a CSS overlay, not a real modal, so window key events still
+   * reach these handlers behind it. A paste while the Export picker is open
+   * would add formations `picker.items` does not hold, and the export that
+   * follows would write a set one paste out of date. */
   function onKeyDown(e: KeyboardEvent) {
+    if (picker) return;
     // Ctrl-V needs no branch here: the browser fires `paste`, which carries the
     // data and asks no permission.
     if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || inAField(e.target)) return;
@@ -392,6 +418,7 @@
   }
 
   function onPaste(e: ClipboardEvent) {
+    if (picker) return; // see onKeyDown
     if (inAField(e.target) || !canShare) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text.trim()) return;
