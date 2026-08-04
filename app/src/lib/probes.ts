@@ -109,8 +109,17 @@ export interface Basis {
   eye: Vec3;
 }
 
-/** Vertical field of view, degrees. */
-export const FOV_DEG = 50;
+/** Vertical field of view, degrees.
+ *
+ * Wide on purpose. How much a probe's cube appears TURNED is set by how far
+ * off the view axis it sits, and framing the same formation through a wider
+ * lens pulls the camera in — which grows both the angular spread across the
+ * scene and the near/far depth ratio within it. Measured on the corpus's own
+ * "close" formation: 50° gives 0.5-20.6° of turn at 1.84x near/far, 70° gives
+ * 0.6-30.8° at 2.19x. Below about 60° the cubes all present the same face at
+ * the same angle and the scene reads flat. Beyond about 80° it reads as a
+ * fisheye. */
+export const FOV_DEG = 70;
 
 /** Pitch never reaches ±90: the up vector degenerates when the view direction
  * is parallel to Y, and the whole basis comes back NaN. */
