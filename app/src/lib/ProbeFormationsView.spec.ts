@@ -278,4 +278,35 @@ describe("clipboard sharing", () => {
 
     await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
   });
+
+  test("Ctrl-C with a text selection copies the selection, not the formation", async () => {
+    // A formation copy is the fallback for when nothing is selected, never an
+    // override of a real selection — the hint paragraph or the shared-account
+    // banner must still copy normally.
+    await open();
+    calls.stub("probe_yaml", SHARED);
+    const range = document.createRange();
+    range.selectNodeContents(document.body);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    await fireEvent.keyDown(window, { key: "c", ctrlKey: true });
+
+    calls.never("probe_yaml");
+    sel?.removeAllRanges();
+  });
+
+  test("a paste event does nothing when the account file isn't open", async () => {
+    // The window listeners outlive the markup's `{#if}` branches, so they are
+    // live on the "pair this character" hint screen too, where there is no
+    // Paste button on screen and nothing loaded to add to.
+    render(ProbeFormationsView, { userOpen: false, userId: 1, onUserDirty: noop });
+
+    const ev = new Event("paste", { bubbles: true });
+    Object.defineProperty(ev, "clipboardData", { value: { getData: () => SHARED } });
+    window.dispatchEvent(ev);
+
+    calls.never("probe_parse_yaml");
+  });
 });
