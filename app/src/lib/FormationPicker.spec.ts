@@ -66,4 +66,10 @@ describe("FormationPicker", () => {
     await fireEvent.click(screen.getByTestId("picker-backdrop"));
     expect(oncancel).toHaveBeenCalled();
   });
+
+  test("clicking the meta text toggles the row, not just the checkbox", async () => {
+    open();
+    await fireEvent.click(screen.getByText("2 probes · 0.5 AU"));
+    expect((screen.getByLabelText("close") as HTMLInputElement).checked).toBe(false);
+  });
 });

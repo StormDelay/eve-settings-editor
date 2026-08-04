@@ -31,13 +31,15 @@
       {#each items as f, i}
         <li>
           <label>
-            <input type="checkbox" checked={picked[i]}
+            <!-- Without this, the label's own text (name + meta) becomes the
+                 accessible name; this pins it to just the formation's name. -->
+            <input type="checkbox" checked={picked[i]} aria-label={f.name}
                    onchange={(e) => (picked[i] = e.currentTarget.checked)} />
             <span class="name">{f.name}</span>
+            <span class="meta">
+              {f.probes.length} {f.probes.length === 1 ? "probe" : "probes"} · {rangeLabel(f)}
+            </span>
           </label>
-          <span class="meta">
-            {f.probes.length} {f.probes.length === 1 ? "probe" : "probes"} · {rangeLabel(f)}
-          </span>
         </li>
       {/each}
     </ul>
@@ -59,8 +61,7 @@
      this is the same modal the tree's insert form uses, not a second one. */
   h2 { margin: 0 0 0.6rem; font-size: 1em; font-weight: 600; }
   ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
-  li { display: flex; align-items: baseline; gap: 0.5rem; padding: 3px 2px; }
-  li label { display: flex; align-items: baseline; gap: 0.5rem; cursor: pointer; flex: 1; }
+  li label { display: flex; align-items: baseline; gap: 0.5rem; padding: 3px 2px; cursor: pointer; }
   .name { flex: 1; }
   .meta { opacity: 0.7; font-size: 0.85em; white-space: nowrap; }
 </style>
