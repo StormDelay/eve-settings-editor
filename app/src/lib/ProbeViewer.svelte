@@ -91,19 +91,16 @@
   const CUBE_RGB = [79, 156, 240]; // --accent
   const CUBE_SEL_RGB = [217, 164, 65]; // --warn
 
-  /** Half a cube's side, in METRES, and the same for every probe.
-   *
-   * Sizing each cube from its OWN depth would hold them all to an identical
-   * number of screen pixels — and a row of objects that never changes size
-   * with distance does not read as a scene, it reads as a row of icons. One
-   * world size, taken from the camera distance so it still lands near CUBE_PX
-   * at any zoom, lets perspective do its job: the near ones come out bigger. */
-  const cubeHalf = $derived(worldPerPixel(cam.dist, SIZE) * (CUBE_PX / 2));
-
   /** One probe's cube as its visible faces, back-face culled — only three of
-   * the six can ever face the camera — each with its own shade. */
-  function cubeFaces(p: Vec3, sel: boolean) {
-    const h = cubeHalf;
+   * the six can ever face the camera — each with its own shade.
+   *
+   * Sized from the probe's OWN depth, so every cube covers the same number of
+   * screen pixels however far away it is. Size is not the depth cue here and
+   * making it one only shrinks the distant probes you still have to click:
+   * what reads as depth is the perspective TURN, which scaling a cube about
+   * its own centre does not touch. */
+  function cubeFaces(p: Vec3, depth: number, sel: boolean) {
+    const h = worldPerPixel(depth, SIZE) * (CUBE_PX / 2);
     const faces: { pts: string; fill: string }[] = [];
     for (let k = 0; k < 3; k++) {
       const u = (k + 1) % 3;
@@ -455,7 +452,7 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
-      {#each cubeFaces(d.p, selected === d.i) as f}
+      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
         <polygon points={f.pts} fill={f.fill} class="probe-face" />
       {/each}
       <!-- The grab target is a fat transparent square over the small visible
