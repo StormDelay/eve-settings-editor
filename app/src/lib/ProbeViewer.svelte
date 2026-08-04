@@ -79,8 +79,12 @@
 
   function onBackgroundDown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 2) return;
-    // A left press on empty space clears the selection, like the canvas views.
-    if (e.button === 0 && e.target === e.currentTarget) onselect(null);
+    // Every probe marker's own handler stops propagation on its way here, so
+    // any left press that reaches this one has already landed on empty space
+    // — no target check needed. (A future handle added to this view must keep
+    // that contract: stopPropagation on its own left-button press, or it
+    // deselects through it.)
+    if (e.button === 0) onselect(null);
     camDrag = { button: e.button, x: e.clientX, y: e.clientY };
     svgEl?.setPointerCapture(e.pointerId);
   }
@@ -149,7 +153,11 @@
             class="probe" class:selected={selected === d.i}
             role="button" tabindex="0"
             aria-label={`probe ${d.i + 1}`}
-            onpointerdown={(e) => { e.stopPropagation(); onselect(d.i); }} />
+            onpointerdown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              onselect(d.i);
+            }} />
     {/each}
   </svg>
 
