@@ -298,6 +298,14 @@ export type Formation = {
 };
 export type Formations = { formations: Formation[]; selected: number | null };
 
+/** A formation as it travels between files: no id, because an id is
+ * account-local and an import allocates a fresh one. */
+export type FormationSpec = {
+  name: string;
+  probes: [number, number, number][];
+  ranges: number[];
+};
+
 export type KeybindEntry = {
   command: string;
   /** null = unbound. Otherwise [17?, 18?, 16?, key]. */
@@ -488,6 +496,17 @@ export const api = {
   ) => invoke<Formations>("set_probe_formation", { id, name, probes, ranges }),
   removeProbeFormation: (id: number) =>
     invoke<Formations>("remove_probe_formation", { id }),
+  /** The shared YAML for these formations. Pure text — the caller supplies the
+   * data, so Copy and Export can send an uncommitted draft. */
+  probeYaml: (formations: FormationSpec[]) => invoke<string>("probe_yaml", { formations }),
+  probeParseYaml: (text: string) => invoke<FormationSpec[]>("probe_parse_yaml", { text }),
+  probeExport: (path: string, formations: FormationSpec[]) =>
+    invoke<void>("probe_export", { path, formations }),
+  probeImport: (path: string) => invoke<FormationSpec[]>("probe_import", { path }),
+  /** Add at fresh ids, suffixing any name the account already holds. Never
+   * replaces or deletes anything. */
+  addProbeFormations: (formations: FormationSpec[]) =>
+    invoke<Formations>("add_probe_formations", { formations }),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
