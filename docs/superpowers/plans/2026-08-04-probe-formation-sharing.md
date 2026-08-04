@@ -158,6 +158,17 @@ mod tests {
     }
 
     #[test]
+    fn whole_metres_are_written_without_a_decimal_point() {
+        // Every corpus coordinate is integral, and legibility is this format's
+        // other job — a trailing `.0` on all twenty-four of them is noise.
+        let text = emit_formations(&[close()]);
+        assert!(!text.contains("74798935350.0"), "got:\n{text}");
+        assert!(text.contains("-1199120384,"), "got:\n{text}");
+        // …and a fractional coordinate still keeps every bit it needs.
+        assert!(text.contains("-1199120384.7,"), "got:\n{text}");
+    }
+
+    #[test]
     fn a_mixed_formation_emits_ranges_and_survives_the_round_trip() {
         // Flattening a mix to one value is exactly what the editor refuses to
         // do (editor spec §2.3); the exchange format must not reintroduce it.
@@ -295,9 +306,17 @@ pub struct FormationSpec {
     pub ranges: Vec<f64>,
 }
 
-/// A number that parses back to the same `f64`. `{:?}` is Rust's shortest
-/// round-tripping form and is what `emit_pack` already uses for floats.
+/// A number that parses back to the same `f64`.
+///
+/// Integral values are written without a decimal point: every corpus
+/// coordinate is one, and `-1199120384` reads where `-1199120384.0` only adds
+/// noise across twenty-four of them. `i64` is exact well past 2^53, far beyond
+/// any coordinate EVE stores. Everything else falls back to `{:?}`, Rust's
+/// shortest round-tripping form and what `emit_pack` already uses for floats.
 fn num(v: f64) -> String {
+    if v.fract() == 0.0 && v.abs() < 9.0e15 {
+        return format!("{}", v as i64);
+    }
     format!("{v:?}")
 }
 
