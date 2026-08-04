@@ -4,6 +4,7 @@
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
   import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
   import FormationPicker from "./FormationPicker.svelte";
 
@@ -276,10 +277,19 @@
     if (added.length) select(added[added.length - 1]);
   }
 
+  /** A copy leaves no trace on screen — the clipboard is invisible and nothing
+   * in the file changed — so say so. Same flash the sidebar uses for its own
+   * silent action. */
+  let flash = $state<string | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
   async function copyFormation() {
     if (visibleIndex < 0) return;
     try {
-      await navigator.clipboard.writeText(await api.probeYaml([visible[visibleIndex]]));
+      await writeText(await api.probeYaml([visible[visibleIndex]]));
+      flash = `Copied “${visible[visibleIndex].name}”`;
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => (flash = null), 2000);
     } catch (e) {
       await message(errMessage(e), { title: "Could not copy the formation", kind: "error" });
     }
@@ -305,11 +315,13 @@
   async function pasteFormation() {
     let text: string;
     try {
-      text = await navigator.clipboard.readText();
+      text = await readText();
     } catch {
-      // WebView2 can refuse a clipboard READ without showing a prompt. Ctrl-V
-      // needs no permission — the keypress is the grant — so point the user at
-      // it rather than reporting a failure they cannot act on (spec §5.4).
+      // The clipboard goes through Tauri, not `navigator.clipboard`: WebView2
+      // grants a browser clipboard READ only behind a permission prompt, and
+      // re-asks on every app launch — the wrong thing to put on a Paste button.
+      // A read can still fail (no text on the clipboard, for one), and Ctrl-V
+      // needs no permission on any path, so it stays the offer.
       await message("Press Ctrl+V to paste a formation instead.", {
         title: "The clipboard could not be read",
       });
@@ -330,16 +342,20 @@
 
   async function exportFormations() {
     if (!visible.length) return;
-    const path = await saveDialog({
-      defaultPath: "probe-formations.yaml",
-      filters: [{ name: "Probe formations", extensions: ["yaml"] }],
-    });
-    if (!path) return;
     picker = {
       title: "Export formations",
       items: visible,
       label: "Export",
       confirm: async (chosen) => {
+        // The file dialog comes AFTER the pick. Asking where to save first meant
+        // that cancelling it — the reasonable thing to do when you have not been
+        // asked what you are exporting yet — returned before the picker ever
+        // appeared, so Export looked like it offered no choice at all.
+        const path = await saveDialog({
+          defaultPath: "probe-formations.yaml",
+          filters: [{ name: "Probe formations", extensions: ["yaml"] }],
+        });
+        if (!path) return;
         await api.probeExport(path, chosen);
         await message(`Exported ${chosen.length} formation(s).`, { title: "Export formations" });
       },
@@ -457,12 +473,20 @@
       <div class="list-actions">
         <button onclick={createNew}>New</button>
         <button onclick={duplicate} disabled={!current}>Duplicate</button>
-        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
         <button class="danger" onclick={remove} disabled={!current}>Delete</button>
+      </div>
+      <!-- The sharing group, kept together in its own row. Copy and Paste are a
+           pair, and a user hunting for one looks where the other is — Copy sat
+           beside the AU/km toggle at first and was simply not found. -->
+      <div class="list-actions">
+        <button onclick={copyFormation} disabled={!current}
+                title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
+        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
         <button onclick={exportFormations} disabled={!visible.length}
                 title="Write formations out as a shareable file">Export…</button>
         <button onclick={importFormations} title="Add formations from a shared file">Import…</button>
       </div>
+      {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
     </aside>
 
     {#if current}
@@ -492,7 +516,6 @@
             <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
             <button class:active={unit === "km"} onclick={() => (unit = "km")}>km</button>
           </span>
-          <button onclick={copyFormation} title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
         </div>
 
         <table>
