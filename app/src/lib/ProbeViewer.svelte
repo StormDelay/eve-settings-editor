@@ -56,20 +56,72 @@
     }
   });
 
-  /** Side of a probe's transparent grab square, px. The visible marker is 10;
-   * this is what the pointer actually has to hit. */
+  /** Side of a probe's transparent grab square, px. The cube inside it is
+   * smaller; this is what the pointer actually has to hit. */
   const HIT_PX = 22;
+
+  /** The formation centre on screen — the origin every probe is an offset from,
+   * and the camera's home. `null` once a pan puts it behind the eye. */
+  const origin = $derived(projectPoint([0, 0, 0], basis, SIZE));
 
   /** Every probe projected, with its silhouette, sorted back to front. */
   const drawn = $derived(
     probes
       .map((p, i) => {
         const s = projectPoint(p, basis, SIZE);
-        return s === null ? null : { i, s, r: silhouette(s.dist, ranges[i] ?? 0, SIZE) };
+        return s === null ? null : { i, p, s, r: silhouette(s.dist, ranges[i] ?? 0, SIZE) };
       })
       .filter((d) => d !== null)
       .sort((a, b) => b.s.depth - a.s.depth),
   );
+
+  // --- probe cubes ---------------------------------------------------------
+  // A flat square gives the scene no depth, and depth is what makes a probe
+  // placeable by eye — so a probe draws as a shaded cube, as the client's own
+  // view does. The cube is axis-aligned in WORLD space, so it turns as you
+  // orbit and the shading turns with it: that motion is most of the cue.
+
+  /** Cube width in screen px. Sized in pixels like the gizmo, so it stays
+   * readable across the orders of magnitude these formations span. */
+  const CUBE_PX = 15;
+  /** A world-fixed light. Every face normal is a unit axis, so the lambert term
+   * for a face is just ±LIGHT[k] — no dot product needed. */
+  const LIGHT = [0.34, 0.86, 0.44];
+  const AMBIENT = 0.34;
+  const CUBE_RGB = [79, 156, 240]; // --accent
+  const CUBE_SEL_RGB = [217, 164, 65]; // --warn
+
+  /** One probe's cube as its visible faces, back-face culled — only three of
+   * the six can ever face the camera — each with its own shade. */
+  function cubeFaces(p: Vec3, depth: number, sel: boolean) {
+    const h = worldPerPixel(depth, SIZE) * (CUBE_PX / 2);
+    const faces: { pts: string; fill: string }[] = [];
+    for (let k = 0; k < 3; k++) {
+      const u = (k + 1) % 3;
+      const v = (k + 2) % 3;
+      // Of the two faces on this axis, the one the eye is on the side of.
+      const s = basis.eye[k] - p[k] > 0 ? 1 : -1;
+      const proj = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, c]) => {
+        const q = [p[0], p[1], p[2]];
+        q[k] += s * h;
+        q[u] += a * h;
+        q[v] += c * h;
+        return projectPoint(q as Vec3, basis, SIZE);
+      });
+      if (proj.some((q) => q === null)) continue;
+      // Wrap lighting, not plain lambert: a face pointing away from the light
+      // would otherwise sit at flat ambient, and so would the two beside it —
+      // three identical greys, which is exactly the flatness this is here to
+      // fix. Wrapping keeps all six distinct from every angle.
+      const shade = AMBIENT + (1 - AMBIENT) * (0.5 + 0.5 * s * LIGHT[k]);
+      const rgb = sel ? CUBE_SEL_RGB : CUBE_RGB;
+      faces.push({
+        pts: proj.map((q) => `${q!.x},${q!.y}`).join(" "),
+        fill: `rgb(${rgb.map((ch) => Math.round(ch * shade)).join(",")})`,
+      });
+    }
+    return faces;
+  }
 
   /** The three axis stubs, so a free camera's orientation is readable in the
    * picture — the fixed panes carried it in their captions (spec §4.5). */
@@ -79,7 +131,7 @@
     { v: [0, 0, 1], label: "Z" },
   ];
   const axisMarks = $derived.by(() => {
-    const o = projectPoint([0, 0, 0], basis, SIZE);
+    const o = origin;
     if (!o) return [];
     // 60 px long whatever the zoom.
     const len = worldPerPixel(o.depth, SIZE) * 60;
@@ -273,6 +325,22 @@
     if (svgEl?.hasPointerCapture(e.pointerId)) svgEl.releasePointerCapture(e.pointerId);
   }
 
+  /** Orbit around something else. Only the target moves — the distance and the
+   * angles you were looking from are yours, and re-deriving them would throw
+   * away the view you just built. */
+  const focusOn = (t: Vec3) => (cam = { ...cam, target: [t[0], t[1], t[2]] });
+
+  /** Double-clicking empty space flips between the two views the flat panes
+   * used to show. It fires on the background alone: the probes, the centre
+   * marker and the gizmo handles all have their own meaning for a double
+   * click, and the pointer capture taken on press is released before the click
+   * lands, so the target here is the real element under the pointer. */
+  function onDblClick(e: MouseEvent) {
+    const t = e.target as Element;
+    if (t !== svgEl && !t.classList.contains("bg")) return;
+    cam = { ...cam, ...(Math.abs(cam.pitch) < 45 ? TOP_VIEW : SIDE_VIEW) };
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault();
     // Mid-drag the pixels-per-metre captured at pointerdown is what the drag
@@ -292,6 +360,7 @@
        onpointerup={onUp}
        onpointercancel={onUp}
        onpointerleave={() => (hoveredAxis = null)}
+       ondblclick={onDblClick}
        onwheel={onWheel}
        oncontextmenu={(e) => e.preventDefault()}
        ondragstart={(e) => e.preventDefault()}>
@@ -314,10 +383,23 @@
       {/if}
     {/if}
 
+    <!-- The formation centre: what every probe coordinate is an offset from,
+         and the camera's home. Before the probes, so a probe sitting on top of
+         it wins both the paint and the click. -->
+    {#if origin}
+      <circle cx={origin.x} cy={origin.y} r="4" class="centre" />
+      <circle cx={origin.x} cy={origin.y} r="11" class="centre-grab"
+              role="button" tabindex="-1" aria-label="formation centre"
+              ondblclick={() => focusOn([0, 0, 0])} />
+    {/if}
+
     {#each drawn as d (d.i)}
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
+      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
+        <polygon points={f.pts} fill={f.fill} class="probe-face" />
+      {/each}
       <!-- The grab target is a fat transparent square over the small visible
            one, the same way `.grab` fattens the gizmo's arrows: a 10 px marker
            is an awkward thing to hit, and missing it lands on the background,
@@ -337,9 +419,8 @@
               if (e.button !== 0) return;
               e.stopPropagation();
               onselect(d.i);
-            }} />
-      <rect x={d.s.x - 5} y={d.s.y - 5} width="10" height="10"
-            class="probe" class:selected={selected === d.i} />
+            }}
+            ondblclick={() => focusOn(d.p)} />
     {/each}
 
     {#if gizmo && !vectors}
@@ -383,7 +464,10 @@
       <input type="checkbox" bind:checked={vectors} />
       Vectors
     </label>
-    <span class="meta">drag to orbit · right-drag to pan · wheel to zoom</span>
+    <span class="meta">
+      drag to orbit · right-drag to pan · wheel to zoom ·
+      double-click a probe or the centre to orbit it, empty space to flip view
+    </span>
   </div>
 </div>
 
@@ -410,18 +494,22 @@
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }
-  /* The visible marker is decoration now — the transparent square over it is
-     what hit-tests, so a click landing between the two still selects. */
-  .probe { fill: var(--accent); pointer-events: none; }
-  .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
+  /* The cube is decoration — the transparent square over it is what hit-tests,
+     so a click landing near a probe rather than exactly on it still selects.
+     Its fill is per-face and computed, so it is set inline, not here. The
+     stroke darkens the shared edges and is what stops three lit faces reading
+     as one flat blob. */
+  .probe-face { pointer-events: none; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.6; stroke-linejoin: round; }
   .probe-grab { fill: transparent; cursor: pointer; }
+  .centre { fill: none; stroke: var(--fg-dim); stroke-width: 1.5; pointer-events: none; }
+  .centre-grab { fill: transparent; cursor: pointer; }
   /* Pressing a handle focuses it, and the UA then outlines its BOUNDING BOX —
      which for a diagonal arrow is a large rectangle across the scene. These
      are all tabindex="-1" and pointer-only, so the ring can never be a
      keyboard affordance here; it is pure noise. What the ring was badly trying
      to say — which handle you are on — is said properly by `.live` below.
      The numeric table remains the keyboard path. */
-  .probe-grab:focus, .grab:focus, .handle:focus { outline: none; }
+  .probe-grab:focus, .centre-grab:focus, .grab:focus, .handle:focus { outline: none; }
   .viewer-actions { display: flex; gap: 4px; align-items: center; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
