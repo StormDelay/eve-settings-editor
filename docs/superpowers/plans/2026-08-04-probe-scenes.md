@@ -624,7 +624,7 @@ Expected: PASS — 10 tests.
 
 `cargo clippy` is deliberately NOT run here. `mod scenes;` is private and
 nothing outside it calls `list` yet, so `-D warnings` would fail on dead code.
-Do **not** silence it with `#[allow(dead_code)]` — Task 2 adds the caller, and
+Do **not** silence it with `#[allow(dead_code)]` — Task 3 adds the caller, and
 clippy runs there.
 
 ```bash
@@ -634,108 +634,7 @@ git commit -m "Read scene files, and ship two drifter ones as worked examples"
 
 ---
 
-### Task 2: The command and its DTOs
-
-**Files:**
-- Modify: `app/src-tauri/src/lib.rs`
-- Modify: `app/src/lib/api.ts`
-
-**Interfaces:**
-- Consumes: `scenes::list`, `scenes::SceneList` from Task 1.
-- Produces:
-  - Tauri command `scene_list` taking no arguments, returning `SceneList`.
-  - `api.sceneList(): Promise<SceneList>` in `api.ts`.
-  - TypeScript `Scene`, `SceneObject`, `SceneList` (`ScenePos` arrives in Task 3).
-
-- [ ] **Step 1: Add the command**
-
-`app/src-tauri/src/lib.rs`. Put it immediately after the `add_probe_formations`
-command, keeping the probe-adjacent commands together:
-
-```rust
-/// Read-only. There is no write path: a scene is a file the user edits, and an
-/// in-app editor is a later slice.
-#[tauri::command]
-fn scene_list(app: tauri::AppHandle) -> scenes::SceneList {
-    scenes::list(&app_dir(&app))
-}
-```
-
-- [ ] **Step 2: Register it**
-
-`app/src-tauri/src/lib.rs`, in the `invoke_handler` list, on the line after
-`probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,`:
-
-```rust
-            scene_list,
-```
-
-- [ ] **Step 3: Verify it compiles**
-
-Run: `cd app/src-tauri && cargo clippy --all-targets -- -D warnings`
-Expected: no warnings, and no dead-code complaint from Task 1 (the command now uses `list`).
-
-- [ ] **Step 4: Add the frontend types and call**
-
-`app/src/lib/api.ts`. Add after the `FormationSpec` type:
-
-```ts
-export interface SceneObject {
-  label: string;
-  pos: ScenePos;
-  /** Metres. 0 draws no sphere. */
-  radius_m: number;
-}
-
-/** Static reference geometry for the probe viewer, read from a file in the
- * app data directory. Read-only: scenes are edited as text, not in the app. */
-export interface Scene {
-  name: string;
-  objects: SceneObject[];
-}
-
-/** `problems` holds one message per file that would not read, so a typo in a
- * hand-edited scene is reported rather than silently missing from the picker. */
-export interface SceneList {
-  scenes: Scene[];
-  problems: string[];
-}
-```
-
-Add the import at the top of the file, beside the existing imports:
-
-```ts
-import type { ScenePos } from "./probes";
-```
-
-Re-export it so a consumer needs one import, not two:
-
-```ts
-export type { ScenePos };
-```
-
-And add to the `api` object, after `addProbeFormations`:
-
-```ts
-  /** Every scene on disk, installing the shipped ones on first run. */
-  sceneList: () => invoke<SceneList>("scene_list"),
-```
-
-> `ScenePos` is defined in `probes.ts`, not here, and Task 3 creates it —
-> `api.ts` will not typecheck until that task lands. That direction is
-> deliberate: the type is what the geometry consumes, and `probes.ts` must stay
-> import-free so it remains `node --test`-able.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add app/src-tauri/src/lib.rs app/src/lib/api.ts
-git commit -m "Hand the scene list to the frontend"
-```
-
----
-
-### Task 3: Bearing to world vector
+### Task 2: Bearing to world vector
 
 **Files:**
 - Modify: `app/src/lib/probes.ts`
@@ -846,14 +745,120 @@ Expected: PASS, including the eight new `ok -` lines.
 - [ ] **Step 5: Verify the frontend typechecks end to end**
 
 Run: `cd app && npm run check`
-Expected: no errors — this is also the first point Task 2's `api.ts` import of
-`ScenePos` resolves.
+Expected: no errors. Nothing consumes `scenePos` yet — this only confirms the
+new export does not break the existing frontend.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add app/src/lib/probes.ts app/src/lib/probes.test.ts
 git commit -m "Convert a scene's compass bearing to the formation's own frame"
+```
+
+---
+
+### Task 3: The command and its DTOs
+
+**Files:**
+- Modify: `app/src-tauri/src/lib.rs`
+- Modify: `app/src/lib/api.ts`
+
+**Interfaces:**
+- Consumes: `scenes::list`, `scenes::SceneList` from Task 1.
+- Produces:
+  - Tauri command `scene_list` taking no arguments, returning `SceneList`.
+  - `api.sceneList(): Promise<SceneList>` in `api.ts`.
+  - TypeScript `Scene`, `SceneObject`, `SceneList` (`ScenePos` came from Task 2).
+
+- [ ] **Step 1: Add the command**
+
+`app/src-tauri/src/lib.rs`. Put it immediately after the `add_probe_formations`
+command, keeping the probe-adjacent commands together:
+
+```rust
+/// Read-only. There is no write path: a scene is a file the user edits, and an
+/// in-app editor is a later slice.
+#[tauri::command]
+fn scene_list(app: tauri::AppHandle) -> scenes::SceneList {
+    scenes::list(&app_dir(&app))
+}
+```
+
+- [ ] **Step 2: Register it**
+
+`app/src-tauri/src/lib.rs`, in the `invoke_handler` list, on the line after
+`probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,`:
+
+```rust
+            scene_list,
+```
+
+- [ ] **Step 3: Verify it compiles**
+
+Run: `cd app/src-tauri && cargo clippy --all-targets -- -D warnings`
+Expected: no warnings, and no dead-code complaint from Task 1 (the command now uses `list`).
+
+- [ ] **Step 4: Add the frontend types and call**
+
+`app/src/lib/api.ts`. Add after the `FormationSpec` type:
+
+```ts
+export interface SceneObject {
+  label: string;
+  pos: ScenePos;
+  /** Metres. 0 draws no sphere. */
+  radius_m: number;
+}
+
+/** Static reference geometry for the probe viewer, read from a file in the
+ * app data directory. Read-only: scenes are edited as text, not in the app. */
+export interface Scene {
+  name: string;
+  objects: SceneObject[];
+}
+
+/** `problems` holds one message per file that would not read, so a typo in a
+ * hand-edited scene is reported rather than silently missing from the picker. */
+export interface SceneList {
+  scenes: Scene[];
+  problems: string[];
+}
+```
+
+Add the import at the top of the file, beside the existing imports:
+
+```ts
+import type { ScenePos } from "./probes";
+```
+
+Re-export it so a consumer needs one import, not two:
+
+```ts
+export type { ScenePos };
+```
+
+And add to the `api` object, after `addProbeFormations`:
+
+```ts
+  /** Every scene on disk, installing the shipped ones on first run. */
+  sceneList: () => invoke<SceneList>("scene_list"),
+```
+
+> `ScenePos` is defined in `probes.ts` (Task 2), not here. That direction is
+> deliberate: the type is what the geometry consumes, and `probes.ts` must stay
+> import-free so it remains `node --test`-able.
+
+- [ ] **Step 5: Verify the frontend typechecks**
+
+Run: `cd app && npm run check`
+Expected: no errors. `ScenePos` already exists (Task 2), so this task
+leaves the frontend compiling — nothing here is committed broken.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/src-tauri/src/lib.rs app/src/lib/api.ts
+git commit -m "Hand the scene list to the frontend"
 ```
 
 ---
@@ -866,7 +871,7 @@ git commit -m "Convert a scene's compass bearing to the formation's own frame"
 - Test: `app/src/lib/ProbeViewer.spec.ts`
 
 **Interfaces:**
-- Consumes: `Scene` from `api.ts` (Task 2), `scenePos` from `probes.ts` (Task 3), and the viewer's existing `projectPoint`, `silhouette`, `fitDistance`.
+- Consumes: `Scene` from `api.ts` (Task 3), `scenePos` from `probes.ts` (Task 2), and the viewer's existing `projectPoint`, `silhouette`, `fitDistance`.
 - Produces: a `scenes: Scene[]` prop on `ProbeViewer`, defaulting to `[]`.
 
 The default matters: `ProbeViewer.spec.ts`'s existing `mount()` helper does not
