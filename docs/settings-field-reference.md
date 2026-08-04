@@ -574,6 +574,37 @@ saved probe arrangements from the scanner's formation menu.
 - The coordinates are metre offsets from the formation centre, not absolute
   positions. `"close"` spans ~±22e9 m (~0.15 AU); `"on grid"` ~±10e6 m
   (~10 000 km).
+- **`+Z` is in-game north.** Measured in-game 2026-08-04. A formation of three
+  probes on `+X` (500/600/700 km), two on `+Y` (1500/1600 km) and one on `−Z`
+  (1000 km) was launched and read against the tactical overlay: the three-probe
+  cluster sat **west**, the two-probe cluster straight **up**, the lone probe
+  **south**. The groups were sized 3/2/1 precisely so no probe had to be
+  identified individually.
+
+  | axis | in-game |
+  |---|---|
+  | `+Z` | north |
+  | `−X` | east |
+  | `−Z` | south |
+  | `+X` | west |
+  | `+Y` | up |
+
+  A separate launch agrees: a marker formation carrying one probe per axis
+  direction put the `+Z` marker nearest north on the overlay. That reading alone
+  was **not** conclusive, for a reason worth recording — the ship sat 75 km off
+  the formation centre, so its overview distances did not match the authored
+  offsets at all, and every bearing was skewed (8° on a 300 km marker). The
+  offset was solved from the eight distances (rms 0.3 km) to recover which probe
+  was which. **Overview distance only names a probe when the ship is at the
+  formation centre, which it is not guaranteed to be** — the same caution the
+  "stored origin is not the probe centroid" bullet below raises, seen from the
+  other side.
+
+  **Not established: whether the frame is world-fixed at launch.** If the client
+  rotated a formation's offsets by the ship's heading, there would be no north
+  axis at all. Two launches agreed, but both were probably at a similar heading,
+  so this is consistent-with rather than tested. To settle it: recall, turn the
+  ship ~90°, relaunch, and check the cardinals have not moved.
 - **A formation saved in-game does not always come back as it was authored, and
   what it loses depends on where the ship was.** Measured in-game 2026-08-04, one
   authored cube of ±2 309 401 m per axis (4000 km from centre), 8 Sisters Combat

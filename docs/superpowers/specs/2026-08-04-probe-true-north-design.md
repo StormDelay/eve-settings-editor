@@ -1,8 +1,31 @@
 # Probe formation true north and compass (design)
 
-Status: designed 2026-08-04, not yet planned. **Blocked on a live measurement** —
-§2 has to run before §3 can be built, and §2 can return an answer that cancels §3
-entirely.
+Status: designed 2026-08-04. **Measured and built the same day.** §2 ran, §3 is
+implemented.
+
+**What §2 actually measured, and how it differed from the plan.** The marker
+formation below (one probe per axis direction, unique distances) was launched
+first and was *not* conclusive: the ship sat 75 km off the formation centre, so
+its overview distances did not match the authored offsets and could not name the
+probes, and every bearing was skewed by up to 8°. The offset was recovered by
+solving all eight distances (rms 0.3 km), which identified the `+Z` marker as the
+one nearest north — suggestive, not decisive.
+
+What settled it was a **cluster formation** rather than a marker one: three
+probes on `+X`, two on `+Y`, one on `−Z`, sized 3/2/1 so no probe had to be
+identified individually at all. The overlay put them west, up and south.
+
+**The lesson for any future in-space reading: identify by GROUP SIZE, not by
+distance.** Distance identification silently assumes the ship is at the formation
+centre, and it is not guaranteed to be. §2.2's unique-distance table is kept
+below as the record of what was tried, not as the recommended shape.
+
+Result: `+Z` north, `−X` east, `−Z` south, `+X` west, `+Y` up.
+`NORTH_AZ_DEG = 90`, `EAST_SIGN = 1`.
+
+**§2.3's rotation control was not run.** Two launches agreed, but both were
+probably at a similar heading, so a world-fixed frame is consistent-with rather
+than tested. It stays open in `docs/settings-field-reference.md`.
 
 Builds on `2026-08-04-probe-3d-viewer-design.md`, referred to below as **the
 viewer spec**. Nothing here changes the file format, the exchange format, or what
@@ -133,14 +156,8 @@ that direction is not, and does not go in.
 In `probes.ts`, beside the existing frame documentation:
 
 ```ts
-/** Bearing of in-game north in the formation's own frame: degrees from +X
- *  toward +Z, the same convention `toSpherical` uses.
- *  MEASURED <date> — see docs/settings-field-reference.md. */
-export const NORTH_AZ_DEG = /* measured */;
-
-/** +1 when east lies at NORTH_AZ_DEG + 90 in that convention, −1 when it does
- *  not. Measured with north, from the diagonal markers. */
-export const EAST_SIGN: 1 | -1 = /* measured */;
+export const NORTH_AZ_DEG = 90;   // +Z is north
+export const EAST_SIGN: 1 | -1 = 1; // east is -X, i.e. azimuth 180 = 90 + 90
 ```
 
 This is the calibration knob. If north turns out not to sit on an axis, or a
