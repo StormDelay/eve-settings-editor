@@ -265,9 +265,10 @@ sidebar.
 | **Import…** | `openDialog` (`yaml`/`yml`) → `probe_import` → picker → `add_probe_formations` |
 
 Import and Paste both call `onUserDirty()`; the user still saves, and the normal
-backup chain applies. Neither is available when the slot is read-only — the
-existing `Fidelity::ReadOnly` check in `edit_user_probes` covers the write, and
-the buttons follow the same disabled rule the editor's other write actions use.
+backup chain applies. On a read-only slot the buttons stay enabled and the write
+is refused: the existing `Fidelity::ReadOnly` check in `edit_user_probes` rejects
+it and the view reports the message. That is what every other write action in
+this editor already does — none of them are disabled on read-only either.
 
 **Ctrl-C and Ctrl-V** via `<svelte:window onkeydown>` inside the view. The tab
 is conditionally mounted (`+page.svelte:594`), so the listener does not exist
