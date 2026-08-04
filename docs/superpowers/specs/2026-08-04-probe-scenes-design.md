@@ -138,7 +138,9 @@ Two consequences fall out for free:
 ### 4.1 Location and discovery
 
 `<app data dir>/scenes/*.yaml`, alongside `presets/` — user data, not
-configuration, the same call `presets_dir` makes.
+configuration, the same call `presets_dir` makes. `.yml` is accepted too: it
+costs one condition, and a file ignored for its extension is the same silent
+disappearance §4.6 refuses.
 
 Built-in scenes are `include_str!`'d into the binary and **written to that
 directory the first time it does not exist**. The guard is on the *directory*, so
