@@ -148,7 +148,11 @@ fn read_spec(y: &Yaml) -> Result<FormationSpec, ProbeError> {
             .iter()
             .map(|r| number(r).ok_or_else(|| bad(format!("a range of '{name}' is not a number"))))
             .collect::<Result<Vec<f64>, ProbeError>>()?,
-        _ => {
+        // Present but not a list: NOT a fallback to `range:` — that would
+        // silently discard whatever the user put in `ranges`, exactly the
+        // partial import this module's doc comment says never to hand out.
+        Some(_) => return Err(bad(format!("formation '{name}' has a 'ranges' that is not a list"))),
+        None => {
             let r = get("range")
                 .and_then(number)
                 .ok_or_else(|| bad(format!("formation '{name}' has no range")))?;
@@ -315,6 +319,14 @@ formations:
         assert!(matches!(parse_formations(no_range), Err(ProbeError::BadYaml { .. })));
         let no_name = "formations:\n  - range: 1\n    probes:\n      - [1, 2, 3]\n";
         assert!(matches!(parse_formations(no_name), Err(ProbeError::BadYaml { .. })));
+    }
+
+    #[test]
+    fn a_ranges_that_is_not_a_list_is_reported_not_ignored() {
+        // A hand edit that left the brackets off `ranges: 200` must not fall
+        // back to `range:` and silently discard the 200.
+        let text = "formations:\n  - name: a\n    range: 100\n    ranges: 200\n    probes:\n      - [1, 2, 3]\n      - [4, 5, 6]\n";
+        assert!(matches!(parse_formations(text), Err(ProbeError::BadYaml { .. })));
     }
 
     #[test]
