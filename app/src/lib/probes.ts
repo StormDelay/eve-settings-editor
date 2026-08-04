@@ -230,3 +230,72 @@ export function fitDistance(probes: Vec3[], ranges: number[]): number {
   if (!(reach > 0)) return 1;
   return reach / Math.sin((FOV_DEG * RAD) / 2);
 }
+
+/** Unit world direction from the eye through a viewport pixel. */
+export function pointerRay(sx: number, sy: number, b: Basis, size: number): Vec3 {
+  const f = focal(size);
+  return norm(
+    add(
+      mul(b.fwd, f),
+      add(mul(b.right, sx - size / 2), mul(b.up, size / 2 - sy)),
+    ),
+  );
+}
+
+/** An axis at `p0` seen in screen space: a unit screen direction and how many
+ * pixels one metre along it covers.
+ *
+ * `null` when the axis points nearly at or away from the camera. The scale
+ * diverges there, and the arrow is edge-on and all but invisible, so there is
+ * nothing the user could have meant to grab. */
+export function axisScreen(
+  p0: Vec3,
+  axis: Vec3,
+  b: Basis,
+  size: number,
+): { dx: number; dy: number; pxPerM: number } | null {
+  const a = projectPoint(p0, b, size);
+  if (!a) return null;
+  // A step worth roughly one pixel. A fixed metre step would be ~1e-10 px at
+  // formation scale and lose the direction to rounding.
+  const step = worldPerPixel(a.depth, size);
+  const q = projectPoint(add(p0, mul(axis, step)), b, size);
+  if (!q) return null;
+  const dx = q.x - a.x;
+  const dy = q.y - a.y;
+  const len = Math.hypot(dx, dy);
+  // A one-pixel step gives len ≈ 1 across the view and ≈ 0 down it; 0.15 is
+  // about 8.6° off the view direction.
+  if (len < 0.15) return null;
+  return { dx: dx / len, dy: dy / len, pxPerM: len / step };
+}
+
+/** Metres to move along an axis for a pointer delta in pixels. */
+export const axisDrag = (
+  a: { dx: number; dy: number; pxPerM: number },
+  px: number,
+  py: number,
+) => (px * a.dx + py * a.dy) / a.pxPerM;
+
+/** Where the ray through viewport pixel (`sx`, `sy`) meets the plane through
+ * `p0` with normal `n`, or `null` when the plane is edge-on or the hit is
+ * behind the eye.
+ *
+ * The caller must keep the locked component from `p0` rather than reading it
+ * back out of the result: the intersection returns it with float noise on top,
+ * which would displace the probe along an axis nobody dragged (spec §4.7). */
+export function planeHit(
+  sx: number,
+  sy: number,
+  b: Basis,
+  size: number,
+  p0: Vec3,
+  n: Vec3,
+): Vec3 | null {
+  const dir = pointerRay(sx, sy, b, size);
+  const den = dot(dir, n);
+  if (Math.abs(den) < 1e-6) return null;
+  const t = dot(sub(p0, b.eye), n) / den;
+  if (t <= 0) return null;
+  return add(b.eye, mul(dir, t));
+}
