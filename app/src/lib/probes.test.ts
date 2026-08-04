@@ -130,12 +130,19 @@ check("in the side view +Y is above centre", (() => {
   return p !== null && p.y < SIZE / 2 && near(p.x, SIZE / 2, 1e-6);
 })());
 
-check("in the top view +Z is below centre", (() => {
-  // The old top-down pane drew +Z upward, the map convention. A camera above
-  // the formation sees the opposite, and this is a camera (spec §4.2).
+check("the top view looks DOWN, with +Z up the screen", (() => {
+  // Both halves matter, and they pull against each other. A right-handed
+  // camera looking down cannot put +X right AND +Z up, and reading +Z downward
+  // makes the view register as the bottom one — reported from live use. So X
+  // is the one that mirrors, and the eye stays genuinely above, which is what
+  // keeps the cube shading and the near/far ordering honest.
   const b = cameraBasis({ ...TOP_VIEW, dist: 1000, target: [0, 0, 0] });
-  const p = projectPoint([0, 0, 100], b, SIZE);
-  return p !== null && p.y > SIZE / 2;
+  const up = projectPoint([0, 0, 100], b, SIZE); // +Z
+  const near = projectPoint([0, 100, 0], b, SIZE); // +Y, toward the eye
+  const far = projectPoint([0, -100, 0], b, SIZE);
+  return up !== null && near !== null && far !== null &&
+    up.y < SIZE / 2 && // +Z above centre, as the flat top-down pane drew it
+    near.depth < far.depth; // and the camera really is above, not below
 })());
 
 check("a point behind the eye does not project", (() => {
