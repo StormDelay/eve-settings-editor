@@ -1447,6 +1447,12 @@ pub fn set_probe_formation(
     probes: Vec<[f64; 3]>,
     ranges: Vec<f64>,
 ) -> Result<settings_model::Formations, ErrDto> {
+    // ponytail: this create path allocates from the PROJECTION, which drops any
+    // entry `read_formation` rejects — so a create can land on, and overwrite,
+    // an entry the user was never shown. `next_free_id` (probes.rs) is the fix,
+    // but it needs the document, and this resolves the id OUTSIDE
+    // `edit_user_probes`. Restructure to allocate inside the edit closure, as
+    // `add_probe_formations` does, if this becomes a real report.
     let id = match id {
         Some(i) => i,
         None => match probe_formations(state) {
@@ -1523,7 +1529,14 @@ pub fn add_probe_formations(
                 formations: Vec::new(),
                 selected: None,
             });
-            let id = settings_model::next_formation_id(&now);
+            // From the STORED dict, not the projection: an entry the projection
+            // could not read keeps its key, and `set_formation` REPLACES an id
+            // it finds. An import is additive (spec §4.3), so it must not land
+            // on one. The collision names still come from the projection —
+            // that is the only place a name can be read from safely, and a
+            // clash with an unreadable entry is cosmetic rather than
+            // destructive.
+            let id = settings_model::next_free_id(v);
             let held: Vec<String> = now.formations.into_iter().map(|x| x.name).collect();
             let name = settings_model::unique_name(&held, &f.name);
             settings_model::set_formation(v, id, &name, &f.probes, &f.ranges)?;
