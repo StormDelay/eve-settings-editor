@@ -21,7 +21,9 @@ import {
   axisScreen,
   axisDrag,
   planeHit,
+  dragPosition,
   type Camera,
+  type HandleDrag,
   type Vec3,
 } from "./probes.ts";
 
@@ -153,14 +155,26 @@ check("the silhouette radius matches the closed form", (() => {
 
 check("a sphere containing the eye has no silhouette", silhouette(500, 600, SIZE) === null);
 
-check("fit frames the furthest probe plus its range", (() => {
+check("fit frames the furthest probe plus its range when given ranges", (() => {
   // A sphere of radius `reach` fits the vertical field of view exactly at
   // dist = reach / sin(fov/2).
   const d = fitDistance([[300, 0, 0]], [700]);
   return near(d, 1000 / Math.sin((FOV_DEG * Math.PI) / 360), 1e-6);
 })());
 
+check("fit without ranges frames the probes, so a tight formation stays visible", (() => {
+  // "on grid" is ±10 000 km with a 0.5 AU range: framing the spheres puts the
+  // camera 177e9 m out and the whole formation projects into 0.03 px. The
+  // viewer omits the ranges for exactly this reason — the probes are the
+  // subject, the spheres are context the user wheels out to see.
+  const probes: Vec3[] = [[1e7, 0, 0], [-1e7, 0, 0]];
+  const d = fitDistance(probes);
+  return near(d, 1e7 / Math.sin((FOV_DEG * Math.PI) / 360), 1e-6) &&
+    d < fitDistance(probes, [DEFAULT_RANGE_M, DEFAULT_RANGE_M]) / 1000;
+})());
+
 check("fit survives a formation with nothing to frame", fitDistance([[0, 0, 0]], [0]) > 0);
+check("fit survives a formation at the centre with no ranges", fitDistance([[0, 0, 0]]) > 0);
 
 // --- drag ------------------------------------------------------------------
 
@@ -230,4 +244,45 @@ check("a plane seen edge-on is not hit", (() => {
   // Normal perpendicular to the view direction: the ray never meets it.
   const b = cameraBasis(sideCam(1000));
   return planeHit(SIZE / 2, SIZE / 2, b, SIZE, [0, 0, 0], [1, 0, 0]) === null;
+})());
+
+// --- dragPosition: the precision rule (spec §4.7) ---------------------------
+// The branch's most load-bearing rule, and the reason the maths lives here and
+// not in the component: an axis drag writes exactly ONE component, a plane drag
+// exactly two, and every untouched one is copied verbatim from the position
+// captured at pointerdown. `Object.is` throughout, not a tolerance — a
+// "simplification" that reads the locked value back out of the intersection
+// passes any tolerance and still displaces the probe on every drag.
+
+const DRAG_P0: Vec3 = [-1199120384.7, -115136512.3, -415997952.9];
+
+check("an axis drag moves one component and leaves the other two bit-identical", (() => {
+  const b = cameraBasis(sideCam(1e10));
+  const a = axisScreen(DRAG_P0, [1, 0, 0], b, SIZE);
+  if (!a) return false;
+  const d: HandleDrag = { kind: "axis", i: 0, comp: 0, p0: DRAG_P0, sx: 200, sy: 200, a };
+  const next = dragPosition(d, 260, 170, b, SIZE);
+  return next !== null &&
+    next[0] !== DRAG_P0[0] &&
+    Object.is(next[1], DRAG_P0[1]) &&
+    Object.is(next[2], DRAG_P0[2]);
+})());
+
+check("a plane drag moves two components and returns the locked one bit-identical", (() => {
+  // The XY plane through p0, face-on from the side camera; Z is locked.
+  const b = cameraBasis(sideCam(1e10));
+  const d: HandleDrag = { kind: "plane", i: 0, lock: 2, p0: DRAG_P0 };
+  const next = dragPosition(d, SIZE / 2 + 30, SIZE / 2 - 10, b, SIZE);
+  return next !== null &&
+    next[0] !== DRAG_P0[0] &&
+    next[1] !== DRAG_P0[1] &&
+    Object.is(next[2], DRAG_P0[2]);
+})());
+
+check("a plane drag gone edge-on returns null rather than a position", (() => {
+  // The only null path: an axis drag's scale is captured at pointerdown and
+  // cannot diverge mid-drag, but the camera can orbit a plane to edge-on.
+  const b = cameraBasis(sideCam(1000));
+  const d: HandleDrag = { kind: "plane", i: 0, lock: 0, p0: [0, 0, 0] };
+  return dragPosition(d, SIZE / 2, SIZE / 2, b, SIZE) === null;
 })());
