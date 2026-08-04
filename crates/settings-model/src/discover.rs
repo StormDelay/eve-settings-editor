@@ -120,14 +120,31 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Profile> {
     profiles
 }
 
-/// The character/account id encoded at the start of a `core_(char|user)_<id>`
-/// stem: the leading run of digits. Tolerates trailing suffixes users add to
-/// backup copies (e.g. `core_char_90000001 - old.dat` → `90000001`), and yields
-/// `None` for names with no leading digits — the anomalous `core_char__.dat`
-/// and tuple-keyed files still resolve to `None`.
-fn leading_u64(stem_rest: &str) -> Option<u64> {
-    let digits: String = stem_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse::<u64>().ok()
+/// The character/account id in a `core_(char|user)_<id>` stem: the rest of the
+/// stem, and ONLY when all of it is digits. `None` for the anomalous names real
+/// installs carry (`core_char__.dat`, `core_char_('char', None, 'dat').dat`).
+///
+/// **The whole stem, not the leading digits.** This used to take the leading run
+/// so a backup copy a user parked beside the real file — `core_user_90000001 -
+/// old.dat` — still reported an id. That made the backup and the file it was
+/// copied from claim the SAME id, and an id is how every resolver downstream
+/// finds a file to open and to write. Each resolver then broke the tie by
+/// whatever its own container happened to yield first, which is not a rule:
+/// `pairedFilePath` takes the first in file-name order and ' ' (0x20) sorts
+/// before '.' (0x2E), so the backup won every time, while `ops.rs`'s HashMap
+/// took the last insert and the canonical file won by the same accident.
+/// Measured 2026-08-04 on a live install: opening a character loaded the
+/// `- old` copy as its account, and an edit was saved there.
+///
+/// A backup keeps its `Char`/`User` kind and stays listed — it is still openable
+/// by path from the file list. It simply answers to no id, which restores the
+/// invariant every resolver already assumed: within one folder, a kind and an id
+/// name exactly one file.
+fn exact_u64(stem_rest: &str) -> Option<u64> {
+    if stem_rest.is_empty() || !stem_rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    stem_rest.parse::<u64>().ok()
 }
 
 /// The one definition of the `core_char_`/`core_user_` prefix rules: derive
@@ -137,9 +154,9 @@ fn leading_u64(stem_rest: &str) -> Option<u64> {
 /// never drift from what `discover` itself considers a char/user file.
 fn kind_and_id(stem: &str) -> (FileKind, Option<u64>) {
     if let Some(rest) = stem.strip_prefix("core_char_") {
-        (FileKind::Char, leading_u64(rest))
+        (FileKind::Char, exact_u64(rest))
     } else if let Some(rest) = stem.strip_prefix("core_user_") {
-        (FileKind::User, leading_u64(rest))
+        (FileKind::User, exact_u64(rest))
     } else {
         (FileKind::Other, None)
     }
@@ -244,15 +261,55 @@ mod tests {
     }
 
     #[test]
-    fn leading_u64_reads_id_before_a_backup_suffix() {
-        // Synthetic ids only (repo rule). Canonical name and user-added backup
-        // suffixes both yield the leading id.
-        assert_eq!(leading_u64("90000001"), Some(90000001));
-        assert_eq!(leading_u64("90000001 - old"), Some(90000001));
-        assert_eq!(leading_u64("90000002_backup"), Some(90000002));
-        // No leading digits → None (preserves the anomalous-file handling).
-        assert_eq!(leading_u64("_"), None);
-        assert_eq!(leading_u64("('char', None, 'dat')"), None);
-        assert_eq!(leading_u64(""), None);
+    fn only_the_canonical_name_claims_an_id() {
+        // Synthetic ids only (repo rule). A backup copy a user parked beside the
+        // real file must NOT claim the same id: an id is how every resolver
+        // downstream finds the file to open and to write.
+        assert_eq!(exact_u64("90000001"), Some(90000001));
+        assert_eq!(exact_u64("90000001 - old"), None);
+        assert_eq!(exact_u64("90000002_backup"), None);
+        assert_eq!(exact_u64("90000003 (1)"), None);
+        // No digits at all → None (preserves the anomalous-file handling).
+        assert_eq!(exact_u64("_"), None);
+        assert_eq!(exact_u64("('char', None, 'dat')"), None);
+        assert_eq!(exact_u64(""), None);
+    }
+
+    #[test]
+    fn a_backup_copy_does_not_shadow_the_file_it_was_copied_from() {
+        // The live shape that caused this: `core_user_<id> - old.dat` sits in the
+        // same folder as `core_user_<id>.dat`. Both used to report the same id,
+        // and every id→path resolver then picked whichever its own container
+        // happened to yield first — for the app's `pairedFilePath`, that is the
+        // FIRST in file-name order, and ' ' (0x20) sorts before '.' (0x2E), so
+        // the backup won every single time.
+        let root = std::env::temp_dir().join(format!(
+            "settings-model-shadow-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_90000001.dat"), b"x").unwrap();
+        fs::write(sdir.join("core_user_90000001 - old.dat"), b"x").unwrap();
+
+        let profiles = discover(&[root.clone()]);
+        let files = &profiles[0].files;
+        assert_eq!(files.len(), 2, "both files are still listed");
+        // The backup still sorts first — that is not what is being fixed.
+        assert_eq!(files[0].file_name, "core_user_90000001 - old.dat");
+        assert_eq!(files[0].id, None, "a backup copy claims no id");
+        assert_eq!(files[1].file_name, "core_user_90000001.dat");
+        assert_eq!(files[1].id, Some(90000001), "the canonical file keeps it");
+
+        // The invariant every resolver relies on: within one folder, an id and
+        // kind name exactly one file.
+        let claiming: Vec<&SettingsFile> = files
+            .iter()
+            .filter(|f| f.id == Some(90000001) && f.kind == FileKind::User)
+            .collect();
+        assert_eq!(claiming.len(), 1, "exactly one file answers to an id");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
