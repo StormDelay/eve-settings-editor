@@ -219,17 +219,35 @@ check("a plane drag hits the plane it was given", (() => {
   return hit !== null && near(hit[0], 0, 1e-6) && near(hit[1], 0, 1e-6) && near(hit[2], 0, 1e-6);
 })());
 
-check("a plane drag returns the locked axis bit-for-bit", (() => {
+check("planeHit's locked axis carries float noise, so the caller must keep p0's", (() => {
   // THE precision guarantee (spec §4.7). The intersection maths returns the
   // locked component with float noise on it; taking that value would displace
-  // the probe along an axis the user never dragged, on every drag.
+  // the probe along an axis the user never dragged, on every drag. This pins
+  // that the noise is real (hit[2] != p0[2] bit-for-bit, though still on the
+  // right plane), which is why the caller must keep p0[2] instead of hit[2].
   const b = cameraBasis(sideCam(1e11));
   const p0: Vec3 = [-1199120384.7, -115136512.3, -415997952.9];
   const hit = planeHit(SIZE / 2 + 30, SIZE / 2 - 10, b, SIZE, p0, [0, 0, 1]);
   if (hit === null) return false;
-  // The caller keeps the locked component; this asserts the value is available
-  // to keep, and that the other two actually moved.
-  return Object.is([hit[0], hit[1], p0[2]][2], p0[2]) && hit[0] !== p0[0] && hit[1] !== p0[1];
+  return (
+    !Object.is(hit[2], p0[2]) &&
+    near(hit[2], p0[2], 1e-3) &&
+    hit[0] !== p0[0] &&
+    hit[1] !== p0[1]
+  );
+})());
+
+check("pointerRay's vertical sign points a pixel above centre toward world +Y", (() => {
+  // Pin the sign nothing else in the suite exercises: projectPoint defines
+  // y = size/2 - f*up-component/depth (SVG's y grows downward), so a smaller
+  // screen y needs a larger up-component, i.e. more +Y. On the z=0 plane the
+  // side camera faces dead-on, a pixel above centre must therefore hit a
+  // greater world Y than the mirrored pixel below centre. An inverted sign
+  // would move plane drags the wrong way vertically with nothing to catch it.
+  const b = cameraBasis(sideCam(1000));
+  const above = planeHit(SIZE / 2, SIZE / 2 - 50, b, SIZE, [0, 0, 0], [0, 0, 1]);
+  const below = planeHit(SIZE / 2, SIZE / 2 + 50, b, SIZE, [0, 0, 0], [0, 0, 1]);
+  return above !== null && below !== null && above[1] > below[1];
 })());
 
 check("a plane seen edge-on is not hit", (() => {
