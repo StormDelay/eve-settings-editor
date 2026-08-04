@@ -253,16 +253,32 @@ the count and is disabled at zero.
 
 ### 5.3 Buttons and shortcuts in `ProbeFormationsView.svelte`
 
-Four buttons. Copy and Paste sit with the per-formation controls; Export and
-Import are set-wide, so they go with `New` / `Duplicate` / `Delete` in the list
-sidebar.
+All four buttons live in the list sidebar, in their own row below
+`New` / `Duplicate` / `Delete`.
+
+Copy first sat with the per-formation controls, beside the AU/km toggle, on the
+reasoning that it acts on the formation being edited. In the client it was
+simply not found: Copy and Paste are a pair, and someone hunting for one looks
+where the other is. The grouping beats the taxonomy.
 
 | action | flow |
 |---|---|
-| **Copy** | `probe_yaml([visible@selected])` → `navigator.clipboard.writeText` |
-| **Paste** | `navigator.clipboard.readText()` → `probe_parse_yaml` → `add_probe_formations` |
-| **Export…** | `saveDialog` → picker over `visible` → `probe_export` |
+| **Copy** | `probe_yaml([visible@selected])` → `writeText` → a `.flash` naming the formation |
+| **Paste** | `readText()` → `probe_parse_yaml` → `add_probe_formations` |
+| **Export…** | picker over `visible` → `saveDialog` → `probe_export` |
 | **Import…** | `openDialog` (`yaml`/`yml`) → `probe_import` → picker → `add_probe_formations` |
+
+**Export asks what before it asks where.** The path dialog came first at first,
+which the design called an arbitrary order; it is not. Cancelling that dialog —
+the reasonable move when nothing has yet asked what you are exporting — returned
+before the picker appeared, so Export looked like it offered no choice at all.
+Import keeps the opposite order because it must read the file before it can list
+what is inside.
+
+**Copy flashes a confirmation.** It is the one action here that leaves no other
+trace: the clipboard is invisible and the file does not change, so without it the
+button reads as inert. Uses the existing `.flash` class (`app.css:66`) that
+`Sidebar.svelte` and `AccountsView.svelte` already use for the same purpose.
 
 Import and Paste both call `onUserDirty()`; the user still saves, and the normal
 backup chain applies. On a read-only slot the buttons stay enabled and the write
@@ -280,23 +296,34 @@ holds a window handler for Ctrl-S and Ctrl-F; neither letter collides.
 Ctrl-C to copy the number they just selected, and stealing that would be a
 regression on ordinary text editing.
 
-### 5.4 Clipboard read, and the fallback
+### 5.4 Clipboard read — measured in-client, and resolved
 
-`navigator.clipboard.writeText` is already used in this codebase
-(`WindowPanel.svelte:99`) and needs no permission. **Reads are the uncertain
-half**: `navigator.clipboard.readText()` requires a permission WebView2 may
-refuse without showing a prompt.
+This section originally shipped `navigator.clipboard.readText()` with a
+Ctrl-V fallback, and declined the Tauri clipboard-manager plugin as an npm
+dependency, a cargo dependency and a capability entry "for a feature two DOM
+APIs already cover" — revisitable "only if the fallback proves to be the common
+path in practice rather than the rare one".
 
-So the Paste button tries `readText()`, and on rejection shows a message asking
-the user to press Ctrl-V instead. Ctrl-V is handled by a `paste` event listener
-reading `event.clipboardData`, which is a plain DOM event and needs no
-permission at all — it cannot be refused, because the user pressing the key
-*is* the grant.
+**Measured in the running client on 2026-08-04: WebView2 does not silently
+refuse the read, it PROMPTS.** Clicking Paste raised *"localhost:1420 wants to
+see text and images copied to the clipboard — Block / Allow"*. WebView2 does not
+persist that grant, so it returns on every app launch. That is not the rare
+path; it is a permission dialog on a button in a desktop app the user already
+trusts with their settings files.
 
-The Tauri clipboard-manager plugin would remove the uncertainty at the cost of
-an npm dependency, a cargo dependency and a capability entry, for a feature two
-DOM APIs already cover. Declined; revisit only if the fallback proves to be the
-common path in practice rather than the rare one.
+So the plugin is in, and the condition this section set is the reason:
+
+- **`tauri-plugin-clipboard-manager`** (cargo) and
+  `@tauri-apps/plugin-clipboard-manager` (npm), with
+  `clipboard-manager:allow-read-text` and `allow-write-text` in
+  `capabilities/default.json`.
+- **Both directions go through it.** Writes never needed the plugin, but
+  splitting the two would leave a reader wondering why one direction uses the
+  DOM and the other does not.
+- **The Ctrl-V path stays**, and stays first-class. A `paste` event carries its
+  own data and needs no permission on any path — the keypress *is* the grant —
+  so it remains both the natural gesture and the answer when a read fails for
+  an ordinary reason, such as no text on the clipboard.
 
 ## 6. Testing
 
