@@ -25,6 +25,7 @@ mod overview_tabs;
 mod overview_presets;
 mod overview_states;
 mod overview_pack;
+mod probe_pack;
 
 pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
 pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
@@ -38,8 +39,8 @@ pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudS
 pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use probes::{
-    next_id as next_formation_id, project_formations, remove_formation, set_formation, Formation,
-    Formations, ProbeError, DEFAULT_RANGE, MAX_PROBES,
+    check_formation, next_free_id, next_id as next_formation_id, project_formations,
+    remove_formation, set_formation, Formation, Formations, ProbeError, DEFAULT_RANGE, MAX_PROBES,
 };
 pub use overview::{project_overview, set_column_order, set_column_visible, set_column_width, Appearance, OverviewColumn, OverviewColumns, OverviewError, OverviewTab, OverviewWindow, StateSurface};
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
@@ -61,6 +62,7 @@ pub use overview_states::{
 // Node}` line above). Inside `overview_pack.rs` it stays plain `Node`; only the
 // external name is aliased.
 pub use overview_pack::{apply_pack, emit_pack, parse_pack, read_pack, Node as PackNode, Pack, PackError, PackReport};
+pub use probe_pack::{emit_formations, parse_formations, unique_name, FormationSpec};
 
 /// Kind name for error messages; mirrors projection::Node.kind.
 pub(crate) fn projection_kind(v: &blue_marshal::Value) -> &'static str {
