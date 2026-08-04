@@ -1,9 +1,18 @@
 // Component test: run with `npm run test:ui` (vitest + jsdom).
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
 import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
 import { calls } from "$lib/test/setup";
-import type { Formation, Formations } from "$lib/api";
+import { message } from "@tauri-apps/plugin-dialog";
+import type { Formation, Formations, FormationSpec } from "$lib/api";
+
+// The view raises dialogs on every failure path; jsdom has no Tauri to answer
+// them, and a test asserting on WHICH message appeared needs the spy anyway.
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  message: vi.fn(() => Promise.resolve()),
+  open: vi.fn(),
+  save: vi.fn(),
+}));
 
 const noop = () => {};
 
@@ -171,5 +180,102 @@ describe("per-probe range", () => {
     const row = (await screen.findByLabelText("probe 1 range")) as HTMLSelectElement;
     expect(row.value).toBe(String(odd));
     expect(row.selectedOptions[0].text).toMatch(/not a slider stop/);
+  });
+});
+
+describe("clipboard sharing", () => {
+  /** What writeText was last handed, and what readText will answer. */
+  let written: string[] = [];
+  let readable: string | Error = "";
+
+  beforeEach(() => {
+    written = [];
+    readable = "";
+    // jsdom implements no clipboard at all, so there is nothing to spy on —
+    // define one. `configurable` so each test can redefine it.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (t: string) => { written.push(t); return Promise.resolve(); },
+        readText: () => (readable instanceof Error
+          ? Promise.reject(readable)
+          : Promise.resolve(readable)),
+      },
+    });
+  });
+
+  const SHARED = "formations:\n  - name: close\n    range: 74798935350\n    probes:\n      - [1, 0, 0]\n";
+
+  test("Copy sends the draft, not the saved projection", async () => {
+    // The whole reason Copy passes data rather than an id: what the user sees
+    // is the draft, and blur-commit is async (spec §5.1).
+    await open();
+    calls.stub("probe_yaml", SHARED);
+    const x = await screen.findByLabelText("probe 1 X");
+    await fireEvent.input(x, { target: { value: "999" } });
+
+    await fireEvent.click(screen.getByText("Copy"));
+
+    const sent = calls.of("probe_yaml").at(-1)?.args as { formations: FormationSpec[] };
+    expect(sent.formations).toHaveLength(1);
+    // 999 AU in metres, from the un-blurred field.
+    expect(sent.formations[0].probes[0][0]).toBeCloseTo(999 * 149597870700, 0);
+    expect(written).toEqual([SHARED]);
+  });
+
+  test("Ctrl-C copies the formation, but not from inside a field", async () => {
+    await open();
+    calls.stub("probe_yaml", SHARED);
+
+    const x = await screen.findByLabelText("probe 1 X");
+    await fireEvent.keyDown(x, { key: "c", ctrlKey: true });
+    expect(calls.of("probe_yaml")).toHaveLength(0);
+
+    await fireEvent.keyDown(window, { key: "c", ctrlKey: true });
+    await vi.waitFor(() => expect(calls.of("probe_yaml")).toHaveLength(1));
+  });
+
+  test("Paste parses the clipboard and adds what it found", async () => {
+    await open();
+    readable = SHARED;
+    calls.stub("probe_parse_yaml", [
+      { name: "close", probes: [[1, 0, 0]], ranges: [74798935350] },
+    ] satisfies FormationSpec[]);
+    calls.stub("add_probe_formations", FORMATIONS);
+
+    await fireEvent.click(screen.getByText("Paste"));
+
+    await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
+    const sent = calls.of("add_probe_formations")[0].args as { formations: FormationSpec[] };
+    expect(sent.formations[0].name).toBe("close");
+    // Never set_probe_formation: the collision rule lives in the batch command.
+    expect(calls.of("set_probe_formation")).toHaveLength(0);
+  });
+
+  test("a refused clipboard read does not fail silently", async () => {
+    await open();
+    readable = new Error("denied");
+    await fireEvent.click(screen.getByText("Paste"));
+    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
+    expect(vi.mocked(message).mock.calls[0][0]).toMatch(/Ctrl\+V/);
+    calls.never("probe_parse_yaml");
+  });
+
+  test("a paste event adds formations without touching the clipboard API", async () => {
+    // The Ctrl-V fallback: the keypress IS the permission grant, so this path
+    // must work even when readText is refused outright (spec §5.4).
+    await open();
+    readable = new Error("denied");
+    calls.stub("probe_parse_yaml", [
+      { name: "close", probes: [[1, 0, 0]], ranges: [74798935350] },
+    ] satisfies FormationSpec[]);
+    calls.stub("add_probe_formations", FORMATIONS);
+
+    // fireEvent cannot attach clipboardData to a jsdom Event, so build it.
+    const ev = new Event("paste", { bubbles: true });
+    Object.defineProperty(ev, "clipboardData", { value: { getData: () => SHARED } });
+    window.dispatchEvent(ev);
+
+    await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
   });
 });
