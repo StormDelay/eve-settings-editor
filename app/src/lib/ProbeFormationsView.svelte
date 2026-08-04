@@ -73,6 +73,12 @@
   );
   const visibleIndex = $derived(loaded?.formations.findIndex((f) => f.id === selectedId) ?? -1);
 
+  /** Whether the account file is open, so Copy/Paste have something to act on.
+   * The `<svelte:window>` listeners below outlive the markup's `{#if}`
+   * branches — they're live even on the "pair this character" hint screen —
+   * so they need their own gate rather than relying on the buttons' absence. */
+  const canShare = $derived(userOpen && loaded !== null);
+
   /** The range every probe shares, or `null` when they differ — the header
    * picker shows blank rather than claiming one of the values applies to all. */
   const uniformRange = $derived(
@@ -303,12 +309,17 @@
     // Ctrl-V needs no branch here: the browser fires `paste`, which carries the
     // data and asks no permission.
     if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || inAField(e.target)) return;
+    if (!canShare || visibleIndex < 0) return;
+    // A formation copy is the fallback for when there is nothing selected,
+    // never an override of it — if the user has text selected (the hint
+    // paragraph, the shared-account banner), let the browser's own copy win.
+    if (!window.getSelection()?.isCollapsed) return;
     e.preventDefault();
     void copyFormation();
   }
 
   function onPaste(e: ClipboardEvent) {
-    if (inAField(e.target)) return;
+    if (inAField(e.target) || !canShare) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text.trim()) return;
     e.preventDefault();
