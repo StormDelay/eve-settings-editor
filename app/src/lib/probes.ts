@@ -118,9 +118,17 @@ export const PITCH_LIMIT = 89.9;
 
 /** X to the right, Y up — the old side (X/Y) pane. */
 export const SIDE_VIEW = { yaw: 90, pitch: 0 };
-/** Looking down. X to the right, +Z toward the bottom of the screen, which is
- * what a camera above the formation actually sees (spec §4.2). */
-export const TOP_VIEW = { yaw: 90, pitch: PITCH_LIMIT };
+/** Looking down from above, with +Z up the screen the way the flat top-down
+ * pane drew it.
+ *
+ * Yaw 90 would put +X to the right instead, and that was the original choice —
+ * but a right-handed camera looking down cannot have both, and reading +Z
+ * downward makes the view register as the BOTTOM one however the button is
+ * labelled. Between mirroring X and mirroring the axis people navigate by,
+ * mirroring X is the cheaper lie: the eye stays genuinely above, so the cube
+ * shading and the near/far ordering both stay honest, and the axis indicator
+ * shows which way X runs. */
+export const TOP_VIEW = { yaw: -90, pitch: PITCH_LIMIT };
 
 const RAD = Math.PI / 180;
 
