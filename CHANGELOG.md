@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-08-04
+
+A compass in the probe view, and settings edits that stop landing in a backup file.
+
+### Added
+- A compass in the probe formation's 3D view, showing the horizontal plane and where in-game north lies in it.
+
+### Fixed
+- **A backup copy of a settings file no longer stands in for the file it was copied from.** A file named like `core_user_12345 - old.dat` claimed the same account as `core_user_12345.dat`, so opening a character could load — and save to — the backup.
+
+### Changed
+- A settings file with anything after the id in its name no longer shows a character or account name in the file list.
+
 ## [0.29.0] - 2026-08-04
 
 Probe formations you can hand to someone else — and a version number you can read.
