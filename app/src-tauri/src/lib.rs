@@ -370,6 +370,37 @@ fn remove_probe_formation(
 }
 
 #[tauri::command]
+fn probe_yaml(formations: Vec<settings_model::FormationSpec>) -> String {
+    ops::probe_yaml(&formations)
+}
+
+#[tauri::command]
+fn probe_parse_yaml(text: String) -> Result<Vec<settings_model::FormationSpec>, ErrDto> {
+    ops::probe_parse_yaml(&text)
+}
+
+#[tauri::command]
+fn probe_export(
+    path: String,
+    formations: Vec<settings_model::FormationSpec>,
+) -> Result<(), ErrDto> {
+    ops::probe_export(&path, &formations)
+}
+
+#[tauri::command]
+fn probe_import(path: String) -> Result<Vec<settings_model::FormationSpec>, ErrDto> {
+    ops::probe_import(&path)
+}
+
+#[tauri::command]
+fn add_probe_formations(
+    state: tauri::State<'_, AppState>,
+    formations: Vec<settings_model::FormationSpec>,
+) -> Result<settings_model::Formations, ErrDto> {
+    ops::add_probe_formations(&state, formations)
+}
+
+#[tauri::command]
 fn hud_layout(state: tauri::State<'_, AppState>) -> Result<settings_model::Hud, ErrDto> {
     ops::hud_layout(&state)
 }
@@ -500,6 +531,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
@@ -521,6 +553,7 @@ pub fn run() {
             stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
             probe_formations, set_probe_formation, remove_probe_formation,
+            probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
             hud_layout, set_hud_value,
             preferences, set_preferences
         ])

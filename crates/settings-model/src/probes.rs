@@ -51,6 +51,12 @@ pub enum ProbeError {
     BadRangeCount,
     /// A name that is empty once trimmed.
     BadName,
+    /// Shared text that is not valid YAML, or valid YAML in a shape a
+    /// formation cannot be read out of.
+    BadYaml { message: String },
+    /// Valid YAML with no top-level `formations:` list — the user picked the
+    /// wrong file (sharing spec §2.4).
+    NotFormations,
 }
 
 impl std::fmt::Display for ProbeError {
@@ -62,6 +68,10 @@ impl std::fmt::Display for ProbeError {
             ProbeError::BadProbeCount => write!(f, "A formation needs between 1 and 8 probes."),
             ProbeError::BadRangeCount => write!(f, "Every probe needs a scan range."),
             ProbeError::BadName => write!(f, "A formation needs a name."),
+            ProbeError::BadYaml { message } => {
+                write!(f, "This is not a readable formation file: {message}")
+            }
+            ProbeError::NotFormations => write!(f, "This file contains no probe formations."),
         }
     }
 }
@@ -237,6 +247,23 @@ fn set_selected(v: &mut Value, id: i64) -> Result<(), ProbeError> {
     Ok(())
 }
 
+/// The rules a formation must satisfy before anything is written. Split out of
+/// `set_formation` so a BATCH can check every member before the first one is
+/// inlined — otherwise a bad entry halfway down an import leaves half of it
+/// applied (sharing spec §4.2).
+pub fn check_formation(name: &str, probes: &[[f64; 3]], ranges: &[f64]) -> Result<(), ProbeError> {
+    if name.trim().is_empty() {
+        return Err(ProbeError::BadName);
+    }
+    if probes.is_empty() || probes.len() > MAX_PROBES {
+        return Err(ProbeError::BadProbeCount);
+    }
+    if ranges.len() != probes.len() {
+        return Err(ProbeError::BadRangeCount);
+    }
+    Ok(())
+}
+
 /// Replace the formation at `id`, or create it there.
 ///
 /// `ranges` is one scan range per probe, positionally matching `probes` — the
@@ -253,15 +280,7 @@ pub fn set_formation(
     if id < 0 {
         return Err(ProbeError::NoSuchFormation); // never the -4 scratch slot
     }
-    if name.trim().is_empty() {
-        return Err(ProbeError::BadName);
-    }
-    if probes.is_empty() || probes.len() > MAX_PROBES {
-        return Err(ProbeError::BadProbeCount);
-    }
-    if ranges.len() != probes.len() {
-        return Err(ProbeError::BadRangeCount);
-    }
+    check_formation(name, probes, ranges)?;
     inline_all(v);
     let d = formations_mut(v)?;
     let entry = Value::Tuple(vec![
@@ -314,6 +333,36 @@ pub fn remove_formation(v: &mut Value, id: i64) -> Result<(), ProbeError> {
 /// minted, so this fills gaps rather than counting up from the maximum.
 pub fn next_id(f: &Formations) -> i64 {
     (0i64..).find(|c| !f.formations.iter().any(|x| x.id == *c)).expect("i64 has a free id")
+}
+
+/// The smallest id `>= 0` that the STORED dict does not hold — including
+/// entries the projection could not read.
+///
+/// `next_id` answers from the projection, and `project_formations` DROPS any
+/// entry `read_formation` rejects (an empty probe list, a range that is neither
+/// `Float` nor `Int`). The key stays in the dict, so an id allocated from the
+/// projection can name a live entry that `set_formation` then REPLACES —
+/// destroying data the user was never shown. Anything additive allocates here.
+pub fn next_free_id(v: &Value) -> i64 {
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    let taken: Vec<i64> = section(v, b"ui", &sh)
+        .and_then(|(entries, _)| find_child(entries, KEY, &sh))
+        .and_then(|raw| match wrapper_payload(raw, &sh) {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        })
+        .map(|d| {
+            d.iter()
+                .filter_map(|(k, _)| match effective(k, &sh) {
+                    Value::Int(i) => Some(*i),
+                    _ => None,
+                })
+                .collect()
+        })
+        // No `ui`, no key, or a payload that is not a dict: nothing is taken.
+        .unwrap_or_default();
+    (0i64..).find(|c| !taken.contains(c)).expect("i64 has a free id")
 }
 
 #[cfg(test)]
@@ -644,5 +693,37 @@ mod tests {
             selected: None,
         };
         assert_eq!(next_id(&gapped), 1, "ids are reused in the corpus, not counted upward");
+    }
+
+    #[test]
+    fn next_free_id_skips_an_id_the_projection_cannot_read() {
+        // The whole reason it exists. An entry with an empty probe list is
+        // dropped by `read_formation`, so the projection never sees id 0 — but
+        // the key is still in the dict, and `set_formation` would REPLACE it.
+        let d = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), formation(Value::Str("unreadable".into()), vec![])),
+            ])])),
+        ]))]);
+        assert_eq!(next_id(&project_formations(&d).unwrap()), 0, "the projection cannot see it");
+        assert_eq!(next_free_id(&d), 1, "but the stored dict holds it, so 0 is not free");
+    }
+
+    #[test]
+    fn next_free_id_fills_the_lowest_gap() {
+        assert_eq!(next_free_id(&doc()), 2, "ids 0, 1 and the -4 scratch slot are taken");
+        // Nothing to read at all: no ui section, then a ui with no key.
+        assert_eq!(next_free_id(&Value::Dict(Vec::new())), 0);
+        assert_eq!(
+            next_free_id(&Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("x"), Value::Int(1))]))])),
+            0,
+        );
+        let gapped = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), formation(Value::Str("a".into()), vec![probe(1.0, 0.0, 0.0, DEFAULT_RANGE)])),
+                (Value::Int(2), formation(Value::Str("b".into()), vec![probe(2.0, 0.0, 0.0, DEFAULT_RANGE)])),
+            ])])),
+        ]))]);
+        assert_eq!(next_free_id(&gapped), 1);
     }
 }

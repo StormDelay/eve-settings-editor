@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { api, errMessage, type Formation, type Formations } from "./api";
+  import { api, errMessage, type Formation, type Formations, type FormationSpec } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
+  import FormationPicker from "./FormationPicker.svelte";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
@@ -28,6 +30,13 @@
   /** Last angles entered per probe, so a probe pulled to r == 0 and back does
    * not silently snap onto the X axis. */
   let lastAngles = $state<{ az: number; el: number }[]>([]);
+
+  /** The account the edit buffer belongs to. Switching accounts must resync the
+   * drafts even when the new account happens to hold the same formation id —
+   * otherwise the next blur writes the OLD account's formation into the NEW
+   * account's file. Deliberately not `$state`: `reload` runs inside an
+   * `$effect`, and a reactive read here would join that effect's dependencies. */
+  let draftUserId: number | null = null;
 
   /** Which probe row is focused, so a row and its dots highlight together in
    * both panes (Task 7). */
@@ -56,6 +65,28 @@
   }
 
   const current = $derived(loaded?.formations.find((f) => f.id === selectedId) ?? null);
+
+  /** The formation set as the user currently sees it: the loaded projection
+   * with the selected formation's uncommitted draft substituted in.
+   *
+   * Copy, Export and the export picker all read this, so what leaves the app is
+   * what is on screen (spec §5.1). Reading the backend's projection instead
+   * would race the blur-commit that the Copy button's own click fires, and
+   * could return either side of it depending on timing. */
+  const visible = $derived<FormationSpec[]>(
+    (loaded?.formations ?? []).map((f) =>
+      f.id === selectedId
+        ? { name: draftName, probes: draftProbes, ranges: draftRanges }
+        : { name: f.name, probes: f.probes, ranges: f.ranges },
+    ),
+  );
+  const visibleIndex = $derived(loaded?.formations.findIndex((f) => f.id === selectedId) ?? -1);
+
+  /** Whether the account file is open, so Copy/Paste have something to act on.
+   * The `<svelte:window>` listeners below outlive the markup's `{#if}`
+   * branches — they're live even on the "pair this character" hint screen —
+   * so they need their own gate rather than relying on the buttons' absence. */
+  const canShare = $derived(userOpen && loaded !== null);
 
   /** The range every probe shares, or `null` when they differ — the header
    * picker shows blank rather than claiming one of the values applies to all. */
@@ -89,10 +120,16 @@
       if (code === "no_formations") { loaded = { formations: [], selected: null }; }
       else { error = errMessage(e); loaded = null; return; }
     }
-    if (!loaded.formations.some((f) => f.id === selectedId)) {
+    // A different account, or a selection that vanished — either way the drafts
+    // describe a formation that is no longer on screen. Ids 0 and 1 are the
+    // corpus's own, so a plain account switch normally keeps `selectedId` valid
+    // and would otherwise leave the previous account's name and probes in the
+    // buffer for the next blur to commit here.
+    if (userId !== draftUserId || !loaded.formations.some((f) => f.id === selectedId)) {
       const l = loaded; // narrowed non-null; `loaded` itself doesn't narrow inside a closure
       select(l.formations.find((f) => f.id === l.selected) ?? l.formations[0] ?? null);
     }
+    draftUserId = userId;
   }
   $effect(() => { void userOpen; void userId; reload(); });
 
@@ -225,7 +262,190 @@
       await message(errMessage(e), { title: "Could not delete the formation", kind: "error" });
     }
   }
+
+  /** Add formations from shared text — the one path Paste and Import both end
+   * on, so the collision rule (in Rust, spec §4.3) applies to both. Throws;
+   * each caller reports under its own title. */
+  async function addShared(specs: FormationSpec[]) {
+    if (specs.length === 0) return;
+    const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
+    loaded = await api.addProbeFormations(specs);
+    onUserDirty();
+    // next_id fills the lowest free gap, so an added formation can land in the
+    // MIDDLE of the sorted response — diff the ids rather than reading the end.
+    const added = loaded.formations.filter((f) => !before.has(f.id));
+    if (added.length) select(added[added.length - 1]);
+  }
+
+  /** A copy leaves no trace on screen — the clipboard is invisible and nothing
+   * in the file changed — so say so. Same flash the sidebar uses for its own
+   * silent action. */
+  let flash = $state<string | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function copyFormation() {
+    if (visibleIndex < 0) return;
+    try {
+      await writeText(await api.probeYaml([visible[visibleIndex]]));
+      flash = `Copied “${visible[visibleIndex].name}”`;
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => (flash = null), 2000);
+    } catch (e) {
+      await message(errMessage(e), { title: "Could not copy the formation", kind: "error" });
+    }
+  }
+
+  async function pasteText(text: string) {
+    if (!text.trim()) return;
+    try {
+      const specs = await api.probeParseYaml(text);
+      // `addShared` returns silently on an empty set, and Import has its own
+      // message for the same case — without one here a valid-but-empty paste is
+      // indistinguishable from a button that does nothing.
+      if (!specs.length) {
+        await message("That text contains no formations.", { title: "Paste formations" });
+        return;
+      }
+      await addShared(specs);
+    } catch (e) {
+      await message(errMessage(e), { title: "Could not paste the formation", kind: "error" });
+    }
+  }
+
+  async function pasteFormation() {
+    let text: string;
+    try {
+      text = await readText();
+    } catch {
+      // The clipboard goes through Tauri, not `navigator.clipboard`: WebView2
+      // grants a browser clipboard READ only behind a permission prompt, and
+      // re-asks on every app launch — the wrong thing to put on a Paste button.
+      // A read can still fail (no text on the clipboard, for one), and Ctrl-V
+      // needs no permission on any path, so it stays the offer.
+      await message("Press Ctrl+V to paste a formation instead.", {
+        title: "The clipboard could not be read",
+      });
+      return;
+    }
+    await pasteText(text);
+  }
+
+  /** The open picker, or null. `items` is what to choose from; `confirm` runs
+   * with the chosen formations. One slot for both flows, because only one
+   * picker is ever open. */
+  let picker = $state<{
+    title: string;
+    items: FormationSpec[];
+    label: string;
+    confirm: (chosen: FormationSpec[]) => Promise<void>;
+  } | null>(null);
+
+  async function exportFormations() {
+    if (!visible.length) return;
+    picker = {
+      title: "Export formations",
+      items: visible,
+      label: "Export",
+      confirm: async (chosen) => {
+        // The file dialog comes AFTER the pick. Asking where to save first meant
+        // that cancelling it — the reasonable thing to do when you have not been
+        // asked what you are exporting yet — returned before the picker ever
+        // appeared, so Export looked like it offered no choice at all.
+        const path = await saveDialog({
+          defaultPath: "probe-formations.yaml",
+          filters: [{ name: "Probe formations", extensions: ["yaml"] }],
+        });
+        if (!path) return;
+        await api.probeExport(path, chosen);
+        await message(`Exported ${chosen.length} formation(s).`, { title: "Export formations" });
+      },
+    };
+  }
+
+  async function importFormations() {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "Probe formations", extensions: ["yaml", "yml"] }],
+    });
+    if (typeof picked !== "string") return;
+    let items: FormationSpec[];
+    try {
+      items = await api.probeImport(picked);
+    } catch (e) {
+      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      return;
+    }
+    if (!items.length) {
+      await message("That file contains no formations.", { title: "Import formations" });
+      return;
+    }
+    picker = {
+      title: `Import formations from ${picked.split(/[\\/]/).pop()}`,
+      items,
+      label: "Import",
+      confirm: async (chosen) => {
+        await addShared(chosen);
+        await message(
+          `Imported ${chosen.length} formation(s). Save to write them to the account file.`,
+          { title: "Import formations" },
+        );
+      },
+    };
+  }
+
+  /** Close the picker, THEN run its action — a dialog raised by the action
+   * would otherwise stack on top of a modal the user can no longer reach. */
+  async function runPicker(indices: number[]) {
+    const p = picker;
+    picker = null;
+    if (!p) return;
+    try {
+      await p.confirm(indices.map((i) => p.items[i]));
+    } catch (e) {
+      await message(errMessage(e), { title: p.title, kind: "error" });
+    }
+  }
+
+  /** True when the event came from somewhere the OS clipboard must keep
+   * behaving normally. A tab full of coordinate fields is exactly where Ctrl-C
+   * has to go on copying the digits the user just selected. */
+  function inAField(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    const tag = el?.tagName;
+    return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!el?.isContentEditable;
+  }
+
+  /** The picker is a CSS overlay, not a real modal, so window key events still
+   * reach these handlers behind it. A paste while the Export picker is open
+   * would add formations `picker.items` does not hold, and the export that
+   * follows would write a set one paste out of date. */
+  function onKeyDown(e: KeyboardEvent) {
+    if (picker) return;
+    // Ctrl-V needs no branch here: the browser fires `paste`, which carries the
+    // data and asks no permission.
+    if (!(e.ctrlKey || e.metaKey) || e.key !== "c" || inAField(e.target)) return;
+    if (!canShare || visibleIndex < 0) return;
+    // A formation copy is the fallback for when there is nothing selected,
+    // never an override of it — if the user has text selected (the hint
+    // paragraph, the shared-account banner), let the browser's own copy win.
+    if (!window.getSelection()?.isCollapsed) return;
+    e.preventDefault();
+    void copyFormation();
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    if (picker) return; // see onKeyDown
+    if (inAField(e.target) || !canShare) return;
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text.trim()) return;
+    e.preventDefault();
+    void pasteText(text);
+  }
 </script>
+
+<!-- The Probes tab is conditionally mounted (+page.svelte), so this listener
+     does not exist while another view is open and cannot leak into it. -->
+<svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 {#if !userOpen}
   <p class="hint">
@@ -255,6 +475,18 @@
         <button onclick={duplicate} disabled={!current}>Duplicate</button>
         <button class="danger" onclick={remove} disabled={!current}>Delete</button>
       </div>
+      <!-- The sharing group, kept together in its own row. Copy and Paste are a
+           pair, and a user hunting for one looks where the other is — Copy sat
+           beside the AU/km toggle at first and was simply not found. -->
+      <div class="list-actions">
+        <button onclick={copyFormation} disabled={!current}
+                title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
+        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
+        <button onclick={exportFormations} disabled={!visible.length}
+                title="Write formations out as a shareable file">Export…</button>
+        <button onclick={importFormations} title="Add formations from a shared file">Import…</button>
+      </div>
+      {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
     </aside>
 
     {#if current}
@@ -381,6 +613,11 @@
     {/if}
   </div>
   </div>
+{/if}
+
+{#if picker}
+  <FormationPicker title={picker.title} items={picker.items} confirmLabel={picker.label}
+                   onconfirm={runPicker} oncancel={() => (picker = null)} />
 {/if}
 
 <style>
