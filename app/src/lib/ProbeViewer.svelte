@@ -7,7 +7,7 @@
   // everything drawn goes through one depth sort.
   import {
     cameraBasis, projectPoint, silhouette, fitDistance, worldPerPixel,
-    axisScreen, dragPosition,
+    axisScreen, dragPosition, cardinals, horizonRing,
     PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type HandleDrag, type Vec3,
   } from "./probes";
 
@@ -165,6 +165,43 @@
       const e = projectPoint([v[0] * len, v[1] * len, v[2] * len], basis, SIZE);
       return e === null ? null : { o, e, label };
     }).filter((a) => a !== null);
+  });
+
+  // --- compass -------------------------------------------------------------
+  // The horizontal plane, and where EVE's north lies in it. The axis stubs
+  // above say which way X/Y/Z run; they cannot say which way is north, because
+  // that is a fact about the game and not about the frame. It was measured
+  // in-game (see `NORTH_AZ_DEG`) and everything here derives from it.
+
+  /** Ring radius in screen px, the same at every zoom — for the reason the
+   * gizmo handles are screen-sized: formation spread and range spheres differ
+   * by orders of magnitude, so a world-sized ring is a speck at one zoom and
+   * off-screen at the next. It is an orientation cue, not a scale bar. */
+  const RING_PX = 150;
+
+  const compass = $derived.by(() => {
+    const o = origin;
+    if (!o) return null;
+    const r = worldPerPixel(o.depth, SIZE) * RING_PX;
+    // Projected point by point and joined only between consecutive pairs that
+    // BOTH project. A pan can put part of the ring behind the eye, where
+    // `projectPoint` returns null, and one <polyline> would tear across the
+    // whole view rather than simply going missing there.
+    const pts = horizonRing(r).map((p) => projectPoint(p, basis, SIZE));
+    const segs = pts
+      .map((a, i) => {
+        const b = pts[(i + 1) % pts.length];
+        return a && b ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
+      })
+      .filter((s) => s !== null);
+    // Just outside the ring, so a label never sits on the line it belongs to.
+    const marks = cardinals()
+      .map(({ label, v }) => {
+        const q = projectPoint([v[0] * r * 1.1, 0, v[2] * r * 1.1], basis, SIZE);
+        return q === null ? null : { label, x: q.x, y: q.y };
+      })
+      .filter((m) => m !== null);
+    return { segs, marks };
   });
 
   // --- gizmo ---------------------------------------------------------------
@@ -454,6 +491,20 @@
        ondragstart={(e) => e.preventDefault()}>
     <rect x="0" y="0" width={SIZE} height={SIZE} class="bg" />
 
+    <!-- The compass, first so everything else paints over it: it is context,
+         not subject. It deliberately does NOT join the depth sort the probes go
+         through — that sort takes one depth per drawn item, and this is a single
+         curve spanning many, so it has no depth to sort by. A thin ring
+         occluded by a probe cube reads the same as one drawn under it. -->
+    {#if compass}
+      {#each compass.segs as s}
+        <line x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} class="ring" />
+      {/each}
+      {#each compass.marks as m (m.label)}
+        <text x={m.x} y={m.y} class="cardinal" class:north={m.label === "N"}>{m.label}</text>
+      {/each}
+    {/if}
+
     <defs>
       <marker id="probe-vec-head" viewBox="0 0 10 10" refX="9" refY="5"
               markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -607,7 +658,16 @@
      alpha 0.06, so SVG's default `visiblePainted` would hit-test it — and at
      any fitted zoom the circles blanket the markers, so a click meant for a
      probe would land on a circle, bubble to the background and deselect. */
-  .axis, .axis-label, .range, .vec, .vec-head { pointer-events: none; }
+  .axis, .axis-label, .range, .vec, .vec-head, .ring, .cardinal { pointer-events: none; }
+  /* Fainter than the axis stubs: the ring is the plane those stubs live in, and
+     it must not compete with them or with the probes. */
+  .ring { stroke: var(--border); stroke-width: 1; opacity: 0.6; }
+  .cardinal {
+    fill: var(--fg-dim); font-size: 11px; text-anchor: middle; dominant-baseline: middle;
+  }
+  /* North is the one the other three are read from, so it is the one that has
+     to be findable at a glance. */
+  .cardinal.north { fill: var(--fg); font-weight: 600; }
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }

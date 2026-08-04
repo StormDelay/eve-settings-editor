@@ -13,6 +13,21 @@ Workflow:
 
 ## Open
 
+- [ ] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
+  `ops.rs`'s `scoped_files` returns `HashMap<u64, PathBuf>` maps keyed by id
+  alone. With `allow_other_folders` it walks every profile, so an account id
+  present in several `settings_*` folders — the normal case; this install has
+  ten folders each holding `core_user_13036531.dat` — collapses to whichever
+  path was inserted last, and `plan_batch` then writes the account settings
+  there (`ops.rs:279`). The char writes are safe: their paths come from targets
+  the user picked explicitly. Only the derived account path is arbitrary.
+  Turned up 2026-08-04 while fixing the backup-shadowing bug below, which was
+  the same "an id names one file" assumption failing one level down. **Needs a
+  decision before it can be fixed:** should the account write follow each target
+  character's own folder (one write per folder, so a cross-folder batch can
+  write the same account several times), or should a cross-folder batch refuse
+  account-scoped aspects outright? _Added 2026-08-04._
+
 - [ ] **Confirm in-client that a probe formation with fewer than 8 probes loads.**
   The formation editor accepts 1–8 probes, but every one of the 123 corpus
   formations holds exactly 8 — so a short formation is a shape this project

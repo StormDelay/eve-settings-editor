@@ -44,6 +44,42 @@ export interface Spherical {
 
 const DEG = 180 / Math.PI;
 
+/** Bearing of in-game north in the formation's own frame: degrees from +X
+ * toward +Z, the same convention `toSpherical` uses.
+ *
+ * MEASURED in-game 2026-08-04, not derived. A formation of three probes on +X,
+ * two on +Y and one on −Z was launched and read against the tactical overlay:
+ * the +X group sat WEST, the +Y group straight UP, the −Z probe SOUTH. So +Z is
+ * north (90°), −X is east, +X is west, and +Y is up as this file already
+ * assumed. See docs/settings-field-reference.md.
+ *
+ * The calibration knob: if a patch ever moves north, or it turns out not to sit
+ * on an axis, this is the one number to change. */
+export const NORTH_AZ_DEG = 90;
+
+/** +1 when east lies at `NORTH_AZ_DEG + 90` in that convention, −1 when it does
+ * not. Measured with north: east is −X, which is azimuth 180° = 90° + 90°. */
+export const EAST_SIGN: 1 | -1 = 1;
+
+/** The four cardinal directions as labelled unit vectors in the horizontal
+ * plane, N first and then the way bearings increase. */
+export function cardinals(): { label: string; v: Vec3 }[] {
+  return ["N", "E", "S", "W"].map((label, i) => {
+    const a = (NORTH_AZ_DEG + EAST_SIGN * 90 * i) / DEG;
+    return { label, v: [Math.cos(a), 0, Math.sin(a)] as Vec3 };
+  });
+}
+
+/** A horizontal circle of world radius `r` about the formation centre, as `n`
+ * points. The caller projects them; this only knows which plane is the
+ * horizontal one. */
+export function horizonRing(r: number, n = 64): Vec3[] {
+  return Array.from({ length: n }, (_, i) => {
+    const a = ((i / n) * 360) / DEG;
+    return [r * Math.cos(a), 0, r * Math.sin(a)] as Vec3;
+  });
+}
+
 /** EVE's axes: X and Z are the horizontal plane, Y is up. */
 export function toSpherical([x, y, z]: [number, number, number]): Spherical {
   const r = Math.hypot(x, y, z);
