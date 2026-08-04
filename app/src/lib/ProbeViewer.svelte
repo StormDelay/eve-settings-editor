@@ -291,7 +291,10 @@
     if (camDrag.button === 0) {
       cam = {
         ...cam,
-        yaw: cam.yaw + dx * 0.4,
+        // Negated, so dragging left swings the formation left with the
+        // pointer rather than against it — you are turning the object, not
+        // walking around it.
+        yaw: cam.yaw - dx * 0.4,
         pitch: Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, cam.pitch - dy * 0.4)),
       };
     } else {
