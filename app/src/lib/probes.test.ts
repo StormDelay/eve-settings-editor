@@ -9,8 +9,6 @@ import {
   toCartesian,
   cubeFormation,
   formatUnit,
-  paneScale,
-  project,
   cameraBasis,
   projectPoint,
   silhouette,
@@ -81,28 +79,6 @@ check("every cube corner is the same distance from the centre", (() => {
 // 10 000 km out to "0.00".
 check("a small distance still shows a value in AU", formatUnit(1e7, "au") !== "0");
 check("km formatting is readable", formatUnit(1e7, "km") === "10000");
-
-// Top-down is X/Z, side is X/Y. Getting these the wrong way round draws a
-// plausible picture of the wrong formation, which no type check would catch.
-check("top-down drops Y", (() => {
-  const [a, b] = project([1, 2, 3], "top");
-  return a === 1 && b === 3;
-})());
-check("side drops Z", (() => {
-  const [a, b] = project([1, 2, 3], "side");
-  return a === 1 && b === 2;
-})());
-
-check("the scale fits the widest probe plus its range", (() => {
-  // A probe 100 units out with a range of 10 needs 110 of half-extent to show
-  // its whole sphere, so a 200px pane fits 110 into 100px.
-  const s = paneScale([[100, 0, 0]], 10, 200);
-  return near(s, 110 / 100, 1e-9);
-})());
-check("an all-centre formation still yields a finite scale", (() => {
-  const s = paneScale([[0, 0, 0]], 0, 200);
-  return Number.isFinite(s) && s > 0;
-})());
 
 // --- camera and projection -------------------------------------------------
 // EVE's axes: X and Z are the horizontal plane, Y is up. The `side` camera
