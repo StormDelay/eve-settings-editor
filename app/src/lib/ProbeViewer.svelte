@@ -7,17 +7,21 @@
   // everything drawn goes through one depth sort.
   import {
     cameraBasis, projectPoint, silhouette, fitDistance, worldPerPixel,
-    axisScreen, dragPosition, cardinals, horizonRing,
+    axisScreen, dragPosition, cardinals, horizonRing, scenePos,
     PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type HandleDrag, type Vec3,
   } from "./probes";
+  import type { Scene } from "./api";
 
-  let { probes, ranges, formationId, selected, onselect, onmove, oncommit }: {
+  let { probes, ranges, formationId, selected, scenes = [], onselect, onmove, oncommit }: {
     probes: Vec3[];
     ranges: number[];
     /** The formation on show. The re-fit key: a different formation is a
      * different subject and gets framed, a retyped number is not. */
     formationId: number | null;
     selected: number | null;
+    /** Reference geometry available to show alongside the probes. Empty when
+     * the app data directory holds none, which is what hides the picker. */
+    scenes?: Scene[];
     onselect: (i: number | null) => void;
     onmove: (i: number, p: Vec3) => void;
     oncommit: () => void;
@@ -203,6 +207,52 @@
       .filter((m) => m !== null);
     return { segs, marks };
   });
+
+  // --- scene ---------------------------------------------------------------
+  // Static reference geometry loaded from a file: a beacon, a wormhole, the
+  // volume you can jump it from. Everything here is CONTEXT — it is drawn under
+  // the probes, it never hit-tests, and it does not join the probes' depth sort,
+  // for the reason the compass does not.
+  //
+  // The two scales never have to share a frame. A formation is ~0.5 AU across
+  // and a drifter site is ~90 km, so at formation zoom the whole scene is
+  // sub-pixel and at scene zoom the probes are far outside it — which is why
+  // there are two Fit buttons rather than one cleverer one. An earlier attempt
+  // at this (formation-editor spec §8) drew both at one scale and rendered the
+  // site at 1e-4 px.
+
+  /** Which scene is showing; -1 is none, and is where it starts. Local state:
+   * nothing else reads it and nothing persists it. */
+  let sceneIndex = $state(-1);
+  const scene = $derived(scenes[sceneIndex] ?? null);
+  /** The chosen scene's objects in world metres, paired so `fitScene` and the
+   * drawing below agree about what is in it. */
+  const sceneWorld = $derived(
+    (scene?.objects ?? []).map((o) => ({ label: o.label, p: scenePos(o.pos), radius: o.radius_m })),
+  );
+
+  const sceneDrawn = $derived(
+    sceneWorld
+      .map((o) => {
+        const s = projectPoint(o.p, basis, SIZE);
+        // A zero radius must draw NOTHING. `silhouette` returns 0 for it, not
+        // null, and a zero-radius circle is a stray element in the DOM.
+        return s === null
+          ? null
+          : { label: o.label, s, r: o.radius > 0 ? silhouette(s.dist, o.radius, SIZE) : null };
+      })
+      .filter((o) => o !== null),
+  );
+
+  /** Frame the scene rather than the probes. `fitDistance` already takes
+   * positions and a matching radius each, which is exactly a scene. */
+  function fitScene() {
+    cam = {
+      ...cam,
+      target: [0, 0, 0],
+      dist: fitDistance(sceneWorld.map((o) => o.p), sceneWorld.map((o) => o.radius)),
+    };
+  }
 
   // --- gizmo ---------------------------------------------------------------
   // Handles are sized in SCREEN pixels: the formation spread and the range
@@ -505,6 +555,16 @@
       {/each}
     {/if}
 
+    <!-- The scene, with the compass: context, painted under everything. Keyed
+         by index, not label — two objects may legitimately share a name. -->
+    {#each sceneDrawn as o, i (i)}
+      {#if o.r !== null}
+        <circle cx={o.s.x} cy={o.s.y} r={o.r} class="scene-vol" />
+      {/if}
+      <circle cx={o.s.x} cy={o.s.y} r="3.5" class="scene-mark" />
+      <text x={o.s.x + 7} y={o.s.y - 5} class="scene-label">{o.label}</text>
+    {/each}
+
     <defs>
       <marker id="probe-vec-head" viewBox="0 0 10 10" refX="9" refY="5"
               markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -615,6 +675,20 @@
     <button onclick={() => (cam = { ...cam, ...TOP_VIEW })}>Top</button>
     <button onclick={() => (cam = { ...cam, ...SIDE_VIEW })}>Side</button>
     <button onclick={fit}>Fit</button>
+    {#if scenes.length}
+      <label class="toggle">
+        Scene
+        <select class="scene-pick" bind:value={sceneIndex}>
+          <option value={-1}>None</option>
+          {#each scenes as s, i (i)}
+            <option value={i}>{s.name}</option>
+          {/each}
+        </select>
+      </label>
+      {#if scene}
+        <button onclick={fitScene}>Fit scene</button>
+      {/if}
+    {/if}
     <label class="toggle">
       <input type="checkbox" bind:checked={vectors} />
       Vectors
@@ -658,7 +732,8 @@
      alpha 0.06, so SVG's default `visiblePainted` would hit-test it — and at
      any fitted zoom the circles blanket the markers, so a click meant for a
      probe would land on a circle, bubble to the background and deselect. */
-  .axis, .axis-label, .range, .vec, .vec-head, .ring, .cardinal { pointer-events: none; }
+  .axis, .axis-label, .range, .vec, .vec-head, .ring, .cardinal,
+  .scene-vol, .scene-mark, .scene-label { pointer-events: none; }
   /* Fainter than the axis stubs: the ring is the plane those stubs live in, and
      it must not compete with them or with the probes. */
   .ring { stroke: var(--border); stroke-width: 1; opacity: 0.6; }
@@ -668,6 +743,12 @@
   /* North is the one the other three are read from, so it is the one that has
      to be findable at a glance. */
   .cardinal.north { fill: var(--fg); font-weight: 600; }
+  /* Brighter than the compass, dimmer than a probe. A scene is the thing the
+     probes are being placed against, so it has to be findable — but the probes
+     are still the subject and the scene must not compete with them. */
+  .scene-vol { fill: rgba(255, 255, 255, 0.035); stroke: var(--border); stroke-width: 1; }
+  .scene-mark { fill: var(--fg); opacity: 0.75; }
+  .scene-label { fill: var(--fg-dim); font-size: 10px; }
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }

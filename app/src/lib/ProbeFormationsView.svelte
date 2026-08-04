@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage, type Formation, type Formations, type FormationSpec } from "./api";
+  import { api, errMessage, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
@@ -19,6 +19,20 @@
   let unit = $state<Unit>("au");
   /** The unit as it reads in a column header. */
   const unitLabel = $derived(unit === "au" ? "AU" : "km");
+
+  /** Scenes are read once. They are files on disk, independent of which account
+   * or formation is open, so nothing reactive belongs in the effect below. */
+  let scenes = $state<Scene[]>([]);
+  let sceneProblems = $state<string[]>([]);
+  $effect(() => {
+    // No reactive reads, so this runs once on mount.
+    api
+      .sceneList()
+      .then((r) => { scenes = r.scenes; sceneProblems = r.problems; })
+      // A scene is decoration. Failing to read the directory must not take the
+      // formation editor down with it, so this reports nothing and shows none.
+      .catch(() => {});
+  });
 
   // THE EDIT BUFFER, IN METRES. Every displayed number is derived from this;
   // nothing derived is ever read back into it. A field the user has not typed
@@ -604,9 +618,13 @@
 
         <ProbeViewer probes={draftProbes} ranges={draftRanges} formationId={selectedId}
                      selected={selectedProbe}
+                     {scenes}
                      onselect={(i) => (selectedProbe = i)}
                      onmove={moveProbe}
                      oncommit={() => { if (draftChanged()) commit(); }} />
+        {#each sceneProblems as p (p)}
+          <p class="hint">Scene not loaded — {p}</p>
+        {/each}
       </section>
     {:else}
       <p class="hint">This account has no custom probe formations yet.</p>
