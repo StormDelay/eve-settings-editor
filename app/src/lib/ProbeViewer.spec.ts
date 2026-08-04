@@ -305,7 +305,14 @@ describe("scenes", () => {
     // Two objects, one radius. A zero radius must draw NOTHING rather than a
     // zero-radius circle: `silhouette` returns 0 for it, not null, so the guard
     // has to be the viewer's own.
-    expect(c.querySelectorAll(".scene-vol").length).toBe(1);
+    //
+    // The count alone would not catch the guard reversed: `silhouette(dist, 0,
+    // SIZE)` still comes back 0, not null, for the radius-less Beacon, so
+    // `{#if o.r !== null}` would keep emitting exactly one circle either way —
+    // just on the wrong object. Pin which one survives, not just how many.
+    const vols = [...c.querySelectorAll(".scene-vol")] as SVGCircleElement[];
+    expect(vols.length).toBe(1);
+    expect(Number(vols[0].getAttribute("cx"))).toBe(markX(c, 1)); // the Wormhole, not the Beacon
   });
 
   test("Fit scene frames the scene", async () => {

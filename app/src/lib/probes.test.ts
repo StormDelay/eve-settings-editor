@@ -30,7 +30,6 @@ import {
   type Camera,
   type HandleDrag,
   type Vec3,
-  type ScenePos,
 } from "./probes.ts";
 
 const check = (name: string, ok: boolean) => {
