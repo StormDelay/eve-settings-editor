@@ -437,7 +437,11 @@
 </script>
 
 <div class="viewer">
-  <svg bind:this={svgEl} viewBox="0 0 {SIZE} {SIZE}" width={SIZE} height={SIZE}
+  <!-- No width/height attributes: CSS sizes it and the viewBox keeps the
+       coordinate system at SIZE units whatever the pixels come out as. Every
+       projection here works in those units, and `local` already divides client
+       pixels by the rendered width, so the scene simply scales. -->
+  <svg bind:this={svgEl} viewBox="0 0 {SIZE} {SIZE}"
        role="img" aria-label="the formation in 3D"
        onpointerdown={onBackgroundDown}
        onpointermove={onMove}
@@ -572,8 +576,15 @@
 </div>
 
 <style>
-  .viewer { display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; }
+  .viewer { display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; width: 100%; }
   .viewer svg {
+    /* Takes the width it is given and stays square, so a maximised window
+       gets a big view instead of a stamp in the corner. Capped against the
+       WINDOW height, not the container's: a square that fills a wide panel
+       would otherwise be taller than the screen and push the table off it. */
+    width: 100%;
+    max-width: min(100%, 72vh);
+    aspect-ratio: 1;
     border: 1px solid var(--border); border-radius: 3px;
     touch-action: none; /* or a drag scrolls the page instead of orbiting */
     /* An orbit that crosses the axis labels would otherwise start selecting

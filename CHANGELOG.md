@@ -8,7 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - Edit the probe formation in 3D: orbit, pan and zoom a free camera, with `Top`, `Side` and `Fit` shortcuts.
-- Drag a probe along an axis or across a plane to place it.
+- Drag a probe by its arrows to move it along one axis, or by a face of its cube to move it in that plane.
+- Double-click a probe or the formation's centre to orbit around it, or empty space to flip between the top and side views.
 - Show each probe as a vector from the formation's centre.
 - Set scan range per probe, as the game does.
 
