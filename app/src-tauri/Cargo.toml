@@ -23,6 +23,10 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-dialog = "2"
+# Reads the clipboard through Rust. `navigator.clipboard.readText` works in
+# WebView2 but raises a permission prompt on every app launch, which is the
+# wrong thing to show on a Paste button.
+tauri-plugin-clipboard-manager = "2"
 settings-model = { path = "../../crates/settings-model" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 blue-marshal = { path = "../../crates/blue-marshal" }
