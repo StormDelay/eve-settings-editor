@@ -133,8 +133,8 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Profile> {
 /// `pairedFilePath` takes the first in file-name order and ' ' (0x20) sorts
 /// before '.' (0x2E), so the backup won every time, while `ops.rs`'s HashMap
 /// took the last insert and the canonical file won by the same accident.
-/// Measured 2026-08-04 on a live install: opening a character loaded
-/// `core_user_13036531 - old.dat` as its account, and an edit was saved there.
+/// Measured 2026-08-04 on a live install: opening a character loaded the
+/// `- old` copy as its account, and an edit was saved there.
 ///
 /// A backup keeps its `Char`/`User` kind and stays listed — it is still openable
 /// by path from the file list. It simply answers to no id, which restores the
