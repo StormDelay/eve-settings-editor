@@ -56,6 +56,10 @@
     }
   });
 
+  /** Side of a probe's transparent grab square, px. The visible marker is 10;
+   * this is what the pointer actually has to hit. */
+  const HIT_PX = 22;
+
   /** Every probe projected, with its silhouette, sorted back to front. */
   const drawn = $derived(
     probes
@@ -247,7 +251,9 @@
     else if (camDrag?.button === 0 && !camDrag.moved) onselect(null);
     handleDrag = null;
     camDrag = null;
-    svgEl?.releasePointerCapture(e.pointerId);
+    // On pointercancel the capture is already gone, and releasing one we no
+    // longer hold throws NotFoundError in Chromium.
+    if (svgEl?.hasPointerCapture(e.pointerId)) svgEl.releasePointerCapture(e.pointerId);
   }
 
   function onWheel(e: WheelEvent) {
@@ -269,7 +275,8 @@
        onpointerup={onUp}
        onpointercancel={onUp}
        onwheel={onWheel}
-       oncontextmenu={(e) => e.preventDefault()}>
+       oncontextmenu={(e) => e.preventDefault()}
+       ondragstart={(e) => e.preventDefault()}>
     <rect x="0" y="0" width={SIZE} height={SIZE} class="bg" />
 
     <defs>
@@ -293,13 +300,19 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
-      <!-- tabindex="-1", like the gizmo handles below: the <svg role="img">
+      <!-- The grab target is a fat transparent square over the small visible
+           one, the same way `.grab` fattens the gizmo's arrows: a 10 px marker
+           is an awkward thing to hit, and missing it lands on the background,
+           which deselects. Kept well under the plane handles' 18 px offset so
+           a selected probe's own gizmo stays reachable.
+
+           tabindex="-1", like the gizmo handles below: the <svg role="img">
            makes this whole subtree presentational, so a tab stop here is one
            nothing can activate (these are pointer-only). Out of the tab order,
            but still a role the linter and the pointer contract both want. The
            numeric table is the keyboard path. -->
-      <rect x={d.s.x - 5} y={d.s.y - 5} width="10" height="10"
-            class="probe" class:selected={selected === d.i}
+      <rect x={d.s.x - HIT_PX / 2} y={d.s.y - HIT_PX / 2} width={HIT_PX} height={HIT_PX}
+            class="probe-grab"
             role="button" tabindex="-1"
             aria-label={`probe ${d.i + 1}`}
             onpointerdown={(e) => {
@@ -307,6 +320,8 @@
               e.stopPropagation();
               onselect(d.i);
             }} />
+      <rect x={d.s.x - 5} y={d.s.y - 5} width="10" height="10"
+            class="probe" class:selected={selected === d.i} />
     {/each}
 
     {#if gizmo && !vectors}
@@ -355,6 +370,13 @@
   .viewer svg {
     border: 1px solid var(--border); border-radius: 3px;
     touch-action: none; /* or a drag scrolls the page instead of orbiting */
+    /* An orbit that crosses the axis labels would otherwise start selecting
+       their text, and the browser cancels the pointer sequence when it does —
+       which fires pointercancel and drops the drag halfway through. Paired
+       with the svg's ondragstart guard, which stops the same thing happening
+       via a native element drag. */
+    user-select: none;
+    -webkit-user-select: none;
     cursor: grab;
   }
   .bg { fill: var(--bg-panel); }
@@ -366,8 +388,11 @@
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }
-  .probe { fill: var(--accent); cursor: pointer; }
+  /* The visible marker is decoration now — the transparent square over it is
+     what hit-tests, so a click landing between the two still selects. */
+  .probe { fill: var(--accent); pointer-events: none; }
   .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
+  .probe-grab { fill: transparent; cursor: pointer; }
   .viewer-actions { display: flex; gap: 4px; align-items: center; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
