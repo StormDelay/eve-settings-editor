@@ -401,6 +401,13 @@ fn add_probe_formations(
     ops::add_probe_formations(&state, formations)
 }
 
+/// Read-only. There is no write path: a scene is a file the user edits, and an
+/// in-app editor is a later slice.
+#[tauri::command]
+fn scene_list(app: tauri::AppHandle) -> scenes::SceneList {
+    scenes::list(&app_dir(&app))
+}
+
 #[tauri::command]
 fn hud_layout(state: tauri::State<'_, AppState>) -> Result<settings_model::Hud, ErrDto> {
     ops::hud_layout(&state)
@@ -555,6 +562,7 @@ pub fn run() {
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
             probe_formations, set_probe_formation, remove_probe_formation,
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
+            scene_list,
             hud_layout, set_hud_value,
             preferences, set_preferences
         ])
