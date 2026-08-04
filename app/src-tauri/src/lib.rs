@@ -356,9 +356,9 @@ fn set_probe_formation(
     id: Option<i64>,
     name: String,
     probes: Vec<[f64; 3]>,
-    range: f64,
+    ranges: Vec<f64>,
 ) -> Result<settings_model::Formations, ErrDto> {
-    ops::set_probe_formation(&state, id, &name, probes, range)
+    ops::set_probe_formation(&state, id, &name, probes, ranges)
 }
 
 #[tauri::command]

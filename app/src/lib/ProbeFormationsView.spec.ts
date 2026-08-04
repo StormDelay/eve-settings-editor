@@ -17,8 +17,6 @@ const FORMATIONS: Formations = {
       name: "close",
       probes: [AWKWARD, [1e9, 2e9, 3e9]],
       ranges: [74798935350, 74798935350],
-      range: 74798935350,
-      mixed_range: false,
     },
   ],
   selected: 0,
@@ -34,7 +32,7 @@ async function open() {
 /** The arguments of the last set_probe_formation call. */
 const lastSet = () => {
   const c = [...calls.log].reverse().find((x) => x.cmd === "set_probe_formation");
-  return c?.args as { id: number | null; name: string; probes: number[][]; range: number };
+  return c?.args as { id: number | null; name: string; probes: number[][]; ranges: number[] };
 };
 
 describe("precision", () => {
@@ -87,48 +85,29 @@ describe("editing", () => {
     // In-game the scan range is a slider with fixed stops, so a free-text field
     // could write a range the client has no way to represent. A picker also
     // makes a zero-or-negative range — meaningless in EVE, and an invalid SVG
-    // radius in the panes — unwritable by construction rather than by a guard.
+    // radius — unreachable by construction.
     await open();
-    const range = (await screen.findByLabelText("formation range")) as HTMLSelectElement;
+    const range = (await screen.findByLabelText("range for every probe")) as HTMLSelectElement;
     const offered = [...range.options].map((o) => o.text);
     expect(offered).toEqual([
       "0.25 AU", "0.5 AU", "1 AU", "2 AU", "4 AU", "8 AU", "16 AU", "32 AU", "64 AU",
     ]);
-    // Always AU: the km toggle governs probe positions, not the range.
-    expect(offered.some((t) => t.includes("km"))).toBe(false);
   });
 
   test("choosing a range sends that stop's metres", async () => {
     await open();
-    const range = await screen.findByLabelText("formation range");
-    // 1 AU, one stop above the loaded 0.5 AU.
+    const range = await screen.findByLabelText("range for every probe");
     await fireEvent.change(range, { target: { value: String(149597870700) } });
-
-    expect(lastSet().range).toBe(149597870700);
-  });
-
-  test("a range the slider cannot produce is shown, not snapped to a neighbour", async () => {
-    // Same rule mixed_range follows: a file we did not author is displayed as
-    // it is rather than quietly rewritten to the nearest thing we understand.
-    const odd = 12345678901;
-    calls.stub("probe_formations", {
-      formations: [{ ...FORMATIONS.formations[0], ranges: [odd, odd], range: odd }],
-      selected: 0,
-    } satisfies Formations);
-    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
-
-    const range = (await screen.findByLabelText("formation range")) as HTMLSelectElement;
-    expect(range.value).toBe(String(odd));
-    expect(range.selectedOptions[0].text).toMatch(/not a slider stop/);
+    expect(lastSet().ranges).toEqual([149597870700, 149597870700]);
   });
 
   test("New selects the newly minted formation even when its id fills a gap", async () => {
     // next_id fills the lowest free gap (probes.rs), so with ids {0, 2} the
     // new formation lands at id 1 — the MIDDLE of the sorted response, not
     // its end. Selecting by position would land on id 2 ("b") instead.
-    const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350], range: 74798935350, mixed_range: false };
-    const b: Formation = { id: 2, name: "b", probes: [[4, 5, 6]], ranges: [74798935350], range: 74798935350, mixed_range: false };
-    const created: Formation = { id: 1, name: "New formation", probes: [[0, 0, 0]], ranges: [74798935350], range: 74798935350, mixed_range: false };
+    const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350] };
+    const b: Formation = { id: 2, name: "b", probes: [[4, 5, 6]], ranges: [74798935350] };
+    const created: Formation = { id: 1, name: "New formation", probes: [[0, 0, 0]], ranges: [74798935350] };
     calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);
     calls.stub("set_probe_formation", { formations: [a, created, b], selected: 1 } satisfies Formations);
     render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
@@ -139,45 +118,58 @@ describe("editing", () => {
     expect(await screen.findByDisplayValue("New formation")).toBeTruthy();
   });
 
-  test("a mixed-range formation does not offer an edit that would flatten it", async () => {
-    calls.stub("probe_formations", {
-      formations: [{
-        ...FORMATIONS.formations[0],
-        ranges: [74798935350, 37399467675],
-        mixed_range: true,
-      }],
-      selected: 0,
-    } satisfies Formations);
-    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
-    const range = await screen.findByLabelText("formation range");
-    expect((range as HTMLSelectElement).disabled).toBe(true);
-    // And it says WHICH row differs, not just that one does.
-    expect(await screen.findByText(/probes 2/)).toBeTruthy();
-    // The whole formation is read-only, not just the range field — the
-    // editor writes one range for the whole formation, so any other edit
-    // would flatten the mix just as surely as the range field would.
-    const nameField = await screen.findByDisplayValue("close");
-    expect((nameField as HTMLInputElement).disabled).toBe(true);
-    const x = await screen.findByLabelText("probe 1 X");
-    expect((x as HTMLInputElement).disabled).toBe(true);
+});
+
+describe("per-probe range", () => {
+  test("a probe's range picker sends only that probe's new range", async () => {
+    // The client sets scan range per probe. A picker per row is the whole
+    // point of dropping the old single field, so the other rows must not move.
+    await open();
+    const row = (await screen.findByLabelText("probe 2 range")) as HTMLSelectElement;
+    await fireEvent.change(row, { target: { value: String(149597870700) } });
+
+    expect(lastSet().ranges).toEqual([74798935350, 149597870700]);
   });
 
-  test("Copy with uniform range creates a new formation, leaving the mixed original untouched", async () => {
-    const mixed: Formation = {
-      ...FORMATIONS.formations[0],
-      ranges: [74798935350, 37399467675],
-      mixed_range: true,
-    };
-    const copy: Formation = { ...mixed, id: 1, name: "close copy", ranges: [74798935350, 74798935350], mixed_range: false };
-    calls.stub("probe_formations", { formations: [mixed], selected: 0 } satisfies Formations);
-    calls.stub("set_probe_formation", { formations: [mixed, copy], selected: 1 } satisfies Formations);
+  test("the header picker sets every probe's range at once", async () => {
+    // Uniform range is still the common case; reaching it by setting eight
+    // selects by hand would be a regression on the field this replaces.
+    await open();
+    const all = await screen.findByLabelText("range for every probe");
+    await fireEvent.change(all, { target: { value: String(149597870700) } });
+
+    expect(lastSet().ranges).toEqual([149597870700, 149597870700]);
+  });
+
+  test("a formation with differing ranges is editable, not locked read-only", async () => {
+    // This inverts the old mixed_range behaviour. That flag guarded against
+    // flattening a mix through a single range field; with a field per row
+    // there is nothing to flatten (spec §2.1, §5.1).
+    calls.stub("probe_formations", {
+      formations: [{ ...FORMATIONS.formations[0], ranges: [74798935350, 37399467675] }],
+      selected: 0,
+    });
+    calls.stub("set_probe_formation", FORMATIONS);
     render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
-    await screen.findByDisplayValue("close");
 
-    await fireEvent.click(screen.getByText("Copy with uniform range"));
+    const nameField = await screen.findByDisplayValue("close");
+    expect((nameField as HTMLInputElement).disabled).toBe(false);
+    const row = (await screen.findByLabelText("probe 2 range")) as HTMLSelectElement;
+    expect(row.disabled).toBe(false);
+    expect(row.value).toBe(String(37399467675));
+  });
 
-    const args = lastSet();
-    expect(args.id).toBe(null); // a create, never a write onto the mixed original
-    expect(await screen.findByDisplayValue("close copy")).toBeTruthy();
+  test("a range the slider cannot produce is shown on its row, not snapped", async () => {
+    const odd = 12345678;
+    calls.stub("probe_formations", {
+      formations: [{ ...FORMATIONS.formations[0], ranges: [odd, 74798935350] }],
+      selected: 0,
+    });
+    calls.stub("set_probe_formation", FORMATIONS);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+
+    const row = (await screen.findByLabelText("probe 1 range")) as HTMLSelectElement;
+    expect(row.value).toBe(String(odd));
+    expect(row.selectedOptions[0].text).toMatch(/not a slider stop/);
   });
 });
