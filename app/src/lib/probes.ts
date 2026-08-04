@@ -288,7 +288,7 @@ export function planeHit(
 export type HandleDrag =
   | { kind: "axis"; i: number; comp: 0 | 1 | 2; p0: Vec3; sx: number; sy: number;
       a: { dx: number; dy: number; pxPerM: number } }
-  | { kind: "plane"; i: number; lock: 0 | 1 | 2; p0: Vec3 };
+  | { kind: "plane"; i: number; lock: 0 | 1 | 2; p0: Vec3; sx: number; sy: number };
 
 /** The dragged probe's new position for a pointer at (`lx`, `ly`) in viewport
  * units, or `null` when this frame has no answer (a plane gone edge-on).
@@ -311,8 +311,24 @@ export function dragPosition(
   }
   const n: Vec3 = [0, 0, 0];
   n[d.lock] = 1;
-  const hit = planeHit(lx, ly, b, size, d.p0, n);
-  if (!hit) return null;
-  hit[d.lock] = d.p0[d.lock]; // from p0, NOT from the intersection
-  return hit;
+  // Where the grab landed on this plane, and where the pointer is now. The
+  // probe moves by the DIFFERENCE between them, exactly as the axis branch
+  // moves by a pointer delta.
+  //
+  // Returning the intersection itself would place the probe under the cursor,
+  // so it would jump on the first frame by however far the handle sits from
+  // the probe it belongs to — and the plane quads are deliberately offset from
+  // it, so that jump is guaranteed rather than incidental.
+  const from = planeHit(d.sx, d.sy, b, size, d.p0, n);
+  const to = planeHit(lx, ly, b, size, d.p0, n);
+  if (!from || !to) return null;
+  const next: Vec3 = [
+    d.p0[0] + (to[0] - from[0]),
+    d.p0[1] + (to[1] - from[1]),
+    d.p0[2] + (to[2] - from[2]),
+  ];
+  // Still copied, not left to the delta: both intersections carry their own
+  // float noise on this axis, so their difference is not exactly zero.
+  next[d.lock] = d.p0[d.lock]; // from p0, NOT from the intersection
+  return next;
 }
