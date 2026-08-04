@@ -51,6 +51,12 @@ pub enum ProbeError {
     BadRangeCount,
     /// A name that is empty once trimmed.
     BadName,
+    /// Shared text that is not valid YAML, or valid YAML in a shape a
+    /// formation cannot be read out of.
+    BadYaml { message: String },
+    /// Valid YAML with no top-level `formations:` list — the user picked the
+    /// wrong file (sharing spec §2.4).
+    NotFormations,
 }
 
 impl std::fmt::Display for ProbeError {
@@ -62,6 +68,10 @@ impl std::fmt::Display for ProbeError {
             ProbeError::BadProbeCount => write!(f, "A formation needs between 1 and 8 probes."),
             ProbeError::BadRangeCount => write!(f, "Every probe needs a scan range."),
             ProbeError::BadName => write!(f, "A formation needs a name."),
+            ProbeError::BadYaml { message } => {
+                write!(f, "This is not a readable formation file: {message}")
+            }
+            ProbeError::NotFormations => write!(f, "This file contains no probe formations."),
         }
     }
 }
@@ -237,6 +247,23 @@ fn set_selected(v: &mut Value, id: i64) -> Result<(), ProbeError> {
     Ok(())
 }
 
+/// The rules a formation must satisfy before anything is written. Split out of
+/// `set_formation` so a BATCH can check every member before the first one is
+/// inlined — otherwise a bad entry halfway down an import leaves half of it
+/// applied (sharing spec §4.2).
+pub fn check_formation(name: &str, probes: &[[f64; 3]], ranges: &[f64]) -> Result<(), ProbeError> {
+    if name.trim().is_empty() {
+        return Err(ProbeError::BadName);
+    }
+    if probes.is_empty() || probes.len() > MAX_PROBES {
+        return Err(ProbeError::BadProbeCount);
+    }
+    if ranges.len() != probes.len() {
+        return Err(ProbeError::BadRangeCount);
+    }
+    Ok(())
+}
+
 /// Replace the formation at `id`, or create it there.
 ///
 /// `ranges` is one scan range per probe, positionally matching `probes` — the
@@ -253,15 +280,7 @@ pub fn set_formation(
     if id < 0 {
         return Err(ProbeError::NoSuchFormation); // never the -4 scratch slot
     }
-    if name.trim().is_empty() {
-        return Err(ProbeError::BadName);
-    }
-    if probes.is_empty() || probes.len() > MAX_PROBES {
-        return Err(ProbeError::BadProbeCount);
-    }
-    if ranges.len() != probes.len() {
-        return Err(ProbeError::BadRangeCount);
-    }
+    check_formation(name, probes, ranges)?;
     inline_all(v);
     let d = formations_mut(v)?;
     let entry = Value::Tuple(vec![
