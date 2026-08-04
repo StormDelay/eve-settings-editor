@@ -144,6 +144,19 @@
    * only the event plumbing. */
   let handleDrag = $state<HandleDrag | null>(null);
 
+  /** The axis the pointer is over. The visible arm cannot answer this with
+   * `:hover` — it is `pointer-events: none`, and the thing actually hovered is
+   * the fat transparent line on top of it. */
+  let hoveredAxis = $state<number | null>(null);
+
+  /** Whether an axis arm should read as live: being dragged, or about to be. */
+  const axisLive = (i: number) =>
+    (handleDrag?.kind === "axis" && handleDrag.comp === i) || hoveredAxis === i;
+
+  /** Whether a plane quad should read as live. `:hover` covers the approach;
+   * this covers the drag, when pointer capture has moved off the quad. */
+  const planeLive = (lock: number) => handleDrag?.kind === "plane" && handleDrag.lock === lock;
+
   /** Pointer position in viewport units. The SVG is square and scales with its
    * box, so client pixels convert by the box's own width. */
   function local(e: PointerEvent): { x: number; y: number } {
@@ -274,6 +287,7 @@
        onpointermove={onMove}
        onpointerup={onUp}
        onpointercancel={onUp}
+       onpointerleave={() => (hoveredAxis = null)}
        onwheel={onWheel}
        oncontextmenu={(e) => e.preventDefault()}
        ondragstart={(e) => e.preventDefault()}>
@@ -327,19 +341,23 @@
     {#if gizmo && !vectors}
       <g class="gizmo">
         {#each gizmo.quads as q}
-          <polygon points={q.points} class="handle {q.cls}"
+          <polygon points={q.points} class="handle {q.cls}" class:live={planeLive(q.lock)}
                    role="button" tabindex="-1" aria-label="drag in plane"
                    onpointerdown={(e) => startPlane(e, q.lock)} />
         {/each}
         {#each gizmo.arms as a}
-          <line x1={a.neg.x} y1={a.neg.y} x2={a.pos.x} y2={a.pos.y} class="arm {a.cls}" />
+          <line x1={a.neg.x} y1={a.neg.y} x2={a.pos.x} y2={a.pos.y}
+                class="arm {a.cls}" class:live={axisLive(a.i)} />
           <!-- The grab target is a fat transparent line over the thin visible
-               one, so a 1 px arrow is still catchable with a mouse. -->
+               one, so a 1 px arrow is still catchable with a mouse. It also
+               carries the hover, because the arm it covers cannot. -->
           <line x1={a.neg.x} y1={a.neg.y} x2={a.pos.x} y2={a.pos.y} class="grab"
                 role="button" tabindex="-1" aria-label={`drag probe along ${"XYZ"[a.i]}`}
-                onpointerdown={(e) => startAxis(e, a.i as 0 | 1 | 2)} />
-          <circle cx={a.pos.x} cy={a.pos.y} r="3.5" class="tip {a.cls}" />
-          <circle cx={a.neg.x} cy={a.neg.y} r="3.5" class="tip {a.cls}" />
+                onpointerdown={(e) => startAxis(e, a.i as 0 | 1 | 2)}
+                onpointerenter={() => (hoveredAxis = a.i)}
+                onpointerleave={() => { if (hoveredAxis === a.i) hoveredAxis = null; }} />
+          <circle cx={a.pos.x} cy={a.pos.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
+          <circle cx={a.neg.x} cy={a.neg.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
         {/each}
       </g>
     {/if}
@@ -393,6 +411,13 @@
   .probe { fill: var(--accent); pointer-events: none; }
   .probe.selected { fill: var(--warn); stroke: var(--fg); stroke-width: 1; }
   .probe-grab { fill: transparent; cursor: pointer; }
+  /* Pressing a handle focuses it, and the UA then outlines its BOUNDING BOX —
+     which for a diagonal arrow is a large rectangle across the scene. These
+     are all tabindex="-1" and pointer-only, so the ring can never be a
+     keyboard affordance here; it is pure noise. What the ring was badly trying
+     to say — which handle you are on — is said properly by `.live` below.
+     The numeric table remains the keyboard path. */
+  .probe-grab:focus, .grab:focus, .handle:focus { outline: none; }
   .viewer-actions { display: flex; gap: 4px; align-items: center; }
   .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
@@ -406,6 +431,16 @@
   .arm { stroke-width: 1.5; pointer-events: none; }
   .tip { stroke: none; pointer-events: none; }
   .grab { stroke: transparent; stroke-width: 12; stroke-linecap: round; cursor: move; }
+  /* The handle under the pointer, or the one being dragged, brightens and
+     thickens — it keeps its axis colour, so which axis you are on and which
+     one is live are two separate readings rather than one overloaded shade.
+     The visible arm and tips carry it; the transparent grab line stays
+     invisible. */
+  .arm.live { stroke-width: 3.5; filter: brightness(1.5); }
+  .tip.live { r: 5; filter: brightness(1.5); }
   .handle { fill-opacity: 0.25; stroke-width: 1; cursor: move; }
-  .handle:hover { fill-opacity: 0.5; }
+  /* A plane handle hit-tests itself, so :hover carries it — but a drag holds
+     pointer capture on the svg, and :hover stops matching the moment the
+     pointer leaves the quad. `.live` is what keeps it lit for the whole drag. */
+  .handle:hover, .handle.live { fill-opacity: 0.55; stroke-width: 2; }
 </style>
