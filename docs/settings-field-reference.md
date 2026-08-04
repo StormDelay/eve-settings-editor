@@ -561,18 +561,91 @@ saved probe arrangements from the scanner's formation menu.
 
 - **Every formation holds exactly 8 probe entries** (123 formations, 984 entries,
   no other length).
-- `range` is `74798935350.0` in all 984 entries — exactly 0.5 AU in metres. The
-  corpus has no evidence a formation can carry mixed or non-default ranges. The
-  *format* nonetheless carries a range per entry rather than one per formation,
-  and the client sets scan range per probe, so the editor edits them per probe —
-  the uniform 0.5 AU is a measurement of these files, not a constraint.
+- `range` is `74798935350.0` in all 984 entries — exactly 0.5 AU in metres. It is
+  a per-probe setting, and **0.5 AU is the floor for combat scanner probes**
+  (core probes reach 0.25 AU), which is why the corpus never varies: these are
+  combat-probe formations at the tightest range those probes allow, not a
+  constant written by the client. Confirmed in-game 2026-08-04 — a formation
+  authored at 0.25 AU, launched with Sisters Combat probes, came back 0.5 AU on
+  all 8 entries. Whether a stored range is applied at all on load is still
+  untested; author one at 4 AU (clear of every floor) and read the scanner to
+  settle it. The format records **no probe type**, so an editor cannot validate
+  the floor, only warn about it.
 - The coordinates are metre offsets from the formation centre, not absolute
   positions. `"close"` spans ~±22e9 m (~0.15 AU); `"on grid"` ~±10e6 m
   (~10 000 km).
+- **A formation saved in-game does not always come back as it was authored, and
+  what it loses depends on where the ship was.** Measured in-game 2026-08-04, one
+  authored cube of ±2 309 401 m per axis (4000 km from centre), 8 Sisters Combat
+  probes, launched and re-saved from three locations:
+
+  | where | saved back |
+  |---|---|
+  | sun warp-in (~1e9 m) | ±2 309 401 m per axis — exact |
+  | ~42 AU | half-extents 2 097 152 / 2 359 296 / 2 359 296 m — a **box**, not a cube |
+  | ~90 AU | ±2 097 152 m per axis |
+
+  Overview distances confirm the probes really sat where the saved file says:
+  4 000 km on all eight at the sun, 3 941 km on all eight at 42 AU (the
+  half-diagonal of that box). So the loss happens in space, between the client
+  reading the file and writing it back — not in the file format, and not in
+  anything an editor does.
+
+  <a id="probe-precision-speculation"></a>
+  > **SPECULATIVE — everything from here to the end of this bullet is one
+  > hypothesis fitted to three saves, not a corpus measurement.** Treat the three
+  > rows above as the only established facts. Nothing in the codebase should
+  > depend on this being right.
+  >
+  > The numbers land on powers of two: 2 097 152 = 2^21, 2 359 296 = 9 × 2^18.
+  > That fits probe positions round-tripping through `float32` **absolute**
+  > coordinates, where the representable step at magnitude `c` is
+  > `2^(floor(log2 |c|) - 23)` m. Authored 2 309 401 m then rounds to 4 steps of
+  > 2^19 on one axis and 9 steps of 2^18 on another — which is what the 42 AU box
+  > shows, and would mean each axis quantises independently by its own
+  > coordinate's magnitude, so distortion is anisotropic and not predictable from
+  > the radius alone.
+  >
+  > If that is what is happening, the grid coarsens with distance as below. The
+  > radius is the **worst case** for any single axis; an axis whose coordinate is
+  > smaller than `r` gets a finer step. "Smallest faithful offset" is 50 × step,
+  > i.e. the offset below which the worst-case error exceeds 1%.
+  >
+  > | distance from the sun | grid step | worst error per axis | smallest faithful offset |
+  > |---|---|---|---|
+  > | < 0.007 AU | ≤ 128 m | ≤ 64 m | ≤ 6 km |
+  > | 0.007 – 0.014 AU | 128 m | 64 m | 6 km |
+  > | 0.014 – 0.029 AU | 256 m | 128 m | 13 km |
+  > | 0.029 – 0.057 AU | 512 m | 256 m | 26 km |
+  > | 0.057 – 0.115 AU | 1.0 km | 512 m | 51 km |
+  > | 0.115 – 0.23 AU | 2.0 km | 1.0 km | 102 km |
+  > | 0.23 – 0.46 AU | 4.1 km | 2.0 km | 205 km |
+  > | 0.46 – 0.92 AU | 8.2 km | 4.1 km | 410 km |
+  > | 0.92 – 1.84 AU | 16.4 km | 8.2 km | 819 km |
+  > | 1.84 – 3.67 AU | 32.8 km | 16.4 km | 1 638 km |
+  > | 3.67 – 7.35 AU | 65.5 km | 32.8 km | 3 277 km |
+  > | 7.35 – 14.7 AU | 131 km | 65.5 km | 6 554 km |
+  > | 14.7 – 29.4 AU | 262 km | 131 km | 13 107 km |
+  > | 29.4 – 58.8 AU | 524 km | 262 km | 26 214 km |
+  > | 58.8 – 118 AU | 1 049 km | 524 km | 52 429 km |
+  > | 118 – 235 AU | 2 097 km | 1 049 km | 104 858 km |
+  >
+  > Three saves cannot distinguish this from any other rule that happens to round
+  > 2 309 401 the same way, and no boundary in the table has been tested. To
+  > falsify it cheaply: author offsets that straddle a predicted band edge and
+  > save from a known distance — the step should double as the ship crosses it.
+
+- **The stored origin is not the probe centroid.** That same 42 AU save carries Z
+  as −2 621 440 / +2 097 152: symmetric ±2 359 296 about a centre sitting
+  262 144 m off the origin the file counts from. A formation physically
+  centred on the ship can still read lopsided, so nothing downstream may assume
+  symmetry or normalise to it.
 - Ids are **small and reused, not minted per formation**: `0` is `"close"` in all
   114 files, `1` is `"on grid"` in 5. `"close"`'s coordinates differ in the low
   bits between files (3 distinct signatures across the 114) — the same authored
-  formation re-saved through `Float`/`Float32` rounding, not three formations.
+  formation re-saved and rounded differently, not three formations. The
+  location-dependent loss measured above is the likely cause, though this has not
+  been tested at `"close"`'s scale.
 - **Id `-4` is a scratch slot, and its name is `Bytes`, not `Str`.** 4 files carry
   `-4: (b"tempFormation", …)` alongside `0`, holding coordinates within rounding
   distance of `"close"` — the client's copy of the formation being edited. So the
