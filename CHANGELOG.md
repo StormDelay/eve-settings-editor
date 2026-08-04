@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-04
+
+The probe formation, in 3D and draggable — and a scan range on every probe.
+
 ### Added
 - Edit the probe formation in 3D: orbit, pan and zoom a free camera, with `Top`, `Side` and `Fit` shortcuts.
 - Drag a probe by its arrows to move it along one axis, or by a face of its cube to move it in that plane.
