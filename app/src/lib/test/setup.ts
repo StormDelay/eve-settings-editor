@@ -10,6 +10,21 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => calls.dispatch(cmd, args),
 }));
 
+// jsdom implements pointer EVENTS but not pointer CAPTURE, so any component
+// that captures a drag — the layout canvas, the probe viewer — throws the
+// moment a test presses on it.
+//
+// Stubbed here rather than guarded at the call sites: capture is real
+// behaviour every real browser provides, and an optional call in the source
+// would be test scaffolding leaking into the product. `hasPointerCapture`
+// answers false, which is the truth once nothing is captured, and sends the
+// release paths down the branch that skips.
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.hasPointerCapture = () => false;
+}
+
 // @testing-library only auto-registers this when vitest runs with `globals`,
 // which this config deliberately does not. Without it every render stays in the
 // document and the next test's queries match two copies of everything.

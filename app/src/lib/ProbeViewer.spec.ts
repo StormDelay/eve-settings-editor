@@ -5,7 +5,7 @@
 // projection runs off the SIZE constant alone, so every probe lands at a real
 // viewport coordinate in jsdom and a camera move is directly observable as the
 // marker moving. That is what these cover.
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ProbeViewer from "$lib/ProbeViewer.svelte";
 
@@ -103,7 +103,9 @@ describe("double-click camera shortcuts", () => {
     // checkable: no grab stroke may reach into the probe's own grab square.
     const c = mount(0);
     const probe = at(marker(c, 1));
-    const grabs = [...c.querySelectorAll("line.grab")];
+    // Probe 1's OWN arrows. Every probe carries a set now, so an unqualified
+    // query would measure a neighbour's arrows against this probe's centre.
+    const grabs = [...c.querySelectorAll('line.grab[aria-label^="drag probe 1 "]')];
     expect(grabs.length).toBeGreaterThan(0);
 
     for (const g of grabs) {
@@ -128,5 +130,65 @@ describe("double-click camera shortcuts", () => {
     // Focused on the probe at +X, still in the side view: the +Y probe stays
     // above the middle of the view. A flip to top would put it level with it.
     expect(at(marker(c, 2)).y).toBeLessThan(CENTRE);
+  });
+
+  test("every probe carries its own handles, not just the selected one", async () => {
+    // Selection-gated handles were the original design and they made the gizmo
+    // useless for finding a probe: you had to have already picked the one you
+    // wanted before there was anything to drag.
+    const c = mount(0);
+    for (const n of [1, 2]) {
+      expect(c.querySelectorAll(`line.grab[aria-label^="drag probe ${n} "]`).length).toBe(6);
+      expect(c.querySelectorAll(`polygon[aria-label="drag probe ${n} in plane"]`).length).toBe(3);
+    }
+  });
+});
+
+describe("selection is not collateral damage", () => {
+  /** Two press/release pairs on empty space and the dblclick they produce. */
+  async function clickBackground(bg: Element, times: number) {
+    for (let i = 0; i < times; i++) {
+      await fireEvent.pointerDown(bg, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      await fireEvent.pointerUp(bg, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    }
+    if (times > 1) await fireEvent.dblClick(bg);
+  }
+
+  function mountWithSpy() {
+    const onselect = vi.fn();
+    const { container } = render(ProbeViewer, {
+      probes: PROBES, ranges: RANGES, selected: 0, formationId: 0,
+      onselect, onmove: noop, oncommit: noop,
+    });
+    return { onselect, bg: container.querySelector(".bg") as SVGRectElement };
+  }
+
+  test("double-clicking empty space flips the view without dropping the selection", async () => {
+    // The browser fires the first click of a double click regardless, so a
+    // deselect running on pointerup would always clear the selection on the
+    // way to a view flip. It waits out the double-click window instead.
+    vi.useFakeTimers();
+    try {
+      const { onselect, bg } = mountWithSpy();
+      await clickBackground(bg, 2);
+      vi.advanceTimersByTime(2000);
+      expect(onselect).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a single click on empty space still deselects", async () => {
+    // The other half of the rule: waiting out the double click must not turn
+    // the plain deselect into a no-op.
+    vi.useFakeTimers();
+    try {
+      const { onselect, bg } = mountWithSpy();
+      await clickBackground(bg, 1);
+      vi.advanceTimersByTime(2000);
+      expect(onselect).toHaveBeenCalledWith(null);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -91,10 +91,19 @@
   const CUBE_RGB = [79, 156, 240]; // --accent
   const CUBE_SEL_RGB = [217, 164, 65]; // --warn
 
+  /** Half a cube's side, in METRES, and the same for every probe.
+   *
+   * Sizing each cube from its OWN depth would hold them all to an identical
+   * number of screen pixels — and a row of objects that never changes size
+   * with distance does not read as a scene, it reads as a row of icons. One
+   * world size, taken from the camera distance so it still lands near CUBE_PX
+   * at any zoom, lets perspective do its job: the near ones come out bigger. */
+  const cubeHalf = $derived(worldPerPixel(cam.dist, SIZE) * (CUBE_PX / 2));
+
   /** One probe's cube as its visible faces, back-face culled — only three of
    * the six can ever face the camera — each with its own shade. */
-  function cubeFaces(p: Vec3, depth: number, sel: boolean) {
-    const h = worldPerPixel(depth, SIZE) * (CUBE_PX / 2);
+  function cubeFaces(p: Vec3, sel: boolean) {
+    const h = cubeHalf;
     const faces: { pts: string; fill: string }[] = [];
     for (let k = 0; k < 3; k++) {
       const u = (k + 1) % 3;
@@ -170,9 +179,10 @@
 
   /** The selected probe's handles, in viewport pixels. `null` when nothing is
    * selected or the probe does not project. */
-  const gizmo = $derived.by(() => {
-    if (selected === null || !probes[selected]) return null;
-    const p0 = probes[selected];
+  /** One probe's handles, in viewport pixels. `null` when it does not project. */
+  function gizmoFor(n: number) {
+    const p0 = probes[n];
+    if (!p0) return null;
     const c = projectPoint(p0, basis, SIZE);
     if (!c) return null;
     const w = worldPerPixel(c.depth, SIZE);
@@ -211,25 +221,37 @@
         points: corners.map((q) => `${q!.x},${q!.y}`).join(" "),
       };
     }).filter((q) => q !== null);
-    return { arms, quads };
-  });
+    return { n, arms, quads };
+  }
+
+  /** Handles on EVERY probe, not just the selected one — the client shows them
+   * all at once too. Overlap at a tight zoom is the accepted cost: zooming in
+   * resolves it, and a gizmo you have to select a probe to see is one you
+   * cannot use to find the probe in the first place. Back to front, so the
+   * handles of a nearer probe sit above a farther one's. */
+  const gizmos = $derived(
+    drawn.map((d) => gizmoFor(d.i)).filter((g) => g !== null),
+  );
 
   /** A handle drag in progress. The maths lives in `probes.ts`; this file keeps
    * only the event plumbing. */
   let handleDrag = $state<HandleDrag | null>(null);
 
-  /** The axis the pointer is over. The visible arm cannot answer this with
-   * `:hover` — it is `pointer-events: none`, and the thing actually hovered is
-   * the fat transparent line on top of it. */
-  let hoveredAxis = $state<number | null>(null);
+  /** Which probe's axis the pointer is over. The visible arm cannot answer this
+   * with `:hover` — it is `pointer-events: none`, and the thing actually
+   * hovered is the fat transparent line on top of it. Probe-scoped, because
+   * every probe carries its own set of arrows. */
+  let hoveredAxis = $state<{ n: number; axis: number } | null>(null);
 
   /** Whether an axis arm should read as live: being dragged, or about to be. */
-  const axisLive = (i: number) =>
-    (handleDrag?.kind === "axis" && handleDrag.comp === i) || hoveredAxis === i;
+  const axisLive = (n: number, axis: number) =>
+    (handleDrag?.kind === "axis" && handleDrag.i === n && handleDrag.comp === axis) ||
+    (hoveredAxis?.n === n && hoveredAxis.axis === axis);
 
   /** Whether a plane quad should read as live. `:hover` covers the approach;
    * this covers the drag, when pointer capture has moved off the quad. */
-  const planeLive = (lock: number) => handleDrag?.kind === "plane" && handleDrag.lock === lock;
+  const planeLive = (n: number, lock: number) =>
+    handleDrag?.kind === "plane" && handleDrag.i === n && handleDrag.lock === lock;
 
   /** Pointer position in viewport units. The SVG is square and scales with its
    * box, so client pixels convert by the box's own width. */
@@ -239,27 +261,31 @@
     return { x: (e.clientX - box.left) * k, y: (e.clientY - box.top) * k };
   }
 
-  function startAxis(e: PointerEvent, comp: 0 | 1 | 2) {
-    if (e.button !== 0 || selected === null) return;
+  function startAxis(e: PointerEvent, n: number, comp: 0 | 1 | 2) {
+    if (e.button !== 0 || !probes[n]) return;
     e.stopPropagation();
-    const p0 = probes[selected];
+    // Grabbing a probe's handle is a way of picking that probe, so the table
+    // row follows the drag rather than staying on whatever was chosen before.
+    onselect(n);
+    const p0 = probes[n];
     const a = axisScreen(p0, UNIT[comp], basis, SIZE);
     // Edge-on: the arrow is invisible and the scale diverges, so there is
     // nothing to drag.
     if (!a) return;
     const l = local(e);
-    handleDrag = { kind: "axis", i: selected, comp, p0, sx: l.x, sy: l.y, a };
+    handleDrag = { kind: "axis", i: n, comp, p0, sx: l.x, sy: l.y, a };
     svgEl?.setPointerCapture(e.pointerId);
   }
 
-  function startPlane(e: PointerEvent, lock: 0 | 1 | 2) {
-    if (e.button !== 0 || selected === null) return;
+  function startPlane(e: PointerEvent, n: number, lock: 0 | 1 | 2) {
+    if (e.button !== 0 || !probes[n]) return;
     e.stopPropagation();
+    onselect(n);
     // The press point is recorded for the same reason the axis drag records
     // one: the probe moves by how far the pointer travelled across the plane,
     // not to wherever the pointer happens to be on it.
     const l = local(e);
-    handleDrag = { kind: "plane", i: selected, lock, p0: probes[selected], sx: l.x, sy: l.y };
+    handleDrag = { kind: "plane", i: n, lock, p0: probes[n], sx: l.x, sy: l.y };
     svgEl?.setPointerCapture(e.pointerId);
   }
 
@@ -284,6 +310,12 @@
   >(null);
   /** How far a press may wander and still deselect. A click is rarely still. */
   const CLICK_SLOP = 4; // px
+  /** How long a background click waits to see whether a second one follows.
+   * Comfortably inside a typical system double-click time, and short enough
+   * that a plain deselect still feels immediate. */
+  const DOUBLE_CLICK_MS = 250;
+  let deselectTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(deselectTimer));
 
   function onBackgroundDown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 2) return;
@@ -342,7 +374,15 @@
     // A left click on empty space — press and release without travelling — is
     // the deselect. A handle drag or a marker press never sets `camDrag`, so
     // neither can reach this.
-    else if (camDrag?.button === 0 && !camDrag.moved) onselect(null);
+    //
+    // Held back by the double-click window rather than fired now, because a
+    // double click in empty space is a view flip and must keep the selection:
+    // the browser fires the first click of a pair regardless, so the only way
+    // to tell the two apart is to wait and let `dblclick` cancel it.
+    else if (camDrag?.button === 0 && !camDrag.moved) {
+      clearTimeout(deselectTimer);
+      deselectTimer = setTimeout(() => onselect(null), DOUBLE_CLICK_MS);
+    }
     handleDrag = null;
     camDrag = null;
     // On pointercancel the capture is already gone, and releasing one we no
@@ -363,6 +403,9 @@
   function onDblClick(e: MouseEvent) {
     const t = e.target as Element;
     if (t !== svgEl && !t.classList.contains("bg")) return;
+    // This is the second click of the pair, so cancel the deselect the first
+    // one queued: flipping the view is not a reason to lose your probe.
+    clearTimeout(deselectTimer);
     cam = { ...cam, ...(Math.abs(cam.pitch) < 45 ? TOP_VIEW : SIDE_VIEW) };
   }
 
@@ -412,7 +455,7 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
-      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
+      {#each cubeFaces(d.p, selected === d.i) as f}
         <polygon points={f.pts} fill={f.fill} class="probe-face" />
       {/each}
       <!-- The grab target is a fat transparent square over the small visible
@@ -451,29 +494,36 @@
               ondblclick={() => focusOn([0, 0, 0])} />
     {/if}
 
-    {#if gizmo && !vectors}
-      <g class="gizmo">
-        {#each gizmo.quads as q}
-          <polygon points={q.points} class="handle {q.cls}" class:live={planeLive(q.lock)}
-                   role="button" tabindex="-1" aria-label="drag in plane"
-                   onpointerdown={(e) => startPlane(e, q.lock)} />
-        {/each}
-        {#each gizmo.arms as a}
-          {#each a.halves as h}
-            <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y}
-                  class="arm {a.cls}" class:live={axisLive(a.i)} />
-            <!-- The grab target is a fat transparent line over the thin visible
-                 one, so a 1 px arrow is still catchable with a mouse. It also
-                 carries the hover, because the arm it covers cannot. -->
-            <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y} class="grab"
-                  role="button" tabindex="-1" aria-label={`drag probe along ${"XYZ"[a.i]}`}
-                  onpointerdown={(e) => startAxis(e, a.i as 0 | 1 | 2)}
-                  onpointerenter={() => (hoveredAxis = a.i)}
-                  onpointerleave={() => { if (hoveredAxis === a.i) hoveredAxis = null; }} />
-            <circle cx={h.outer.x} cy={h.outer.y} r="3.5" class="tip {a.cls}" class:live={axisLive(a.i)} />
+    {#if !vectors}
+      {#each gizmos as g (g.n)}
+        <g class="gizmo" class:dim={selected !== null && selected !== g.n}>
+          {#each g.quads as q}
+            <polygon points={q.points} class="handle {q.cls}" class:live={planeLive(g.n, q.lock)}
+                     role="button" tabindex="-1" aria-label={`drag probe ${g.n + 1} in plane`}
+                     onpointerdown={(e) => startPlane(e, g.n, q.lock)} />
           {/each}
-        {/each}
-      </g>
+          {#each g.arms as a}
+            {#each a.halves as h}
+              <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y}
+                    class="arm {a.cls}" class:live={axisLive(g.n, a.i)} />
+              <!-- The grab target is a fat transparent line over the thin
+                   visible one, so a 1 px arrow is still catchable with a
+                   mouse. It also carries the hover, because the arm it covers
+                   cannot. -->
+              <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y} class="grab"
+                    role="button" tabindex="-1"
+                    aria-label={`drag probe ${g.n + 1} along ${"XYZ"[a.i]}`}
+                    onpointerdown={(e) => startAxis(e, g.n, a.i as 0 | 1 | 2)}
+                    onpointerenter={() => (hoveredAxis = { n: g.n, axis: a.i })}
+                    onpointerleave={() => {
+                      if (hoveredAxis?.n === g.n && hoveredAxis.axis === a.i) hoveredAxis = null;
+                    }} />
+              <circle cx={h.outer.x} cy={h.outer.y} r="3.5"
+                      class="tip {a.cls}" class:live={axisLive(g.n, a.i)} />
+            {/each}
+          {/each}
+        </g>
+      {/each}
     {/if}
 
     <!-- Last, so it paints over the translucent range circles: this indicator
@@ -553,6 +603,10 @@
   .gx { stroke: #e06c6c; fill: #e06c6c; }
   .gy { stroke: #7bc47b; fill: #7bc47b; }
   .gz { stroke: #6c9ce0; fill: #6c9ce0; }
+  /* Eight gizmos at once is a lot of line. Once a probe is chosen the other
+     seven fade back so its own handles stay findable — still drawn, still
+     grabbable, just no longer competing. */
+  .gizmo.dim { opacity: 0.3; }
   .arm { stroke-width: 1.5; pointer-events: none; }
   .tip { stroke: none; pointer-events: none; }
   .grab { stroke: transparent; stroke-width: 12; stroke-linecap: round; cursor: move; }
