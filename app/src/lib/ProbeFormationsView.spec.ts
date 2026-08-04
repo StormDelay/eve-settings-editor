@@ -4,7 +4,16 @@ import { render, fireEvent, screen } from "@testing-library/svelte";
 import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
 import { calls } from "$lib/test/setup";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { Formation, Formations, FormationSpec } from "$lib/api";
+
+// The clipboard goes through Tauri rather than `navigator.clipboard`, so this
+// is the boundary to stub. WebView2 grants a browser clipboard READ only behind
+// a permission prompt, and re-asks on every app launch.
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  readText: vi.fn(),
+  writeText: vi.fn(() => Promise.resolve()),
+}));
 
 // The view raises dialogs on every failure path; jsdom has no Tauri to answer
 // them, and a test asserting on WHICH message appeared needs the spy anyway.
@@ -214,24 +223,14 @@ describe("per-probe range", () => {
 });
 
 describe("clipboard sharing", () => {
-  /** What writeText was last handed, and what readText will answer. */
-  let written: string[] = [];
-  let readable: string | Error = "";
+  /** Everything `writeText` was handed, in order. */
+  const written = () => vi.mocked(writeText).mock.calls.map((c) => c[0]);
 
   beforeEach(() => {
-    written = [];
-    readable = "";
-    // jsdom implements no clipboard at all, so there is nothing to spy on —
-    // define one. `configurable` so each test can redefine it.
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: (t: string) => { written.push(t); return Promise.resolve(); },
-        readText: () => (readable instanceof Error
-          ? Promise.reject(readable)
-          : Promise.resolve(readable)),
-      },
-    });
+    // `restoreMocks` strips the factory's implementation after every test, so
+    // the default has to be re-armed here rather than set once.
+    vi.mocked(readText).mockResolvedValue("");
+    vi.mocked(writeText).mockResolvedValue(undefined);
   });
 
   test("Copy sends the draft, not the saved projection", async () => {
@@ -248,7 +247,18 @@ describe("clipboard sharing", () => {
     expect(sent.formations).toHaveLength(1);
     // 999 AU in metres, from the un-blurred field.
     expect(sent.formations[0].probes[0][0]).toBeCloseTo(999 * 149597870700, 0);
-    expect(written).toEqual([SHARED]);
+    expect(written()).toEqual([SHARED]);
+  });
+
+  test("Copy confirms it copied, naming the formation", async () => {
+    // Nothing else on screen changes: the clipboard is invisible and the file
+    // is untouched, so without this the button looks inert.
+    await open();
+    calls.stub("probe_yaml", SHARED);
+
+    await fireEvent.click(screen.getByText("Copy"));
+
+    expect(await screen.findByText(/Copied .*close/)).toBeTruthy();
   });
 
   test("Ctrl-C copies the formation, but not from inside a field", async () => {
@@ -265,7 +275,7 @@ describe("clipboard sharing", () => {
 
   test("Paste parses the clipboard and adds what it found", async () => {
     await open();
-    readable = SHARED;
+    vi.mocked(readText).mockResolvedValue(SHARED);
     calls.stub("probe_parse_yaml", [
       { name: "close", probes: [[1, 0, 0]], ranges: [74798935350] },
     ] satisfies FormationSpec[]);
@@ -284,7 +294,7 @@ describe("clipboard sharing", () => {
     // Import has its own message for an empty-but-valid file; without one here
     // the paste is indistinguishable from a button that does nothing.
     await open();
-    readable = "formations: []\n";
+    vi.mocked(readText).mockResolvedValue("formations: []\n");
     calls.stub("probe_parse_yaml", [] satisfies FormationSpec[]);
 
     await fireEvent.click(screen.getByText("Paste"));
@@ -296,7 +306,7 @@ describe("clipboard sharing", () => {
 
   test("a refused clipboard read does not fail silently", async () => {
     await open();
-    readable = new Error("denied");
+    vi.mocked(readText).mockRejectedValue(new Error("denied"));
     await fireEvent.click(screen.getByText("Paste"));
     await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
     expect(vi.mocked(message).mock.calls[0][0]).toMatch(/Ctrl\+V/);
@@ -307,7 +317,7 @@ describe("clipboard sharing", () => {
     // The Ctrl-V fallback: the keypress IS the permission grant, so this path
     // must work even when readText is refused outright (spec §5.4).
     await open();
-    readable = new Error("denied");
+    vi.mocked(readText).mockRejectedValue(new Error("denied"));
     calls.stub("probe_parse_yaml", [
       { name: "close", probes: [[1, 0, 0]], ranges: [74798935350] },
     ] satisfies FormationSpec[]);
@@ -370,10 +380,23 @@ describe("file sharing", () => {
     expect(sent.formations.map((f) => f.name)).toEqual(["closer"]);
   });
 
-  test("cancelling the save dialog opens no picker and writes nothing", async () => {
+  test("Export asks what before it asks where", async () => {
+    // Asking for the path first meant that cancelling it — the reasonable move
+    // when nothing has asked you what you are exporting — returned before the
+    // picker ever appeared, so Export looked like it offered no choice at all.
+    await open();
+    await fireEvent.click(screen.getByText("Export…"));
+
+    expect(await screen.findByText("Export 1")).toBeTruthy();
+    expect(vi.mocked(saveDialog)).not.toHaveBeenCalled();
+  });
+
+  test("cancelling the save dialog writes nothing", async () => {
     await open();
     vi.mocked(saveDialog).mockResolvedValueOnce(null);
     await fireEvent.click(screen.getByText("Export…"));
+    await fireEvent.click(await screen.findByText("Export 1"));
+
     await vi.waitFor(() => expect(vi.mocked(saveDialog)).toHaveBeenCalled());
     expect(screen.queryByTestId("picker-backdrop")).toBeNull();
     calls.never("probe_export");
