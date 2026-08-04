@@ -335,6 +335,36 @@ pub fn next_id(f: &Formations) -> i64 {
     (0i64..).find(|c| !f.formations.iter().any(|x| x.id == *c)).expect("i64 has a free id")
 }
 
+/// The smallest id `>= 0` that the STORED dict does not hold — including
+/// entries the projection could not read.
+///
+/// `next_id` answers from the projection, and `project_formations` DROPS any
+/// entry `read_formation` rejects (an empty probe list, a range that is neither
+/// `Float` nor `Int`). The key stays in the dict, so an id allocated from the
+/// projection can name a live entry that `set_formation` then REPLACES —
+/// destroying data the user was never shown. Anything additive allocates here.
+pub fn next_free_id(v: &Value) -> i64 {
+    let mut sh = SharedTable::new();
+    collect_shared(v, &mut sh);
+    let taken: Vec<i64> = section(v, b"ui", &sh)
+        .and_then(|(entries, _)| find_child(entries, KEY, &sh))
+        .and_then(|raw| match wrapper_payload(raw, &sh) {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        })
+        .map(|d| {
+            d.iter()
+                .filter_map(|(k, _)| match effective(k, &sh) {
+                    Value::Int(i) => Some(*i),
+                    _ => None,
+                })
+                .collect()
+        })
+        // No `ui`, no key, or a payload that is not a dict: nothing is taken.
+        .unwrap_or_default();
+    (0i64..).find(|c| !taken.contains(c)).expect("i64 has a free id")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,5 +693,37 @@ mod tests {
             selected: None,
         };
         assert_eq!(next_id(&gapped), 1, "ids are reused in the corpus, not counted upward");
+    }
+
+    #[test]
+    fn next_free_id_skips_an_id_the_projection_cannot_read() {
+        // The whole reason it exists. An entry with an empty probe list is
+        // dropped by `read_formation`, so the projection never sees id 0 — but
+        // the key is still in the dict, and `set_formation` would REPLACE it.
+        let d = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), formation(Value::Str("unreadable".into()), vec![])),
+            ])])),
+        ]))]);
+        assert_eq!(next_id(&project_formations(&d).unwrap()), 0, "the projection cannot see it");
+        assert_eq!(next_free_id(&d), 1, "but the stored dict holds it, so 0 is not free");
+    }
+
+    #[test]
+    fn next_free_id_fills_the_lowest_gap() {
+        assert_eq!(next_free_id(&doc()), 2, "ids 0, 1 and the -4 scratch slot are taken");
+        // Nothing to read at all: no ui section, then a ui with no key.
+        assert_eq!(next_free_id(&Value::Dict(Vec::new())), 0);
+        assert_eq!(
+            next_free_id(&Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("x"), Value::Int(1))]))])),
+            0,
+        );
+        let gapped = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), formation(Value::Str("a".into()), vec![probe(1.0, 0.0, 0.0, DEFAULT_RANGE)])),
+                (Value::Int(2), formation(Value::Str("b".into()), vec![probe(2.0, 0.0, 0.0, DEFAULT_RANGE)])),
+            ])])),
+        ]))]);
+        assert_eq!(next_free_id(&gapped), 1);
     }
 }
