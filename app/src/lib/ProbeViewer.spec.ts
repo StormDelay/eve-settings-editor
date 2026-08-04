@@ -158,10 +158,11 @@ describe("double-click camera shortcuts", () => {
 
     const below = mount();
     const svg = below.querySelector("svg") as SVGSVGElement;
-    // Drag far enough down to swing the camera under the formation.
+    // UP, to swing the camera under the formation: a downward drag brings the
+    // near side down with the pointer, which lifts the camera over the top.
     await fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
-    await fireEvent.pointerMove(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 400 });
-    await fireEvent.pointerUp(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 400 });
+    await fireEvent.pointerMove(svg, { button: 0, pointerId: 1, clientX: 0, clientY: -400 });
+    await fireEvent.pointerUp(svg, { button: 0, pointerId: 1, clientX: 0, clientY: -400 });
     const fromBelow = brightest(below);
 
     expect(fromAbove).toBeGreaterThan(fromBelow);
@@ -187,13 +188,33 @@ describe("double-click camera shortcuts", () => {
     expect(at(marker(c, 1)).x).toBeGreaterThan(before.x);
   });
 
+  test("dragging down turns the scene down", async () => {
+    // The vertical drag has to agree with the horizontal one or the view feels
+    // nothing like the client's. It did not: this ran inverted, pushing the
+    // near side up while a rightward drag carried it right.
+    const c = mount(null, [[0, 0, 2e10], [0, 2e10, 0]]);
+    const svg = c.querySelector("svg") as SVGSVGElement;
+    const before = at(marker(c, 1));
+
+    await fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    await fireEvent.pointerMove(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 40 });
+    await fireEvent.pointerUp(svg, { button: 0, pointerId: 1, clientX: 0, clientY: 40 });
+
+    expect(at(marker(c, 1)).y).toBeGreaterThan(before.y);
+  });
+
   test("every probe carries its own handles, not just the selected one", async () => {
     // Selection-gated handles were the original design and they made the gizmo
     // useless for finding a probe: you had to have already picked the one you
     // wanted before there was anything to drag.
     const c = mount(0);
     for (const n of [1, 2]) {
-      expect(c.querySelectorAll(`line.grab[aria-label^="drag probe ${n} "]`).length).toBe(6);
+      // Six arrow halves at most — fewer when an axis points near enough at
+      // the camera that its arrows would be stubs on top of the cube, which is
+      // the same edge-on case a drag refuses.
+      expect(c.querySelectorAll(`line.grab[aria-label^="drag probe ${n} "]`).length)
+        .toBeGreaterThanOrEqual(4);
+      // Three faces, always: the plane handles are the cube itself.
       expect(c.querySelectorAll(`polygon[aria-label="drag probe ${n} in plane"]`).length).toBe(3);
     }
   });

@@ -94,8 +94,10 @@
   // were in. Do not reintroduce it.
 
   /** Cube width in screen px — the same for every probe however far away it
-   * is, so a distant probe stays as clickable as a near one. */
-  const CUBE_PX = 15;
+   * is, so a distant probe stays as clickable as a near one. Big enough that
+   * its three visible faces are each a drag target in their own right, since
+   * that is what they now are. */
+  const CUBE_PX = 26;
   /** A world-fixed light. Every face normal is a unit axis, so the lambert term
    * for a face is just ±LIGHT[k] — no dot product needed. */
   const LIGHT = [0.34, 0.86, 0.44];
@@ -115,7 +117,7 @@
   function cubeFaces(p: Vec3, depth: number, sel: boolean) {
     const h = worldPerPixel(depth, SIZE) * (CUBE_PX / 2);
     const rgb = sel ? CUBE_SEL_RGB : CUBE_RGB;
-    const faces: { pts: string; fill: string }[] = [];
+    const faces: { lock: 0 | 1 | 2; pts: string; fill: string }[] = [];
     for (let k = 0; k < 3; k++) {
       const u = (k + 1) % 3;
       const v = (k + 2) % 3;
@@ -135,6 +137,11 @@
       // fix. Wrapping keeps all six distinct from every angle.
       const shade = AMBIENT + (1 - AMBIENT) * (0.5 + 0.5 * s * LIGHT[k]);
       faces.push({
+        // The axis this face is perpendicular to — the one a drag across it
+        // holds still. The face IS the plane handle (spec §4.6 as the client
+        // does it: you drag a face of the cube to move in its plane), so it
+        // carries the lock rather than a separate quad floating beside it.
+        lock: k as 0 | 1 | 2,
         pts: proj.map((q) => `${q!.x},${q!.y}`).join(" "),
         fill: `rgb(${rgb.map((ch) => Math.round(ch * shade)).join(",")})`,
       });
@@ -165,31 +172,20 @@
   // spheres differ by more than an order of magnitude in real data, so a
   // world-sized gizmo would be a speck at one zoom and fill the view at
   // another (spec §4.6).
-  const ARM_PX = 46;   // arrow half-length
-  const PLANE_PX = 18; // plane-handle side, offset from the probe by the same
-  /** Each arrow stops short of the probe by this much, leaving the middle
-   * clear. Two reasons, and the second is not cosmetic: a single line through
-   * the centre puts all three arrows' fat grab strokes on top of the probe, so
-   * the first click of a double click selects it and the SECOND lands on an
-   * arrow — no `dblclick` ever reaches the probe. Wider than the probe's own
-   * 22 px grab square, so the two never overlap. */
-  const GAP_PX = 14;
+  const ARM_PX = 64; // arrow half-length
+  /** Each arrow stops short of the probe by this much, leaving the cube clear.
+   * The cube is the plane handle and the click target, so an arrow crossing it
+   * would steal both; wide enough to clear the cube's corners. */
+  const GAP_PX = 24;
 
   const UNIT: Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const AXIS_CLASS = ["gx", "gy", "gz"];
-  /** The two axes each plane handle spans, and the axis it locks. */
-  const PLANES: { a: 0 | 1 | 2; b: 0 | 1 | 2; lock: 0 | 1 | 2 }[] = [
-    { a: 0, b: 1, lock: 2 },
-    { a: 1, b: 2, lock: 0 },
-    { a: 2, b: 0, lock: 1 },
-  ];
 
   const step = (p: Vec3, axis: Vec3, k: number): Vec3 =>
     [p[0] + axis[0] * k, p[1] + axis[1] * k, p[2] + axis[2] * k];
 
-  /** The selected probe's handles, in viewport pixels. `null` when nothing is
-   * selected or the probe does not project. */
-  /** One probe's handles, in viewport pixels. `null` when it does not project. */
+  /** One probe's arrows, in viewport pixels. `null` when it does not project.
+   * The plane handles are the cube's own faces and live with the cube. */
   function gizmoFor(n: number) {
     const p0 = probes[n];
     if (!p0) return null;
@@ -216,22 +212,7 @@
       }).filter((h) => h !== null);
       return halves.length ? { i, halves, cls: AXIS_CLASS[i] } : null;
     }).filter((a) => a !== null);
-    const quads = PLANES.map(({ a, b, lock }) => {
-      const o = w * PLANE_PX;
-      const corners = [
-        step(step(p0, UNIT[a], o), UNIT[b], o),
-        step(step(p0, UNIT[a], o * 2), UNIT[b], o),
-        step(step(p0, UNIT[a], o * 2), UNIT[b], o * 2),
-        step(step(p0, UNIT[a], o), UNIT[b], o * 2),
-      ].map((q) => projectPoint(q, basis, SIZE));
-      if (corners.some((q) => q === null)) return null;
-      return {
-        lock,
-        cls: AXIS_CLASS[lock],
-        points: corners.map((q) => `${q!.x},${q!.y}`).join(" "),
-      };
-    }).filter((q) => q !== null);
-    return { n, arms, quads };
+    return { n, arms };
   }
 
   /** Handles on EVERY probe, not just the selected one — the client shows them
@@ -361,7 +342,11 @@
         // turning the object rather than walking around it; measured, the
         // negation did the opposite and moved the scene against the pointer.
         yaw: cam.yaw + dx * 0.4,
-        pitch: Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, cam.pitch - dy * 0.4)),
+        // PLUS for the same reason as the yaw: drag down and the near side of
+        // the formation comes down with the pointer. This was minus, which
+        // pushed it up — so the vertical drag ran opposite to the horizontal
+        // one and the whole thing felt unlike the client.
+        pitch: Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, cam.pitch + dy * 0.4)),
       };
     } else {
       // Pan in the camera's own plane, scaled so the scene tracks the pointer
@@ -467,20 +452,16 @@
       {#if d.r !== null}
         <circle cx={d.s.x} cy={d.s.y} r={d.r} class="range" />
       {/if}
-      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
-        <polygon points={f.pts} fill={f.fill} class="probe-face" />
-      {/each}
-      <!-- The grab target is a fat transparent square over the small visible
-           one, the same way `.grab` fattens the gizmo's arrows: a 10 px marker
-           is an awkward thing to hit, and missing it lands on the background,
-           which deselects. Kept well under the plane handles' 18 px offset so
-           a selected probe's own gizmo stays reachable.
+      <!-- A forgiving square UNDER the cube, so a click that lands near a probe
+           rather than exactly on it still selects instead of hitting the
+           background and deselecting. Under, not over: the cube's own faces
+           are the plane handles and have to take the press.
 
-           tabindex="-1", like the gizmo handles below: the <svg role="img">
-           makes this whole subtree presentational, so a tab stop here is one
-           nothing can activate (these are pointer-only). Out of the tab order,
-           but still a role the linter and the pointer contract both want. The
-           numeric table is the keyboard path. -->
+           tabindex="-1", like the arrows below: the <svg role="img"> makes this
+           whole subtree presentational, so a tab stop here is one nothing can
+           activate (these are pointer-only). Out of the tab order, but still a
+           role the linter and the pointer contract both want. The numeric
+           table is the keyboard path. -->
       <rect x={d.s.x - HIT_PX / 2} y={d.s.y - HIT_PX / 2} width={HIT_PX} height={HIT_PX}
             class="probe-grab"
             role="button" tabindex="-1"
@@ -491,6 +472,18 @@
               onselect(d.i);
             }}
             ondblclick={() => focusOn(d.p)} />
+      <!-- The cube's faces ARE the plane handles: drag a face and the probe
+           moves in that face's plane, which is how the client does it. A
+           separate quad floating beside each axis was the old arrangement and
+           it put two dozen parallelograms on screen for eight probes. -->
+      {#each cubeFaces(d.p, d.s.depth, selected === d.i) as f}
+        <polygon points={f.pts} fill={f.fill}
+                 class="probe-face" class:live={planeLive(d.i, f.lock)}
+                 role="button" tabindex="-1"
+                 aria-label={`drag probe ${d.i + 1} in plane`}
+                 onpointerdown={(e) => startPlane(e, d.i, f.lock)}
+                 ondblclick={() => focusOn(d.p)} />
+      {/each}
     {/each}
 
     <!-- The formation centre: what every probe coordinate is an offset from,
@@ -509,11 +502,6 @@
     {#if !vectors}
       {#each gizmos as g (g.n)}
         <g class="gizmo" class:dim={selected !== null && selected !== g.n}>
-          {#each g.quads as q}
-            <polygon points={q.points} class="handle {q.cls}" class:live={planeLive(g.n, q.lock)}
-                     role="button" tabindex="-1" aria-label={`drag probe ${g.n + 1} in plane`}
-                     onpointerdown={(e) => startPlane(e, g.n, q.lock)} />
-          {/each}
           {#each g.arms as a}
             {#each a.halves as h}
               <line x1={h.inner.x} y1={h.inner.y} x2={h.outer.x} y2={h.outer.y}
@@ -585,12 +573,16 @@
   .axis { stroke: var(--border); stroke-width: 1; }
   .axis-label { fill: var(--fg-dim); font-size: 10px; }
   .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }
-  /* The cube is decoration — the transparent square over it is what hit-tests,
-     so a click landing near a probe rather than exactly on it still selects.
-     Its fill is per-face and computed, so it is set inline, not here. The
-     stroke darkens the shared edges and is what stops three lit faces reading
-     as one flat blob. */
-  .probe-face { pointer-events: none; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.6; stroke-linejoin: round; }
+  /* Each face is a plane handle, so it hit-tests. Its fill is per-face and
+     computed, so it is set inline, not here; the stroke darkens the shared
+     edges and is what stops three lit faces reading as one flat blob. */
+  .probe-face {
+    stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.6; stroke-linejoin: round; cursor: move;
+  }
+  /* The face under the pointer, or being dragged, lifts out of the shading —
+     brightness rather than a colour change, so which face you are on reads
+     without breaking the lit-cube illusion the shading builds. */
+  .probe-face:hover, .probe-face.live { filter: brightness(1.45); }
   .probe-grab { fill: transparent; cursor: pointer; }
   /* A ring, not a disc, so a probe sitting on the formation centre still reads
      through it. Brighter than the axis stubs it sits among, or it is lost in
