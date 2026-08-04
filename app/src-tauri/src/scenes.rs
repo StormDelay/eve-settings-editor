@@ -193,28 +193,17 @@ pub fn parse_scene(text: &str) -> Result<Scene, String> {
     Ok(Scene { name, objects })
 }
 
-// ponytail: `list` re-reads and re-parses every file on every call. Scene files
-// are a handful of small documents and the list is only rebuilt when the view
-// mounts. Cache by (path, mtime) if a large library ever drags — the same call
-// `presets::list` makes, for the same reason.
-/// Every scene on disk, sorted by name, plus a message for each file that would
-/// not read.
-///
-/// Installs the built-ins the first time the directory is ABSENT. The guard is
-/// on the directory and not on each file, so a scene the user deleted stays
-/// deleted and one they edited is never overwritten — which is the point of
-/// installing files rather than reading them out of the binary.
-pub fn list(app_data: &Path) -> SceneList {
-    let root = scenes_dir(app_data);
-    let mut out = SceneList::default();
-    if !root.exists() && std::fs::create_dir_all(&root).is_ok() {
-        for (name, body) in BUILT_INS {
-            // Best effort. An unwritable app data directory is not a reason to
-            // show no scenes at all; the built-ins are simply absent this run.
-            let _ = std::fs::write(root.join(name), body);
-        }
-    }
-    let Ok(entries) = std::fs::read_dir(&root) else { return out };
+/// The scenes shipped with the app. Rewritten from the binary on every launch,
+/// so an improved measurement reaches an existing install instead of only a
+/// fresh one. NOT the user's to edit — `scenes/` itself is.
+pub fn shipped_dir(app_data: &Path) -> PathBuf {
+    scenes_dir(app_data).join("shipped")
+}
+
+/// The YAML files directly inside `dir`, sorted. Not recursive: `scenes/` holds
+/// `shipped/`, and this must not walk into it and list its contents twice.
+fn yaml_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut files: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
@@ -229,8 +218,49 @@ pub fn list(app_data: &Path) -> SceneList {
         })
         .collect();
     files.sort();
+    files
+}
+
+// ponytail: `list` re-reads and re-parses every file on every call. Scene files
+// are a handful of small documents and the list is only rebuilt when the view
+// mounts. Cache by (path, mtime) if a large library ever drags — the same call
+// `presets::list` makes, for the same reason.
+/// Every scene on disk, sorted by name, plus a message for each file that would
+/// not read.
+///
+/// TWO DIRECTORIES, AND THE SPLIT IS OWNERSHIP. `scenes/shipped/` belongs to the
+/// app and is overwritten wholesale every time this runs; `scenes/` itself
+/// belongs to the user and is never written to. To change a shipped scene you
+/// copy it up one level and edit the copy, which is the `/usr/share` versus
+/// `~/.config` arrangement and is legible from the path alone.
+///
+/// An earlier design wrote the built-ins straight into `scenes/` and guarded on
+/// the directory being absent, so that a deleted scene stayed deleted. That was
+/// the wrong trade: it also meant a release that improved the drifter numbers —
+/// which the numbers themselves invite, being estimates — could never reach
+/// anyone who had already run the app once. Refreshing beats remembering a
+/// deletion, and this way neither promise has to be broken, because the two
+/// kinds of file no longer share a directory.
+pub fn list(app_data: &Path) -> SceneList {
+    let root = scenes_dir(app_data);
+    let shipped = shipped_dir(app_data);
+    let mut out = SceneList::default();
+    // Best effort throughout. An unwritable app data directory is not a reason
+    // to show no scenes at all; the shipped ones are simply absent this run.
+    if std::fs::create_dir_all(&shipped).is_ok() {
+        for (name, body) in BUILT_INS {
+            let _ = std::fs::write(shipped.join(name), body);
+        }
+    }
+    // The user's own first, then the shipped ones. Only the ordering of the
+    // reads — `scenes` is sorted by name below regardless.
+    let files = yaml_files(&root).into_iter().chain(yaml_files(&shipped));
     for path in files {
-        let shown = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        // A shipped file says so, or two files of the same name in the two
+        // directories produce the same message and neither can be found.
+        let shown =
+            if path.starts_with(&shipped) { format!("shipped/{name}") } else { name };
         let read = std::fs::read_to_string(&path).map_err(|e| e.to_string());
         match read.and_then(|t| parse_scene(&t)) {
             Ok(s) => out.scenes.push(s),
@@ -335,23 +365,67 @@ scene:
     }
 
     #[test]
-    fn listing_installs_the_built_ins_once_and_never_overwrites_them() {
+    fn a_shipped_scene_is_restored_however_it_was_changed() {
+        // The whole reason `shipped/` is a separate directory: a release that
+        // improves the drifter numbers has to reach an install that has already
+        // run, not just a fresh one. Editing or deleting a shipped file is
+        // therefore undone, and that is not data loss, because the file was
+        // never the user's — `scenes/` is (see the test below).
         let dir = tempdir();
         let first = list(&dir);
         assert_eq!(first.problems, Vec::<String>::new());
-        assert_eq!(first.scenes.len(), BUILT_INS.len(), "the built-ins should be installed");
+        assert_eq!(first.scenes.len(), BUILT_INS.len(), "the shipped scenes should be installed");
 
-        // An edit survives. This is the point of installing files rather than
-        // reading them out of the binary: they are the user's to change.
-        let edited = scenes_dir(&dir).join(BUILT_INS[0].0);
-        std::fs::write(&edited, "scene:\n  name: mine\n  objects:\n    - label: p\n      km: 1\n")
+        let shipped = shipped_dir(&dir).join(BUILT_INS[0].0);
+        let original = std::fs::read_to_string(&shipped).unwrap();
+        std::fs::write(&shipped, "scene:\n  name: mine\n  objects:\n    - label: p\n      km: 1\n")
             .unwrap();
-        let second = list(&dir);
-        assert!(second.scenes.iter().any(|s| s.name == "mine"), "an edit must not be overwritten");
+        let after_edit = list(&dir);
+        assert!(
+            !after_edit.scenes.iter().any(|s| s.name == "mine"),
+            "an edit to a shipped scene must be overwritten",
+        );
+        assert_eq!(std::fs::read_to_string(&shipped).unwrap(), original);
 
-        // A deleted scene stays deleted: the install guard is on the DIRECTORY.
-        std::fs::remove_file(&edited).unwrap();
-        assert_eq!(list(&dir).scenes.len(), BUILT_INS.len() - 1);
+        std::fs::remove_file(&shipped).unwrap();
+        assert_eq!(list(&dir).scenes.len(), BUILT_INS.len(), "a deleted shipped scene comes back");
+    }
+
+    #[test]
+    fn a_users_own_scene_is_never_written_to() {
+        // The other half of the split. `scenes/` is the user's: what they put
+        // there is listed beside the shipped ones and is never touched, which
+        // is what makes "copy it up a level and edit the copy" a real answer
+        // rather than advice that quietly fails.
+        let dir = tempdir();
+        list(&dir); // install
+        let mine = scenes_dir(&dir).join(BUILT_INS[0].0); // deliberately the SAME name
+        let body = "scene:\n  name: mine\n  objects:\n    - label: p\n      km: 1\n";
+        std::fs::write(&mine, body).unwrap();
+
+        let out = list(&dir);
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), body, "the user's file is untouched");
+        // Both are listed. A name collision is not deduplicated: the file is the
+        // identity, and hiding one would make a copied-and-edited scene look
+        // like it had failed to load.
+        assert_eq!(out.scenes.len(), BUILT_INS.len() + 1);
+        assert!(out.scenes.iter().any(|s| s.name == "mine"));
+    }
+
+    #[test]
+    fn a_broken_shipped_file_is_named_as_shipped() {
+        // Two files of the same name in the two directories would otherwise
+        // produce the same message, and the user could not tell which to fix.
+        let dir = tempdir();
+        list(&dir);
+        std::fs::write(shipped_dir(&dir).join("broken.yaml"), "\t- [").unwrap();
+        let out = list(&dir);
+        assert_eq!(out.problems.len(), 1);
+        assert!(
+            out.problems[0].starts_with("shipped/broken.yaml:"),
+            "got: {:?}",
+            out.problems,
+        );
     }
 
     #[test]
@@ -381,8 +455,15 @@ scene:
             )
             .unwrap();
         }
+        // By NAME, not by which directory the file came from — the shipped
+        // scenes are read after the user's but must not clump at the end.
         let names: Vec<String> = list(&dir).scenes.into_iter().map(|s| s.name).collect();
-        assert_eq!(names, vec!["alpha".to_string(), "zulu".to_string()]);
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "got: {names:?}");
+        let at = |n: &str| names.iter().position(|s| s == n).unwrap_or_else(|| panic!("no {n}"));
+        assert!(at("alpha") < at("zulu"));
+        assert_eq!(names.len(), BUILT_INS.len() + 2);
     }
 
     #[test]
