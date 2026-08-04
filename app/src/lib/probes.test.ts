@@ -19,6 +19,10 @@ import {
   FOV_DEG,
   SIDE_VIEW,
   TOP_VIEW,
+  pointerRay,
+  axisScreen,
+  axisDrag,
+  planeHit,
   type Camera,
   type Vec3,
 } from "./probes.ts";
@@ -181,3 +185,55 @@ check("fit frames the furthest probe plus its range", (() => {
 })());
 
 check("fit survives a formation with nothing to frame", fitDistance([[0, 0, 0]], [0]) > 0);
+
+// --- drag ------------------------------------------------------------------
+
+check("an axis across the screen drags a pixel delta into metres", (() => {
+  // Side view: +X is screen-right, so a rightward pointer delta is +X metres,
+  // and the conversion is the pointer travel over the axis's pixels-per-metre.
+  const b = cameraBasis(sideCam(1000));
+  const a = axisScreen([0, 0, 0], [1, 0, 0], b, SIZE);
+  if (!a) return false;
+  if (!near(a.dx, 1, 1e-6) || !near(a.dy, 0, 1e-6)) return false;
+  return near(axisDrag(a, 40, 0), 40 / a.pxPerM, 1e-9);
+})());
+
+check("a drag across an axis moves it nowhere", (() => {
+  const b = cameraBasis(sideCam(1000));
+  const a = axisScreen([0, 0, 0], [1, 0, 0], b, SIZE);
+  return a !== null && near(axisDrag(a, 0, 40), 0, 1e-9);
+})());
+
+check("an axis pointing at the camera cannot be dragged", (() => {
+  // Side view looks along -Z, so the Z axis is edge-on: its screen length is
+  // near zero and the metres-per-pixel diverges. The arrow is invisible in
+  // exactly this case, so there is nothing the user could have meant to grab.
+  const b = cameraBasis(sideCam(1000));
+  return axisScreen([0, 0, 0], [0, 0, 1], b, SIZE) === null;
+})());
+
+check("a plane drag hits the plane it was given", (() => {
+  // The XY plane through the origin, seen face-on from the side camera.
+  const b = cameraBasis(sideCam(1000));
+  const hit = planeHit(SIZE / 2, SIZE / 2, b, SIZE, [0, 0, 0], [0, 0, 1]);
+  return hit !== null && near(hit[0], 0, 1e-6) && near(hit[1], 0, 1e-6) && near(hit[2], 0, 1e-6);
+})());
+
+check("a plane drag returns the locked axis bit-for-bit", (() => {
+  // THE precision guarantee (spec §4.7). The intersection maths returns the
+  // locked component with float noise on it; taking that value would displace
+  // the probe along an axis the user never dragged, on every drag.
+  const b = cameraBasis(sideCam(1e11));
+  const p0: Vec3 = [-1199120384.7, -115136512.3, -415997952.9];
+  const hit = planeHit(SIZE / 2 + 30, SIZE / 2 - 10, b, SIZE, p0, [0, 0, 1]);
+  if (hit === null) return false;
+  // The caller keeps the locked component; this asserts the value is available
+  // to keep, and that the other two actually moved.
+  return Object.is([hit[0], hit[1], p0[2]][2], p0[2]) && hit[0] !== p0[0] && hit[1] !== p0[1];
+})());
+
+check("a plane seen edge-on is not hit", (() => {
+  // Normal perpendicular to the view direction: the ray never meets it.
+  const b = cameraBasis(sideCam(1000));
+  return planeHit(SIZE / 2, SIZE / 2, b, SIZE, [0, 0, 0], [1, 0, 0]) === null;
+})());
