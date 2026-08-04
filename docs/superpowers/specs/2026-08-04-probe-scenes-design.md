@@ -142,11 +142,31 @@ configuration, the same call `presets_dir` makes. `.yml` is accepted too: it
 costs one condition, and a file ignored for its extension is the same silent
 disappearance §4.6 refuses.
 
-Built-in scenes are `include_str!`'d into the binary and **written to that
-directory the first time it does not exist**. The guard is on the *directory*, so
-a deleted scene stays deleted and an edited one is never overwritten. Shipping
-them as real files on disk is the point: the built-ins are the worked examples a
-user copies to write their own.
+Built-in scenes are `include_str!`'d into the binary and written to
+`<app data dir>/scenes/shipped/`, **rewritten wholesale every time the list is
+built**. Shipping them as real files on disk is the point: they are the worked
+examples a user copies to write their own.
+
+**The subdirectory is an ownership boundary, and it is load-bearing.**
+`scenes/shipped/` belongs to the app; `scenes/` itself belongs to the user and
+is never written to. To change a shipped scene you copy it one level up and edit
+the copy — the `/usr/share` versus `~/.config` arrangement, legible from the
+path alone. Every shipped file says so in its own header.
+
+> **Superseded.** This section first specified one flat directory with the
+> install guarded on the *directory* being absent, so that a deleted scene
+> stayed deleted and an edited one was never overwritten. That was the wrong
+> trade and it shipped before anyone noticed: it also meant a release with
+> better drifter numbers — which §2 openly invites, the numbers being
+> estimates — could never reach anyone who had already run the app once. Their
+> `scenes/` already existed, so nothing was ever written again, and the only
+> repair was deleting the whole directory, taking their own scenes with it.
+>
+> Refreshing beats remembering a deletion. Splitting the two kinds of file into
+> two directories means neither promise has to be broken: shipped scenes are
+> always current, and user scenes are never touched. The cost is that an edit
+> made *inside* `shipped/` is discarded on next launch, which is why every file
+> there opens by saying not to make one.
 
 The picker lists scenes by `scene.name`, sorted, and does **not** deduplicate:
 the file is the identity, and two files claiming the same name is a thing the
