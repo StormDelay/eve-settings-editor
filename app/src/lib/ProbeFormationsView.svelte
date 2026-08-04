@@ -236,6 +236,10 @@
 {:else if error}
   <p class="error">{error}</p>
 {:else if loaded}
+  <!-- One column filling the tab, so the banner takes its own height off the
+       top instead of the editor below assuming it has the whole tab and
+       running that much past the bottom. -->
+  <div class="probes-tab">
   {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
   <div class="probes">
     <aside class="formation-list">
@@ -376,6 +380,7 @@
       <p class="hint">This account has no custom probe formations yet.</p>
     {/if}
   </div>
+  </div>
 {/if}
 
 <style>
@@ -385,7 +390,8 @@
     background: var(--bg-panel); color: var(--fg);
     border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit;
   }
-  .probes { display: flex; gap: 1rem; align-items: flex-start; height: 100%; }
+  .probes-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .probes { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
   .formation-list {
     flex: 0 0 14rem; display: flex; flex-direction: column; gap: 0.5rem;
     border-right: 1px solid var(--border); padding-right: 1rem;
@@ -401,6 +407,10 @@
   .formation {
     flex: 1; min-width: 0; align-self: stretch;
     display: flex; flex-direction: column; min-height: 0;
+    /* Not the default `stretch`: that pulled the table out to the full width
+       of the panel, and a full-width table hands the slack to its columns and
+       puts the X/Y/Z fields inches apart. Each row keeps its own width. */
+    align-items: flex-start;
   }
   .formation > :not(:last-child) { flex: none; }
   .probe-actions { display: flex; align-items: center; }
