@@ -531,7 +531,10 @@ export const api = {
    * replaces or deletes anything. */
   addProbeFormations: (formations: FormationSpec[]) =>
     invoke<Formations>("add_probe_formations", { formations }),
-  /** Every scene on disk, installing the shipped ones on first run. */
+  /** Every scene on disk. The shipped ones are re-synced from the app on every
+   * call, not installed once, so a release with corrected numbers reaches an
+   * install that has already run. Scenes the user put in the folder themselves
+   * are never written to. */
   sceneList: () => invoke<SceneList>("scene_list"),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
