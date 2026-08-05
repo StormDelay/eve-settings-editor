@@ -52,7 +52,7 @@ pub fn load_cache(dir: &Path) -> Cache {
 fn save_cache(dir: &Path, cache: &Cache) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec_pretty(cache)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     fs::write(cache_path(dir), bytes)
 }
 

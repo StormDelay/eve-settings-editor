@@ -227,7 +227,7 @@ mod tests {
         fs::create_dir_all(root.join("c_eve_sharedcache_tq_tranquility").join("cache"))
             .unwrap(); // non-settings dir ignored
 
-        let profiles = discover(&[root.clone()]);
+        let profiles = discover(std::slice::from_ref(&root));
         assert_eq!(profiles.len(), 2);
         // sorted by (server, profile): singularity first
         assert_eq!(profiles[0].server, "singularity");
@@ -293,7 +293,7 @@ mod tests {
         fs::write(sdir.join("core_user_90000001.dat"), b"x").unwrap();
         fs::write(sdir.join("core_user_90000001 - old.dat"), b"x").unwrap();
 
-        let profiles = discover(&[root.clone()]);
+        let profiles = discover(std::slice::from_ref(&root));
         let files = &profiles[0].files;
         assert_eq!(files.len(), 2, "both files are still listed");
         // The backup still sorts first — that is not what is being fixed.
