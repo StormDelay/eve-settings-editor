@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-05
+
+Reference geometry in the probe view, so a formation can be placed against something real.
+
 ### Added
 - Reference scenes in the probe formation's 3D view — a beacon, a wormhole and the volume you can jump it from — loaded from editable files, with two drifter-wormhole scenes included.
 
