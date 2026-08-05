@@ -628,7 +628,7 @@ fn apply_tabs(ov: &mut Entries, node: &Node) -> usize {
         let mut lowest: Option<(i64, Value)> = None;
         for (k, val) in tabs.iter() {
             if let Some(idx) = as_int(k) {
-                if lowest.as_ref().map_or(true, |(best, _)| idx < *best) {
+                if lowest.as_ref().is_none_or(|(best, _)| idx < *best) {
                     lowest = Some((idx, val.clone()));
                 }
             }
@@ -691,7 +691,7 @@ fn apply_tabs(ov: &mut Entries, node: &Node) -> usize {
 
     let mut emptied = 0;
     for window in groups.iter_mut() {
-        if window_list_mut(window).map_or(false, |l| l.is_empty()) {
+        if window_list_mut(window).is_some_and(|l| l.is_empty()) {
             emptied += 1;
         }
     }

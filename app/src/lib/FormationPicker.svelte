@@ -11,6 +11,9 @@
 
   // Everything starts ticked: "all of them" is the common case both ways, and
   // unticking one is easier to discover than hunting for a select-all first.
+  // The initial capture is the point — the picker is mounted fresh per use, and
+  // the ticks are the user's from then on, not a mirror of the prop.
+  // svelte-ignore state_referenced_locally
   let picked = $state(items.map(() => true));
   const chosen = $derived(picked.flatMap((on, i) => (on ? [i] : [])));
   const allOn = $derived(picked.every(Boolean));
