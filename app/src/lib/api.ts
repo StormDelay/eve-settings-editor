@@ -1,6 +1,9 @@
 // Typed mirror of the Rust command surface. The JSON shapes are contracts
 // pinned by settings-model unit tests — change them there first.
 import { invoke } from "@tauri-apps/api/core";
+import type { ScenePos } from "./probes";
+
+export type { ScenePos };
 
 export interface Step {
   s: string;
@@ -306,6 +309,27 @@ export type FormationSpec = {
   ranges: number[];
 };
 
+export interface SceneObject {
+  label: string;
+  pos: ScenePos;
+  /** Metres. 0 draws no sphere. */
+  radius_m: number;
+}
+
+/** Static reference geometry for the probe viewer, read from a file in the
+ * app data directory. Read-only: scenes are edited as text, not in the app. */
+export interface Scene {
+  name: string;
+  objects: SceneObject[];
+}
+
+/** `problems` holds one message per file that would not read, so a typo in a
+ * hand-edited scene is reported rather than silently missing from the picker. */
+export interface SceneList {
+  scenes: Scene[];
+  problems: string[];
+}
+
 export type KeybindEntry = {
   command: string;
   /** null = unbound. Otherwise [17?, 18?, 16?, key]. */
@@ -507,6 +531,11 @@ export const api = {
    * replaces or deletes anything. */
   addProbeFormations: (formations: FormationSpec[]) =>
     invoke<Formations>("add_probe_formations", { formations }),
+  /** Every scene on disk. The shipped ones are re-synced from the app on every
+   * call, not installed once, so a release with corrected numbers reaches an
+   * install that has already run. Scenes the user put in the folder themselves
+   * are never written to. */
+  sceneList: () => invoke<SceneList>("scene_list"),
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),

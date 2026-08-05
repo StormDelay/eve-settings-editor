@@ -236,6 +236,116 @@ describe("double-click camera shortcuts", () => {
   });
 });
 
+/** A scene with one object at the origin and one well off it, the second
+ * carrying a volume. Distances are in metres — `scenePos` is not involved on
+ * the xyz path, so these are the world coordinates directly. */
+const SCENE = {
+  name: "Drifter wormhole — K-space side",
+  objects: [
+    { label: "Beacon", pos: { kind: "xyz" as const, m: [0, 0, 0] as [number, number, number] }, radius_m: 0 },
+    {
+      label: "Wormhole",
+      pos: { kind: "xyz" as const, m: [8e9, 2e9, 0] as [number, number, number] },
+      radius_m: 1e9,
+    },
+  ],
+};
+
+function mountWithScene() {
+  const { container } = render(ProbeViewer, {
+    probes: PROBES,
+    ranges: RANGES,
+    selected: null,
+    formationId: 0,
+    scenes: [SCENE],
+    onselect: noop,
+    onmove: noop,
+    oncommit: noop,
+  });
+  return container;
+}
+
+const sceneLabels = (c: Element) =>
+  [...c.querySelectorAll(".scene-label")].map((e) => e.textContent);
+
+/** Pick by INDEX, not by setting `.value` to a string. The options carry
+ * numeric values, and driving the select through `selectedIndex` sidesteps the
+ * question of how Svelte stringifies them. */
+async function pick(c: Element, index: number) {
+  const picker = c.querySelector(".scene-pick") as HTMLSelectElement;
+  picker.selectedIndex = index;
+  await fireEvent.change(picker);
+}
+
+/** A scene marker's x, by its 0-based position in the scene. */
+const markX = (c: Element, n: number) =>
+  Number(([...c.querySelectorAll(".scene-mark")][n] as SVGCircleElement).getAttribute("cx"));
+
+describe("scenes", () => {
+  test("no scene is showing until one is picked", () => {
+    const c = mountWithScene();
+    expect(sceneLabels(c)).toEqual([]);
+    expect((c.querySelector(".scene-pick") as HTMLSelectElement).selectedIndex).toBe(0); // None
+  });
+
+  test("picking a scene draws its objects, and None removes them again", async () => {
+    const c = mountWithScene();
+    expect(c.querySelector(".scene-pick")).toBeTruthy();
+
+    await pick(c, 1); // index 0 is None, so the first scene is 1
+    expect(sceneLabels(c)).toEqual(["Beacon", "Wormhole"]);
+
+    await pick(c, 0);
+    expect(sceneLabels(c)).toEqual([]);
+  });
+
+  test("an object with a radius draws a volume and one without does not", async () => {
+    const c = mountWithScene();
+    await pick(c, 1);
+    // Two objects, one radius. A zero radius must draw NOTHING rather than a
+    // zero-radius circle: `silhouette` returns 0 for it, not null, so the guard
+    // has to be the viewer's own.
+    //
+    // The count alone would not catch the guard reversed: `silhouette(dist, 0,
+    // SIZE)` still comes back 0, not null, for the radius-less Beacon, so
+    // `{#if o.r !== null}` would keep emitting exactly one circle either way —
+    // just on the wrong object. Pin which one survives, not just how many.
+    const vols = [...c.querySelectorAll(".scene-vol")] as SVGCircleElement[];
+    expect(vols.length).toBe(1);
+    expect(Number(vols[0].getAttribute("cx"))).toBe(markX(c, 1)); // the Wormhole, not the Beacon
+  });
+
+  test("Fit scene frames the scene", async () => {
+    const c = mountWithScene();
+    await pick(c, 1);
+    // The OFF-CENTRE object. The beacon is at the world origin, which is also
+    // the camera target, so it projects to the middle of the viewport at every
+    // camera distance and would show no change however the camera moved.
+    const before = markX(c, 1);
+
+    const fit = [...c.querySelectorAll("button")].find((b) => b.textContent?.includes("Fit scene"));
+    expect(fit).toBeTruthy();
+    await fireEvent.click(fit!);
+
+    expect(markX(c, 1)).not.toBe(before);
+    // Framing is the whole point, so what matters is that both objects are on
+    // screen afterwards.
+    for (const m of [...c.querySelectorAll(".scene-mark")] as SVGCircleElement[]) {
+      for (const attr of ["cx", "cy"]) {
+        const v = Number(m.getAttribute(attr));
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(SIZE);
+      }
+    }
+  });
+
+  test("no picker at all when there are no scenes on disk", () => {
+    // The existing mount() passes no `scenes`, which is the empty case and the
+    // reason the prop has to default.
+    expect(mount().querySelector(".scene-pick")).toBeNull();
+  });
+});
+
 describe("selection is not collateral damage", () => {
   /** Two press/release pairs on empty space and the dblclick they produce. */
   async function clickBackground(bg: Element, times: number) {
