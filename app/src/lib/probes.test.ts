@@ -26,6 +26,7 @@ import {
   axisDrag,
   planeHit,
   dragPosition,
+  scenePos,
   type Camera,
   type HandleDrag,
   type Vec3,
@@ -356,3 +357,42 @@ check("a plane drag gone edge-on returns null rather than a position", (() => {
   const d: HandleDrag = { kind: "plane", i: 0, lock: 0, p0: [0, 0, 0], sx: SIZE / 2, sy: SIZE / 2 };
   return dragPosition(d, SIZE / 2, SIZE / 2, b, SIZE) === null;
 })());
+
+// --- scene positions --------------------------------------------------------
+// A scene is authored in COMPASS bearings, which is not the azimuth convention
+// `toSpherical` uses. These pin the mapping between them. Written against
+// NORTH_AZ_DEG rather than hard-coded directions, so moving the knob moves the
+// test with it instead of breaking it.
+{
+  const at = (bearing: number, elevation = 0) =>
+    scenePos({ kind: "polar", km: 100, bearing, elevation });
+  const [n, e, s, w] = cardinals();
+
+  const alongs = (v: Vec3, dir: Vec3) =>
+    near(v[0], dir[0] * 100_000, 1) && near(v[1], dir[1] * 100_000, 1) &&
+    near(v[2], dir[2] * 100_000, 1);
+
+  check("bearing 0 is north", alongs(at(0), n.v));
+  check("bearing 90 is east", alongs(at(90), e.v));
+  check("bearing 180 is south", alongs(at(180), s.v));
+  check("bearing 270 is west", alongs(at(270), w.v));
+
+  // The drifter scenes' own object: 87.5 km west, 17.45 degrees UP. The sign of
+  // y is the measured fact the whole scene rests on (spec §2.2).
+  const hole = scenePos({ kind: "polar", km: 87.5, bearing: 270, elevation: 17.45 });
+  check("elevation raises the object", hole[1] > 0);
+  check("a raised object keeps its slant range", near(Math.hypot(...hole), 87_500, 1e-3));
+  check(
+    "elevation is measured from the horizontal plane",
+    near(hole[1], 87_500 * Math.sin((17.45 * Math.PI) / 180), 1e-3),
+  );
+
+  // Kilometres in, metres out. Getting this backwards is a factor of a million
+  // and the object lands somewhere nobody will scroll to.
+  check("km are scaled to metres", near(Math.hypot(...at(0)), 100_000, 1e-6));
+
+  // The cartesian form is a pass-through: it arrives from Rust already in
+  // metres, and touching it here would be a second place units could go wrong.
+  const xyz = scenePos({ kind: "xyz", m: [12500, 3000, -8000] });
+  check("xyz passes through untouched", xyz[0] === 12500 && xyz[1] === 3000 && xyz[2] === -8000);
+}
