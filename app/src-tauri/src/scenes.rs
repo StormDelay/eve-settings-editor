@@ -236,10 +236,19 @@ fn yaml_files(dir: &Path) -> Vec<PathBuf> {
 /// rather than enumerating reparse tags — `is_symlink` alone would miss a
 /// junction, which carries a different tag from a symlink on Windows.
 ///
-/// ponytail: no test for the junction case. Creating one needs Developer Mode or
-/// an elevated process on Windows, so the test would be skipped on the platform
-/// it exists to protect. The plain-file-in-the-way case IS covered, by
-/// `create_dir_all` failing ahead of this.
+/// The check is deliberately looser than the invariant: it accepts `shipped`
+/// resolving to any descendant of `root`, not specifically `root/shipped`. A
+/// junction aimed at a sibling under `scenes/` therefore still gets written. That
+/// costs nothing anyone can see — `list` never scans nested directories, so such
+/// a directory is not in the picker either way — and tightening it would trade a
+/// real comparison for a stricter-looking one.
+///
+/// A check-then-write is a race in principle: `fs::write` re-resolves the path,
+/// so a reparse point installed between this call and the writes would still be
+/// followed. Closing that needs directory-handle-relative I/O, which `std::fs`
+/// does not expose portably. Before this check any pre-existing junction worked
+/// forever and needed no timing at all; now it needs a writer racing the exact
+/// moment `list` runs, which is a different kind of problem.
 fn writes_stay_inside(root: &Path, shipped: &Path) -> bool {
     match (root.canonicalize(), shipped.canonicalize()) {
         // `s != r` because a junction can point at its own parent, and that is
@@ -444,6 +453,71 @@ scene:
     }
 
     #[test]
+    fn a_file_where_the_shipped_directory_belongs_costs_only_the_shipped_scenes() {
+        // `create_dir_all` fails, the write loop is skipped, and the user's own
+        // scenes still come back. The "best effort" the module claims, pinned.
+        let dir = tempdir();
+        let root = scenes_dir(&dir);
+        std::fs::create_dir_all(&root).unwrap();
+        let body = "scene:\n  name: mine\n  objects:\n    - label: p\n      km: 1\n";
+        std::fs::write(root.join("mine.yaml"), body).unwrap();
+        std::fs::write(shipped_dir(&dir), b"not a directory").unwrap();
+
+        let out = list(&dir);
+        assert_eq!(out.scenes.len(), 1, "the shipped scenes are simply absent");
+        assert_eq!(out.scenes[0].name, "mine");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_where_the_shipped_directory_belongs_is_not_written_through() {
+        // THE case `writes_stay_inside` exists for, in its worst form: a
+        // junction at `scenes/shipped` aimed back at `scenes/`, holding a file
+        // with the same name as a shipped scene. Unguarded, every launch
+        // overwrites it.
+        //
+        // Reachable by any standard user — `mklink /J` needs neither elevation
+        // nor Developer Mode, unlike a true symlink. That asymmetry is the
+        // whole reason the guard canonicalizes instead of asking `is_symlink`,
+        // and it is why this test can exist at all.
+        let dir = tempdir();
+        let root = scenes_dir(&dir);
+        std::fs::create_dir_all(&root).unwrap();
+        let mine = root.join(BUILT_INS[0].0); // deliberately a shipped name
+        let body = "scene:\n  name: mine\n  objects:\n    - label: p\n      km: 1\n";
+        std::fs::write(&mine, body).unwrap();
+
+        // `raw_arg`, not `args`. `Command` quotes any argument holding spaces or
+        // quotes, which turns the command line into `/C "mklink /J \"a\" \"b\""`
+        // — cmd does not read backslash-escaped quotes and reports a syntax
+        // error. `raw_arg` appends the line verbatim, which is the only way to
+        // hand cmd a quoted path from Rust.
+        use std::os::windows::process::CommandExt;
+        let line = format!(
+            "/C mklink /J \"{}\" \"{}\"",
+            shipped_dir(&dir).display(),
+            root.display(),
+        );
+        let out = std::process::Command::new("cmd")
+            .raw_arg(&line)
+            .output()
+            .expect("cmd is available on Windows");
+        assert!(
+            out.status.success(),
+            "mklink failed ({line}): {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+
+        list(&dir);
+        assert_eq!(
+            std::fs::read_to_string(&mine).unwrap(),
+            body,
+            "the user's file must survive a junction pointing at its own directory",
+        );
+    }
+
+    #[test]
     fn a_broken_shipped_file_is_named_as_shipped() {
         // Two files of the same name in the two directories would otherwise
         // produce the same message, and the user could not tell which to fix.
@@ -509,14 +583,22 @@ scene:
     /// A fresh empty directory that outlives the test body.
     ///
     /// No `tempfile` dependency: this crate has none, and the only thing
-    /// needed is a unique path. The nanosecond clock plus the test's own
-    /// thread name is unique enough for a test binary.
+    /// needed is a unique path. The nanosecond clock alone is not enough —
+    /// tests run in parallel and the clock's resolution is coarser than the
+    /// gap between two of them — so a counter goes on the end.
+    ///
+    /// PLAIN CHARACTERS ONLY. This was `{:?}` of the thread id, which renders
+    /// as `ThreadId(3)`, and the junction test hands its path to
+    /// `cmd /C mklink`, where parentheses are syntax even inside quotes.
     fn tempdir() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let d = std::env::temp_dir().join(format!("ese-scenes-{stamp}-{:?}", std::thread::current().id()));
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("ese-scenes-{stamp}-{n}"));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
