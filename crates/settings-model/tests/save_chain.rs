@@ -3,7 +3,7 @@
 //! conflict detection, and the ReadOnly refusal.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use blue_marshal::{encode, Value};
 use settings_model::{apply, save, Document, Mutation, SaveError, Step};
@@ -18,7 +18,7 @@ fn temp_settings_dir(name: &str) -> PathBuf {
     dir
 }
 
-fn write_canonical_file(dir: &PathBuf) -> (PathBuf, Vec<u8>) {
+fn write_canonical_file(dir: &Path) -> (PathBuf, Vec<u8>) {
     let value = Value::Dict(vec![(
         Value::Bytes(b"suggestions".to_vec()),
         Value::List(vec![Value::Str("alpha".into()), Value::Str("beta".into())]),
