@@ -283,7 +283,7 @@ fn build_value(nv: &NewValue) -> Result<Value, MutateError> {
 
 fn parse_hex(s: &str) -> Option<Vec<u8>> {
     let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if !s.is_ascii() || s.len() % 2 != 0 {
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())
