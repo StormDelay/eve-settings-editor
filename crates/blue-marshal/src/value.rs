@@ -477,8 +477,8 @@ mod tests {
     /// the chain has a clean terminator). Mirrors `nested_stream_chain`'s
     /// O(depth) flat-buffer construction (fixed-size prefix per level,
     /// precomputed sizes bottom-up, then written top-down directly into
-    /// position) — just with a bigger per-level prefix (DICT opcode + count
-    /// + NONE value ahead of the BUFFER key), since here the nesting is
+    /// position) — just with a bigger per-level prefix (DICT opcode, count,
+    /// and NONE value ahead of the BUFFER key), since here the nesting is
     /// through a dict key rather than a bare BUFFER payload.
     fn nested_dict_key_chain(depth: usize, leaf: &[u8]) -> Vec<u8> {
         // stream header + DICT op + count(=1) + NONE value + BUFFER key op + ext length

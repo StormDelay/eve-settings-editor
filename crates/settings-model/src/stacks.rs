@@ -316,13 +316,13 @@ mod tests {
     }
 
     // Read helpers: navigate the (inlined) tree to the two dicts.
-    fn win<'a>(v: &'a Value) -> &'a Vec<(Value, Value)> {
+    fn win(v: &Value) -> &Vec<(Value, Value)> {
         let Value::Dict(top) = v else { panic!() };
         let (_, w) = top.iter().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windows")).unwrap();
         let Value::Dict(d) = w else { panic!() };
         d
     }
-    fn win_mut<'a>(v: &'a mut Value) -> &'a mut Vec<(Value, Value)> {
+    fn win_mut(v: &mut Value) -> &mut Vec<(Value, Value)> {
         let Value::Dict(top) = v else { panic!() };
         let (_, w) = top.iter_mut().find(|(k, _)| matches!(k, Value::Bytes(x) if x == b"windows")).unwrap();
         let Value::Dict(d) = w else { panic!() };

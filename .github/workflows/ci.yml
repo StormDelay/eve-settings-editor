@@ -9,14 +9,16 @@ jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+        with:
+          components: clippy
+      - uses: actions/setup-node@v5
         with:
           # 24: `node --test` strips the TypeScript itself, so the frontend
           # tests need no test framework and no extra dependency.
@@ -35,6 +37,8 @@ jobs:
       - name: Build frontend (generate_context embeds build/)
         working-directory: app
         run: npm run build
+      - name: Lint workspace (warnings are failures)
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test workspace
         run: cargo test --workspace
         # The corpus gates run here against the committed synthetic corpus in
