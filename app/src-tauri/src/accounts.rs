@@ -45,7 +45,7 @@ pub fn load_store(dir: &Path) -> AccountsStore {
 fn save_store(dir: &Path, store: &AccountsStore) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec_pretty(store)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     // Write-then-rename so a crash mid-write can't truncate the live file.
     let tmp = dir.join("accounts.json.tmp");
     fs::write(&tmp, bytes)?;
@@ -526,7 +526,7 @@ mod tests {
         fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
         let appdir = temp_dir("confirm-appdata");
 
-        let roster = confirm_pairing(&[root.clone()], &appdir, 90000001, 987654).unwrap();
+        let roster = confirm_pairing(std::slice::from_ref(&root), &appdir, 90000001, 987654).unwrap();
         let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
         assert_eq!(acct.characters, vec![90000001]);
         assert!(roster.unassigned.is_empty());
@@ -542,7 +542,7 @@ mod tests {
         fs::write(sdir.join("core_user_987654.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
         let appdir = temp_dir("alias-appdata");
 
-        let roster = set_account_alias(&[root.clone()], &appdir, 987654, Some("Main".into()));
+        let roster = set_account_alias(std::slice::from_ref(&root), &appdir, 987654, Some("Main".into()));
         let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
         assert_eq!(acct.alias.as_deref(), Some("Main"));
         // Persisted across a reload.
@@ -558,8 +558,8 @@ mod tests {
         fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
         let appdir = temp_dir("unpair-appdata");
 
-        confirm_pairing(&[root.clone()], &appdir, 90000001, 987654).unwrap();
-        let roster = unpair_character(&[root.clone()], &appdir, 90000001);
+        confirm_pairing(std::slice::from_ref(&root), &appdir, 90000001, 987654).unwrap();
+        let roster = unpair_character(std::slice::from_ref(&root), &appdir, 90000001);
         let acct = roster.accounts.iter().find(|a| a.user_id == 987654).unwrap();
         assert!(acct.characters.is_empty(), "char removed from the account");
         assert_eq!(roster.unassigned, vec![90000001], "char back in unassigned");

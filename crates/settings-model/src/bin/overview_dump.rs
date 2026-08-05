@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 fn is_default_key(k: &str) -> bool {
-    k.strip_prefix("DefaultPreset_").map_or(false, |n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    k.strip_prefix("DefaultPreset_").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
         || k.to_ascii_lowercase().starts_with("default")
 }
 
