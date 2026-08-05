@@ -51,7 +51,7 @@ fn reads_through_shared_and_ref() {
     assert_eq!(settings_model::PackNode::Seq(vec![settings_model::PackNode::Int(9), settings_model::PackNode::Int(13)]), *states);
     assert!(pack.get("presets").is_some(), "preset field name read through a Ref");
     let colors = pack.get("stateColorsNameList").expect("colour surface read through a Ref");
-    assert_eq!(format!("{colors:?}").contains("background_16"), true);
+    assert!(format!("{colors:?}").contains("background_16"));
 
     // and it still emits valid YAML
     assert!(parse_pack(&emit_pack(&pack)).is_ok());

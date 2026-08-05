@@ -541,10 +541,11 @@ fn preview_with_sides(
 
     // Drop no-op splice writes: a splice aspect whose categories are all absent
     // from the source would back up and rewrite every target for nothing.
-    if !w.char_full_copy && !plan.char_writes.is_empty() {
-        if source_side_empty(&sides.char_path, &w.char_categories) {
-            plan.char_writes.clear();
-        }
+    if !w.char_full_copy
+        && !plan.char_writes.is_empty()
+        && source_side_empty(&sides.char_path, &w.char_categories)
+    {
+        plan.char_writes.clear();
     }
     if !w.account_full_copy && !plan.account_writes.is_empty() {
         if let Some(p) = sides.user_path.as_deref() {
@@ -1294,7 +1295,7 @@ pub fn set_autofill_list(state: &AppState, widget: &str, entries: Vec<String>) -
 }
 
 pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDto> {
-    edit_user_autofill(state, |v| clear_all_history(v))
+    edit_user_autofill(state, clear_all_history)
 }
 
 pub fn keybinds(state: &AppState) -> Result<Keybinds, ErrDto> {
@@ -1792,7 +1793,7 @@ mod tests {
         fs::write(&uf, b"x").unwrap();
 
         let state = AppState::new();
-        begin_capture(&state, &[root.clone()]);
+        begin_capture(&state, std::slice::from_ref(&root));
         // Advance both mtimes (rewrite the files a moment later).
         std::thread::sleep(std::time::Duration::from_millis(1100));
         fs::write(&cf, b"xy").unwrap();
@@ -1816,7 +1817,7 @@ mod tests {
 
         let state = AppState::new();
         open_file(&state, Slot::Char, cf.to_str().unwrap()).unwrap();
-        begin_capture(&state, &[root.clone()]);
+        begin_capture(&state, std::slice::from_ref(&root));
 
         // Advance both mtimes (rewrite the files a moment later). The char
         // file isn't re-opened, so this simulates the app rewriting it while

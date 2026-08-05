@@ -14,7 +14,7 @@ fn dict<'a>(v: &'a Value, key: &[u8]) -> Option<&'a Value> {
     d.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b.as_slice() == key)).map(|(_, v)| v)
 }
 
-fn inner<'a>(v: &'a Value) -> &'a Value {
+fn inner(v: &Value) -> &Value {
     match v {
         Value::Tuple(items) => items.iter().find(|e| matches!(e, Value::Dict(_) | Value::List(_))).unwrap_or(v),
         other => other,
@@ -75,7 +75,7 @@ fn main() {
         for e in rd.flatten() {
             let path = e.path();
             if path.is_dir() { stack.push(path); }
-            else if path.file_name().map_or(false, |n| n.to_string_lossy().starts_with("core_user_")) {
+            else if path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("core_user_")) {
                 walk(&path, &mut out);
             }
         }
