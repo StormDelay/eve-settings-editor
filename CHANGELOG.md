@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Reference scenes in the probe formation's 3D view — a beacon, a wormhole and the volume you can jump it from — loaded from editable files, with two drifter-wormhole scenes included.
+
 ## [0.30.0] - 2026-08-04
 
 A compass in the probe view, and settings edits that stop landing in a backup file.

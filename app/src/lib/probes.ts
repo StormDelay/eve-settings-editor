@@ -70,6 +70,32 @@ export function cardinals(): { label: string; v: Vec3 }[] {
   });
 }
 
+/** A scene object's position exactly as `scenes.rs` hands it over: units
+ * already normalized to metres, angles untouched. */
+export type ScenePos =
+  | { kind: "polar"; km: number; bearing: number; elevation: number }
+  | { kind: "xyz"; m: Vec3 };
+
+/** A scene position as a world offset in metres from the formation centre.
+ *
+ * `bearing` is a COMPASS bearing — 0 north, 90 east, 180 south, 270 west —
+ * because that is the frame the geometry is known in ("87.5 km, west, 17.45
+ * degrees up"). It is NOT `toSpherical`'s azimuth, and this function is the one
+ * place the two meet.
+ *
+ * The conversion lives here and not in `scenes.rs` on purpose: it reads
+ * `NORTH_AZ_DEG` and `EAST_SIGN`, which are the product's single calibration
+ * knob for which way north is. A second copy in Rust would mean a patch that
+ * moved north had to be applied twice, and the two would drift. */
+export function scenePos(p: ScenePos): Vec3 {
+  if (p.kind === "xyz") return [p.m[0], p.m[1], p.m[2]];
+  return toCartesian({
+    r: p.km * M_PER_KM,
+    az: NORTH_AZ_DEG + EAST_SIGN * p.bearing,
+    el: p.elevation,
+  });
+}
+
 /** A horizontal circle of world radius `r` about the formation centre, as `n`
  * points. The caller projects them; this only knows which plane is the
  * horizontal one. */

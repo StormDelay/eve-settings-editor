@@ -13,6 +13,34 @@ Workflow:
 
 ## Open
 
+- [ ] **Measure the drifter geometry properly, in-client.** The two shipped
+  scenes (`app/src-tauri/scenes/`) carry numbers that are estimates, and their
+  own comments say so. What IS measured is only the sign of the K-space
+  elevation — the hole is above the beacon, not the ~14° below every published
+  source claims. The distance (87.5 km against sources saying 75/80/89/91/100),
+  the bearing being west for every site rather than the one photographed, the
+  J-space 30°, and both 16 km jump spheres are all unverified. Warping to a
+  drifter beacon and reading the overlay with a known camera pitch settles all
+  of them. _Added 2026-08-05 (probe viewer scenes)._
+
+- [ ] **A distance readout from each probe to a named scene object.** "Is probe
+  3 inside the jump sphere" is a number, and the picture only approximates it.
+  Deliberately left out of the scenes slice to keep it to drawing; needs no
+  change to the scene file format when it arrives. _Added 2026-08-05 (probe
+  viewer scenes)._
+
+- [ ] **`cargo clippy` fails on `settings-model` under Rust 1.97.** Four
+  errors, none of them from new code: `mutate.rs:286` (manual
+  `is_multiple_of`), `overview.rs:245` (a `sort_by` that wants `sort_by_key`),
+  and `overview_pack.rs:631`/`:694` (`map_or` that wants `is_none_or` /
+  `is_some_and`). These are lints the toolchain added, firing on code that has
+  not changed — so `-D warnings` fails for the whole workspace and clippy
+  cannot be used as a gate on any branch until they are fixed. All four fixes
+  are mechanical and the compiler prints them verbatim. Turned up 2026-08-05
+  while running clippy as the probe-viewer-scenes gate; left alone there
+  because fixing it would have put an unrelated crate in that branch's diff.
+  _Added 2026-08-05._
+
 - [ ] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
   `ops.rs`'s `scoped_files` returns `HashMap<u64, PathBuf>` maps keyed by id
   alone. With `allow_other_folders` it walks every profile, so an account id
