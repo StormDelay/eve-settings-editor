@@ -9,7 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -18,7 +18,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # 24: `node --test` strips the TypeScript itself, so the frontend
           # tests need no test framework and no extra dependency.
