@@ -221,6 +221,37 @@ fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Whether `shipped` really resolves to a directory inside `root`, rather than
+/// to somewhere else entirely.
+///
+/// The ownership split rests on exactly one invariant — the app only ever writes
+/// inside `shipped/` — and a reparse point at that path breaks it silently.
+/// `create_dir_all` FOLLOWS a symlink or NTFS junction and reports success, and
+/// `fs::write` would then write straight through it. The realistic harm is not
+/// privilege escalation, since the app writes as the user either way: it is a
+/// junction aimed back at `scenes/`, which would turn every launch into an
+/// overwrite of the user's own scenes.
+///
+/// Canonicalizing both and comparing settles the whole class in one comparison
+/// rather than enumerating reparse tags — `is_symlink` alone would miss a
+/// junction, which carries a different tag from a symlink on Windows.
+///
+/// ponytail: no test for the junction case. Creating one needs Developer Mode or
+/// an elevated process on Windows, so the test would be skipped on the platform
+/// it exists to protect. The plain-file-in-the-way case IS covered, by
+/// `create_dir_all` failing ahead of this.
+fn writes_stay_inside(root: &Path, shipped: &Path) -> bool {
+    match (root.canonicalize(), shipped.canonicalize()) {
+        // `s != r` because a junction can point at its own parent, and that is
+        // the case that costs the user their files rather than merely misfiling
+        // ours.
+        (Ok(r), Ok(s)) => s.starts_with(&r) && s != r,
+        // Unresolvable: refuse rather than guess. The shipped scenes go missing
+        // for this run, the same degradation as an unwritable directory.
+        _ => false,
+    }
+}
+
 // ponytail: `list` re-reads and re-parses every file on every call. Scene files
 // are a handful of small documents and the list is only rebuilt when the view
 // mounts. Cache by (path, mtime) if a large library ever drags — the same call
@@ -247,7 +278,7 @@ pub fn list(app_data: &Path) -> SceneList {
     let mut out = SceneList::default();
     // Best effort throughout. An unwritable app data directory is not a reason
     // to show no scenes at all; the shipped ones are simply absent this run.
-    if std::fs::create_dir_all(&shipped).is_ok() {
+    if std::fs::create_dir_all(&shipped).is_ok() && writes_stay_inside(&root, &shipped) {
         for (name, body) in BUILT_INS {
             let _ = std::fs::write(shipped.join(name), body);
         }
