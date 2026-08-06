@@ -81,12 +81,14 @@ pub fn save_to(path: &Path, prefs: &Preferences) -> std::io::Result<()> {
     std::fs::write(path, serde_json::to_vec_pretty(prefs).map_err(std::io::Error::other)?)
 }
 
-/// `<app config dir>/preferences.json` — created lazily, on first save.
+/// `<config dir>/EVE Settings Editor/preferences.json` — created lazily, on
+/// first save. The config dir rather than the data dir keeps this XDG-correct
+/// on Linux; on Windows and macOS the two are the same folder anyway.
 pub fn path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
     app.path()
-        .app_config_dir()
-        .map(|d| d.join("preferences.json"))
+        .config_dir()
+        .map(|d| d.join(crate::APP_DIR).join("preferences.json"))
         .map_err(|e| format!("no config directory: {e}"))
 }
 
