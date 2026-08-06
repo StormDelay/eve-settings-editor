@@ -29,18 +29,6 @@ Workflow:
   change to the scene file format when it arrives. _Added 2026-08-05 (probe
   viewer scenes)._
 
-- [ ] **`cargo clippy` fails on `settings-model` under Rust 1.97.** Four
-  errors, none of them from new code: `mutate.rs:286` (manual
-  `is_multiple_of`), `overview.rs:245` (a `sort_by` that wants `sort_by_key`),
-  and `overview_pack.rs:631`/`:694` (`map_or` that wants `is_none_or` /
-  `is_some_and`). These are lints the toolchain added, firing on code that has
-  not changed — so `-D warnings` fails for the whole workspace and clippy
-  cannot be used as a gate on any branch until they are fixed. All four fixes
-  are mechanical and the compiler prints them verbatim. Turned up 2026-08-05
-  while running clippy as the probe-viewer-scenes gate; left alone there
-  because fixing it would have put an unrelated crate in that branch's diff.
-  _Added 2026-08-05._
-
 - [ ] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
   `ops.rs`'s `scoped_files` returns `HashMap<u64, PathBuf>` maps keyed by id
   alone. With `allow_other_folders` it walks every profile, so an account id
@@ -633,6 +621,16 @@ these items went.
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **`cargo clippy` fails on `settings-model` under Rust 1.97.** _Done
+  2026-08-05, PR #68 (`clippy-clean` → master, `00f82ee`)._ The four errors were
+  the visible part: the workspace carried 24 clippy warnings and one from
+  `svelte-check`, all advisory, so nothing stopped them growing. Every fix was
+  mechanical except `FormationPicker`, whose `$state` really does mean to
+  capture the initial items — silenced with the reason rather than
+  restructured. **The gate the entry wanted now exists:** CI runs clippy with
+  `-D warnings` and `npm run check` fails on warnings, so the next lint lands
+  as a red build. _Added 2026-08-05; done 2026-08-05._
 
 - [x] **A drawing layer for the canvas: module slots, fighter abilities,
   overview columns.** Shipped as a `Detail` toggle beside the canvas's
