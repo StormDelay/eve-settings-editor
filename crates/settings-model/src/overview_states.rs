@@ -13,8 +13,11 @@
 
 use blue_marshal::Value;
 
-use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, OverviewTabError};
-use crate::treewalk::{collect_shared, effective, inline_all, Entries, SharedTable};
+use crate::overview_tabs::{overview_mut, OverviewTabError};
+use crate::treewalk::{
+    collect_shared, dict_inner_mut, effective, inline_all, is_bytes as is_b, root_child_dict,
+    SharedTable,
+};
 
 /// Which of the four account-scoped state lists to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,24 +96,6 @@ pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<()
 /// any other is read past and written back untouched.
 const BACKGROUND_SURFACE: &[u8] = b"background";
 
-/// Key match for the READ path. The write path inlines the tree first and can
-/// use `is_b`, which matches bare `Bytes`; a read cannot — real files store a
-/// repeated byte string once and `Ref` it everywhere else (so does our own
-/// `reshare` pass), and an unresolved `Ref` silently matches nothing.
-fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
-    matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name)
-}
-
-/// The `overview` container's entries, resolving indirection at every hop.
-fn overview_entries<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    let Value::Dict(root) = effective(v, sh) else { return None };
-    let (_, ov) = root.iter().find(|(k, _)| shared_is_b(k, b"overview", sh))?;
-    match effective(ov, sh) {
-        Value::Dict(d) => Some(d),
-        _ => None,
-    }
-}
-
 fn as_f64<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<f64> {
     match effective(v, sh) {
         Value::Float(f) => Some(*f),
@@ -142,8 +127,8 @@ fn as_rgba<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<[f64; 4]> {
 pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
     let mut sh = SharedTable::new();
     collect_shared(v, &mut sh);
-    let Some(ovd) = overview_entries(v, &sh) else { return Vec::new() };
-    let Some((_, sc)) = ovd.iter().find(|(k, _)| shared_is_b(k, b"stateColors", &sh)) else {
+    let Some(ovd) = root_child_dict(v, b"overview", &sh) else { return Vec::new() };
+    let Some((_, sc)) = ovd.iter().find(|(k, _)| is_b(effective(k, &sh), b"stateColors")) else {
         return Vec::new();
     };
     let inner = match effective(sc, &sh) {
@@ -243,11 +228,11 @@ fn as_bool<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<bool> {
 pub fn overview_bools(v: &Value) -> Vec<(String, bool)> {
     let mut sh = SharedTable::new();
     collect_shared(v, &mut sh);
-    let Some(ovd) = overview_entries(v, &sh) else { return Vec::new() };
+    let Some(ovd) = root_child_dict(v, b"overview", &sh) else { return Vec::new() };
     OVERVIEW_BOOLS
         .iter()
         .filter_map(|name| {
-            let (_, val) = ovd.iter().find(|(k, _)| shared_is_b(k, name.as_bytes(), &sh))?;
+            let (_, val) = ovd.iter().find(|(k, _)| is_b(effective(k, &sh), name.as_bytes()))?;
             Some(((*name).to_string(), as_bool(val, &sh)?))
         })
         .collect()
@@ -293,8 +278,8 @@ pub fn set_overview_bool(v: &mut Value, key: &str, on: bool) -> Result<(), Overv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::b;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
     fn ints(v: &Value) -> Vec<i64> {
         let inner = match v {

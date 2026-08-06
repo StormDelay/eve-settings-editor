@@ -7,7 +7,7 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::inline_all;
+use crate::treewalk::{inline_all, is_bytes as is_b};
 use crate::windows::{decode_id, BOOL_FLAGS};
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -33,8 +33,6 @@ impl std::fmt::Display for StackError {
         }
     }
 }
-
-fn is_b(k: &Value, name: &[u8]) -> bool { matches!(k, Value::Bytes(b) if b.as_slice() == name) }
 
 /// Mutable `windows` dict (the file is already inlined, so no Shared wrapper).
 fn windows_mut(v: &mut Value) -> Result<&mut Vec<(Value, Value)>, StackError> {
@@ -293,10 +291,9 @@ fn adopt_container_rect(win: &mut Vec<(Value, Value)>, member: &[u8], container:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
     // root -> windows -> { stacksWindows, preferredIdxInStack3 }, with a Shared
     // container id to prove inline-first (RemoveEntry would refuse it raw).
