@@ -8,10 +8,36 @@ mod scenes;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-fn app_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
-    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir())
+/// The one folder name this app owns, under both the data and the config dir.
+/// Deliberately NOT Tauri's `app_data_dir()`/`app_config_dir()`, which append
+/// the bundle identifier and so would name the folder
+/// `io.github.stormdelay.eve-settings-editor`. The identifier itself stays as
+/// it is — it is installer and OS-level app identity, not a display name.
+pub(crate) const APP_DIR: &str = "EVE Settings Editor";
+
+pub(crate) fn app_dir(app: &tauri::AppHandle) -> PathBuf {
+    app.path()
+        .data_dir()
+        .map(|d| d.join(APP_DIR))
+        .unwrap_or_else(|_| std::env::temp_dir())
+}
+
+/// Move a pre-0.32 identifier-named folder to its new name, once. Runs before
+/// any command, so on a normal upgrade `new` cannot exist yet.
+///
+/// ponytail: one attempt, no merge. If the rename fails — a second instance
+/// holding a file open is the realistic cause on Windows — the old folder is
+/// left intact and the app starts empty beside it; renaming it by hand
+/// recovers everything. Merging two populated folders is the only thing that
+/// would do better, and that is a lot of code for a case that needs someone to
+/// launch two copies at once.
+fn migrate_dir(old: &Path, new: &Path) {
+    if old.is_dir() && !new.exists() {
+        let _ = std::fs::rename(old, new);
+    }
 }
 
 #[tauri::command]
@@ -86,7 +112,7 @@ async fn resolve_character_names(
     app: tauri::AppHandle,
     ids: Vec<u64>,
 ) -> HashMap<u64, names::ResolvedName> {
-    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    let dir = app_dir(&app);
     // Blocking ESI/file work off the async runtime; empty map on join failure.
     tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, false))
         .await
@@ -98,7 +124,7 @@ async fn refresh_character_names(
     app: tauri::AppHandle,
     ids: Vec<u64>,
 ) -> HashMap<u64, names::ResolvedName> {
-    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    let dir = app_dir(&app);
     tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, true))
         .await
         .unwrap_or_default()
@@ -110,7 +136,7 @@ async fn sync_group_catalog(
     known_ids: Vec<i64>,
     relevant_categories: Vec<i64>,
 ) -> Vec<groups::GroupEntry> {
-    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    let dir = app_dir(&app);
     tauri::async_runtime::spawn_blocking(move || groups::sync_blocking(&dir, &known_ids, &relevant_categories))
         .await
         .unwrap_or_default()
@@ -537,6 +563,41 @@ fn set_preferences(app: tauri::AppHandle, prefs: prefs::Preferences) -> Result<(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let p = app.path();
+            // Three trees, one name. On Windows and macOS data and config are
+            // the same folder, so the second pass finds nothing left to move;
+            // on Linux they are separate and `preferences.json` is in the
+            // config one. The local data dir is separate everywhere and holds
+            // only WebView2's `EBWebView` cache — machine-specific and
+            // regenerable, which is exactly what belongs there rather than in
+            // the roaming folder beside the user's presets.
+            for (old, base) in [
+                (p.app_data_dir(), p.data_dir()),
+                (p.app_config_dir(), p.config_dir()),
+                (p.app_local_data_dir(), p.local_data_dir()),
+            ] {
+                if let (Ok(old), Ok(base)) = (old, base) {
+                    migrate_dir(&old, &base.join(APP_DIR));
+                }
+            }
+
+            // The window is `"create": false` in tauri.conf.json so it can be
+            // built here instead: `data_directory` takes an absolute path only
+            // from the builder — a value in the config file is forced relative
+            // to `<local data dir>/<window label>`, which is neither the old
+            // folder nor the new one.
+            if let Some(window) = app.config().app.windows.first() {
+                let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), window)?;
+                // An unresolvable local data dir is not worth losing the window
+                // over — Tauri's identifier-named default is a fine fallback.
+                if let Ok(dir) = p.local_data_dir() {
+                    builder = builder.data_directory(dir.join(APP_DIR));
+                }
+                builder.build()?;
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -568,4 +629,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("eve-appdir-test-{name}"));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn an_identifier_named_folder_moves_with_its_contents() {
+        let base = temp_dir("moves");
+        let old = base.join("io.github.stormdelay.eve-settings-editor");
+        std::fs::create_dir_all(old.join("presets")).unwrap();
+        std::fs::write(old.join("accounts.json"), b"{}").unwrap();
+
+        let new = base.join(APP_DIR);
+        migrate_dir(&old, &new);
+
+        assert!(!old.exists(), "the old folder is gone, not copied");
+        assert_eq!(std::fs::read(new.join("accounts.json")).unwrap(), b"{}");
+        assert!(new.join("presets").is_dir(), "and subdirectories came with it");
+    }
+
+    /// A populated destination survives. Note this passes on Windows even
+    /// without the `!new.exists()` guard, because renaming onto a non-empty
+    /// directory fails there anyway — the guard is what makes it true on Unix,
+    /// where an EMPTY destination would otherwise be replaced.
+    #[test]
+    fn an_existing_new_folder_is_never_clobbered() {
+        let base = temp_dir("clobber");
+        let old = base.join("io.github.stormdelay.eve-settings-editor");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("accounts.json"), b"old").unwrap();
+
+        let new = base.join(APP_DIR);
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("accounts.json"), b"new").unwrap();
+
+        migrate_dir(&old, &new);
+
+        assert_eq!(std::fs::read(new.join("accounts.json")).unwrap(), b"new");
+        assert!(old.is_dir(), "and the old one is left where a human can find it");
+    }
 }
