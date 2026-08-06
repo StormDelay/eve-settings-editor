@@ -415,13 +415,7 @@ mod tests {
     use crate::path::resolve;
     use blue_marshal::Value;
 
-    fn ts() -> Value {
-        Value::Long(vec![0u8; 8])
-    }
-
-    fn b(s: &str) -> Value {
-        Value::Bytes(s.as_bytes().to_vec())
-    }
+    use crate::testkit::{b, ts};
 
     /// (timestamp, value) — the file-wide value-wrapper convention.
     fn wrapped(v: Value) -> Value {

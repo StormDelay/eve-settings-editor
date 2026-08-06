@@ -1,12 +1,7 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching layout.test.ts, overview.test.ts and search.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type CatalogBundle } from "./groups.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
-const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+import { check, eq } from "./test/check.ts";
 
 const bundle: CatalogBundle = {
   categories: [
@@ -64,4 +59,3 @@ check("toggleGroup removes", eq(toggleGroup([25, 26], 25, false), [26]));
   check("unknownGroups returns preset IDs not in any category", eq(unknownGroups(cats, [25, 999]), [999]));
 }
 
-console.log("groups: all checks passed");

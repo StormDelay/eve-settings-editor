@@ -1,11 +1,7 @@
-// Run: npm test (node --test). No test framework — a throw is a failing exit
-// code, which is all a runner needs.
-import { countIn, withoutIn } from "./prefs.ts";
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
+import { countIn, withoutIn } from "./prefs.svelte.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 // Counting is about the document you are looking at, not the preferences file.
 {
@@ -43,4 +39,3 @@ const check = (name: string, ok: boolean) => {
   check("withoutIn preserves the effect count", out.effects === 5);
 }
 
-console.log("prefs.test.ts: all checks passed");

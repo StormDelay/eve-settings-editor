@@ -19,8 +19,8 @@ use serde::Serialize;
 
 use crate::path::{resolve, resolve_mut, NodePath, Step};
 use crate::treewalk::{
-    as_dict, as_list, collect_shared, effective, find_child, is_bytes, key_is, unwrap_shared,
-    unwrap_shared_ref, Entries, SharedTable,
+    as_dict, as_int, as_list, collect_shared, effective, find_child, is_bytes, key_is,
+    unwrap_shared, unwrap_shared_ref, Entries, SharedTable,
 };
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -340,13 +340,6 @@ fn prettify(token: &str) -> String {
     }
 }
 
-fn as_int(v: &Value) -> Option<i64> {
-    match v {
-        Value::Int(n) => Some(*n),
-        _ => None,
-    }
-}
-
 fn token_r(v: &Value, sh: &SharedTable) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
@@ -640,9 +633,9 @@ fn sort_headers_sizes_path(char_tree: &Value) -> Option<NodePath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::Value;
 
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
     fn bytes(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
     /// user root -> b"overview" -> b"tabsettings_new" -> (ts, { 0: tab })
@@ -709,8 +702,6 @@ mod tests {
     #[test]
     fn projects_account_default_fallback_and_window_grouping() {
         use blue_marshal::Value;
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab0 = Value::Dict(vec![
             (Value::StrTable(52), Value::Str("Alpha".into())),      // name (string-table key); no own lists
             (b("overview"), b("P")),                                // a FILTER preset name — irrelevant to columns
@@ -759,8 +750,6 @@ mod tests {
         // `tabColumns` but NOT `tabColumnOrder`, so the tab owns its visible set
         // yet still inherits order from the account default.
         use blue_marshal::Value;
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab = Value::Dict(vec![
             (Value::Str("name".into()), Value::Str("3".into())),
             // owns visibility (NAME hidden out of the default) but no order list
@@ -818,8 +807,6 @@ mod tests {
         // first, that destroys the Shared(1) definition and the account lists'
         // Ref(1) dangles, so encode fails RefBeforeStore(1). This guards that fix.
         use blue_marshal::{decode, encode, Value};
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab0 = Value::Dict(vec![
             (b("tabColumnOrder"), Value::List(vec![
                 Value::Shared { slot: 1, value: Box::new(b("NAME")) }, b("TYPE"),
@@ -849,8 +836,6 @@ mod tests {
         // definition and is `Ref`'d from the account lists, dropping it would
         // dangle the Ref. Inlining before the edit prevents it.
         use blue_marshal::{encode, Value};
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab0 = Value::Dict(vec![
             (b("tabColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
             (b("tabColumns"), Value::List(vec![
@@ -872,8 +857,6 @@ mod tests {
     #[test]
     fn editing_a_legacy_overview_migrates_it_to_modern() {
         use blue_marshal::Value;
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         // Legacy: the tab container is `tabsettings` (no `tabsettings_new`).
         let tab0 = Value::Dict(vec![
             (Value::Str("name".into()), Value::Str("PvP".into())),
@@ -939,8 +922,6 @@ mod tests {
     #[test]
     fn editing_inheriting_tab_materializes_from_account_default() {
         use blue_marshal::Value;
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab0 = Value::Dict(vec![(b("overview"), b("P"))]); // names a FILTER preset; no own column lists
         let overview = Value::Dict(vec![
             (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
@@ -975,8 +956,6 @@ mod tests {
         // `is_bytes` key match would miss them and report NoTab; the resolved-key
         // path must find the tab and land the edit.
         use blue_marshal::Value;
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let tab0 = Value::Dict(vec![(b("overview"), b("P"))]); // no own column lists
         let overview = Value::Dict(vec![
             (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE")])),
@@ -1371,7 +1350,6 @@ mod tests {
 
     #[test]
     fn project_exposes_sorted_preset_names() {
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
         // overview -> overviewProfilePresets -> (ts, { "Zeta": {}, "alpha": {} })
         let presets = Value::Dict(vec![
             (b("Zeta"), Value::Dict(vec![])),
