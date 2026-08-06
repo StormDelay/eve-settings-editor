@@ -15,8 +15,10 @@ use yaml_rust2::{Yaml, YamlLoader};
 use blue_marshal::Value;
 
 use crate::overview_states::OVERVIEW_BOOLS;
-use crate::overview_tabs::{is_b, overview_mut};
-use crate::treewalk::{collect_shared, effective, inline_all, Entries, SharedTable};
+use crate::overview_tabs::overview_mut;
+use crate::treewalk::{
+    collect_shared, effective, inline_all, is_bytes as is_b, root_child_dict, Entries, SharedTable,
+};
 
 /// A YAML scalar or sequence. No map variant — see the module note.
 #[derive(Debug, Clone, PartialEq)]
@@ -621,7 +623,8 @@ fn is_empty_section(node: &Node) -> bool {
 /// window empty — unavoidable, since a pack carries no window model — so the
 /// caller reports it as a warning instead of hiding it.
 fn apply_tabs(ov: &mut Entries, node: &Node) -> usize {
-    use crate::overview_tabs::{as_int, dict_inner_mut, fallback_tab, list_inner_mut as window_list_mut, tabs_mut};
+    use crate::overview_tabs::{fallback_tab, tabs_mut};
+    use crate::treewalk::{as_int, dict_inner_mut, list_inner_mut as window_list_mut};
 
     let template = {
         let tabs = tabs_mut(ov);
@@ -698,18 +701,8 @@ fn apply_tabs(ov: &mut Entries, node: &Node) -> usize {
     emptied
 }
 
-fn shared_is_b<'a>(k: &'a Value, name: &[u8], sh: &SharedTable<'a>) -> bool {
-    matches!(effective(k, sh), Value::Bytes(b) if b.as_slice() == name)
-}
-
-fn overview_entries<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<&'a Entries> {
-    let Value::Dict(root) = effective(v, sh) else { return None };
-    let (_, ov) = root.iter().find(|(k, _)| shared_is_b(k, b"overview", sh))?;
-    match effective(ov, sh) { Value::Dict(d) => Some(d), _ => None }
-}
-
 fn find<'a>(ov: &'a Entries, key: &[u8], sh: &SharedTable<'a>) -> Option<&'a Value> {
-    ov.iter().find(|(k, _)| shared_is_b(k, key, sh)).map(|(_, v)| v)
+    ov.iter().find(|(k, _)| is_b(effective(k, sh), key)).map(|(_, v)| v)
 }
 
 /// Unwrap a `(timestamp, x)` wrapper, resolving indirection at both hops.
@@ -757,7 +750,7 @@ pub fn read_pack(v: &Value) -> (Pack, Vec<String>) {
     collect_shared(v, &mut sh);
     let mut pack = Pack::default();
     let mut warnings = Vec::new();
-    let Some(ov) = overview_entries(v, &sh) else { return (pack, warnings) };
+    let Some(ov) = root_child_dict(v, b"overview", &sh) else { return (pack, warnings) };
 
     for (section, key) in LIST_SECTIONS {
         let Some(raw) = find(ov, key, &sh) else { continue };
@@ -907,6 +900,7 @@ pub fn read_pack(v: &Value) -> (Pack, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::b;
 
     /// A pack fixture in the real published shape: dicts encoded as sequences of
     /// two-element [key, value] sequences, unicode and EVE markup in names, a
@@ -1143,7 +1137,6 @@ userSettings:
 
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
     // A distinguishable non-zero seed (not all-zero): Task 5's write path mints
     // a zero `Long` timestamp for an ABSENT key while preserving an EXISTING
     // key's own timestamp untouched, and an all-zero fixture cannot tell those
@@ -1644,7 +1637,7 @@ userSettings:
     }
 
     fn as_ints(items: &[Value]) -> Vec<i64> {
-        items.iter().filter_map(crate::overview_tabs::as_int).collect()
+        items.iter().filter_map(crate::treewalk::as_int).collect()
     }
 
     // A raw string (matching FIXTURE's convention above), not a `\`-continued
@@ -1704,8 +1697,8 @@ tabSetup:
         let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
         let tabs = crate::overview_tabs::tabs_mut(ov);
         for idx in [0i64, 1] {
-            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(idx)).unwrap();
-            let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::treewalk::as_int(k) == Some(idx)).unwrap();
+            let fields = crate::treewalk::dict_inner_mut(tab).unwrap();
             assert!(fields.iter().any(|(k, _)| is_b(k, b"color")), "tab {idx} lost its color key");
         }
     }
@@ -1719,8 +1712,8 @@ tabSetup:
         {
             let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
             let tabs = crate::overview_tabs::tabs_mut(ov);
-            let (_, tab0) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(0)).unwrap();
-            let fields = crate::overview_tabs::dict_inner_mut(tab0).unwrap();
+            let (_, tab0) = tabs.iter_mut().find(|(k, _)| crate::treewalk::as_int(k) == Some(0)).unwrap();
+            let fields = crate::treewalk::dict_inner_mut(tab0).unwrap();
             fields.push((b("tabColumns"), Value::List(vec![b("NAME")])));
             fields.push((b("tabColumnOrder"), Value::List(vec![b("NAME")])));
         }
@@ -1730,8 +1723,8 @@ tabSetup:
         let ov = crate::overview_tabs::overview_mut(&mut probe).unwrap();
         let tabs = crate::overview_tabs::tabs_mut(ov);
         for idx in [0i64, 1] {
-            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(idx)).unwrap();
-            let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+            let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::treewalk::as_int(k) == Some(idx)).unwrap();
+            let fields = crate::treewalk::dict_inner_mut(tab).unwrap();
             assert!(!fields.iter().any(|(k, _)| is_b(k, b"tabColumns")), "tab {idx} kept a per-tab tabColumns override");
             assert!(!fields.iter().any(|(k, _)| is_b(k, b"tabColumnOrder")), "tab {idx} kept a per-tab tabColumnOrder override");
         }
@@ -1888,8 +1881,8 @@ tabSetup:
         // just re-project whatever keys happen to exist).
         let ov = crate::overview_tabs::overview_mut(&mut doc).unwrap();
         let tabs = crate::overview_tabs::tabs_mut(ov);
-        let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::overview_tabs::as_int(k) == Some(0)).unwrap();
-        let fields = crate::overview_tabs::dict_inner_mut(tab).unwrap();
+        let (_, tab) = tabs.iter_mut().find(|(k, _)| crate::treewalk::as_int(k) == Some(0)).unwrap();
+        let fields = crate::treewalk::dict_inner_mut(tab).unwrap();
         assert!(fields.iter().any(|(k, _)| is_b(k, b"bracket")), "fallback tab must carry bracket: {fields:?}");
         assert!(fields.iter().any(|(k, _)| is_b(k, b"color")), "fallback tab must carry color: {fields:?}");
     }

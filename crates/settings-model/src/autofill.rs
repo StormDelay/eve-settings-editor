@@ -90,10 +90,9 @@ pub fn clear_all_history(user: &mut Value) -> Result<(), AutofillError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
     /// user root -> b"ui" -> b"editHistory" -> (ts, { widget: [entries] })
     fn user_with_history() -> Value {

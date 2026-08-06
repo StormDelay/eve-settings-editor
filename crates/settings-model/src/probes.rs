@@ -368,10 +368,9 @@ pub fn next_free_id(v: &Value) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
     fn f(x: f64) -> Value { Value::Float(x) }
 
     /// One probe entry: ((x, y, z), range).

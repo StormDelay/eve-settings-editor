@@ -20,8 +20,6 @@ jobs:
           components: clippy
       - uses: actions/setup-node@v5
         with:
-          # 24: `node --test` strips the TypeScript itself, so the frontend
-          # tests need no test framework and no extra dependency.
           node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json

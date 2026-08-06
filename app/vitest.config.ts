@@ -2,10 +2,10 @@ import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
 
-// Component tests only. The pure-module tests keep running under `node --test`
-// with no framework at all (see package.json `test`). The two suites split by
-// file extension so neither runner picks up the other's files: `*.test.ts` is
-// node --test, `*.spec.ts` is vitest. `npm test` runs both.
+// One runner for both suites. `*.test.ts` is a pure-module test (plain data in,
+// plain data out); `*.spec.ts` mounts a component. The naming split is kept
+// because it says at a glance what a file costs to run — it is no longer two
+// runners. See src/lib/test/check.ts for why the second one went away.
 export default defineConfig({
   plugins: [svelte({ hot: false })],
   resolve: {
@@ -18,7 +18,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.spec.ts"],
+    include: ["src/**/*.{test,spec}.ts"],
     setupFiles: ["./src/lib/test/setup.ts"],
     restoreMocks: true,
   },
