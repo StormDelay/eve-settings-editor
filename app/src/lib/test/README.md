@@ -1,15 +1,17 @@
 # Frontend tests
 
-Two suites, split by file extension so neither runner picks up the other's
-files. `npm test` runs both.
+One runner, `vitest`. `npm test` runs everything; `npx vitest run <pattern>`
+runs a subset.
 
-| Suite | Files | Runner | For |
+| Kind | Files | Style | For |
 |---|---|---|---|
-| pure modules | `src/lib/*.test.ts` | `node --test`, no framework | logic extracted out of components, plus the IPC contract test |
-| components | `src/lib/*.spec.ts` | `vitest` + `jsdom` + `@testing-library/svelte` | mounting a component, firing events, asserting on the DOM and on what it sends over IPC |
+| pure modules | `src/lib/*.test.ts` | `check("name", expr)` from `test/check.ts` | logic extracted out of components, plus the IPC contract test |
+| components | `src/lib/*.spec.ts` | `@testing-library/svelte` + `jsdom` | mounting a component, firing events, asserting on the DOM and on what it sends over IPC |
 
-Run one suite on its own with `npm run test:ui` (components) or
-`node --test "src/lib/**/*.test.ts"` (pure modules).
+The extension split is a label, not two runners: it says at a glance whether a
+file mounts anything. `check` evaluates its condition eagerly, at collection
+time, and registers a named test asserting the result — see `check.ts` for why
+it is shaped that way and what the second runner used to cost.
 
 ## What gets mocked
 

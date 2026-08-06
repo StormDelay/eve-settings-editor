@@ -1,8 +1,8 @@
-// Run: npm test (node --test). Throw-based checks, no framework.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { labelFor, groupFor, GROUP_ORDER, defaultFor } from "./keybinds.ts";
 import names from "./data/command-names.json" with { type: "json" };
 
-const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
+import { check } from "./test/check.ts";
 
 check("resolves a client-provided label", labelFor("CmdActivateHighPowerSlot1") === "Activate High Power Slot 1");
 check("resolves a fleet broadcast label", labelFor("CmdFleetBroadcast_HealArmor") === "Broadcast: Need Armor");

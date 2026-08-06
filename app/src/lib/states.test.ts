@@ -1,8 +1,7 @@
-// Run: npm test (node --test). Throw-based checks, no framework.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { stateLabel, EXCEPTION_STATES, DEFAULT_BACKGROUND_ORDER, DEFAULT_BACKGROUND_STATES, DEFAULT_FLAG_STATES, exceptionOf, applyException, rgbaToHex, hexToRgba, moveInOrder, defaultColor } from "./states.ts";
 
-const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
-const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+import { check, eq } from "./test/check.ts";
 
 check("stateLabel resolves a known id", stateLabel(51) === "Pilot is a criminal");
 check("stateLabel resolves a wreck state", stateLabel(37) === "Wreck is empty");
@@ -45,4 +44,3 @@ check("the default enabled set leaves the retribution timer off",
 check("every rendered state has a harvested default",
   DEFAULT_BACKGROUND_ORDER.filter((id) => id !== 68).every((id) => /^#[0-9a-f]{6}$/.test(defaultColor(id) ?? "")));
 
-console.log("states: all checks passed");

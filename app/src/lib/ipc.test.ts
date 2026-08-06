@@ -1,4 +1,4 @@
-// Run: npm test (node --test). Throw-based checks, no framework.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 //
 // Contract test for the one boundary nothing else can see. `invoke` is
 // stringly-typed: the command name and every argument name are plain strings
@@ -12,10 +12,10 @@
 //   2. every #[tauri::command] is registered in generate_handler!
 //   3. every command Rust defines is actually reachable from api.ts
 //   4. argument names agree, allowing for Rust snake_case -> JS camelCase
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
+import { check } from "./test/check.ts";
 const at = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 const apiSrc = readFileSync(at("./api.ts"), "utf8");
@@ -25,8 +25,14 @@ const apiSrc = readFileSync(at("./api.ts"), "utf8");
 const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-const rustSrc = ["../../src-tauri/src/lib.rs", "../../src-tauri/src/ops.rs"]
-  .map((p) => stripComments(readFileSync(at(p), "utf8")))
+// Every module, not a hand-kept list: `#[tauri::command]` lives in lib.rs today
+// and a named list was already one file behind when the batch half moved out of
+// ops.rs into setup.rs. A scan that goes stale silently stops checking the
+// commands it no longer reads, which is the one failure this test cannot afford.
+const rustDir = at("../../src-tauri/src/");
+const rustSrc = readdirSync(rustDir)
+  .filter((f) => f.endsWith(".rs"))
+  .map((f) => stripComments(readFileSync(rustDir + f, "utf8")))
   .join("\n");
 
 const camel = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());

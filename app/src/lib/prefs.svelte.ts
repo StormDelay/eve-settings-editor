@@ -1,18 +1,27 @@
 // Editor preferences, loaded once at startup and written through on change.
 // Nothing here touches an EVE settings file — see app/src-tauri/src/prefs.rs.
 //
-// Split from prefs.ts: this half uses runes ($state), which only the
-// Svelte/Vite compiler understands, so it can't be loaded by plain
-// `node --test` — the pure helpers live there instead and are re-exported here
-// for callers that want everything from one module.
+// The pure helpers at the bottom used to live in a separate prefs.ts, because
+// this half's `$state` rune is compiler-only and `node --test` could not load
+// it. One vitest suite now runs both kinds of test, so the split — and the
+// re-export shim that held it together — is gone.
 import { api, errMessage } from "$lib/api";
-import type { Preferences } from "$lib/api";
+import type { LayoutPrefs, Preferences } from "$lib/api";
 import type { ClutterOverrides } from "$lib/windowLabels";
-import { countIn, withoutIn } from "$lib/prefs";
 import { EFFECT_COUNT_DEFAULT, EFFECT_COUNT_MAX, TARGET_COUNT_DEFAULT } from "$lib/layout";
 import { message } from "@tauri-apps/plugin-dialog";
 
-export { countIn, withoutIn } from "$lib/prefs";
+/** Overrides naming a window the given document actually has. */
+export const countIn = (stored: LayoutPrefs, ids: ReadonlySet<string>): number =>
+  stored.clutter.filter((id) => ids.has(id)).length +
+  stored.visible.filter((id) => ids.has(id)).length;
+
+/** The stored lists with every in-scope id removed, the rest untouched. */
+export const withoutIn = (stored: LayoutPrefs, ids: ReadonlySet<string>): LayoutPrefs => ({
+  ...stored,
+  clutter: stored.clutter.filter((id) => !ids.has(id)),
+  visible: stored.visible.filter((id) => !ids.has(id)),
+});
 
 let prefs = $state<Preferences>({
   layout: { clutter: [], visible: [], detail: false, targets: TARGET_COUNT_DEFAULT, effects: EFFECT_COUNT_DEFAULT },
