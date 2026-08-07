@@ -17,7 +17,7 @@ use blue_marshal::{encode, Value};
 use serde::Serialize;
 use settings_model::{apply_to_tree, extract_categories, Category};
 
-use crate::ops::{aspect_writes, Aspect};
+use crate::setup::{aspect_writes, Aspect};
 
 pub const CHAR_FILE: &str = "char.dat";
 pub const USER_FILE: &str = "user.dat";

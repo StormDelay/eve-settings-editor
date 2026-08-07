@@ -2,14 +2,32 @@
 // demand and refreshed from whatever the backend returns after each mutation.
 // Nothing here touches an EVE settings file — see app/src-tauri/src/presets.rs.
 //
-// Split from presetLibrary.ts: this half uses runes ($state), which only the
-// Svelte/Vite compiler understands, so it can't be loaded by plain
-// `node --test` — the pure helpers live there instead and are re-exported here
-// for callers that want everything from one module.
+// The label helpers below used to live in a separate presetLibrary.ts, because
+// this half's `$state` rune is compiler-only and `node --test` could not load
+// it. One vitest suite now runs both kinds of test, so the split — and the
+// re-export shim that held it together — is gone.
 import { api } from "./api";
-import type { PresetInfo } from "./api";
+import type { Aspect, PresetInfo } from "./api";
 
-export { aspectLabel, summarise } from "./presetLibrary";
+const LABELS: Record<Aspect, string> = {
+  layout: "Layout",
+  overview: "Overview",
+  autofill: "Autofill",
+  keybinds: "Keybinds",
+  probe_formations: "Probe formations",
+  everything: "Everything",
+};
+
+export const aspectLabel = (a: Aspect): string => LABELS[a];
+
+/** One line describing what a preset holds. A full preset says "Everything"
+ * rather than listing the aspects it implies. */
+export function summarise(p: PresetInfo): string {
+  if (p.error) return "unreadable";
+  if (p.full) return LABELS.everything;
+  if (p.aspects.length === 0) return "empty";
+  return p.aspects.map(aspectLabel).join(" · ");
+}
 
 let presets = $state<PresetInfo[]>([]);
 

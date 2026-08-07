@@ -5,6 +5,10 @@ mod ops;
 mod prefs;
 mod presets;
 mod scenes;
+mod setup;
+
+#[cfg(test)]
+mod testkit;
 
 use ops::{AppState, ErrDto, OpenOutcome};
 use std::collections::HashMap;
@@ -450,12 +454,12 @@ fn set_hud_value(
 #[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
-    source: ops::BatchSource,
+    source: setup::BatchSource,
     target_char_paths: Vec<String>,
-    aspects: Vec<ops::Aspect>,
+    aspects: Vec<setup::Aspect>,
     allow_other_folders: bool,
-) -> ops::SetupPlan {
-    ops::setup_preview(
+) -> setup::SetupPlan {
+    setup::setup_preview(
         &settings_model::default_roots(),
         &app_dir(&app),
         &source,
@@ -468,12 +472,12 @@ fn setup_preview(
 #[tauri::command]
 fn setup_apply(
     app: tauri::AppHandle,
-    source: ops::BatchSource,
+    source: setup::BatchSource,
     target_char_paths: Vec<String>,
-    aspects: Vec<ops::Aspect>,
+    aspects: Vec<setup::Aspect>,
     allow_other_folders: bool,
-) -> Result<Vec<ops::TargetResult>, ErrDto> {
-    ops::setup_apply(
+) -> Result<Vec<setup::TargetResult>, ErrDto> {
+    setup::setup_apply(
         &settings_model::default_roots(),
         &app_dir(&app),
         &source,
@@ -496,10 +500,10 @@ fn settings_preset_create(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
     name: String,
-    aspects: Vec<ops::Aspect>,
+    aspects: Vec<setup::Aspect>,
     overwrite: bool,
 ) -> Result<Vec<presets::PresetInfo>, ErrDto> {
-    ops::preset_save(&state, &app_dir(&app), &name, &aspects, overwrite)?;
+    setup::preset_save(&state, &app_dir(&app), &name, &aspects, overwrite)?;
     Ok(presets::list(&app_dir(&app)))
 }
 

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::document::{Document, LoadError};
 use crate::save::{save, SaveReport};
-use crate::treewalk::{inline_all, is_bytes, Entries};
+use crate::treewalk::{dict_inner, dict_inner_mut, inline_all, is_bytes, Entries};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -272,29 +272,6 @@ pub fn apply_categories_to(
     save(&mut doc, true).map_err(|e| format!("{e:?}"))
 }
 
-/// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
-fn dict_inner(v: &Value) -> Option<&Entries> {
-    match v {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| match e {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
-    match v {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
 fn descend_ref<'a>(root: &'a Entries, keys: &[&[u8]]) -> Option<&'a Entries> {
     let mut cur = root;
     for &key in keys {
@@ -316,6 +293,7 @@ fn descend_mut<'a>(root: &'a mut Entries, keys: &[&[u8]]) -> Option<&'a mut Entr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::{decode, encode};
 
     #[test]
@@ -328,8 +306,6 @@ mod tests {
         );
     }
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
     /// user root -> ui -> editHistory -> (ts, { "/a": ["Jita"] })
     fn user_a() -> Value {

@@ -8,7 +8,14 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{inline_all, key_is, Entries};
+// `is_b` is `treewalk::is_bytes` under this module's shorter local name — the
+// two were byte-identical definitions, and ~40 call sites here read better
+// short. `overview_pack`/`_presets`/`_states` import these from treewalk now
+// rather than routing through this module.
+use crate::treewalk::{
+    as_int, dict_inner, dict_inner_mut, inline_all, is_bytes as is_b, key_is, list_inner,
+    list_inner_mut, Entries,
+};
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -65,14 +72,6 @@ impl std::fmt::Display for OverviewTabError {
     }
 }
 
-pub(crate) fn is_b(k: &Value, name: &[u8]) -> bool {
-    matches!(k, Value::Bytes(b) if b.as_slice() == name)
-}
-
-pub(crate) fn as_int(v: &Value) -> Option<i64> {
-    match v { Value::Int(i) => Some(*i), _ => None }
-}
-
 /// The tab EVE gets when there is no sibling to clone from (an empty overview
 /// — reachable when the account has zero tabs, whether via `create_tab`'s
 /// no-sibling path or `overview_pack.rs`'s zero-tab pack-apply path). Every
@@ -85,28 +84,6 @@ pub(crate) fn fallback_tab() -> Value {
         (Value::Bytes(b"color".to_vec()), Value::None),
         (Value::Bytes(b"overview".to_vec()), Value::Bytes(Vec::new())),
     ])
-}
-
-/// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
-/// The read-only counterpart to `dict_inner_mut`, for callers — including this
-/// module's own tests — that must not create what they cannot find.
-pub(crate) fn dict_inner(v: &Value) -> Option<&Entries> {
-    match v {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
-        _ => None,
-    }
-}
-
-pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
-    match v {
-        Value::Dict(d) => Some(d),
-        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
-            Value::Dict(d) => Some(d),
-            _ => None,
-        }),
-        _ => None,
-    }
 }
 
 /// Restore the `(timestamp, payload)` wrapper on a container key that lost it.
@@ -132,32 +109,6 @@ fn rewrap(slot: &mut Value) {
     if matches!(slot, Value::Dict(_) | Value::List(_)) {
         let inner = std::mem::replace(slot, Value::None);
         *slot = Value::Tuple(vec![Value::Long(vec![0u8; 8]), inner]);
-    }
-}
-
-/// Inner list of a plain (post-inline) value, unwrapping a `(ts, list)` tuple.
-/// `pub(crate)` so `overview_pack.rs`'s window re-pointing can reuse the same
-/// unwrap rather than writing it out again.
-pub(crate) fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
-    match v {
-        Value::List(l) => Some(l),
-        Value::Tuple(items) => items.iter_mut().find_map(|e| match e {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
-/// Read-only counterpart of `list_inner_mut`, unwrapping a `(ts, list)` tuple.
-fn list_inner(v: &Value) -> Option<&Vec<Value>> {
-    match v {
-        Value::List(l) => Some(l),
-        Value::Tuple(items) => items.iter().find_map(|e| match e {
-            Value::List(l) => Some(l),
-            _ => None,
-        }),
-        _ => None,
     }
 }
 
@@ -601,11 +552,7 @@ mod tests {
     use super::*;
     use blue_marshal::Value;
 
-    /// A zero timestamp, as every `(timestamp, payload)` container wrapper in
-    /// these fixtures carries. Real files hold a real one; nothing here reads it.
-    fn ts() -> Value {
-        Value::Long(vec![0u8; 8])
-    }
+    use crate::testkit::ts;
 
     /// user tree: overview -> tabsettings_new `(ts, dict)` -> {0:{bracket,color,name,overview:"P"}}
     /// Both containers are wrapped because that is the only shape EVE writes —

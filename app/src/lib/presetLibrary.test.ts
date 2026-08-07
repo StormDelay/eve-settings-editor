@@ -1,12 +1,8 @@
-// Run: npm test (node --test). No framework, no @types/node — a throw is a
-// failing exit code, which is all a runner needs.
-import { aspectLabel, summarise } from "./presetLibrary.ts";
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
+import { aspectLabel, summarise } from "./presetLibrary.svelte.ts";
 import type { PresetInfo } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const info = (name: string, aspects: PresetInfo["aspects"], full = false): PresetInfo => ({
   name,

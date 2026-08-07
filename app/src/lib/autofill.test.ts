@@ -1,11 +1,7 @@
-// Run: npm test  (node --test; Node strips the types). No test framework / no
-// @types/node on purpose. A throw is the failing signal.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { labelFor } from "./autofill.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 // Curated hit: a known People & Places search widget.
 check(
@@ -72,4 +68,3 @@ check("empty-ish path never yields an empty label", labelFor("/") !== "");
 check("raw-ish path with no useful segment falls back to the raw string",
   labelFor("///") === "///");
 
-console.log("labelFor: all checks passed");

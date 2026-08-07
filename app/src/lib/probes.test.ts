@@ -1,5 +1,4 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching keybinds.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import {
   M_PER_AU,
   DEFAULT_RANGE_M,
@@ -32,10 +31,7 @@ import {
   type Vec3,
 } from "./probes.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const near = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) < eps;
 
