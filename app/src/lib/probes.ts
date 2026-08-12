@@ -9,7 +9,7 @@
 /** EVE's own astronomical unit: 0.5 AU is exactly 74798935350 m in every
  * corpus formation, which fixes this value to the metre. */
 export const M_PER_AU = 149597870700;
-export const M_PER_KM = 1000;
+const M_PER_KM = 1000;
 
 /** 0.5 AU in metres — the range every corpus formation carries, and what a new
  * formation starts at. Mirrors `probes.rs`'s `DEFAULT_RANGE`. */

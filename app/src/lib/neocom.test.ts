@@ -1,12 +1,8 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching layout.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { addableButtons } from "./neocom.ts";
 import type { NeocomButton } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const btn = (id: string, btn_type = 1, icon_path = `${id}.png`): NeocomButton =>
   ({ index: 0, id, btn_type, icon_path, children: 0 });

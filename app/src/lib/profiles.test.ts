@@ -1,13 +1,8 @@
-// Run: npm test  (node --test; Node strips the types itself). No test
-// framework on purpose — the frontend dependency list stays as scaffolded. A
-// throw is a failing exit code, which is all a runner needs.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { primaryProfileDir, profileLabels, profileNote } from "./profiles.ts";
 import type { Profile, SettingsFile } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const profile = (install: string, server: string, name: string): Profile => ({
   install,
@@ -149,4 +144,3 @@ const withFiles = (dir: string, files: SettingsFile[]): Profile => ({
   );
 }
 
-console.log("profiles.test.ts: all checks passed");

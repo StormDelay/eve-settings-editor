@@ -1,11 +1,7 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching layout.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel, inEnv } from "./windowLabels.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 // --- rule 1: stringified Python tuple ids ----------------------------------
 {

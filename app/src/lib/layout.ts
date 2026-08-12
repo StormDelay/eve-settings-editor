@@ -249,7 +249,7 @@ export const SHIP_TOP_MARGIN = 12;
  * mirror", when in fact the 28 was the wrong number and the element is
  * vertically symmetric about its capacitor after all.
  */
-export const SHIP_BOTTOM_MARGIN = 12;
+const SHIP_BOTTOM_MARGIN = 12;
 
 /**
  * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
@@ -496,6 +496,65 @@ export function shipOffsetFromX(x: number, referenceW: number): number {
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x), y: Math.round(y) };
+}
+
+/**
+ * The HUD field writes a finished furniture drag should make: `[name, value]`
+ * pairs for `set_hud_value`, and EMPTY when the drag changed nothing stored.
+ *
+ * The no-op case is the point. Every comparison here is between two STORED
+ * values, never between a stored value and a raw preview coordinate — those are
+ * different quantities (a rect coordinate vs. an offset or a fraction), and
+ * comparing them directly would either miss a real change or dirty the document
+ * on a drag that rounds back to where it started. `start` is the rect captured
+ * at pointerdown, so putting it back through the same inverse recovers what the
+ * file currently holds.
+ *
+ * `anchor` is the target list's anchor at the moment of the drop, and is
+ * required for that piece alone: its box hangs off whichever side of the anchor
+ * faces the middle, so a rect that crossed the middle mid-drag no longer says
+ * where its anchor is. Every other piece is placed from its own rect.
+ */
+export function furnitureWrites(
+  kind: FurnitureRect["kind"],
+  start: { x: number; y: number },
+  dropped: { x: number; y: number },
+  anchor: { x: number; y: number } | null,
+  hud: Hud,
+  layout: WindowLayout,
+): Array<[string, string]> {
+  if (kind === "shipui") {
+    const next = shipOffsetFromX(dropped.x, layout.reference_w);
+    return next === shipOffsetFromX(start.x, layout.reference_w)
+      ? []
+      : [["ship_offset", String(next)]];
+  }
+
+  if (kind === "target") {
+    const fx = hudNum(hud, "target_x");
+    const fy = hudNum(hud, "target_y");
+    if (!anchor || fx === null || fy === null) return [];
+    const next = targetFractionFromPoint(
+      fx, anchor.x, anchor.y, layout.reference_w, layout.reference_h,
+    );
+    const out: Array<[string, string]> = [];
+    if (next.x !== fx) out.push(["target_x", String(next.x)]);
+    if (next.y !== fy) out.push(["target_y", String(next.y)]);
+    return out;
+  }
+
+  if (kind === "fighter" || kind === "badge") {
+    const prefix = kind === "fighter" ? "fighter" : "badge";
+    const stored = hudPointFromRect(kind, dropped.x, dropped.y);
+    const out: Array<[string, string]> = [];
+    if (stored.x !== start.x) out.push([`${prefix}_x`, String(stored.x)]);
+    if (stored.y !== start.y) out.push([`${prefix}_y`, String(stored.y)]);
+    return out;
+  }
+
+  // The neocom: its width is a field, not a rect, so it is selectable but not
+  // draggable and never reaches here.
+  return [];
 }
 
 /**
@@ -772,6 +831,27 @@ const hits = (r: Rect, x: number, y: number) =>
   x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
 /**
+ * `unitAt` for a TAB drag: the dragged unit wins whenever the point is inside
+ * it, and only then does the normal topmost-first ranking apply.
+ *
+ * The exception is not a preference. A dragged unit is selected, so the canvas
+ * paints it above every other rect (`.win.selected`'s z-index) — which
+ * `unitAt`'s array-order ranking cannot see. Without this, a stack that a free
+ * window happens to overlap resolves to that free window instead of the stack
+ * itself, turning a tab reorder into an unstack.
+ */
+export function tabTargetAt(
+  units: DrawUnit[],
+  rectOf: (u: DrawUnit) => Rect,
+  x: number,
+  y: number,
+  dragged: DrawUnit,
+): DrawUnit | null {
+  if (hits(rectOf(dragged), x, y)) return dragged;
+  return unitAt(units, rectOf, x, y);
+}
+
+/**
  * Everything whose rect contains a data-px point, topmost first — the same
  * last-painted-wins ranking `unitAt` uses, so `rectsAt(...)[0]` is always the
  * unit a plain click would select (pinned by a test).
@@ -874,4 +954,59 @@ export function dropAction(
   if (target?.stack) return { op: "unstackInto", member: tabId, container: target.stack.container_id };
   if (target && shift) return { op: "unstackCreate", member: tabId, target: target.anchor.id };
   return { op: "unstack", member: tabId, rect: drag.rect };
+}
+
+// --- Arrow-key nudge -------------------------------------------------------
+
+const NUDGE_STEPS = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+} as const;
+
+/** Whether a key is one the nudge handles at all. */
+export const isNudgeKey = (key: string): boolean => key in NUDGE_STEPS;
+
+/**
+ * How far an arrow press moves the selection, in data px, or null when the key
+ * or the modifiers are not a nudge.
+ *
+ * Alt is the snap-disable modifier for drags. A nudge never snaps — it is the
+ * tool you reach for when a snap put the window one pixel off — so Alt+Arrow
+ * has nothing to disable and is deliberately left to do nothing rather than
+ * behaving as a plain nudge.
+ */
+export function nudgeStep(
+  key: string,
+  mods: { shift?: boolean; ctrl?: boolean; meta?: boolean; alt?: boolean },
+): { dx: number; dy: number } | null {
+  if (mods.ctrl || mods.meta || mods.alt) return null;
+  const step = NUDGE_STEPS[key as keyof typeof NUDGE_STEPS];
+  if (!step) return null;
+  const n = mods.shift ? 10 : 1;
+  return { dx: step[0] * n, dy: step[1] * n };
+}
+
+/**
+ * Whether the element with focus uses the arrow keys itself, so the nudge must
+ * leave them alone.
+ *
+ * A checkbox or radio does NOT, and that distinction is the whole reason this
+ * is a named rule rather than an `instanceof HTMLInputElement` check: the
+ * window panel's own filter toggles are checkboxes, and treating every INPUT
+ * alike left the nudge dead for as long as one of them kept focus, with the
+ * arrows scrolling the window list instead.
+ *
+ * Takes the three fields it reads rather than an element, so it is checkable
+ * without a DOM.
+ */
+export function swallowsArrowKeys(
+  el: { tagName?: string; type?: string; isContentEditable?: boolean } | null,
+): boolean {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  if (tag === "SELECT" || tag === "TEXTAREA") return true;
+  return tag === "INPUT" && el.type !== "checkbox" && el.type !== "radio";
 }

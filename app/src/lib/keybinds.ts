@@ -64,7 +64,7 @@ const MOD_LABEL: Record<number, string> = { [MOD_CTRL]: "Ctrl", [MOD_ALT]: "Alt"
 
 /** Windows virtual-key codes EVE can store. Serves both display and capture
  *  validation: a code absent here is rejected rather than written blind. */
-export const VK_LABELS: Record<number, string> = {
+const VK_LABELS: Record<number, string> = {
   8: "Backspace", 9: "Tab", 13: "Enter", 19: "Pause", 20: "Caps Lock", 27: "Esc",
   32: "Space", 33: "Page Up", 34: "Page Down", 35: "End", 36: "Home",
   37: "Left", 38: "Up", 39: "Right", 40: "Down",

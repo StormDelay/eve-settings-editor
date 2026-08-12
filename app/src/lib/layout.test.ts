@@ -1,16 +1,14 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching search.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, DEFAULT_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
   snapLines, movingEdges, snapDelta, unitAt, rectsAt, moveInOrder, dropAction, linkInventory,
+  tabTargetAt, furnitureWrites, nudgeStep, isNudgeKey, swallowsArrowKeys,
+  type DrawUnit, type Rect,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check, eq } from "./test/check.ts";
 
 check("scale maps reference width onto the container", canvasScale(2560, 1280) === 0.5);
 check("scale is 1 when the reference has no width", canvasScale(0, 1280) === 1);
@@ -1167,4 +1165,147 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   }
 }
 
-console.log("layout: all checks passed");
+
+// --- tabTargetAt: the dragged unit wins inside its own rect ----------------
+// A dragged unit is selected, so the canvas paints it above everything else.
+// unitAt ranks by array order and cannot see that, so without the exception a
+// stack that a free window overlaps resolves to the free window — turning a tab
+// reorder into an unstack, which is a structural write to the user's file.
+{
+  const u = (id: string, x: number): DrawUnit =>
+    ({ key: id, anchor: { id }, stack: null, tabs: [{ id }], fanTargets: [] }) as any;
+  const rects: Record<string, Rect> = {
+    stack: { x: 0, y: 0, w: 100, h: 100 },
+    free: { x: 50, y: 50, w: 100, h: 100 },
+  };
+  const stack = u("stack", 0);
+  const free = u("free", 50);
+  // `free` is later in the array, so unitAt ranks it above `stack`.
+  const all = [stack, free];
+  const rectOf = (x: DrawUnit) => rects[x.anchor.id];
+
+  check(
+    "in the overlap, a tab drag from the stack still resolves to the stack",
+    tabTargetAt(all, rectOf, 75, 75, stack)?.key === "stack",
+  );
+  check(
+    "unitAt alone would have picked the overlapping free window",
+    unitAt(all, rectOf, 75, 75)?.key === "free",
+  );
+  check(
+    "outside the dragged unit, normal topmost-first ranking applies",
+    tabTargetAt(all, rectOf, 140, 140, stack)?.key === "free",
+  );
+  check(
+    "a point over nothing is still nothing",
+    tabTargetAt(all, rectOf, 500, 500, stack) === null,
+  );
+}
+
+// --- nudgeStep -------------------------------------------------------------
+{
+  check("plain arrow moves one data px", eq(nudgeStep("ArrowLeft", {}), { dx: -1, dy: 0 }));
+  check("right is +x", eq(nudgeStep("ArrowRight", {}), { dx: 1, dy: 0 }));
+  check("up is -y (screen coordinates)", eq(nudgeStep("ArrowUp", {}), { dx: 0, dy: -1 }));
+  check("down is +y", eq(nudgeStep("ArrowDown", {}), { dx: 0, dy: 1 }));
+  check("Shift makes it ten", eq(nudgeStep("ArrowDown", { shift: true }), { dx: 0, dy: 10 }));
+
+  // Alt is the snap-disable modifier for drags. A nudge never snaps, so
+  // Alt+Arrow must do nothing rather than behaving as a plain nudge.
+  check("Alt+Arrow is not a nudge", nudgeStep("ArrowLeft", { alt: true }) === null);
+  check("Ctrl+Arrow is not a nudge", nudgeStep("ArrowLeft", { ctrl: true }) === null);
+  check("Cmd+Arrow is not a nudge", nudgeStep("ArrowLeft", { meta: true }) === null);
+  check("a non-arrow key is not a nudge", nudgeStep("a", {}) === null);
+
+  check("isNudgeKey knows the four arrows", ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].every(isNudgeKey));
+  check("isNudgeKey rejects anything else", !isNudgeKey("Enter") && !isNudgeKey("ArrowLeftFoo"));
+}
+
+// --- swallowsArrowKeys -----------------------------------------------------
+// The checkbox/radio carve-out is the whole point: the window panel's filter
+// toggles are checkboxes, and treating every INPUT alike left the nudge dead
+// for as long as one of them held focus.
+{
+  check("a text input keeps its arrows", swallowsArrowKeys({ tagName: "INPUT", type: "text" }));
+  check("a number input keeps its arrows", swallowsArrowKeys({ tagName: "INPUT", type: "number" }));
+  check("a checkbox does not", !swallowsArrowKeys({ tagName: "INPUT", type: "checkbox" }));
+  check("a radio does not", !swallowsArrowKeys({ tagName: "INPUT", type: "radio" }));
+  check("a select keeps its arrows", swallowsArrowKeys({ tagName: "SELECT" }));
+  check("a textarea keeps its arrows", swallowsArrowKeys({ tagName: "TEXTAREA" }));
+  check("a contenteditable div keeps its arrows", swallowsArrowKeys({ tagName: "DIV", isContentEditable: true }));
+  check("a plain div does not", !swallowsArrowKeys({ tagName: "DIV" }));
+  check("nothing focused does not", !swallowsArrowKeys(null));
+}
+
+// --- furnitureWrites: a drag that changes nothing must write nothing --------
+// This is the function that decides what a furniture drag puts in the user's
+// settings file. Every comparison it makes is stored-value against
+// stored-value; comparing a stored value against a raw preview coordinate
+// instead would dirty the document on a drag that rounded back to its start.
+{
+  const entry = (name: string, value: string | null, def: string): HudEntry =>
+    ({ name, kind: "float", value, default: def, scope: "char", set: { how: "set", path: [] } }) as any;
+  const hudOf = (...es: HudEntry[]): Hud => ({ entries: es });
+  const layout: WindowLayout = { reference_w: 2560, reference_h: 1440, windows: [], stacks: [] };
+  const noHud = hudOf();
+
+  // --- ship HUD: a horizontal offset from screen centre ---
+  {
+    // The rect x that hudRects places offset 0 at, recovered through the same
+    // inverse the function uses, so "unmoved" is exact rather than assumed.
+    const x0 = layout.reference_w / 2 - SHIP_ANCHOR_LEFT;
+    check("an unmoved ship HUD writes nothing",
+      eq(furnitureWrites("shipui", { x: x0, y: 900 }, { x: x0, y: 900 }, null, noHud, layout), []));
+    check("a sub-pixel ship drag that rounds back writes nothing",
+      eq(furnitureWrites("shipui", { x: x0, y: 900 }, { x: x0 + 0.4, y: 900 }, null, noHud, layout), []));
+    check("a real ship drag writes the new offset",
+      eq(furnitureWrites("shipui", { x: x0, y: 900 }, { x: x0 + 30, y: 900 }, null, noHud, layout),
+         [["ship_offset", "30"]]));
+    check("the ship HUD never writes a y — it is x-only",
+      furnitureWrites("shipui", { x: x0, y: 900 }, { x: x0, y: 40 }, null, noHud, layout).length === 0);
+  }
+
+  // --- fighter and badge: a stored point, rounded ---
+  {
+    check("an unmoved fighter panel writes nothing",
+      eq(furnitureWrites("fighter", { x: 100, y: 200 }, { x: 100, y: 200 }, null, noHud, layout), []));
+    check("a sub-pixel fighter drag that rounds back writes nothing",
+      eq(furnitureWrites("fighter", { x: 100, y: 200 }, { x: 100.2, y: 199.8 }, null, noHud, layout), []));
+    check("a fighter drag on one axis writes only that axis",
+      eq(furnitureWrites("fighter", { x: 100, y: 200 }, { x: 140, y: 200 }, null, noHud, layout),
+         [["fighter_x", "140"]]));
+    check("a fighter drag on both axes writes both",
+      eq(furnitureWrites("fighter", { x: 100, y: 200 }, { x: 140, y: 260 }, null, noHud, layout),
+         [["fighter_x", "140"], ["fighter_y", "260"]]));
+    check("the badge writes under its own prefix",
+      eq(furnitureWrites("badge", { x: 10, y: 20 }, { x: 11, y: 20 }, null, noHud, layout),
+         [["badge_x", "11"]]));
+  }
+
+  // --- target list: written from its ANCHOR, as fractions ---
+  {
+    // The anchor these stored fractions describe, via the forward placement
+    // (targetAnchor) that furnitureWrites' targetFractionFromPoint inverts —
+    // so "unmoved" is the exact round-trip, not an approximation of one.
+    const fx = 0.5, fy = 0.25;
+    const { x: ax, y: ay } = targetAnchor(fx, fy, layout.reference_w, layout.reference_h);
+    const hud = hudOf(entry("target_x", String(fx), "0"), entry("target_y", String(fy), "0"));
+
+    check("an unmoved target list writes nothing",
+      eq(furnitureWrites("target", { x: 0, y: 0 }, { x: 0, y: 0 }, { x: ax, y: ay }, hud, layout), []));
+    check("a moved target list writes the changed fraction",
+      furnitureWrites("target", { x: 0, y: 0 }, { x: 0, y: 0 }, { x: ax, y: ay + 200 }, hud, layout)
+        .map(([n]) => n).join(",") === "target_y");
+    // No anchor means the drag was not a target-list drag in flight, and a rect
+    // cannot be inverted back to an anchor unambiguously near the middle.
+    check("no anchor writes nothing rather than guessing one",
+      eq(furnitureWrites("target", { x: 0, y: 0 }, { x: 99, y: 99 }, null, hud, layout), []));
+    check("a file with no stored target anchor writes nothing",
+      eq(furnitureWrites("target", { x: 0, y: 0 }, { x: 0, y: 0 }, { x: ax, y: ay }, noHud, layout), []));
+  }
+
+  // The neocom is selectable but not draggable — its width is a field, not a
+  // rect — so it must never reach a write path.
+  check("the neocom writes nothing",
+    eq(furnitureWrites("neocom", { x: 0, y: 0 }, { x: 50, y: 50 }, null, noHud, layout), []));
+}
