@@ -7,11 +7,10 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"src/lib/**/*.test.ts\" && npm run test:ui",
+    "test": "svelte-kit sync && vitest run",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri",
-    "test:ui": "svelte-kit sync && vitest run"
+    "tauri": "tauri"
   },
   "license": "MIT",
   "dependencies": {

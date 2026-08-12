@@ -3,23 +3,28 @@
 //! backup/verify/atomic save chain, backups, and profile discovery.
 //! No EVE *semantics* live here yet (categories arrive in M2/M3).
 
-pub mod backups;
-pub mod discover;
-pub mod document;
-pub mod mutate;
-pub mod path;
-pub mod projection;
-pub mod save;
+// Every module is private: the crate's whole public surface is the `pub use`
+// list below, and it was already the only way in — a sweep found exactly one
+// module-path use anywhere in the workspace, for a name this list re-exports.
+// Leaving them `pub` published a second path to every item that nothing called
+// and no test covered.
+mod backups;
+mod discover;
+mod document;
+mod mutate;
+mod path;
+mod projection;
+mod save;
 mod treewalk;
-pub mod windows;
-pub mod hud;
-pub mod chat;
-pub mod neocom;
-pub mod probes;
-pub mod overview;
-pub mod autofill;
-pub mod batch;
-pub mod keybinds;
+mod windows;
+mod hud;
+mod chat;
+mod neocom;
+mod probes;
+mod overview;
+mod autofill;
+mod batch;
+mod keybinds;
 mod stacks;
 mod overview_tabs;
 mod overview_presets;
@@ -27,13 +32,16 @@ mod overview_states;
 mod overview_pack;
 mod probe_pack;
 
-pub use backups::{list_backups, restore, BackupInfo}; // enabled in Task 7
-pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile}; // enabled in Task 8
+#[cfg(test)]
+mod testkit;
+
+pub use backups::{list_backups, restore, BackupInfo};
+pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile};
 pub use document::{Document, Fidelity, LoadError};
 pub use mutate::{apply, Mutation, MutateError, NewValue};
 pub use path::{resolve, resolve_mut, NodePath, Step};
-pub use projection::{project, Node}; // enabled in Task 4
-pub use save::{save, SaveError, SaveReport}; // enabled in Task 6
+pub use projection::{project, Node};
+pub use save::{save, SaveError, SaveReport};
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
 pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};

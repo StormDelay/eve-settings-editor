@@ -25,6 +25,31 @@ if (!Element.prototype.setPointerCapture) {
   Element.prototype.hasPointerCapture = () => false;
 }
 
+// jsdom implements no layout, so it ships no `scrollIntoView` either. The
+// window panel calls it to keep the selected row visible; without the stub that
+// throws asynchronously, which surfaces as an unhandled error that fails the
+// run while every test still reports green.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
+// jsdom has no ResizeObserver, and Svelte 5 implements `bind:clientWidth` with
+// one — so mounting anything that measures itself (the layout canvas) throws
+// during render, not at the point of measurement, which makes it look like a
+// component bug rather than a missing browser API.
+//
+// A no-op is the honest stub: jsdom lays nothing out, so every element measures
+// 0 and there is never a resize to report. Components that read a width must
+// already tolerate 0 (a real browser reports it that way on the first frame
+// too), and `canvasScale` does.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 // @testing-library only auto-registers this when vitest runs with `globals`,
 // which this config deliberately does not. Without it every render stays in the
 // document and the next test's queries match two copies of everything.
