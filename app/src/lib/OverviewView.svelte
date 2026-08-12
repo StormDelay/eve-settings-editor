@@ -3,6 +3,7 @@
   import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { documentDir } from "@tauri-apps/api/path";
   import { names } from "./names.svelte";
+  import { parseTabName, formatTabName, plainTabName, cssColor, EVE_PALETTE, type TabName } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
@@ -71,7 +72,30 @@
   }
   function startRenameTab() {
     if (!tab) return;
-    pending = { kind: "renameTab", value: tab.name, tabIdx: tab.index };
+    // The box edits the readable text; the tab's colour and bold ride along
+    // through `submitPending` rather than being retyped as raw markup.
+    pending = { kind: "renameTab", value: parseTabName(tab.name).text, tabIdx: tab.index };
+  }
+
+  // Tab names carry EVE's markup — see tabName.ts. The swatch and the B button
+  // rewrite the same `name` string the Rename box does, so neither needs a
+  // backend command of its own.
+  const nameParts = $derived(tab ? parseTabName(tab.name) : null);
+  let swatchOpen = $state(false);
+  let swatchEl: HTMLDivElement | undefined = $state();
+
+  async function setNameFormat(patch: Partial<TabName>) {
+    if (!tab || !nameParts) return;
+    const next = formatTabName({ ...nameParts, ...patch });
+    if (next === tab.name) return;
+    try { data = await api.tabRename(tab.index, next); onUserDirty(); }
+    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  }
+
+  function chipStyle(name: string): string {
+    const n = parseTabName(name);
+    return [n.color ? `color:${cssColor(n.color)}` : "", n.bold ? "font-weight:700" : ""]
+      .filter(Boolean).join(";");
   }
   function startAddWindow() {
     if (!data || data.windows.length === 0) return;
@@ -119,8 +143,13 @@
         tabIndex = newestTab() ?? tabIndex;
         onUserDirty();
       } else if (p.kind === "renameTab") {
-        if (name === data?.tabs.find((t) => t.index === p.tabIdx)?.name) return;
-        data = await api.tabRename(p.tabIdx, name);
+        const current = data?.tabs.find((t) => t.index === p.tabIdx)?.name ?? "";
+        // `p.value`, not the trimmed `name`: padding is how a tab is widened in
+        // game ("  main  ", "  3  "), so the typed spacing is kept verbatim and
+        // the trim above only answers "did they type anything at all".
+        const next = formatTabName({ ...parseTabName(current), text: p.value });
+        if (next === current) return;
+        data = await api.tabRename(p.tabIdx, next);
         onUserDirty();
       } else if (p.kind === "addWindow") {
         // Add window writes the user grouping AND the char-file geometry, so mark
@@ -139,7 +168,7 @@
   }
   async function deleteTab() {
     if (!tab) return;
-    const ok = await confirm(`Delete tab "${tab.name}"? This can't be undone.`, { title: "Delete tab", kind: "warning" });
+    const ok = await confirm(`Delete tab "${plainTabName(tab.name)}"? This can't be undone.`, { title: "Delete tab", kind: "warning" });
     if (!ok) return;
     try {
       const result = await api.tabDelete(tab.index);
@@ -261,6 +290,13 @@
   }
 </script>
 
+<!-- Dismiss the palette on a click anywhere outside it. Tested by containment
+     rather than by stopPropagation inside the popover, which would need a
+     handler on a non-interactive element. -->
+<svelte:window onpointerdown={(e) => {
+  if (swatchOpen && swatchEl && !swatchEl.contains(e.target as Node)) swatchOpen = false;
+}} />
+
 {#if !userOpen && charId !== null}
   <div class="hint pair">
     <p>Link this character to an account to edit shared settings — overview columns live in the account file.</p>
@@ -284,17 +320,20 @@
             {#each data.windows as w (w.index)}
               <optgroup label="Overview {w.index + 1}">
                 {#each w.tab_indices as idx (idx)}
-                  <option value={idx}>{data.tabs.find((t) => t.index === idx)?.name ?? `Tab ${idx}`}</option>
+                  {@const t = data.tabs.find((x) => x.index === idx)}
+                  <!-- plain text: an <option> can't carry the colour, and raw
+                       `<color=0x…>` in the dropdown is worse than neither. -->
+                  <option value={idx}>{t ? plainTabName(t.name) : `Tab ${idx}`}</option>
                 {/each}
               </optgroup>
             {/each}
             {#if orphans.length > 0}
               <optgroup label="Other">
-                {#each orphans as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+                {#each orphans as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
               </optgroup>
             {/if}
           {:else}
-            {#each data.tabs as t (t.index)}<option value={t.index}>{t.name}</option>{/each}
+            {#each data.tabs as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
           {/if}
         </select>
       </label>
@@ -302,6 +341,27 @@
         <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
         <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
         <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
+        <div class="swatch-wrap" bind:this={swatchEl}>
+          <button class="swatch" disabled={!tab} title="Tab name colour"
+                  style={nameParts?.color ? `background:${cssColor(nameParts.color)}` : ""}
+                  onclick={() => (swatchOpen = !swatchOpen)}
+                  aria-label="Tab name colour">{nameParts?.color ? "" : "—"}</button>
+          {#if swatchOpen}
+            <div class="palette">
+              <div class="palette-grid">
+                {#each EVE_PALETTE as c (c)}
+                  <button style="background:#{c}" title="#{c}" aria-label="#{c}"
+                          onclick={() => { setNameFormat({ color: `FF${c.toUpperCase()}` }); swatchOpen = false; }}></button>
+                {/each}
+              </div>
+              <button class="palette-none"
+                      onclick={() => { setNameFormat({ color: null }); swatchOpen = false; }}>No colour</button>
+            </div>
+          {/if}
+        </div>
+        <button class="bold-toggle" class:on={nameParts?.bold} disabled={!tab} title="Bold tab name"
+                aria-pressed={!!nameParts?.bold}
+                onclick={() => setNameFormat({ bold: !nameParts?.bold })}>B</button>
         {#if currentWindow && data.windows.length > 1}
           {@const cw = currentWindow}
           <select aria-label="Move to window" value=""
@@ -372,7 +432,10 @@
               ondrop={(e) => { e.preventDefault(); dropTab(i); }}
               ondragend={() => (tabDragFrom = null)}>
             <span class="grip" title="Drag to reorder">⠿</span>
-            <button type="button" class="tab-chip" onclick={() => (tabIndex = idx)}>{t?.name ?? `Tab ${idx}`}</button>
+            <!-- The chips are the one place a tab's real colour and weight can
+                 be shown, so they render it. -->
+            <button type="button" class="tab-chip" style={t ? chipStyle(t.name) : ""}
+                    onclick={() => (tabIndex = idx)}>{t ? plainTabName(t.name) : `Tab ${idx}`}</button>
           </li>
         {/each}
       </ul>
@@ -448,6 +511,31 @@
   }
   .ov-tabs li.selected { border-color: var(--accent); }
   .ov-tabs button.tab-chip { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
+  /* Tab-name markup controls (see tabName.ts). */
+  .swatch-wrap { position: relative; display: inline-flex; }
+  .swatch {
+    width: 1.9rem; height: 1.6rem; padding: 0; cursor: pointer;
+    background: var(--bg-panel); color: var(--fg-dim);
+    border: 1px solid var(--border); border-radius: 3px; font: inherit;
+  }
+  .bold-toggle {
+    background: var(--bg-panel); color: var(--fg-dim); font-weight: 700;
+    border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; cursor: pointer;
+  }
+  .bold-toggle.on { color: var(--fg); border-color: var(--accent); }
+  .palette {
+    position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
+    padding: 0.35rem; background: var(--bg-panel);
+    border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: 3px; }
+  .palette-grid button { width: 1.1rem; height: 1.1rem; border: 1px solid #0006; border-radius: 2px; padding: 0; cursor: pointer; }
+  .palette-grid button:hover { outline: 1px solid var(--fg); }
+  .palette-none {
+    display: block; width: 100%; margin-top: 0.35rem; cursor: pointer;
+    background: none; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px;
+    padding: 1px 4px; font: inherit; font-size: 0.85em;
+  }
   .grip { cursor: grab; opacity: 0.6; }
   /* New in the sub-tab split (Task 8) — Columns/Filters/Appearance selector. */
   .subtabs { display: flex; gap: 0.3rem; margin: 0.6rem 0 0.5rem; border-bottom: 1px solid var(--border); }
