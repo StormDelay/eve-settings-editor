@@ -123,3 +123,83 @@ describe("tab selection", () => {
     await waitFor(() => expect(calls.of("overview_columns").length).toBe(2));
   });
 });
+
+// Tab names carry EVE's markup (see tabName.ts). The colour swatch and the B
+// button rewrite that string through `tab_rename` — there is no command of
+// their own — so what these pin is the string that goes over the wire.
+describe("tab name markup", () => {
+  const marked = "<color=0xFFFF6F75>   <b>main</b>   </color>";
+
+  test("the selector shows the readable name, not the markup", async () => {
+    calls.stub("overview_columns", columns(tab(0, marked)));
+    mount();
+    await screen.findByLabelText("Tab");
+    expect(screen.getByRole("option", { name: "main" })).toBeTruthy();
+  });
+
+  test("picking a colour rewrites the name, keeping the text and the bold", async () => {
+    calls.stub("overview_columns", columns(tab(0, marked)));
+    mount();
+    await screen.findByLabelText("Tab");
+
+    await fireEvent.click(screen.getByLabelText("Tab name colour"));
+    await fireEvent.click(screen.getByLabelText("#40ff40"));
+
+    expect(calls.only("tab_rename").args).toEqual({
+      tabIdx: 0,
+      // Padding survives — it is how a tab is widened in game.
+      name: "<color=0xFF40FF40><b>   main   </b></color>",
+    });
+  });
+
+  test("clearing the colour drops the span and nothing else", async () => {
+    calls.stub("overview_columns", columns(tab(0, marked)));
+    mount();
+    await screen.findByLabelText("Tab");
+
+    await fireEvent.click(screen.getByLabelText("Tab name colour"));
+    await fireEvent.click(screen.getByText("No colour"));
+
+    expect((calls.only("tab_rename").args as { name: string }).name).toBe("<b>   main   </b>");
+  });
+
+  test("the B button toggles bold off", async () => {
+    calls.stub("overview_columns", columns(tab(0, marked)));
+    mount();
+    await screen.findByLabelText("Tab");
+
+    await fireEvent.click(screen.getByTitle("Bold tab name"));
+
+    expect((calls.only("tab_rename").args as { name: string }).name).toBe("<color=0xFFFF6F75>   main   </color>");
+  });
+
+  // A name the parser can't decompose must never be silently rewritten by the
+  // act of looking at it — only an explicit colour/bold click may replace it.
+  test("an unparseable name is left alone and shows no colour", async () => {
+    const weird = "<color=0xFFFF0000>a</color><color=0xFF00FF00>b</color>";
+    calls.stub("overview_columns", columns(tab(0, weird)));
+    mount();
+    await screen.findByLabelText("Tab");
+
+    calls.never("tab_rename");
+    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
+  });
+
+  test("renaming keeps the colour and the typed spacing", async () => {
+    calls.stub("overview_columns", columns(tab(0, marked)));
+    mount();
+    await screen.findByLabelText("Tab");
+
+    await fireEvent.click(screen.getByTitle("Rename selected tab"));
+    const box = document.querySelector(".name-entry input") as HTMLInputElement;
+    // The box is seeded with the readable text, padding and all.
+    expect(box.value).toBe("   main   ");
+
+    await fireEvent.input(box, { target: { value: "  fleet  " } });
+    // Scoped: the toolbar's Rename button carries the same label.
+    await fireEvent.click(document.querySelector(".name-entry button") as HTMLElement);
+
+    expect((calls.only("tab_rename").args as { name: string }).name)
+      .toBe("<color=0xFFFF6F75><b>  fleet  </b></color>");
+  });
+});
