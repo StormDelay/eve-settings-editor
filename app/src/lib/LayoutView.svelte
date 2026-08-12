@@ -2,10 +2,11 @@
   import { api, errMessage } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
-    canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects, shipOffsetFromX,
-    hudPointFromRect, hudNum, hudFlag, targetAnchor, targetRect, targetCorner, targetFractionFromPoint,
+    canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
+    hudNum, hudFlag, targetAnchor, targetRect, targetCorner, furnitureWrites,
     DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
+    tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
@@ -448,17 +449,10 @@
     return u && u.key !== dragged.key ? u : null;
   }
 
-  /** The unit under the pointer for a tab drag. The dragged unit wins whenever
-   * the point is inside it: it is selected, so the canvas paints it above every
-   * other rect (.win.selected's z-index), which unitAt's array-order ranking
-   * can't see. Without this, a stack a free window overlaps resolves to that
-   * free window instead of the stack itself, turning a reorder into an
-   * unstack. */
-  function tabTargetAt(p: { x: number; y: number }, unit: DrawUnit): DrawUnit | null {
-    const r = rectOf(unit.anchor);
-    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return unit;
-    return unitAt(units, (x) => rectOf(x.anchor), p.x, p.y);
-  }
+  /** The unit under the pointer for a tab drag — see layout.ts's `tabTargetAt`
+   * for why the dragged unit gets to win. */
+  const tabTargetOf = (p: { x: number; y: number }, unit: DrawUnit): DrawUnit | null =>
+    tabTargetAt(units, (x) => rectOf(x.anchor), p.x, p.y, unit);
 
   /** Candidate edges for a drag of `unit`: every rect the canvas currently
    * draws except the dragged unit's own windows, plus the furniture, plus the
@@ -571,7 +565,7 @@
       }
       if (draggingTab === null) return;
       const p = pointerData(e);
-      const over = tabTargetAt(p, drag.unit);
+      const over = tabTargetOf(p, drag.unit);
       const own = over?.key === drag.unit.key;
       // Highlight only a drop that goes somewhere else; hovering the tab's own
       // stack is a reorder, which the strip itself shows.
@@ -624,41 +618,14 @@
     if (d.kind === "furniture") {
       const p = fPreview[d.f.kind];
       if (!p) return;
-      if (d.f.kind === "shipui" && layout) {
-        // Compare the derived offsets, not the raw preview x against the
-        // drag-start rect x — those are different quantities (a rect
-        // coordinate vs. a stored offset) and comparing them directly would
-        // either miss a real change or flag a no-op drag as one, depending on
-        // how hudRects' ship-HUD placement is defined. shipOffsetFromX(d.f.x, …)
-        // recovers the offset hudRects placed this rect at, since d.f is the
-        // rect captured at drag start (undragged, so still the committed one).
-        const next = shipOffsetFromX(p.x, layout.reference_w);
-        if (next !== shipOffsetFromX(d.f.x, layout.reference_w)) {
-          await setHud("ship_offset", String(next));
+      // `d.f` is the rect captured at pointerdown — undragged, so still the
+      // committed one, which is what lets furnitureWrites tell a real move from
+      // a drag that rounded back to where it started. It returns nothing for
+      // the latter, and nothing is what a no-op drag must write.
+      if (layout && hud) {
+        for (const [name, value] of furnitureWrites(d.f.kind, d.f, p, targetDragAnchor, hud, layout)) {
+          await setHud(name, value);
         }
-      } else if (d.f.kind === "target" && layout && hud && targetDragAnchor) {
-        // The ANCHOR the drag ended at, not the rect: the box hangs off
-        // whichever side of the anchor faces the middle, so a rect that
-        // crossed the middle mid-drag no longer says where its anchor is.
-        const fx = hudNum(hud, "target_x");
-        const fy = hudNum(hud, "target_y");
-        if (fx !== null && fy !== null) {
-          const next = targetFractionFromPoint(
-            fx, targetDragAnchor.x, targetDragAnchor.y, layout.reference_w, layout.reference_h,
-          );
-          if (next.x !== fx) await setHud("target_x", String(next.x));
-          if (next.y !== fy) await setHud("target_y", String(next.y));
-        }
-      } else if (d.f.kind === "fighter" || d.f.kind === "badge") {
-        const prefix = d.f.kind === "fighter" ? "fighter" : "badge";
-        // Route through hudPointFromRect (see layout.ts) rather than writing
-        // the raw preview rect coordinates: it's the point-convention inverse
-        // that must stay matched with hudRects' placement, and comparing its
-        // output (not the raw preview x/y) is what makes a sub-pixel drag that
-        // rounds back to the same stored value a no-op instead of a dirtying write.
-        const stored = hudPointFromRect(d.f.kind, p.x, p.y);
-        if (stored.x !== d.f.x) await setHud(`${prefix}_x`, String(stored.x));
-        if (stored.y !== d.f.y) await setHud(`${prefix}_y`, String(stored.y));
       }
       // Only while a drag is in flight: the marker falls back to the stored
       // anchor, which the write above has just refreshed.
@@ -684,7 +651,7 @@
       if (!wasDrag) return; // a press that never travelled is just a select
       const p = pointerData(e);
       const r = rectOf(d.unit.anchor);
-      const target = tabTargetAt(p, d.unit);
+      const target = tabTargetOf(p, d.unit);
       // Only measured when the drop resolves to the tab's own strip (the
       // reorder case) — see tabTargetAt for why that's the pointer-inside-own-
       // rect case, matching onPointerMove's `own` derivation.
@@ -805,8 +772,6 @@
   // as well have been made in the window panel, and a focus-scoped handler
   // would silently do nothing in that case.
 
-  const NUDGE = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
-
   /** The unit the nudge moves: the one whose anchor or tabs carry the
    * selection, so nudging a stacked window moves its whole stack — the same
    * unit a canvas drag would have grabbed. */
@@ -814,20 +779,13 @@
     units.find((u) => u.anchor.id === selectedId || u.tabs.some((t) => t.id === selectedId)) ?? null;
 
   function onKeyDown(e: KeyboardEvent) {
-    // Alt is the snap-disable modifier for drags; a nudge never snaps, so
-    // Alt+Arrow has nothing to disable and is left to do nothing.
-    if (readOnly || drag || e.ctrlKey || e.metaKey || e.altKey) return;
-    const step = NUDGE[e.key as keyof typeof NUDGE];
+    if (readOnly || drag) return;
+    const step = nudgeStep(e.key, {
+      shift: e.shiftKey, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
+    });
     if (!step) return;
-    // Never steal the arrows from a field that uses them — a text box moves
-    // its caret, a number input steps its value. A checkbox or radio does
-    // NOT: the panel's own filter toggles are checkboxes, and treating every
-    // INPUT alike left the nudge dead for as long as one kept focus, with the
-    // arrows scrolling the window list instead.
-    const t = e.target as HTMLElement | null;
-    const kind = (t as HTMLInputElement | null)?.type;
-    if (t && (t.isContentEditable || t.tagName === "SELECT" || t.tagName === "TEXTAREA"
-      || (t.tagName === "INPUT" && kind !== "checkbox" && kind !== "radio"))) return;
+    // Never steal the arrows from a field that uses them — see swallowsArrowKeys.
+    if (swallowsArrowKeys(e.target as HTMLElement | null)) return;
     // A held nudge owns its unit until keyup: re-resolving from the live
     // selection on every auto-repeat keydown would let a mid-hold selection
     // change (e.g. a click in the window panel) retarget onto a different
@@ -835,14 +793,11 @@
     const unit = nudging ? (units.find((u) => u.anchor.id === nudging) ?? null) : selectedUnit();
     if (!unit) return;
     e.preventDefault(); // or the canvas pane scrolls out from under the nudge
-    const n = e.shiftKey ? 10 : 1;
     const r = rectOf(unit.anchor);
     // Preview only — no backend traffic per keypress. Key auto-repeat fires
     // dozens of keydowns and exactly ONE keyup, so a glide costs one commit.
-    // No snapping: nudging is the tool you reach for when a snap put the window
-    // one pixel off, and snapping it back would make the two fight.
     nudging = unit.anchor.id;
-    preview = { ...preview, [unit.anchor.id]: { ...r, x: r.x + step[0] * n, y: r.y + step[1] * n } };
+    preview = { ...preview, [unit.anchor.id]: { ...r, x: r.x + step.dx, y: r.y + step.dy } };
   }
 
   /** Commit whatever nudge is in flight, if any. Shared by keyup and window
@@ -860,7 +815,7 @@
   }
 
   const onKeyUp = (e: KeyboardEvent) => {
-    if (e.key in NUDGE) return endNudge();
+    if (isNudgeKey(e.key)) return endNudge();
   };
 </script>
 

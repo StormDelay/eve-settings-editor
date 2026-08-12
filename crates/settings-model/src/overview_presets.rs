@@ -13,7 +13,8 @@
 
 use blue_marshal::Value;
 
-use crate::overview_tabs::{dict_inner_mut, is_b, overview_mut, set_tab_preset, tabs_mut, OverviewTabError};
+use crate::overview_tabs::{overview_mut, set_tab_preset, tabs_mut, OverviewTabError};
+use crate::treewalk::{dict_inner_mut, is_bytes as is_b};
 use crate::treewalk::{inline_all, Entries};
 
 /// String form of a preset dict key or a tab's `overview` value (Bytes on real
@@ -266,9 +267,9 @@ pub fn set_preset_states(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::overview_tabs::dict_inner;
+    use crate::testkit::b;
+    use crate::treewalk::dict_inner;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
     /// A container in the shape EVE writes: `(timestamp, dict)`. These fixtures
     /// used to seed a bare dict, which no real file contains — so every test in

@@ -1,13 +1,8 @@
-// Run: npm test  (node --test; Node strips the types itself). No test
-// framework and no @types/node on purpose — the frontend dependency list stays
-// as scaffolded. A throw is a failing exit code, which is all a runner needs.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { searchTree } from "./search.ts";
 import type { TreeNodeData } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const node = (
   label: string | null,
@@ -56,4 +51,3 @@ const miss = searchTree(tree, "zzz-nothing");
 check("no match yields no tree", miss.tree === null);
 check("no match counts nothing", miss.count === 0);
 
-console.log("searchTree: all checks passed");

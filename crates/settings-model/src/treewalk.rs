@@ -198,6 +198,20 @@ pub(crate) fn child_dict_mut<'a>(dict: &'a mut Entries, name: &[u8]) -> Option<&
     dict_inner_mut(v)
 }
 
+/// Inner dict of a plain (post-inline) value, unwrapping a `(ts, dict)` tuple.
+/// The no-`SharedTable` counterpart of `as_dict`, for trees the caller has
+/// already inlined.
+pub(crate) fn dict_inner(v: &Value) -> Option<&Entries> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(items) => items.iter().find_map(|e| match e {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     match v {
         Value::Dict(d) => Some(d),
@@ -209,6 +223,7 @@ pub(crate) fn dict_inner_mut(v: &mut Value) -> Option<&mut Entries> {
     }
 }
 
+/// Inner list of a plain (post-inline) value, unwrapping a `(ts, list)` tuple.
 pub(crate) fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
     match v {
         Value::List(l) => Some(l),
@@ -216,6 +231,41 @@ pub(crate) fn list_inner_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
             Value::List(l) => Some(l),
             _ => None,
         }),
+        _ => None,
+    }
+}
+
+/// Read-only counterpart of `list_inner_mut`.
+pub(crate) fn list_inner(v: &Value) -> Option<&Vec<Value>> {
+    match v {
+        Value::List(l) => Some(l),
+        Value::Tuple(items) => items.iter().find_map(|e| match e {
+            Value::List(l) => Some(l),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// A plain integer, or `None` for every other shape. Deliberately narrow:
+/// tab keys are `Value::Int` and reading a `Long` as one would invent an index.
+pub(crate) fn as_int(v: &Value) -> Option<i64> {
+    match v {
+        Value::Int(i) => Some(*i),
+        _ => None,
+    }
+}
+
+/// A named child dict of a document root, resolving `Shared`/`Ref` at every hop
+/// (the root itself, the key, and the value).
+pub(crate) fn root_child_dict<'a>(
+    v: &'a Value,
+    name: &[u8],
+    sh: &SharedTable<'a>,
+) -> Option<&'a Entries> {
+    let Value::Dict(root) = effective(v, sh) else { return None };
+    match find_child(root, name, sh)? {
+        Value::Dict(d) => Some(d),
         _ => None,
     }
 }
@@ -265,9 +315,9 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::b;
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
 
     #[test]
     fn section_finds_a_plain_top_level_dict() {

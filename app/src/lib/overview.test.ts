@@ -1,5 +1,4 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching layout.test.ts and search.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import {
   associatedCharacters,
   accountOf,
@@ -11,10 +10,7 @@ import {
 } from "./overview.ts";
 import type { AccountRoster, Profile } from "./api.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 const roster: AccountRoster = {
   accounts: [{ user_id: 456, alias: "Main", characters: [123, 124] }],
@@ -142,4 +138,3 @@ check(
 );
 check("nothing open, nothing to reload", slotsToReload({ char: null, user: null }).length === 0);
 
-console.log("overview: all checks passed");

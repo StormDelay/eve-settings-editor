@@ -445,10 +445,7 @@ mod tests {
     use blue_marshal::Value;
     use crate::path::resolve;
 
-    fn ts() -> Value {
-        // A stand-in FILETIME timestamp — the (timestamp, dict) wrapper.
-        Value::Long(vec![0u8; 8])
-    }
+    use crate::testkit::{b, ts};
 
     fn geom(x: i64, y: i64, w: i64, h: i64, sw: i64, sh: i64) -> Value {
         Value::Tuple(vec![
@@ -763,8 +760,6 @@ mod tests {
     // Helper: a char-style root with geometry, openWindows, stacksWindows and
     // preferredIdxInStack3 — window ids as Bytes, stack values through a Shared.
     fn stacked_root() -> Value {
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         fn geom(x: i64) -> Value {
             Value::Tuple(vec![
                 Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80),
@@ -876,8 +871,6 @@ mod tests {
         // VALUE), so the shared/ref'd entries projected as geom: None and the
         // stack silently vanished from the canvas. This must pass once reshare
         // stops sharing tuples (Fix A) — and would fail without that fix.
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         fn rect() -> Value {
             Value::Tuple(vec![
                 Value::Int(16), Value::Int(714), Value::Int(500),
@@ -926,8 +919,6 @@ mod tests {
     fn colliding_and_missing_indices_still_order_deterministically() {
         // Two members share index 0 and one is absent from the pref dict: order
         // by (index, id) with absent treated as last.
-        fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-        fn ts() -> Value { Value::Long(vec![0u8; 8]) }
         let windows = Value::Dict(vec![
             (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![
                 (b("zeta"), b("C")), (b("alpha"), b("C")), (b("mid"), b("C")),

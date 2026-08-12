@@ -1,8 +1,7 @@
-// Run: npm test (node --test). Throw-based checks, no framework.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, type DefaultsBundle } from "./presets.ts";
 
-const check = (name: string, ok: boolean) => { if (!ok) throw new Error(`FAIL: ${name}`); console.log(`  ok - ${name}`); };
-const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+import { check, eq } from "./test/check.ts";
 
 const bundle: DefaultsBundle = {
   modern: [
@@ -36,4 +35,3 @@ check("forkName free base", forkName("All", []) === "All copy");
 check("findDefault returns the profile", findDefault(defaultsForFormat(bundle, "modern"), "DefaultPreset_639442")!.groups[0] === 462);
 check("findDefault miss", findDefault(defaultsForFormat(bundle, "modern"), "nope") === undefined);
 
-console.log("presets: all checks passed");
