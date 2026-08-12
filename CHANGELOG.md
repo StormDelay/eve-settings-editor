@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Deleting an overview tab no longer leaves a blank tab behind in game.** Accounts this already affected repair themselves the first time you edit any tab.
+
 ## [0.32.0] - 2026-08-12
 
 A plain file-to-file copy that needs no pairing, and folders named after the app.
