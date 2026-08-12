@@ -482,6 +482,8 @@ export const api = {
     invoke<SetupPlan>("setup_preview", { source, targetCharPaths, aspects, allowOtherFolders }),
   setupApply: (source: BatchSource, targetCharPaths: string[], aspects: Aspect[], allowOtherFolders: boolean) =>
     invoke<BatchTargetResult[]>("setup_apply", { source, targetCharPaths, aspects, allowOtherFolders }),
+  copyFiles: (source: string, targets: string[]) =>
+    invoke<BatchTargetResult[]>("copy_files", { source, targets }),
   // The overview view already owns `presetCreate`/`presetRename`/`presetDelete`
   // for EVE's own overview filter presets — these are the settings-preset
   // library, hence the longer names.

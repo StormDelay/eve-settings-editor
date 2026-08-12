@@ -578,6 +578,58 @@ pub fn setup_apply(
     Ok(results)
 }
 
+/// Every discovered char/user file, by path. Unlike `scoped_files` this keeps
+/// files whose name carries no parseable id: a file copy addresses files by
+/// path, so a hand-made backup like `core_char_123 - old.dat` is a legitimate
+/// source to restore from and a legitimate target to overwrite.
+fn all_settings_files(roots: &[PathBuf]) -> HashMap<PathBuf, FileKind> {
+    let mut out = HashMap::new();
+    for p in discover(roots) {
+        for f in &p.files {
+            if f.kind != FileKind::Other {
+                out.insert(f.path.clone(), f.kind);
+            }
+        }
+    }
+    out
+}
+
+/// Copy one settings file byte-for-byte onto others of the same kind — the
+/// file-level copy, with no character↔account pairing involved. Every target is
+/// backed up first by `full_copy_to`.
+///
+/// Paths come from the frontend, so both ends are checked against discovery:
+/// only a real char/user file can be read, and only a real one of the SAME kind
+/// can be written. A char file spliced over a user file would be a valid
+/// document full of the wrong keys, which nothing downstream would flag.
+pub fn copy_files(
+    roots: &[PathBuf],
+    source: &str,
+    targets: &[String],
+) -> Result<Vec<TargetResult>, ErrDto> {
+    let files = all_settings_files(roots);
+    let src = PathBuf::from(source);
+    let Some(&kind) = files.get(&src) else {
+        return Err(ErrDto::new("source", "The source is not a character or account settings file."));
+    };
+    let bytes = fs::read(&src).map_err(|e| ErrDto::new("io", e.to_string()))?;
+    Ok(targets
+        .iter()
+        .map(|t| {
+            let path = PathBuf::from(t);
+            if path == src {
+                return err_result(t, "A file cannot be copied onto itself.".into());
+            }
+            if files.get(&path) != Some(&kind) {
+                return err_result(t, "Not a settings file of the same kind as the source.".into());
+            }
+            full_copy_to(&bytes, &path)
+                .map(|bk| ok_result(t, bk.to_string_lossy().into_owned()))
+                .unwrap_or_else(|e| err_result(t, e))
+        })
+        .collect())
+}
+
 #[derive(Debug, Serialize)]
 pub struct TargetResult {
     pub path: String,
@@ -1173,6 +1225,53 @@ mod tests {
         let acct_fail = results.iter().any(|r| r.path.contains("core_user_600") && !r.ok);
         assert!(char_ok, "char widths write succeeded");
         assert!(acct_fail, "read-only account write failed but was reported, not panicked");
+    }
+
+    #[test]
+    fn copy_files_clones_bytes_and_refuses_anything_but_a_same_kind_settings_file() {
+        let base = std::env::temp_dir().join(format!("app-copyfiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof =
+            base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+        let doc = |s: &str| encode(&Value::Dict(vec![(b("who"), b(s))])).unwrap();
+        std::fs::write(prof.join("core_user_500.dat"), doc("SRC")).unwrap();
+        std::fs::write(prof.join("core_user_600.dat"), doc("OLD")).unwrap();
+        // No parseable id, so `scoped_files` drops it — a file copy must not.
+        std::fs::write(prof.join("core_user_700 - old.dat"), doc("BACKUP")).unwrap();
+        std::fs::write(prof.join("core_char_100.dat"), doc("CHAR")).unwrap();
+        let stray = base.join("elsewhere.dat");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(&stray, doc("STRAY")).unwrap();
+
+        let roots = vec![base.join("root")];
+        let p = |n: &str| prof.join(n).to_string_lossy().into_owned();
+        let src = p("core_user_500.dat");
+        let results = copy_files(
+            &roots,
+            &src,
+            &[
+                p("core_user_600.dat"),
+                p("core_user_700 - old.dat"),
+                p("core_char_100.dat"),
+                stray.to_string_lossy().into_owned(),
+                src.clone(),
+            ],
+        )
+        .unwrap();
+
+        assert!(results[0].ok && results[1].ok, "both account files were written");
+        assert_eq!(std::fs::read(prof.join("core_user_600.dat")).unwrap(), doc("SRC"));
+        assert_eq!(std::fs::read(prof.join("core_user_700 - old.dat")).unwrap(), doc("SRC"));
+        assert!(results[0].backup_path.is_some(), "the target was backed up before the write");
+        assert!(!results[2].ok, "a char file is not a target for a user-file source");
+        assert!(!results[3].ok, "a path outside discovery is refused");
+        assert!(!results[4].ok, "a file is not copied onto itself");
+        assert_eq!(std::fs::read(prof.join("core_char_100.dat")).unwrap(), doc("CHAR"));
+
+        // An undiscovered source is refused outright, not per-target.
+        let err = copy_files(&roots, &stray.to_string_lossy(), &[p("core_user_600.dat")]).unwrap_err();
+        assert_eq!(err.code, "source");
     }
 
     /// Minimal but non-empty documents to cut a pruned preset from. `create`
