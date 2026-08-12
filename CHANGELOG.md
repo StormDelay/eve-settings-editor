@@ -6,8 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Copy a settings file as-is onto other files of the same kind — character onto characters, account onto accounts — without pairing anything first.
+
 ### Changed
 - The editor's folders are now named `EVE Settings Editor` rather than `io.github.stormdelay.eve-settings-editor`. Your aliases, presets and scenes move themselves the first time you open this version.
+- The sidebar's `Batch apply` button is now `Copy settings`, which is what it does.
 
 ## [0.31.0] - 2026-08-05
 
