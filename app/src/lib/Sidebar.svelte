@@ -127,7 +127,7 @@
       <button onclick={onShowAccounts} title="Manage account names and character associations"
         >Accounts</button>
       <button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first"
-        >Batch apply</button>
+        >Copy settings</button>
       <button onclick={() => (aboutOpen = true)} title="Version and licence">About</button>
     </div>
     <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
