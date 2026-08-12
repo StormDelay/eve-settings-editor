@@ -487,6 +487,11 @@ fn setup_apply(
     )
 }
 
+#[tauri::command]
+fn copy_files(source: String, targets: Vec<String>) -> Result<Vec<setup::TargetResult>, ErrDto> {
+    setup::copy_files(&settings_model::default_roots(), &source, &targets)
+}
+
 // The overview view already owns `preset_create`/`preset_rename`/`preset_delete`
 // for EVE's own overview filter presets — these are the settings-preset
 // library (Task 8+), hence the longer `settings_preset_*` names.
@@ -620,7 +625,7 @@ pub fn run() {
             pack_preview, pack_import, pack_export,
             autofill_lists, set_autofill_list, clear_all_autofill,
             keybinds, set_keybind,
-            setup_preview, setup_apply,
+            setup_preview, setup_apply, copy_files,
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,

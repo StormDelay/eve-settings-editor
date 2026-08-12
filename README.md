@@ -20,9 +20,10 @@ from any backup.
 - **Autofill** — edit or clear the text the client autocompletes.
 - **Accounts** — give accounts readable names and associate characters with them,
   manually or via guided capture.
-- **Batch apply** — copy one character's layout / overview / autofill / everything
+- **Copy settings** — copy one character's layout / overview / autofill / everything
   onto other characters, with a preview of exactly which files (and which other
-  characters) each copy will affect.
+  characters) each copy will affect. Or copy a file as-is onto other files of the
+  same kind, no account pairing needed.
 - **Raw tree editor** with search, for everything else.
 
 ## Install
