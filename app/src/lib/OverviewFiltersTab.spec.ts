@@ -36,8 +36,11 @@ function mount() {
 /// Group rows only — the Exceptions block below uses radios, not checkboxes.
 const groupBoxes = () => document.querySelectorAll(".group-grid input[type='checkbox']");
 
+// Matched on `.cat-name`, not the whole summary: the summary also holds the
+// category's All/None buttons.
 const categoryNamed = (name: string): HTMLElement => {
-  const s = [...document.querySelectorAll(".group-cat summary")].find((e) => e.textContent?.trim() === name);
+  const s = [...document.querySelectorAll(".group-cat summary")]
+    .find((e) => e.querySelector(".cat-name")?.textContent?.trim() === name);
   if (!s) throw new Error(`no category summary "${name}"`);
   return s as HTMLElement;
 };
@@ -147,5 +150,73 @@ describe("the group filter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const bulkButton = (category: string, label: "All" | "None"): HTMLElement => {
+  const b = [...categoryNamed(category).querySelectorAll(".cat-bulk button")]
+    .find((e) => e.textContent?.trim() === label);
+  if (!b) throw new Error(`no ${label} button on "${category}"`);
+  return b as HTMLElement;
+};
+
+describe("per-category select all", () => {
+  test("selects the whole category in ONE backend call", async () => {
+    mount();
+    await waitFor(() => expect(categoryNamed("Ship")).toBeTruthy());
+
+    await fireEvent.click(bulkButton("Ship", "All"));
+
+    // One call, not one per group — the whole point of the bulk path.
+    const sent = calls.only("preset_set_groups").args as { name: string; groups: number[] };
+    expect(sent.groups.length).toBe(50);
+  });
+
+  test("deselects only that category, leaving other groups alone", async () => {
+    // Seed a preset holding 25 (Frigate, in Ship) and 100 (Combat Drone, not);
+    // None on Ship must drop the first and keep the second.
+    calls.stub("sync_group_catalog", []);
+    const seeded = { ...data, presets: [{ name: "Mine", groups: [25, 100], filtered_states: [], always_shown_states: [] }] };
+    render(OverviewFiltersTab, { data: seeded, tabIndex: 0, onChanged: noop, onUserDirty: noop });
+    await waitFor(() => expect(categoryNamed("Ship")).toBeTruthy());
+
+    await fireEvent.click(bulkButton("Ship", "None"));
+
+    const sent = calls.only("preset_set_groups").args as { name: string; groups: number[] };
+    expect(sent.groups).not.toContain(25);
+    expect(sent.groups).toContain(100);
+  });
+
+  test("acts on the groups the filter is showing, not the whole category", async () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      await vi.advanceTimersByTimeAsync(0);
+      const box = document.querySelector(".group-filter") as HTMLInputElement;
+      await fireEvent.input(box, { target: { value: "shuttle" } });
+      await vi.advanceTimersByTimeAsync(200);
+
+      await fireEvent.click(bulkButton("Ship", "All"));
+
+      const sent = calls.only("preset_set_groups").args as { name: string; groups: number[] };
+      expect(sent.groups.length).toBeGreaterThan(0);
+      expect(sent.groups.length).toBeLessThan(50);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not collapse the category it just filled", async () => {
+    mount();
+    await waitFor(() => expect(categoryNamed("Ship")).toBeTruthy());
+    const ship = categoryNamed("Ship").closest("details") as HTMLDetailsElement;
+    ship.open = true;
+    await fireEvent(ship, new Event("toggle"));
+    expect(groupBoxes().length).toBe(50);
+
+    // A click inside a <summary> toggles the <details> unless the handler
+    // prevents it — which would shut the category as you bulk-select it.
+    await fireEvent.click(bulkButton("Ship", "All"));
+    expect(ship.open).toBe(true);
   });
 });

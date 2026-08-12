@@ -3,7 +3,7 @@
   import defaultPresetNames from "./data/default-preset-names.json";
   import defaultPresetsBundle from "./data/default-presets.json";
   import overviewGroups from "./data/overview-groups.json";
-  import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type Category, type CatalogBundle } from "./groups";
+  import { mergeCatalog, filterCatalog, toggleGroup, toggleGroups, unknownGroups, type Category, type CatalogBundle } from "./groups";
   import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
   import { stateLabel, EXCEPTION_STATES, exceptionOf, applyException, type Exception } from "./states";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
@@ -92,10 +92,12 @@
       .sort((a, b) => a.label.localeCompare(b.label)),
   );
 
-  async function setPresetGroup(id: number, on: boolean) {
+  // One write of the whole membership list, whether it came from a single
+  // checkbox or a category's All/None. `presetSetGroups` has always taken the
+  // complete list, so ticking Entity's ~400 groups is one round trip, not 400.
+  async function applyGroups(next: number[]) {
     if (!tab) return;
     const t = tab;
-    const next = toggleGroup(presetGroups, id, on);
     try {
       if (isDefaultKey(t.preset)) {
         const def = currentDefault;
@@ -107,6 +109,15 @@
       onUserDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
+
+  const setPresetGroup = (id: number, on: boolean) => applyGroups(toggleGroup(presetGroups, id, on));
+  // All/None act on the groups CURRENTLY SHOWN, not on the category's full
+  // membership: with a query active `filterCatalog` has already narrowed each
+  // category to its matches, and ticking what is on screen is both the obvious
+  // reading of a button sitting in that header and what makes the filter box
+  // useful as a bulk-select tool. With no query the two are the same thing.
+  const setCategory = (cat: Category, on: boolean) =>
+    applyGroups(toggleGroups(presetGroups, cat.groups.map((g) => g.id), on));
 
   async function setException(id: number, choice: Exception) {
     if (!tab) return;
@@ -242,7 +253,17 @@
             class="group-cat"
             open={isOpen(cat.id)}
             ontoggle={(e) => noteToggle(cat.id, (e.currentTarget as HTMLDetailsElement).open)}>
-            <summary>{cat.name}</summary>
+            <!-- preventDefault, or the click's default action on the ancestor
+                 <summary> toggles the category shut as you bulk-select it. -->
+            <summary>
+              <span class="cat-name">{cat.name}</span>
+              <span class="cat-bulk">
+                <button onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
+                        title="Select every group shown in {cat.name}">All</button>
+                <button onclick={(e) => { e.preventDefault(); setCategory(cat, false); }}
+                        title="Deselect every group shown in {cat.name}">None</button>
+              </span>
+            </summary>
             {#if isOpen(cat.id)}
               <div class="group-grid">
                 {#each cat.groups as g (g.id)}
@@ -310,6 +331,13 @@
   .contents-title { font-weight: 600; }
   .section-heading { margin: 0.2rem 0 0; font-size: 0.9em; }
   .group-cat > summary { cursor: pointer; padding: 0.2rem 0; }
+  .cat-bulk { margin-left: 0.6rem; }
+  .cat-bulk button {
+    background: var(--bg-panel); color: var(--fg-dim);
+    border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 0.35rem; margin-left: 0.2rem; font: inherit; font-size: 0.85em; cursor: pointer;
+  }
+  .cat-bulk button:hover { color: var(--fg); border-color: var(--accent); }
   .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.15rem 0.8rem; padding: 0.2rem 0 0.4rem 1rem; }
   .group-item { display: flex; gap: 0.35rem; align-items: center; }
   .preset-contents input[type="checkbox"] { accent-color: var(--accent); }
