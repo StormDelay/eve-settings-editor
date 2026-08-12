@@ -73,22 +73,24 @@ fn edits_survive_reshare_roundtrip_and_migrate_legacy() {
     let round = decode(&bytes).expect("re-decodes");
     assert_eq!(round, v, "reshared overview_tabs edit round-trips");
 
-    // The created tab (index 2) cloned tab 0's bracket + color — the keys whose
-    // absence broke EVE's "reset all overview settings" — and they survive the
-    // reshare -> encode -> decode save path.
+    // The created tab cloned tab 0's bracket + color — the keys whose absence
+    // broke EVE's "reset all overview settings" — and they survive the
+    // reshare -> encode -> decode save path. It was allocated index 2 and the
+    // delete compacted it onto 1: EVE draws a blank tab in any gap, so the table
+    // is renumbered rather than left with a hole at 1.
     let flat = inline(&round);
-    assert!(tab_field(&flat, 2, b"bracket"), "cloned tab keeps bracket through the save path");
-    assert!(tab_field(&flat, 2, b"color"), "cloned tab keeps color through the save path");
+    assert!(tab_field(&flat, 1, b"bracket"), "cloned tab keeps bracket through the save path");
+    assert!(tab_field(&flat, 1, b"color"), "cloned tab keeps color through the save path");
 
-    // Project the result: tab 0 renamed, tab 2 present, tab 1 gone, legacy migrated.
+    // Project the result: tab 0 renamed, the created tab present, the deleted one
+    // gone, legacy migrated.
     let cols = project_overview(&round, None);
     let names: Vec<_> = cols.tabs.iter().map(|t| (t.index, t.name.clone())).collect();
-    assert!(names.contains(&(0, "Combat".to_string())));
-    assert!(names.contains(&(2, "Mining".to_string())));
-    assert!(!names.iter().any(|(i, _)| *i == 1), "tab 1 deleted");
+    assert_eq!(names, vec![(0, "Combat".to_string()), (1, "Mining".to_string())]);
     // Migration: the container now reads via tabsettings_new (project_overview
-    // prefers it); the two surviving tabs (0 and 2) project, tab 1 was deleted.
+    // prefers it); the two surviving tabs project, the deleted one does not.
     assert_eq!(cols.tabs.len(), 2);
+    assert_eq!(cols.windows[0].tab_indices, vec![0, 1], "the strip follows the renumbering");
 }
 
 /// A char tree with two windows aliasing one geometry tuple via Shared/Ref (real
