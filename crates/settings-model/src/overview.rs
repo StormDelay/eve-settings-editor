@@ -306,6 +306,13 @@ fn tab_edit_prep(user: &Value, tab_index: i64) -> TabEdit {
 // ponytail: rebuilds the char shared-table per tab; char trees are small and tab
 // counts tiny, so the O(tabs * chartree) walk is a non-issue (thread it if it isn't).
 fn tab_widths(char_tree: &Value, tab_index: i64) -> Option<std::collections::HashMap<String, i64>> {
+    Some(tab_widths_ordered(char_tree, tab_index)?.into_iter().collect())
+}
+
+/// The same, in the file's own key order. `copy_tab_widths` writes what it reads,
+/// so it needs the order to be stable — a `HashMap`'s iteration order would make
+/// the bytes written differ run to run for no reason.
+fn tab_widths_ordered(char_tree: &Value, tab_index: i64) -> Option<Vec<(String, i64)>> {
     let mut sh = SharedTable::new();
     collect_shared(char_tree, &mut sh);
     let Value::Dict(root) = effective(char_tree, &sh) else { return None };
@@ -447,14 +454,119 @@ fn owned_column_positions(user: &Value, tab_index: i64, column: &str) -> (Option
 }
 
 pub fn set_column_order(user: &mut Value, tab_index: i64, order: &[String]) -> Result<(), OverviewError> {
+    set_tab_columns(user, tab_index, Some(order), None)
+}
+
+/// Overwrite a tab's column order and/or visible set wholesale, materializing
+/// the tab's own lists first if it was inheriting the account defaults. `None`
+/// leaves that list alone — but both are still materialized, exactly as
+/// `set_column_order` already does, because a tab owning one list and inheriting
+/// the other is a shape the client writes and the editor must not create by
+/// halves.
+fn set_tab_columns(
+    user: &mut Value,
+    tab_index: i64,
+    order: Option<&[String]>,
+    visible: Option<&[String]>,
+) -> Result<(), OverviewError> {
     crate::treewalk::inline_all(user);
     migrate_legacy_overview(user);
     let prep = tab_edit_prep(user, tab_index);
     with_tab(user, tab_index, |tab| {
-        materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
         let order_i = materialize_list(tab, b"tabColumnOrder", prep.order_idx, &prep.def_order);
-        *list_at(tab, order_i) = order.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect();
+        let visible_i = materialize_list(tab, b"tabColumns", prep.visible_idx, &prep.def_visible);
+        if let Some(o) = order { *list_at(tab, order_i) = tok_items(o); }
+        if let Some(v) = visible { *list_at(tab, visible_i) = tok_items(v); }
     })
+}
+
+/// Copy one tab's column layout onto other tabs, in the ACCOUNT file.
+///
+/// The source's columns are read through `project_overview`, so a source tab
+/// that owns no lists of its own contributes the account defaults — which is
+/// exactly what the editor shows for it. Copying from an inheriting tab
+/// therefore materializes the targets with the layout the user was looking at,
+/// the same thing editing an inheriting tab already does.
+///
+/// Every target index is checked before anything is written: a typo'd index
+/// fails the whole call rather than leaving half the tabs copied.
+// ponytail: one `set_tab_columns` pass per target, so N targets walk the account
+// tree N times. Accounts hold tens of tabs, not thousands; fold the targets into
+// a single `with_tab` sweep if that ever shows up in a profile.
+pub fn copy_tab_columns(
+    user: &mut Value,
+    from: i64,
+    to: &[i64],
+    order: bool,
+    visible: bool,
+) -> Result<(), OverviewError> {
+    let projected = project_overview(user, None);
+    let src = projected.tabs.iter().find(|t| t.index == from).ok_or(OverviewError::NoTab)?;
+    // `columns` is in tabColumnOrder order and flags visibility, so both lists
+    // fall out of it — and `tabColumns` keeps the order-list order, matching
+    // what real files store.
+    let src_order: Vec<String> = src.columns.iter().map(|c| c.name.clone()).collect();
+    let src_visible: Vec<String> =
+        src.columns.iter().filter(|c| c.visible).map(|c| c.name.clone()).collect();
+    if to.iter().any(|t| !projected.tabs.iter().any(|x| x.index == *t)) {
+        return Err(OverviewError::NoTab);
+    }
+    if !order && !visible { return Ok(()) }
+    for t in to.iter().filter(|t| **t != from) {
+        set_tab_columns(
+            user,
+            *t,
+            order.then_some(src_order.as_slice()),
+            visible.then_some(src_visible.as_slice()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Copy one tab's column WIDTHS onto other tabs, in the CHARACTER file — the
+/// other half of a column copy, and the reason the operation dirties both slots.
+///
+/// A target's width dict is REPLACED, not merged: the ask is "make these tabs
+/// look like that one", and merging would leave a stale width behind for a
+/// column the source doesn't carry. A source tab with no stored widths at all
+/// copies nothing rather than blanking the targets — EVE defaults an absent
+/// width, so there is no value to propagate.
+pub fn copy_tab_widths(char_tree: &mut Value, from: i64, to: &[i64]) -> Result<(), OverviewError> {
+    let Some(src) = tab_widths_ordered(char_tree, from) else { return Ok(()) };
+    let sizes_path = sort_headers_sizes_path(char_tree).ok_or(OverviewError::NoTab)?;
+    // Immutable phase, mirroring `set_column_width`: resolve each target's
+    // existing entry index by RESOLVED key (real files Ref/Shared-dedup the
+    // width dicts), then drop the table before taking the &mut path.
+    let mut sh = SharedTable::new();
+    collect_shared(char_tree, &mut sh);
+    let targets: Vec<(i64, Option<usize>)> = match resolve(char_tree, &sizes_path) {
+        Some(Value::Dict(sizes)) => to
+            .iter()
+            .filter(|t| **t != from)
+            .map(|t| (*t, sizes.iter().position(|(k, _)| is_width_key(k, *t, &sh))))
+            .collect(),
+        _ => return Err(OverviewError::NoTab),
+    };
+    drop(sh);
+    let Some(Value::Dict(sizes)) = resolve_mut(char_tree, &sizes_path) else {
+        return Err(OverviewError::NoTab);
+    };
+    for (tab_index, pos) in targets {
+        let widths = Value::Dict(
+            src.iter()
+                .map(|(c, w)| (Value::Bytes(c.as_bytes().to_vec()), Value::Int(*w)))
+                .collect(),
+        );
+        // Resolved indices stay valid across the loop: a miss only ever appends.
+        match pos {
+            Some(i) => sizes[i].1 = widths,
+            None => sizes.push((
+                Value::Tuple(vec![Value::Bytes(b"overviewScroll2".to_vec()), Value::Int(tab_index)]),
+                widths,
+            )),
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the mutable tab dict by its Int index and run `edit` on it.
@@ -542,7 +654,11 @@ fn materialize_list(tab: &mut Entries, name: &[u8], idx: Option<usize>, defaults
 }
 
 fn toks(tokens: &[String]) -> Value {
-    Value::List(tokens.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect())
+    Value::List(tok_items(tokens))
+}
+
+fn tok_items(tokens: &[String]) -> Vec<Value> {
+    tokens.iter().map(|t| Value::Bytes(t.as_bytes().to_vec())).collect()
 }
 
 /// The List value at entry `i` (materialized/owned column list). Value handling
@@ -1450,5 +1566,121 @@ mod tests {
         let alpha = out_preset(&out, "alpha");
         assert_eq!(alpha.filtered_states, vec![9, 13]);
         assert_eq!(alpha.always_shown_states, vec![11]);
+    }
+
+    /// Three tabs: 0 owns a distinctive layout, 1 owns a different one, 2 owns
+    /// nothing and inherits the account default.
+    fn user_with_three_tabs() -> Value {
+        let tab0 = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("main".into())),
+            (b("tabColumnOrder"), Value::List(vec![b("TYPE"), b("NAME"), b("DISTANCE")])),
+            (b("tabColumns"), Value::List(vec![b("TYPE"), b("DISTANCE")])),
+        ]);
+        let tab1 = Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str("other".into())),
+            (b("tabColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("tabColumns"), Value::List(vec![b("NAME")])),
+        ]);
+        let tab2 = Value::Dict(vec![(Value::Str("name".into()), Value::Str("inheriting".into()))]);
+        let overview = Value::Dict(vec![
+            (b("overviewColumnOrder"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("overviewColumns"), Value::List(vec![b("NAME"), b("TYPE"), b("DISTANCE")])),
+            (b("tabsettings_new"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), tab0), (Value::Int(1), tab1), (Value::Int(2), tab2),
+            ])])),
+        ]);
+        Value::Dict(vec![(b("overview"), overview)])
+    }
+
+    #[test]
+    fn copies_order_and_visibility_onto_other_tabs() {
+        let mut user = user_with_three_tabs();
+        copy_tab_columns(&mut user, 0, &[1, 2], true, true).unwrap();
+        let src = tab_lists(&user, 0);
+        assert_eq!(tab_lists(&user, 1), src, "tab 1 now matches the source");
+        assert_eq!(tab_lists(&user, 2), src, "the inheriting tab materialized to match too");
+        assert_eq!(src.0, vec!["TYPE", "NAME", "DISTANCE"]);
+        assert_eq!(src.1, vec!["TYPE", "DISTANCE"]);
+    }
+
+    #[test]
+    fn copies_only_the_requested_halves() {
+        let mut user = user_with_three_tabs();
+        let before = tab_lists(&user, 1);
+        copy_tab_columns(&mut user, 0, &[1], true, false).unwrap();
+        let after = tab_lists(&user, 1);
+        assert_eq!(after.0, vec!["TYPE", "NAME", "DISTANCE"], "order copied");
+        assert_eq!(after.1, before.1, "visibility left alone");
+
+        let mut user = user_with_three_tabs();
+        copy_tab_columns(&mut user, 0, &[1], false, true).unwrap();
+        let after = tab_lists(&user, 1);
+        assert_eq!(after.0, vec!["NAME", "TYPE", "DISTANCE"], "order left alone");
+        assert_eq!(after.1, vec!["TYPE", "DISTANCE"], "visibility copied");
+    }
+
+    #[test]
+    fn copying_from_an_inheriting_tab_writes_the_account_default() {
+        let mut user = user_with_three_tabs();
+        // Tab 2 owns nothing, so it contributes the account default — which is
+        // what the editor displays for it.
+        copy_tab_columns(&mut user, 2, &[1], true, true).unwrap();
+        assert_eq!(
+            tab_lists(&user, 1),
+            (vec!["NAME".into(), "TYPE".into(), "DISTANCE".into()],
+             vec!["NAME".into(), "TYPE".into(), "DISTANCE".into()]),
+        );
+    }
+
+    #[test]
+    fn an_unknown_target_fails_without_writing_anything() {
+        let mut user = user_with_three_tabs();
+        let before = tab_lists(&user, 1);
+        assert_eq!(copy_tab_columns(&mut user, 0, &[1, 99], true, true), Err(OverviewError::NoTab));
+        assert_eq!(tab_lists(&user, 1), before, "the valid target was not touched either");
+    }
+
+    #[test]
+    fn copying_onto_the_source_is_a_no_op() {
+        let mut user = user_with_three_tabs();
+        let before = tab_lists(&user, 0);
+        copy_tab_columns(&mut user, 0, &[0], true, true).unwrap();
+        assert_eq!(tab_lists(&user, 0), before);
+    }
+
+    /// char widths for tab 0 only, so a copy has to CREATE tab 1's entry.
+    fn char_with_widths_for_tab_0() -> Value {
+        Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(
+                b("SortHeadersSizes"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![
+                    (Value::Tuple(vec![b("overviewScroll2"), Value::Int(0)]),
+                     Value::Dict(vec![(b("NAME"), Value::Int(120)), (b("TYPE"), Value::Int(80))])),
+                    (Value::Tuple(vec![b("overviewScroll2"), Value::Int(1)]),
+                     Value::Dict(vec![(b("NAME"), Value::Int(999)), (b("DISTANCE"), Value::Int(50))])),
+                ])]),
+            )]),
+        )])
+    }
+
+    #[test]
+    fn copies_widths_replacing_the_targets() {
+        let mut ch = char_with_widths_for_tab_0();
+        copy_tab_widths(&mut ch, 0, &[1, 2]).unwrap();
+        let src = tab_widths(&ch, 0).unwrap();
+        assert_eq!(tab_widths(&ch, 1).unwrap(), src, "existing target replaced, stale DISTANCE gone");
+        assert_eq!(tab_widths(&ch, 2).unwrap(), src, "missing target created");
+        assert_eq!(src.get("NAME"), Some(&120));
+    }
+
+    #[test]
+    fn copying_widths_from_a_tab_that_has_none_leaves_targets_alone() {
+        let mut ch = char_with_widths_for_tab_0();
+        let before = tab_widths(&ch, 1).unwrap();
+        // Tab 7 has no stored widths at all — EVE defaults them, so there is no
+        // value to propagate and blanking the targets would be a loss.
+        copy_tab_widths(&mut ch, 7, &[1]).unwrap();
+        assert_eq!(tab_widths(&ch, 1).unwrap(), before);
     }
 }

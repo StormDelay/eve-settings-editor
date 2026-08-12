@@ -452,6 +452,42 @@ pub fn set_overview_width(state: &AppState, tab_index: i64, column: &str, width:
     overview_columns(state)
 }
 
+/// Copy one tab's column layout onto other tabs.
+///
+/// Order and visibility live in the account file, widths in the character file,
+/// so this is a two-slot command like `overview_window_add` — and the caller
+/// must dirty both sides when it asks for widths, or the width half is dropped
+/// on save. Unlike that command the char write is REQUIRED rather than
+/// best-effort: widths are only ever copied because the user ticked the box,
+/// and silently doing nothing would look like the copy worked.
+pub fn overview_copy_columns(
+    state: &AppState,
+    from_tab: i64,
+    to_tabs: Vec<i64>,
+    order: bool,
+    visible: bool,
+    widths: bool,
+) -> Result<OverviewColumns, ErrDto> {
+    let overview_err = |e| ErrDto::new("overview", format!("{e:?}"));
+    if order || visible {
+        edit_slot(
+            state,
+            Slot::User,
+            |v| settings_model::copy_tab_columns(v, from_tab, &to_tabs, order, visible),
+            overview_err,
+        )?;
+    }
+    if widths {
+        edit_slot(
+            state,
+            Slot::Char,
+            |v| settings_model::copy_tab_widths(v, from_tab, &to_tabs),
+            overview_err,
+        )?;
+    }
+    overview_columns(state)
+}
+
 /// Edit the user slot's overview tab structure, reshare, then re-project.
 fn edit_user_tabs<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
 where

@@ -436,6 +436,10 @@ export const api = {
     invoke<OverviewColumns>("set_overview_order", { tabIndex, order }),
   setOverviewWidth: (tabIndex: number, column: string, width: number) =>
     invoke<OverviewColumns>("set_overview_width", { tabIndex, column, width }),
+  // Order/visibility land in the account file, widths in the character file —
+  // so a call with `widths` set dirties BOTH slots at the caller.
+  overviewCopyColumns: (fromTab: number, toTabs: number[], order: boolean, visible: boolean, widths: boolean) =>
+    invoke<OverviewColumns>("overview_copy_columns", { fromTab, toTabs, order, visible, widths }),
   tabCreate: (windowIdx: number, name: string, fromTab: number | null) =>
     invoke<OverviewColumns>("tab_create", { windowIdx, name, fromTab }),
   tabRename: (tabIdx: number, name: string) =>
