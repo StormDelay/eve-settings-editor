@@ -157,6 +157,81 @@ fn groups_mut(ov: &mut Entries) -> &mut Vec<Value> {
     list_inner_mut(v).expect("tabsByWindowInstanceID is a list or (ts,list)")
 }
 
+/// Renumber the tab table to a gap-free `0..n-1`, rewriting every window strip
+/// through the same old->new map. Returns the old indices in ascending order —
+/// a tab's NEW index is its position in that list — or an empty vec when
+/// nothing was renumbered.
+///
+/// EVE keys `tabsettings_new` densely: 0 of 2,700+ untouched account files has
+/// a gap. A gap is not inert either — the client draws a blank, unnamed tab in
+/// the missing slot — so `delete_tab` dropping a key and leaving the rest where
+/// they sat turned every tab deleted in the editor into a phantom tab in game
+/// (reported 2026-08-12: nine deletes, nine blanks, at exactly the nine missing
+/// indices).
+///
+/// Every entry point here ends with this, not just `delete_tab`, because the
+/// editor cannot show a phantom tab for the user to delete — a file the old
+/// build already damaged has to heal on whatever edit comes next. It is a no-op
+/// on a table that is already dense, which is every table the client wrote.
+///
+/// Called only on the SUCCESS path: a refused edit must leave the file alone,
+/// and renumbering every tab under a rejected rename would not be that.
+///
+/// Refuses — silently, leaving the table as found — when any tab key is not an
+/// `Int`. The map would be partial, and a tab left out of a partial map is a
+/// tab hidden in game while the editor still lists it. Same refusal, for the
+/// same reason, as `create_window_mapping`.
+pub(crate) fn compact_tabs(ov: &mut Entries) -> Vec<i64> {
+    let old = {
+        // Read the table WITHOUT `tabs_mut`, which MINTS `tabsettings_new` when
+        // the key is absent: this runs at the end of paths that need not have
+        // one (`remove_overview_window` touches only the mapping), and a
+        // compaction has no business creating a container.
+        let Some((_, tv)) = ov
+            .iter_mut()
+            .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
+        else {
+            return Vec::new();
+        };
+        let Some(tabs) = dict_inner_mut(tv) else { return Vec::new() };
+        let mut old: Vec<i64> = tabs.iter().filter_map(|(k, _)| as_int(k)).collect();
+        if old.len() != tabs.len() {
+            return Vec::new();
+        }
+        old.sort_unstable();
+        if old.iter().enumerate().all(|(i, &n)| n == i as i64) {
+            return old; // already dense: position == value, so callers still map
+        }
+        for (k, _) in tabs.iter_mut() {
+            if let Some(n) = as_int(k).and_then(|o| old.binary_search(&o).ok()) {
+                *k = Value::Int(n as i64);
+            }
+        }
+        // Ascending key order as well as ascending keys: that is the shape the
+        // client writes, and it is the order `project_overview` reports tabs in.
+        tabs.sort_by_key(|(k, _)| as_int(k).unwrap_or(i64::MAX));
+        old
+    };
+    // Same map over the window strips. Never `groups_mut` — a windowless account
+    // must not gain a mapping just because its tabs were renumbered.
+    if let Some((_, wv)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
+        if let Some(groups) = list_inner_mut(wv) {
+            for g in groups.iter_mut() {
+                let Some(inner) = list_inner_mut(g) else { continue };
+                // An entry no tab answers to was already invisible in game; left
+                // alone it would now name a DIFFERENT tab.
+                inner.retain(|e| as_int(e).is_some_and(|n| old.binary_search(&n).is_ok()));
+                for e in inner.iter_mut() {
+                    if let Some(n) = as_int(e).and_then(|o| old.binary_search(&o).ok()) {
+                        *e = Value::Int(n as i64);
+                    }
+                }
+            }
+        }
+    }
+    old
+}
+
 /// Set a tab's name, preserving an existing name entry's value variant (real
 /// files store names as Str / StrUcs2 / Bytes), inserting a plain `name` key
 /// (unicode-safe `StrUcs2`) if the tab has none. The name KEY may itself be a
@@ -196,11 +271,14 @@ fn window_count(ov: &Entries) -> usize {
 pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
-    let tabs = tabs_mut(ov);
-    let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(tab_idx))
-        .ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
-    let fields = dict_inner_mut(tab).ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
-    set_name(fields, name);
+    {
+        let tabs = tabs_mut(ov);
+        let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(tab_idx))
+            .ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+        let fields = dict_inner_mut(tab).ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+        set_name(fields, name);
+    }
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -209,15 +287,18 @@ pub fn rename_tab(v: &mut Value, tab_idx: i64, name: &str) -> Result<(), Overvie
 pub fn set_tab_preset(v: &mut Value, tab_idx: i64, preset: &str) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
-    let tabs = tabs_mut(ov);
-    let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(tab_idx))
-        .ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
-    let fields = dict_inner_mut(tab).ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
-    if let Some((_, val)) = fields.iter_mut().find(|(k, _)| is_b(k, b"overview")) {
-        *val = Value::Bytes(preset.as_bytes().to_vec());
-    } else {
-        fields.push((Value::Bytes(b"overview".to_vec()), Value::Bytes(preset.as_bytes().to_vec())));
+    {
+        let tabs = tabs_mut(ov);
+        let (_, tab) = tabs.iter_mut().find(|(k, _)| as_int(k) == Some(tab_idx))
+            .ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+        let fields = dict_inner_mut(tab).ok_or(OverviewTabError::UnknownTab { index: tab_idx })?;
+        if let Some((_, val)) = fields.iter_mut().find(|(k, _)| is_b(k, b"overview")) {
+            *val = Value::Bytes(preset.as_bytes().to_vec());
+        } else {
+            fields.push((Value::Bytes(b"overview".to_vec()), Value::Bytes(preset.as_bytes().to_vec())));
+        }
     }
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -271,7 +352,11 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
             }
         }
     }
-    Ok(new_idx)
+    // AFTER the strip attach, which still speaks the old numbering. `max + 1` is
+    // not the index the tab keeps on a table that had gaps, so report where
+    // compaction actually put it — an unmapped index names no tab at all.
+    let order = compact_tabs(ov);
+    Ok(order.binary_search(&new_idx).map_or(new_idx, |i| i as i64))
 }
 
 pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
@@ -300,6 +385,8 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
             }
         }
     }
+    // Close the gap the removal just opened: EVE draws a blank tab in it.
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -319,9 +406,12 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
     if window_count(ov) == 0 {
         return Err(OverviewTabError::NoWindowMapping);
     }
-    let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
-        .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
-    *inner = order.iter().map(|&i| Value::Int(i)).collect();
+    {
+        let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
+            .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
+        *inner = order.iter().map(|&i| Value::Int(i)).collect();
+    }
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -349,10 +439,13 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
             .ok_or(OverviewTabError::UnknownWindow { index: from_window })?;
         src.retain(|e| as_int(e) != Some(tab_idx));
     }
-    let dst = groups_mut(ov).get_mut(to_window).and_then(list_inner_mut)
-        .ok_or(OverviewTabError::UnknownWindow { index: to_window })?;
-    let at = pos.min(dst.len());
-    dst.insert(at, Value::Int(tab_idx));
+    {
+        let dst = groups_mut(ov).get_mut(to_window).and_then(list_inner_mut)
+            .ok_or(OverviewTabError::UnknownWindow { index: to_window })?;
+        let at = pos.min(dst.len());
+        dst.insert(at, Value::Int(tab_idx));
+    }
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -406,8 +499,8 @@ pub fn create_window_mapping(v: &mut Value) -> Result<usize, OverviewTabError> {
     // groups_mut creates the key in the wrapped `(timestamp, list)` shape every
     // real file uses. Only reached once the refusals above have passed, so it
     // can never leave a partial mapping behind.
-    let groups = groups_mut(ov);
-    groups.push(Value::List(indices.iter().map(|&i| Value::Int(i)).collect()));
+    groups_mut(ov).push(Value::List(indices.iter().map(|&i| Value::Int(i)).collect()));
+    compact_tabs(ov);
     Ok(indices.len())
 }
 
@@ -449,34 +542,37 @@ pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> 
 pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
-    // Read the mapping WITHOUT fabricating it (a windowless account has none).
-    // No mapping is not "you are down to your last window" — it is an account
-    // that never had per-window tabs, which is what NoWindowMapping says.
-    let groups = ov.iter_mut()
-        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
-        .and_then(|(_, wv)| list_inner_mut(wv))
-        .ok_or(OverviewTabError::NoWindowMapping)?;
-    let count = groups.len();
-    if count <= 1 {
-        return Err(OverviewTabError::LastWindow);
+    {
+        // Read the mapping WITHOUT fabricating it (a windowless account has none).
+        // No mapping is not "you are down to your last window" — it is an account
+        // that never had per-window tabs, which is what NoWindowMapping says.
+        let groups = ov.iter_mut()
+            .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+            .and_then(|(_, wv)| list_inner_mut(wv))
+            .ok_or(OverviewTabError::NoWindowMapping)?;
+        let count = groups.len();
+        if count <= 1 {
+            return Err(OverviewTabError::LastWindow);
+        }
+        if window_idx >= count {
+            return Err(OverviewTabError::UnknownWindow { index: window_idx });
+        }
+        if window_idx != count - 1 {
+            return Err(OverviewTabError::NotLastWindow { index: window_idx });
+        }
+        let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
+        // Rehome the tabs before dropping the window. If window 0 is not a list
+        // there is nowhere to put them, and continuing would delete them from every
+        // window at once — a tab that exists in `tabsettings_new` but appears in no
+        // window is invisible in-game. Refuse instead of silently dropping, which is
+        // what the `if let Some` this replaced did.
+        let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) else {
+            return Err(OverviewTabError::UnknownWindow { index: 0 });
+        };
+        w0.extend(removed);
+        groups.remove(window_idx);
     }
-    if window_idx >= count {
-        return Err(OverviewTabError::UnknownWindow { index: window_idx });
-    }
-    if window_idx != count - 1 {
-        return Err(OverviewTabError::NotLastWindow { index: window_idx });
-    }
-    let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
-    // Rehome the tabs before dropping the window. If window 0 is not a list
-    // there is nowhere to put them, and continuing would delete them from every
-    // window at once — a tab that exists in `tabsettings_new` but appears in no
-    // window is invisible in-game. Refuse instead of silently dropping, which is
-    // what the `if let Some` this replaced did.
-    let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) else {
-        return Err(OverviewTabError::UnknownWindow { index: 0 });
-    };
-    w0.extend(removed);
-    groups.remove(window_idx);
+    compact_tabs(ov);
     Ok(())
 }
 
@@ -722,9 +818,13 @@ mod tests {
         let mut v = user_with_tabs();
         create_tab(&mut v, 0, "Mining", Some(0)).unwrap(); // now tabs 0,1 in window 0
         delete_tab(&mut v, 0).unwrap();
-        assert_eq!(window_indices(&v, 0), vec![1], "0 purged from the strip");
-        assert!(matches!(rename_tab(&mut v, 0, "X"), Err(OverviewTabError::UnknownTab { index: 0 })),
-            "tab 0 is gone from tabsettings_new");
+        // The deleted tab is gone from BOTH the table and the strip. What is left
+        // is renumbered onto 0 rather than left at 1, because a gap in the table
+        // is a blank tab in game (see `compact_tabs`) — so "tab 0 is gone" now
+        // reads as "the tab now AT 0 is the survivor", which is what this checks.
+        assert_eq!(tab_indices(&v), vec![0], "one tab left, no gap");
+        assert_eq!(tab_name(&v, 0), "Mining", "the survivor, not the deleted tab");
+        assert_eq!(window_indices(&v, 0), vec![0], "the strip names it once, renumbered");
     }
 
     #[test]
@@ -1085,8 +1185,11 @@ mod tests {
             tabs.push((Value::Int(2), clone));
         }
         assert_eq!(create_window_mapping(&mut v).unwrap(), 3);
-        // Ascending index order, and NOT dict order (0, 5, 2 as inserted).
-        assert_eq!(mapped_tabs(&v), vec![0, 2, 5]);
+        // Ascending index order, and NOT dict order. Compaction then renumbers
+        // 0,2,5 onto 0,1,2, so the ascending mapping reads [0,1,2] — dict order
+        // (0, 5, 2 as inserted) would have mapped through to [0, 2, 1] instead,
+        // which is what still makes this test tell the two apart.
+        assert_eq!(mapped_tabs(&v), vec![0, 1, 2]);
     }
 
     #[test]
@@ -1224,6 +1327,132 @@ mod tests {
         };
         assert!(matches!(items[0], Value::Long(_)), "the wrapper leads with a timestamp");
         assert_eq!(window_indices(&v, 0), vec![0], "the reorder itself still landed");
+    }
+
+    /// Every tab index in the table, ascending.
+    fn tab_indices(v: &Value) -> Vec<i64> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+        let mut out: Vec<i64> = dict_inner(tabs).unwrap().iter().filter_map(|(k, _)| as_int(k)).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// An overview whose tab table has GAPS: tabs 0, 3 and 7, shown by one
+    /// window in a deliberately non-ascending order. The state an editor build
+    /// before this fix left behind after three deletes.
+    fn user_with_gaps() -> Value {
+        let mk = |n: &str| Value::Dict(vec![
+            (Value::Bytes(b"bracket".to_vec()), Value::Bytes(b"_BracketFilterShowAll".to_vec())),
+            (Value::Bytes(b"color".to_vec()), Value::None),
+            (Value::Str("name".into()), Value::Str(n.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), mk("A")),
+                (Value::Int(3), mk("B")),
+                (Value::Int(7), mk("C")),
+            ])])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()), Value::Tuple(vec![ts(), Value::List(vec![
+                Value::List(vec![Value::Int(7), Value::Int(0), Value::Int(3)]),
+            ])])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
+    }
+
+    /// EVE keys `tabsettings_new` densely — 0 of 2,700+ untouched account files
+    /// has a gap — and a gap is NOT inert: the client draws a blank, unnamed tab
+    /// in the missing slot. A user who deleted nine tabs in the editor got nine
+    /// phantom tabs in game, at exactly the nine missing indices (2026-08-12).
+    #[test]
+    fn delete_leaves_no_gap_in_the_tab_index_space() {
+        let mut v = user_with_tabs();
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap();
+        create_tab(&mut v, 0, "Scan", Some(0)).unwrap(); // tabs 0, 1, 2
+        delete_tab(&mut v, 1).unwrap();
+        assert_eq!(tab_indices(&v), vec![0, 1], "no gap where tab 1 was");
+        assert_eq!(tab_name(&v, 0), "Main");
+        assert_eq!(tab_name(&v, 1), "Scan", "the survivor moved down, keeping its identity");
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "the strip follows the renumbering");
+    }
+
+    /// Renumbering must rewrite the window strips through the SAME map, and must
+    /// not reshuffle them: the strip is the order the tabs appear in game.
+    #[test]
+    fn renumbering_keeps_the_order_each_window_shows_its_tabs_in() {
+        let mut v = user_two_windows(); // tabs 0,1 — window 0 = [0], window 1 = [1]
+        {
+            let ov = overview_mut(&mut v).unwrap();
+            let tabs = tabs_mut(ov);
+            let clone = tabs[0].1.clone();
+            tabs.push((Value::Int(2), clone));
+            let groups = groups_mut(ov);
+            // Window 1 shows 2 BEFORE 1 — an order ascending indices would lose.
+            *list_inner_mut(&mut groups[1]).unwrap() = vec![Value::Int(2), Value::Int(1)];
+        }
+        delete_tab(&mut v, 0).unwrap();
+        assert_eq!(tab_indices(&v), vec![0, 1]);
+        assert_eq!(window_indices(&v, 0), Vec::<i64>::new());
+        assert_eq!(window_indices(&v, 1), vec![1, 0], "old 2 then old 1, renumbered in place");
+    }
+
+    /// The fix has to reach the files the bug already damaged, and the editor
+    /// cannot show a phantom tab for the user to delete. So any successful tab
+    /// edit compacts — one rename heals a file with nine gaps.
+    #[test]
+    fn an_edit_compacts_a_table_that_already_has_gaps() {
+        let mut v = user_with_gaps();
+        rename_tab(&mut v, 3, "B2").unwrap();
+        assert_eq!(tab_indices(&v), vec![0, 1, 2]);
+        assert_eq!(tab_name(&v, 1), "B2", "the rename landed on the tab it named");
+        assert_eq!(tab_name(&v, 2), "C");
+        assert_eq!(window_indices(&v, 0), vec![2, 0, 1], "7,0,3 renumbered in place");
+    }
+
+    /// `create_tab` allocates `max + 1`, which compaction then moves. Returning
+    /// the pre-compaction number would name a tab that does not exist.
+    #[test]
+    fn create_returns_the_index_the_new_tab_actually_has() {
+        let mut v = user_with_gaps(); // 0, 3, 7
+        let idx = create_tab(&mut v, 0, "D", Some(0)).unwrap();
+        assert_eq!(tab_indices(&v), vec![0, 1, 2, 3]);
+        assert_eq!(idx, 3, "allocated 8, compacted to 3");
+        assert_eq!(tab_name(&v, idx), "D");
+        assert_eq!(window_indices(&v, 0), vec![2, 0, 1, 3]);
+    }
+
+    /// A key `as_int` cannot read makes the map partial, and a tab left out of a
+    /// partial map is a tab hidden in game while the editor still lists it. Same
+    /// refusal `create_window_mapping` makes, for the same reason.
+    #[test]
+    fn a_tab_key_that_is_not_an_int_stops_the_renumbering() {
+        let mk = |n: &str| Value::Dict(vec![(Value::Str("name".into()), Value::Str(n.to_string()))]);
+        let mut v = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), mk("A")),
+                (Value::Int(4), mk("B")),
+                (Value::Long(vec![1u8; 8]), mk("C")),
+            ])])),
+        ]))]);
+        rename_tab(&mut v, 4, "B2").unwrap();
+        assert_eq!(tab_indices(&v), vec![0, 4], "left as found rather than renumbered");
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, tabs) = ovd.iter().find(|(k, _)| is_b(k, b"tabsettings_new")).unwrap();
+        assert_eq!(dict_inner(tabs).unwrap().len(), 3, "and no tab dropped");
+    }
+
+    /// A refused edit must leave the file alone — compaction included, or a
+    /// rejected rename would still renumber every tab under the user.
+    #[test]
+    fn a_refused_edit_does_not_renumber() {
+        let mut v = user_with_gaps();
+        assert!(matches!(rename_tab(&mut v, 9, "X"), Err(OverviewTabError::UnknownTab { index: 9 })));
+        assert_eq!(tab_indices(&v), vec![0, 3, 7], "gaps still there after a refusal");
     }
 
     /// An EXISTING wrapper's own timestamp must survive — the repair is for a
