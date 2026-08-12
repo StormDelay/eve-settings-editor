@@ -43,6 +43,16 @@
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
 
+  // The tab a create just added, which is always the highest index: the backend
+  // allocates max+1, and the gap-compaction that follows keeps it last. Diffing
+  // the index set against a snapshot taken before the call does NOT survive that
+  // compaction — on a table that had gaps, renumbering frees up low indices that
+  // were not in the snapshot either, and the first of those wins the diff.
+  function newestTab(): number | null {
+    const highest = Math.max(...(data?.tabs.map((t) => t.index) ?? []));
+    return Number.isFinite(highest) ? highest : null;
+  }
+
   // Name entry is an inline input (see the markup below), NOT window.prompt —
   // which the WebView2 renders as an ugly "localhost:1420 says …" dialog. One
   // pending action drives all three tab/window name-entry flows (preset rename
@@ -105,12 +115,8 @@
         // selected tab belongs to none of them (the "Other" group) gets the new
         // tab in window 0: arbitrary, but visible and movable, where refusing
         // would leave the New button dead for a selection that looks ordinary.
-        const before = new Set(data?.tabs.map((t) => t.index) ?? []);
         data = await api.tabCreate(currentWindowIndex ?? 0, name, tabIndex);
-        // Select whichever index is NEW rather than the highest one: the
-        // backend allocating max+1 is its business, and a set diff keeps this
-        // right if it ever reuses a gap instead.
-        tabIndex = data.tabs.find((t) => !before.has(t.index))?.index ?? tabIndex;
+        tabIndex = newestTab() ?? tabIndex;
         onUserDirty();
       } else if (p.kind === "renameTab") {
         if (name === data?.tabs.find((t) => t.index === p.tabIdx)?.name) return;
@@ -122,9 +128,8 @@
         // window's position never persists. Then hand the new window's id up so
         // the Layout editor selects it: it defaults offset on top of window 0, so
         // without selecting it it's easy to miss.
-        const before = new Set(data?.tabs.map((t) => t.index) ?? []);
         data = await api.overviewWindowAdd(name, tabIndex);
-        tabIndex = data.tabs.find((t) => !before.has(t.index))?.index ?? tabIndex;
+        tabIndex = newestTab() ?? tabIndex;
         onUserDirty();
         onCharDirty();
         const w = data.windows[data.windows.length - 1];

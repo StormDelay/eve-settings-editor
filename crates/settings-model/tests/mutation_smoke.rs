@@ -253,14 +253,30 @@ fn tab_move_and_reorder_survive_the_save_chain() {
 #[test]
 fn tab_deletion_survives_the_save_chain() {
     let mut v = fixture(MODERN_USER);
+    let gone = project_overview(&v, None)
+        .tabs
+        .iter()
+        .find(|t| t.index == 5)
+        .expect("fixture has a tab 5")
+        .name
+        .clone();
+
     delete_tab(&mut v, 5).expect("delete tab");
     let back = saved(&v);
     let ov = project_overview(&back, None);
+
     assert_eq!(ov.tabs.len(), 7);
-    assert!(
-        ov.windows.iter().all(|w| !w.tab_indices.contains(&5)),
-        "a deleted tab must not stay mapped into a window"
-    );
+    assert!(!ov.tabs.iter().any(|t| t.name == gone), "the deleted tab is gone: {gone}");
+    // Gap-free afterwards — EVE draws a blank, unnamed tab in any gap, so index 5
+    // is now the tab that used to be 6, not an absence. Checking indices rather
+    // than "5 is unmapped" is the difference the renumbering makes.
+    let mut idx: Vec<i64> = ov.tabs.iter().map(|t| t.index).collect();
+    idx.sort_unstable();
+    assert_eq!(idx, (0..7).collect::<Vec<_>>(), "no gap where tab 5 was");
+
+    let mut mapped: Vec<i64> = ov.windows.iter().flat_map(|w| w.tab_indices.clone()).collect();
+    mapped.sort_unstable();
+    assert_eq!(mapped, idx, "every remaining tab still mapped into exactly one window");
 }
 
 /// Adding an overview window touches both files: the mapping in the account, the
