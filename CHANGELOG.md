@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-12
+
+A plain file-to-file copy that needs no pairing, and folders named after the app.
+
 ### Added
 - Copy a settings file as-is onto other files of the same kind — character onto characters, account onto accounts — without pairing anything first.
 
