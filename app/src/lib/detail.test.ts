@@ -1,5 +1,4 @@
-// Run: npm test (node --test; Node strips the types). Throw-based checks, no
-// framework — matching layout.test.ts.
+// Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DETAIL_NOMINAL, shipHudParts, fighterParts, targetParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
@@ -7,10 +6,7 @@ import { HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect, Stack } from "./api.ts";
 import type { DrawUnit } from "./layout.ts";
 
-const check = (name: string, ok: boolean) => {
-  if (!ok) throw new Error(`FAIL: ${name}`);
-  console.log(`  ok - ${name}`);
-};
+import { check } from "./test/check.ts";
 
 // --- ship HUD --------------------------------------------------------------
 // Every number below is MEASURED (2026-07-30, hud_battleship.png and

@@ -260,10 +260,9 @@ pub fn reset(v: &mut Value) -> Result<(), NeocomError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{b, ts};
     use blue_marshal::Value;
 
-    fn b(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
-    fn ts() -> Value { Value::Long(vec![0u8; 8]) }
 
     /// One button, in the corpus's own key order.
     fn button(id: Value, btn_type: i64, icon: &str, children: Value) -> Value {
