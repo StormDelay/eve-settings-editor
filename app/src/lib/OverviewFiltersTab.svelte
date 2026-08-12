@@ -331,10 +331,7 @@
   .contents-title { font-weight: 600; }
   .section-heading { margin: 0.2rem 0 0; font-size: 0.9em; }
   .group-cat > summary { cursor: pointer; padding: 0.2rem 0; }
-  /* The bulk buttons stay dim until the category is hovered — one pair per
-     category, and 20-odd always-lit pairs would out-shout the group names. */
-  .cat-bulk { margin-left: 0.6rem; opacity: 0; transition: opacity 0.1s; }
-  .group-cat > summary:hover .cat-bulk, .group-cat > summary:focus-within .cat-bulk { opacity: 1; }
+  .cat-bulk { margin-left: 0.6rem; }
   .cat-bulk button {
     background: var(--bg-panel); color: var(--fg-dim);
     border: 1px solid var(--border); border-radius: 3px;
