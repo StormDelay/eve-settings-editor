@@ -49,8 +49,15 @@ export function filterCatalog(cats: Category[], query: string): Category[] {
 
 // Add or remove a group id from a membership list, returning a new sorted array.
 export function toggleGroup(groups: number[], id: number, on: boolean): number[] {
+  return toggleGroups(groups, [id], on);
+}
+
+// The same, for a whole category at once. The bulk form is what the per-category
+// All/None buttons need: `presetSetGroups` takes the complete membership list,
+// so a category of 400 groups is still ONE backend round trip rather than 400.
+export function toggleGroups(groups: number[], ids: number[], on: boolean): number[] {
   const set = new Set(groups);
-  if (on) set.add(id); else set.delete(id);
+  for (const id of ids) { if (on) set.add(id); else set.delete(id); }
   return [...set].sort((a, b) => a - b);
 }
 

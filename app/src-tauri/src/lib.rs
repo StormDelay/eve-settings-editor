@@ -201,6 +201,10 @@ fn set_overview_order(state: tauri::State<'_, AppState>, tab_index: i64, order: 
 fn set_overview_width(state: tauri::State<'_, AppState>, tab_index: i64, column: String, width: i64) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::set_overview_width(&state, tab_index, &column, width)
 }
+#[tauri::command]
+fn overview_copy_columns(state: tauri::State<'_, AppState>, from_tab: i64, to_tabs: Vec<i64>, order: bool, visible: bool, widths: bool) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_copy_columns(&state, from_tab, to_tabs, order, visible, widths)
+}
 
 #[tauri::command]
 fn tab_create(state: tauri::State<'_, AppState>, window_idx: usize, name: String, from_tab: Option<i64>) -> Result<settings_model::OverviewColumns, ErrDto> {
@@ -618,6 +622,7 @@ pub fn run() {
             account_roster, set_account_alias, confirm_pairing, unpair_character,
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
+            overview_copy_columns,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove, overview_create_window_mapping,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
