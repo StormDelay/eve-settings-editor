@@ -1,5 +1,5 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
-import { mergeCatalog, filterCatalog, toggleGroup, unknownGroups, type CatalogBundle } from "./groups.ts";
+import { mergeCatalog, filterCatalog, toggleGroup, toggleGroups, unknownGroups, type CatalogBundle } from "./groups.ts";
 
 import { check, eq } from "./test/check.ts";
 
@@ -53,6 +53,12 @@ const bundle: CatalogBundle = {
 
 check("toggleGroup adds, returning a sorted array", eq(toggleGroup([26, 25], 100, true), [25, 26, 100]));
 check("toggleGroup removes", eq(toggleGroup([25, 26], 25, false), [26]));
+
+check("toggleGroups adds a whole category, sorted", eq(toggleGroups([26], [100, 25], true), [25, 26, 100]));
+check("toggleGroups removes a whole category", eq(toggleGroups([25, 26, 100], [25, 26], false), [100]));
+check("toggleGroups keeps ids already present", eq(toggleGroups([25, 26], [25, 26], true), [25, 26]));
+check("toggleGroups ignores ids not present when removing", eq(toggleGroups([25], [26, 100], false), [25]));
+check("toggleGroups with no ids is a no-op", eq(toggleGroups([26, 25], [], true), [25, 26]));
 
 {
   const cats = mergeCatalog(bundle, []);

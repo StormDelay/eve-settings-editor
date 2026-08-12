@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Select or clear a whole category of types at once in the overview's Filters tab.
+- Copy one tab's columns — order, visible set and widths — onto any of your other tabs.
+- Colour and embolden overview tab names, from the game's own palette.
+
 ### Fixed
 - **Deleting an overview tab no longer leaves a blank tab behind in game.** Accounts this already affected repair themselves the first time you edit any tab.
 
