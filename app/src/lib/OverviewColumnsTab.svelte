@@ -93,28 +93,35 @@
   </div>
   {#if copyOpen}
     <div class="copy-panel">
-      <div class="copy-head">
-        <span>Copy <strong>{plainTabName(tab.name)}</strong>'s columns to:</span>
-        <button onclick={() => pickAll(true)}>Select all</button>
-        <button onclick={() => pickAll(false)}>None</button>
-      </div>
-      <div class="copy-targets">
-        {#each targetGroups as g (g.label)}
-          {#if g.label}<span class="copy-group">{g.label}</span>{/if}
-          {#each g.tabs as t (t.index)}
-            <label><input type="checkbox" bind:checked={picked[t.index]} /> {plainTabName(t.name)}</label>
+      <!-- What travels, then where it goes: the two questions are separate and
+           the panel asks them in that order. -->
+      <section>
+        <h4>What to copy from <strong>{plainTabName(tab.name).trim()}</strong></h4>
+        <div class="copy-parts">
+          <label><input type="checkbox" bind:checked={parts.order} /> Column order</label>
+          <label><input type="checkbox" bind:checked={parts.visible} /> Visible columns</label>
+          <label title={charOpen ? "" : "Widths are per character — open one to copy them"}>
+            <input type="checkbox" checked={copyWidths} disabled={!charOpen}
+                   onchange={(e) => (parts.widths = (e.currentTarget as HTMLInputElement).checked)} />
+            Widths{charOpen ? "" : " (no character open)"}
+          </label>
+        </div>
+      </section>
+      <section>
+        <div class="copy-head">
+          <h4>Copy it to</h4>
+          <button onclick={() => pickAll(true)}>Select all</button>
+          <button onclick={() => pickAll(false)}>None</button>
+        </div>
+        <div class="copy-targets">
+          {#each targetGroups as g (g.label)}
+            {#if g.label}<span class="copy-group">{g.label}</span>{/if}
+            {#each g.tabs as t (t.index)}
+              <label><input type="checkbox" bind:checked={picked[t.index]} /> {plainTabName(t.name).trim()}</label>
+            {/each}
           {/each}
-        {/each}
-      </div>
-      <div class="copy-parts">
-        <label><input type="checkbox" bind:checked={parts.order} /> Column order</label>
-        <label><input type="checkbox" bind:checked={parts.visible} /> Visible columns</label>
-        <label title={charOpen ? "" : "Widths are per character — open one to copy them"}>
-          <input type="checkbox" checked={copyWidths} disabled={!charOpen}
-                 onchange={(e) => (parts.widths = (e.currentTarget as HTMLInputElement).checked)} />
-          Widths{charOpen ? "" : " (no character open)"}
-        </label>
-      </div>
+        </div>
+      </section>
       <div class="copy-actions">
         <button onclick={runCopy} disabled={chosen.length === 0 || !(parts.order || parts.visible || copyWidths)}>
           Copy to {chosen.length} tab{chosen.length === 1 ? "" : "s"}
@@ -168,11 +175,15 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer;
   }
   .copy-panel {
-    display: flex; flex-direction: column; gap: 0.5rem;
+    display: flex; flex-direction: column; gap: 0.6rem;
     margin-bottom: 0.6rem; padding: 0.5rem;
     border: 1px solid var(--border); border-radius: 4px; background: var(--bg-panel);
   }
-  .copy-head { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  /* A rule between the two questions — what to copy, and where to. */
+  .copy-panel section + section { border-top: 1px solid var(--border); padding-top: 0.6rem; }
+  .copy-panel h4 { margin: 0 0 0.4rem; font-size: 0.9em; }
+  .copy-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+  .copy-head h4 { margin: 0 0 0.4rem; }
   .copy-head button { padding: 1px 8px; font-size: 0.85em; }
   .copy-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.15rem 0.8rem; }
   /* A window heading owns its own full row above the tabs it groups. */
