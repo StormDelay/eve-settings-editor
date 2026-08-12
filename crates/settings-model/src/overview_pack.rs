@@ -596,6 +596,10 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
 
     if let Some(node) = tabs_to_apply {
         let emptied = apply_tabs(ov, node);
+        // `apply_tabs` writes the pack's own tab numbering verbatim, so a pack
+        // authored from a table with gaps carries them in. EVE draws a blank,
+        // unnamed tab in every gap — see `overview_tabs::compact_tabs`.
+        crate::overview_tabs::compact_tabs(ov);
         report.applied.push("tabSetup".to_string());
         if emptied > 0 {
             report.warnings.push(format!(
