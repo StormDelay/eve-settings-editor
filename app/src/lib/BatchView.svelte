@@ -18,7 +18,7 @@
     profiles.flatMap((p) =>
       p.files
         .filter((f) => f.kind === "char")
-        .map((f) => ({ path: f.path, file_name: f.file_name, id: f.id, dir: p.dir })),
+        .map((f) => ({ path: f.path, file_name: f.file_name, id: f.id, kind: f.kind, dir: p.dir })),
     ),
   );
 
@@ -29,6 +29,7 @@
       .map((p) => ({ dir: p.dir, label: labels.get(p.dir)! }));
   });
 
+  let allowOtherFolders = $state(false);
   let folderPick = $state<string | null>(null);
   const autoFolder = $derived(
     chars.find((c) => c.path === sourcePath)?.dir ?? primaryProfileDir(profiles),
@@ -47,9 +48,33 @@
   // The batch source is either a character (as before) or a saved preset. A
   // preset belongs to no profile folder, so it borrows the Profile dropdown's
   // `folder` as its anchor — the folder whose characters populate the target list.
-  let sourceKind = $state<"character" | "preset">("character");
+  //
+  // A third source kind sidesteps both: "a file", copied byte-for-byte onto
+  // other files of the same kind. No aspects and no pairing — the plain copy
+  // the character-centric flow cannot express, because every aspect it offers
+  // writes the account file and so needs to know which account that is.
+  let sourceKind = $state<"character" | "preset" | "file">("character");
   let presetDir = $state<string | null>(null);
   const preset = $derived<PresetInfo | null>(allPresets().find((p) => p.dir === presetDir) ?? null);
+
+  let sourceFile = $state<string | null>(null);
+  const fileMode = $derived(sourceKind === "file");
+  // Every char AND user file, backups included: this mode addresses files by
+  // path, so `core_char_123 - old.dat` is a legitimate pick at either end.
+  const filesInScope = $derived(
+    profiles
+      .filter((p) => allowOtherFolders || p.dir === folder)
+      .flatMap((p) => p.files.filter((f) => f.kind !== "other").map((f) => ({ ...f, dir: p.dir })))
+      .sort(byResolvedName),
+  );
+  // Searched across every profile, not just `filesInScope`: toggling "show other
+  // folders" must not invalidate a source already picked.
+  const sourceFileKind = $derived(
+    profiles.flatMap((p) => p.files).find((f) => f.path === sourceFile)?.kind ?? null,
+  );
+  const fileTargets = $derived(
+    filesInScope.filter((f) => f.kind === sourceFileKind && f.path !== sourceFile),
+  );
 
   // What the chosen source can offer. A preset offers only what it holds, so
   // Autofill cannot be ticked on a preset that has none.
@@ -94,7 +119,6 @@
     new Set(accountsStore.roster.accounts.flatMap((acc) => acc.characters)),
   );
 
-  let allowOtherFolders = $state(false);
   // The source dropdown lists every character in the folder (the current source
   // included), ordered like the sidebar.
   const charsInScope = $derived(
@@ -108,11 +132,13 @@
       ),
   );
   const candidates = $derived(
-    // A character cannot be its own copy target — but ONLY when it is the
-    // source. `sourcePath` is seeded from the open file and never cleared on
-    // switching to a preset source, so filtering on it directly kept the open
-    // character out of the list for the rest of the session.
-    charsInScope.filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path)),
+    fileMode
+      ? fileTargets
+      // A character cannot be its own copy target — but ONLY when it is the
+      // source. `sourcePath` is seeded from the open file and never cleared on
+      // switching to a preset source, so filtering on it directly kept the open
+      // character out of the list for the rest of the session.
+      : charsInScope.filter((c) => !(batchSource?.kind === "character" && c.path === batchSource.path)),
   );
   let selectedTargets = $state<Set<string>>(new Set());
   function toggleTarget(path: string) {
@@ -120,7 +146,10 @@
     next.has(path) ? next.delete(path) : next.add(path);
     selectedTargets = next;
   }
-  const targetDisabled = (id: number | null) => anyAccountAspect && !(id != null && pairedIds.has(id));
+  // Pairing only gates the character flow: a file copy writes the file you
+  // picked, so it has no account to look up.
+  const targetDisabled = (id: number | null) =>
+    !fileMode && anyAccountAspect && !(id != null && pairedIds.has(id));
 
   // The targets actually sent to the backend: the selected set minus any row the
   // current aspect selection excludes (an unpaired character under an account
@@ -128,10 +157,12 @@
   // keeps the UI honest — a disabled row never counts as a real target, and its
   // selection is preserved so it re-includes if the aspect choice changes back.
   const effectiveTargets = $derived(
-    [...selectedTargets].filter((p) => {
-      const c = chars.find((x) => x.path === p);
-      return c ? !targetDisabled(c.id) : false;
-    }),
+    fileMode
+      ? [...selectedTargets]
+      : [...selectedTargets].filter((p) => {
+          const c = chars.find((x) => x.path === p);
+          return c ? !targetDisabled(c.id) : false;
+        }),
   );
 
   // Applying onto the open document writes behind it: the in-memory copy goes
@@ -159,8 +190,9 @@
   // to that same default. Every other aspect only ever overwrites.
   const resetsToDefaults = $derived(selected.has("layout"));
 
-  const nameOfChar = (id: number | null, fileName: string) =>
-    id == null ? fileName : (resolvedName("char", id) ?? `char ${id}`);
+  const nameOf = (kind: string, id: number | null, fileName: string) =>
+    id == null ? fileName : (resolvedName(kind, id) ?? `${kind === "user" ? "account" : "char"} ${id}`);
+  const nameOfChar = (id: number | null, fileName: string) => nameOf("char", id, fileName);
   const accountLabel = (id: number) => {
     const alias = resolvedName("user", id);
     return alias ? `${alias} (${id})` : `${id}`;
@@ -179,6 +211,7 @@
   $effect(() => {
     sourcePath;
     presetDir;
+    sourceFile;
     sourceKind;
     folderPick;
     selected = new Set();
@@ -194,7 +227,8 @@
     const asp = [...selected];
     const tgts = effectiveTargets;
     const allow = allowOtherFolders;
-    if (!src || asp.length === 0 || tgts.length === 0) { plan = null; return; }
+    // A file copy has no plan to fetch: the write list is exactly the ticked files.
+    if (fileMode || !src || asp.length === 0 || tgts.length === 0) { plan = null; return; }
     const seq = ++previewSeq;
     api.setupPreview(src, tgts, asp as Aspect[], allow)
       .then((p) => { if (seq === previewSeq) plan = p; })
@@ -205,16 +239,22 @@
   let error = $state<string | null>(null);
   let results = $state<BatchTargetResult[] | null>(null);
   const canApply = $derived(
-    !!batchSource && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
-    !!plan && !plan.source_error && (plan.char_writes.length + plan.account_writes.length > 0),
+    fileMode
+      ? !!sourceFile && effectiveTargets.length > 0 && !busy
+      : !!batchSource && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
+        !!plan && !plan.source_error && (plan.char_writes.length + plan.account_writes.length > 0),
   );
 
   async function apply() {
-    const src = batchSource;
-    if (!src) return;
     busy = true; error = null; results = null;
     try {
-      results = await api.setupApply(src, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
+      if (fileMode) {
+        if (!sourceFile) return;
+        results = await api.copyFiles(sourceFile, effectiveTargets);
+      } else {
+        if (!batchSource) return;
+        results = await api.setupApply(batchSource, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
+      }
     } catch (e) {
       error = errMessage(e);
     } finally {
@@ -224,7 +264,7 @@
 </script>
 
 <div class="batch">
-  <h2>Copy a setup to other characters</h2>
+  <h2>{fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}</h2>
 
   <section>
     <label for="folder">Profile</label>
@@ -239,6 +279,9 @@
     <label class="inline">
       <input type="radio" name="sourceKind" bind:group={sourceKind} value="preset" /> A preset
     </label>
+    <label class="inline">
+      <input type="radio" name="sourceKind" bind:group={sourceKind} value="file" /> A file, copied as-is
+    </label>
 
     {#if sourceKind === "character"}
       <label for="src">Source character</label>
@@ -248,7 +291,7 @@
           <option value={c.path}>{nameOfChar(c.id, c.file_name)} — {c.file_name}</option>
         {/each}
       </select>
-    {:else}
+    {:else if sourceKind === "preset"}
       <label for="srcpreset">Source preset</label>
       <select id="srcpreset" bind:value={presetDir}>
         <option value={null} disabled>Choose a preset…</option>
@@ -259,37 +302,49 @@
       {#if allPresets().length === 0}
         <p class="muted">No presets yet — save one from the sidebar first.</p>
       {/if}
+    {:else}
+      <label for="srcfile">Source file</label>
+      <select id="srcfile" bind:value={sourceFile}>
+        <option value={null} disabled>Choose a file…</option>
+        {#each filesInScope as f}
+          <option value={f.path}>{nameOf(f.kind, f.id, f.file_name)} — {f.file_name}</option>
+        {/each}
+      </select>
+      <p class="muted">The whole file is copied onto every file you tick — character
+        files onto character files, account files onto account files. No pairing needed.</p>
     {/if}
   </section>
 
-  {#if batchSource}
-    <section>
-      <div class="head">What to copy</div>
-      {#each ASPECTS.filter((a) => offered.includes(a.key)) as a}
-        <label class:disabled={everything && a.key !== "everything"}>
-          <input type="checkbox" checked={selected.has(a.key)}
-            disabled={everything && a.key !== "everything"}
-            onchange={() => toggleAspect(a.key)} />
-          {a.label}
-        </label>
-      {/each}
-    </section>
+  {#if fileMode ? !!sourceFile : !!batchSource}
+    {#if !fileMode}
+      <section>
+        <div class="head">What to copy</div>
+        {#each ASPECTS.filter((a) => offered.includes(a.key)) as a}
+          <label class:disabled={everything && a.key !== "everything"}>
+            <input type="checkbox" checked={selected.has(a.key)}
+              disabled={everything && a.key !== "everything"}
+              onchange={() => toggleAspect(a.key)} />
+            {a.label}
+          </label>
+        {/each}
+      </section>
+    {/if}
 
     <section>
       <div class="head">
-        Target characters
+        {fileMode ? "Copy onto" : "Target characters"}
         <button type="button" class="linkbtn" onclick={selectAllTargets}>Select all</button>
         <button type="button" class="linkbtn" onclick={clearTargets}>Clear</button>
         <label class="inline"><input type="checkbox" bind:checked={allowOtherFolders} /> Show other folders</label>
       </div>
       {#if candidates.length === 0}
-        <p class="muted">No other character files found.</p>
+        <p class="muted">{fileMode ? "No other file of this kind in reach." : "No other character files found."}</p>
       {:else}
         {#each candidates as c}
           <label class:disabled={targetDisabled(c.id)}>
             <input type="checkbox" checked={selectedTargets.has(c.path) && !targetDisabled(c.id)}
               disabled={targetDisabled(c.id)} onchange={() => toggleTarget(c.path)} />
-            {nameOfChar(c.id, c.file_name)}
+            {nameOf(c.kind, c.id, c.file_name)}
             <span class="muted">{c.file_name}{c.dir === folder ? "" : ` · ${folderLabelOf(c.dir)}`}</span>
             {#if targetDisabled(c.id)}<span class="muted"> — pair in the Accounts view to include</span>{/if}
           </label>
@@ -297,7 +352,26 @@
       {/if}
     </section>
 
-    {#if plan}
+    <!-- Applies to both modes, so it sits outside the plan: a file copy fetches
+         no plan, and in the character flow this warns before the plan lands. -->
+    {#if targetsOpenFile}
+      <section class="preview">
+        <p class="warn">⚠ One target is the file open in the editor. Its on-screen
+          copy will be out of date after this runs — reload it before editing
+          further, or your next save will collide with what this wrote.</p>
+      </section>
+    {/if}
+
+    {#if fileMode}
+      {#if effectiveTargets.length > 0}
+        <section class="preview">
+          <p>Will write {effectiveTargets.length} file(s) — each is backed up first.</p>
+          <p class="warn">⚠ Each target is replaced whole — every setting it holds,
+            including ones this editor does not show.{#if sourceFileKind === "user"} An
+            account file carries the settings of every character on that account.{/if}</p>
+        </section>
+      {/if}
+    {:else if plan}
       <section class="preview">
         {#if plan.source_error}
           <p class="err">{plan.source_error}</p>
@@ -306,11 +380,6 @@
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
             <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
           {/each}
-          {#if targetsOpenFile}
-            <p class="warn">⚠ One target is the file open in the editor. Its on-screen
-              copy will be out of date after this runs — reload it before editing
-              further, or your next save will collide with what this wrote.</p>
-          {/if}
           {#each plan.account_writes as w}
             <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
           {/each}
@@ -322,7 +391,7 @@
     {/if}
 
     <section>
-      <button disabled={!canApply} onclick={apply}>{busy ? "Applying…" : "Apply"}</button>
+      <button disabled={!canApply} onclick={apply}>{busy ? "Copying…" : "Copy"}</button>
       {#if error}<p class="err">{error}</p>{/if}
     </section>
 

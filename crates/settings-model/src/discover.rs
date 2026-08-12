@@ -37,7 +37,7 @@ pub struct SettingsFile {
     pub modified_unix: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileKind {
     Char,

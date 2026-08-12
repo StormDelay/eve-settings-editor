@@ -1,4 +1,4 @@
-// Component test: run with `npm run test:ui` (vitest + jsdom).
+// Component test: run with `npm test` (vitest + jsdom).
 //
 // Batch is the only destructive screen in the app — it overwrites other
 // characters' settings files, several at once. The rules that decide WHICH
@@ -26,13 +26,30 @@ function charFile(id: number) {
   };
 }
 
+function userFile(id: number) {
+  return {
+    path: `${DIR}/core_user_${id}.dat`,
+    file_name: `core_user_${id}.dat`,
+    kind: "user" as const,
+    id,
+    size: 1000,
+    modified_unix: 0,
+  };
+}
+
 const PROFILES: Profile[] = [
   {
     install: "eve",
     server: "tranquility",
     profile: "Default",
     dir: DIR,
-    files: [charFile(90000001), charFile(90000002), charFile(90000003)],
+    files: [
+      charFile(90000001),
+      charFile(90000002),
+      charFile(90000003),
+      userFile(80000001),
+      userFile(80000002),
+    ],
   },
 ];
 
@@ -161,7 +178,7 @@ describe("what actually gets written", () => {
     await fireEvent.click(aspect("Overview (columns, tabs, presets)"));
     await waitFor(() => expect(targetBox(90000003).disabled).toBe(true));
 
-    const apply = screen.getByRole("button", { name: /apply/i });
+    const apply = screen.getByRole("button", { name: "Copy" });
     await waitFor(() => expect(apply.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(apply);
 
@@ -188,7 +205,7 @@ describe("what actually gets written", () => {
     await fireEvent.click(targetBox(90000002));
     await fireEvent.click(aspect("Window layout"));
     await waitFor(() => expect(calls.of("setup_preview").length).toBeGreaterThan(0));
-    expect(screen.getByRole("button", { name: /apply/i }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Copy" }).hasAttribute("disabled")).toBe(true);
   });
 
   test("apply is refused when the source itself failed to read", async () => {
@@ -197,7 +214,7 @@ describe("what actually gets written", () => {
     await fireEvent.click(targetBox(90000002));
     await fireEvent.click(aspect("Window layout"));
     await waitFor(() => expect(calls.of("setup_preview").length).toBeGreaterThan(0));
-    expect(screen.getByRole("button", { name: /apply/i }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Copy" }).hasAttribute("disabled")).toBe(true);
   });
 });
 
@@ -227,13 +244,13 @@ test("a stale preview response cannot overwrite a newer one", async () => {
   // Resolve the NEWER request first, then let the stale one land.
   pending[1]({ ...PLAN, source_error: null });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: /apply/i }).hasAttribute("disabled")).toBe(false),
+    expect(screen.getByRole("button", { name: "Copy" }).hasAttribute("disabled")).toBe(false),
   );
   pending[0]({ ...PLAN, source_error: "stale source error" });
 
   await new Promise((r) => setTimeout(r, 0));
   expect(screen.queryByText(/stale source error/)).toBeNull();
-  expect(screen.getByRole("button", { name: /apply/i }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "Copy" }).hasAttribute("disabled")).toBe(false);
 });
 
 test("changing the source clears the aspects and targets already picked", async () => {
@@ -292,6 +309,51 @@ test("warns when a target is the file currently open", async () => {
   await fireEvent.click(targetBox(90000001));
   await fireEvent.click(targetBox(90000003));
   await waitFor(() => expect(screen.queryByText(/open in the editor/i)).toBeNull());
+});
+
+describe("the file mode", () => {
+  // The whole character-centric flow is gated on pairing: every aspect it
+  // offers writes the account file, so an unpaired character can never be a
+  // target. This mode is the way out — a plain file-to-file copy, which is what
+  // EVEs older settings managers did and what this had no equivalent of.
+  async function fileMode(source: string) {
+    calls.stub("copy_files", []);
+    await mount();
+    await fireEvent.click(screen.getByRole("radio", { name: /a file/i }));
+    await fireEvent.change(document.querySelector("#srcfile") as HTMLSelectElement, {
+      target: { value: source },
+    });
+  }
+
+  test("an account file copies onto every other account file, pairing or not", async () => {
+    await fileMode(`${DIR}/core_user_80000002.dat`);
+
+    const row = await screen.findByText("core_user_80000001.dat");
+    expect(row.closest("label")!.textContent).not.toMatch(/pair in the Accounts view/);
+    await fireEvent.click(rowIn("Copy onto", "core_user_80000001.dat").querySelector("input")!);
+
+    const copy = screen.getByRole("button", { name: "Copy" });
+    await waitFor(() => expect(copy.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(copy);
+
+    await waitFor(() => expect(calls.of("copy_files").length).toBe(1));
+    expect(calls.only("copy_files").args).toEqual({
+      source: `${DIR}/core_user_80000002.dat`,
+      targets: [`${DIR}/core_user_80000001.dat`],
+    });
+    // No aspects are involved, so the character-centric path is never called.
+    expect(calls.of("setup_apply").length).toBe(0);
+  });
+
+  test("only files of the source's own kind are offered", async () => {
+    await fileMode(`${DIR}/core_char_90000002.dat`);
+    await waitFor(() => expect(rowIn("Copy onto", "core_char_90000003.dat")).toBeTruthy());
+
+    const offered = [...section("Copy onto").querySelectorAll("label")].map((l) => l.textContent);
+    expect(offered.some((t) => t?.includes("core_user_"))).toBe(false);
+    // Not itself, either.
+    expect(offered.some((t) => t?.includes("core_char_90000002.dat"))).toBe(false);
+  });
 });
 
 test("no write is ever sent on mount", async () => {
@@ -374,7 +436,7 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
   await fireEvent.click(targetBox(90000002));
   await fireEvent.click(aspect("Window layout"));
 
-  const apply = screen.getByRole("button", { name: /apply/i });
+  const apply = screen.getByRole("button", { name: "Copy" });
   await waitFor(() => expect(apply.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(apply);
 
