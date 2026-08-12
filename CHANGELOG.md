@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Deleting an overview tab no longer changes the other tabs' columns.** The open character's column widths and sort order now follow each tab, instead of staying on the slot the deleted tab freed up.
+
 ## [0.33.0] - 2026-08-12
 
 Less clicking in the overview editor, and tab names in colour.
