@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-08-12
+
+Less clicking in the overview editor, and tab names in colour.
+
 ### Added
 - Select or clear a whole category of types at once in the overview's Filters tab.
 - Copy one tab's columns — order, visible set and widths — onto any of your other tabs.
@@ -13,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - **Deleting an overview tab no longer leaves a blank tab behind in game.** Accounts this already affected repair themselves the first time you edit any tab.
+- Renaming an overview tab no longer strips the spaces padding its name, which is what widens a tab in game.
 
 ## [0.32.0] - 2026-08-12
 
