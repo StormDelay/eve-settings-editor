@@ -177,6 +177,24 @@ fn unpair_character(app: tauri::AppHandle, char_id: u64) -> accounts::AccountRos
 }
 
 #[tauri::command]
+fn confirm_pairings(
+    app: tauri::AppHandle,
+    pairs: Vec<(u64, u64)>,
+) -> Result<accounts::AccountRoster, ErrDto> {
+    accounts::confirm_pairings(&settings_model::default_roots(), &app_dir(&app), &pairs)
+        .map_err(|m| ErrDto { code: "cap".into(), message: m })
+}
+
+/// What the EVE launcher's own logs say about char↔account membership, minus
+/// whatever the store already agrees with. Read-only, and separate from
+/// `account_roster` on purpose: that one reloads after every alias edit and
+/// every confirm, and re-reading megabytes of logs on each would be silly.
+#[tauri::command]
+fn launcher_proposals(app: tauri::AppHandle) -> Vec<launcher::Proposal> {
+    launcher::proposals(&launcher::read_launcher_roster(), &accounts::load_store(&app_dir(&app)))
+}
+
+#[tauri::command]
 fn begin_capture(state: tauri::State<'_, AppState>) {
     ops::begin_capture(&state, &settings_model::default_roots());
 }
@@ -620,7 +638,8 @@ pub fn run() {
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
-            account_roster, set_account_alias, confirm_pairing, unpair_character,
+            account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
+            launcher_proposals,
             begin_capture, resolve_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             overview_copy_columns,
