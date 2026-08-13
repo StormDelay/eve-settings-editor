@@ -109,8 +109,10 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   width: 280px; background: var(--surface);
   border-left: 1px solid var(--border); overflow-y: auto; padding: var(--s2);
 }
-.backups ul { list-style: none; padding: 0; }
-.backups li { display: flex; gap: var(--s2); align-items: center; padding: var(--s1) 0; }
+.backups ul { list-style: none; padding: 0; margin: 0; }
+/* The row's own flex/gap/padding is ListRow's now; the li is just the list item
+   it always semantically was. */
+.backups li { list-style: none; }
 .stamp { font-family: Consolas, monospace; }
 /* PENDING: deleted with BackupsPanel/ProbeFormationsView — Button ghost sm. */
 .mini-visible { padding: 0 6px; font-size: 0.85em; margin-left: auto; }
@@ -120,8 +122,9 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 }
 .sidebar-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s2); }
 .sidebar ul { list-style: none; margin: var(--s1) 0; padding-left: var(--s3); }
-.sidebar .file { width: 100%; text-align: left; border: none; background: none; }
-.sidebar .file:hover { color: var(--accent); }
+/* `.sidebar .file` is gone with its class: ListRow's label button already is a
+   full-width, left-aligned, borderless button, and its hover is a background
+   rather than a colour shift. */
 .sidebar .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
 .editor { overflow: hidden; display: flex; flex-direction: column; }
 .filebar {
