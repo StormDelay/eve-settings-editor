@@ -107,6 +107,12 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   grid-template-columns: var(--col-left, 17.5rem) minmax(0, 1fr) var(--col-right, 20rem);
   grid-template-rows: auto auto minmax(0, 1fr);
   height: 100vh;
+  /* Where a sheet's panel starts, so it lands on the work area with the context
+     bar and tab row still visible above it and the subject browser beside it.
+     The left one is free — it is the grid column, and it shrinks with the rail.
+     The top one is measured (`--shell-inset-top`, set inline) because the two
+     rows above are content-sized. */
+  --shell-inset-left: var(--col-left, 17.5rem);
 }
 /* One rail width in both directions, where the left rail used to be 24px and
    the right column was `auto`-sized by whatever happened to be in it.
