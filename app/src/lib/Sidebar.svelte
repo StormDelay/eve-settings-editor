@@ -8,6 +8,11 @@
   import { primaryProfileDir, profileLabels, profileNote } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
   import AboutPanel from "./AboutPanel.svelte";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import ListRow from "./ui/ListRow.svelte";
+  import { toast } from "./ui/toasts.svelte";
 
   let {
     onOpen,
@@ -35,8 +40,6 @@
 
   let profiles: Profile[] = $state([]);
   let error: string | null = $state(null);
-  let flash: string | null = $state(null);
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let aboutOpen = $state(false);
   let namesBusy = $state(false);
   // Hide user-made backups / anomalous names, keeping only EVE's own working
@@ -82,9 +85,7 @@
       error = null;
       if (announce) {
         const n = profiles.length;
-        flash = `Refreshed — ${n} profile${n === 1 ? "" : "s"}`;
-        clearTimeout(flashTimer);
-        flashTimer = setTimeout(() => (flash = null), 2000);
+        toast(`Refreshed — ${n} profile${n === 1 ? "" : "s"}`, { variant: "success" });
       }
     } catch (e) {
       error = errMessage(e);
@@ -99,9 +100,7 @@
     } finally {
       namesBusy = false;
     }
-    flash = "Names refreshed";
-    clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => (flash = null), 2000);
+    toast("Names refreshed", { variant: "success" });
   }
 
   async function pickFile() {
@@ -118,35 +117,41 @@
 <aside class="sidebar">
   <div class="sidebar-top">
     <div class="sidebar-actions">
-      <button onclick={pickFile}>Open file…</button>
-      <button onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</button>
-      <button
+      <Button onclick={pickFile}>Open file…</Button>
+      <Button iconOnly onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</Button>
+      <Button
         onclick={refreshNamesClick}
         disabled={namesBusy}
-        title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</button>
-      <button onclick={onShowAccounts} title="Manage account names and character associations"
-        >Accounts</button>
-      <button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first"
-        >Copy settings</button>
-      <button onclick={() => (aboutOpen = true)} title="Version and licence">About</button>
+        disabledReason="Already refreshing"
+        title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</Button>
+      <Button onclick={onShowAccounts} title="Manage account names and character associations">
+        Accounts
+      </Button>
+      <Button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first">
+        Copy settings
+      </Button>
+      <Button onclick={() => (aboutOpen = true)} title="Version and licence">About</Button>
     </div>
-    <button class="collapse" onclick={onCollapse} title="Hide file list" aria-label="Hide file list"
-      >«</button>
+    <Button variant="ghost" size="sm" iconOnly title="Hide file list" onclick={onCollapse}>«</Button>
   </div>
-  <label class="toggle" title="Show only EVE's own core_char_<id>.dat files">
-    <input type="checkbox" bind:checked={hideNonStandard} />
-    Hide non-standard files
-  </label>
-  {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
-  {#if error}<p class="error">{error}</p>{/if}
+  <div class="toggle" title="Show only EVE's own core_char_<id>.dat files">
+    <Field kind="checkbox" label="Hide non-standard files" bind:value={hideNonStandard} />
+  </div>
+  {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
+  <!-- InlineMessage rather than EmptyState, though §4.5 files these under
+       "there is nothing here". Two reasons: content follows them (the preset
+       group and any profile rows), so EmptyState's centred 32px block would
+       push that down, and Sidebar.spec asserts that the "no character files"
+       hint is ONE element whose text also names "Open file…" — splitting it
+       across EmptyState's title and description would break that. -->
   {#if profiles.length === 0}
-    <p class="hint">No EVE profiles found in standard locations. Use “Open file…”.</p>
+    <InlineMessage>No EVE profiles found in standard locations. Use “Open file…”.</InlineMessage>
   {:else if !anyCharVisible}
-    <p class="hint">
+    <InlineMessage>
       {hideNonStandard
         ? "No character files with EVE's own names in these profiles. Untick “Hide non-standard files”, or use “Open file…”."
         : "These profiles hold no character files. Use “Open file…” to open an account file directly."}
-    </p>
+    </InlineMessage>
   {/if}
   <PresetGroup {onOpenPreset} {charOpen} {userOpen} {openPresetName} />
   {#each rows as { p, label, primary } (p.dir)}
@@ -163,12 +168,15 @@
           {#each chars as f (f.path)}
             {@const userId = f.id === null ? null : accountOf(f.id, accountsStore.roster)}
             {@const alias = userId === null ? null : aliasFor(userId)}
+            <!-- The size stays INSIDE the label rather than moving to ListRow's
+                 `trailing`, so the whole row remains the hit target it is
+                 today. -->
             <li>
-              <button class="file" onclick={() => onOpen(f.path)} title={f.file_name}>
+              <ListRow onclick={() => onOpen(f.path)} title={f.file_name}>
                 {resolvedName(f.kind, f.id) ?? f.file_name}
                 {#if alias}<span class="acct">· {alias}</span>{/if}
                 <span class="meta">{Math.round(f.size / 1024)} KB</span>
-              </button>
+              </ListRow>
             </li>
           {/each}
         </ul>
@@ -181,34 +189,25 @@
 
 <style>
   .toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.4em;
-    padding: 0.25rem 0.1rem 0.5rem;
-    font-size: 0.85em;
-    opacity: 0.75;
+    padding: var(--s1) 0 var(--s2);
     cursor: pointer;
   }
-  .toggle input {
-    cursor: pointer;
-  }
-  .acct { color: var(--fg-dim); font-size: 0.85em; margin: 0 0.3em; }
+  .acct { color: var(--text-muted); font-size: var(--t-caption); margin: 0 var(--s1); }
   /* A non-live profile is a real hazard, not a detail: editing one looks like
-     it worked and changes nothing the game reads. */
-  .meta.not-live { color: var(--warn, #d08770); }
+     it worked and changes nothing the game reads. --warn is declared, so the
+     old `var(--warn, #d08770)` fallback was dead code pointing at a fifth
+     amber. */
+  .meta.not-live { color: var(--warn); }
   /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
      takes the remaining width and wraps within it. */
   .sidebar-top {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: var(--s2);
+    margin-bottom: var(--s2);
   }
   .sidebar-top .sidebar-actions {
     flex: 1;
     margin-bottom: 0;
-  }
-  .collapse {
-    padding: 0 6px;
   }
 </style>

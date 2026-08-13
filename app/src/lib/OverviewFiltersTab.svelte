@@ -6,6 +6,9 @@
   import { mergeCatalog, filterCatalog, toggleGroup, toggleGroups, unknownGroups, type Category, type CatalogBundle } from "./groups";
   import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
   import { stateLabel, EXCEPTION_STATES, exceptionOf, applyException, type Exception } from "./states";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import { message, confirm } from "@tauri-apps/plugin-dialog";
 
   let { data, tabIndex, onChanged, onUserDirty }:
@@ -148,7 +151,15 @@
   // Name entry is an inline input (see the markup below), NOT window.prompt —
   // which the WebView2 renders as an ugly "localhost:1420 says …" dialog.
   let pending = $state<{ value: string; old: string } | null>(null);
-  function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
+  // Was a `use:` action, which Svelte cannot apply to a component. Field hands
+  // back its control node instead, and this focuses it when the rename box
+  // appears — same moment, same effect.
+  let renameInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  $effect(() => {
+    if (!renameInput) return;
+    renameInput.focus();
+    if (renameInput instanceof HTMLInputElement) renameInput.select();
+  });
 
   function startRenamePreset() {
     if (!tab) return;
@@ -208,44 +219,54 @@
 
 {#if tab}
   <div class="filters-controls">
-    <label>Preset
-      <select value={tab.preset} onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}>
-        {#if !grouped.defaults.includes(tab.preset) && !grouped.user.includes(tab.preset)}
-          <option value={tab.preset}>{labelFor(tab.preset)}</option>
-        {/if}
-        <optgroup label="Default profiles">
-          {#each grouped.defaults as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
-        </optgroup>
-        {#if grouped.user.length}
-          <optgroup label="Your profiles">
-            {#each grouped.user as k (k)}<option value={k}>{labelFor(k)}</option>{/each}
-          </optgroup>
-        {/if}
-      </select>
-    </label>
+    <Field
+      kind="select"
+      label="Preset"
+      value={tab.preset}
+      onchange={(e) => setTabPreset((e.currentTarget as HTMLSelectElement).value)}
+      options={[
+        ...(grouped.defaults.includes(tab.preset) || grouped.user.includes(tab.preset)
+          ? []
+          : [{ value: tab.preset, label: labelFor(tab.preset) }]),
+        ...grouped.defaults.map((k) => ({ value: k, label: labelFor(k), group: "Default profiles" })),
+        ...grouped.user.map((k) => ({ value: k, label: labelFor(k), group: "Your profiles" })),
+      ]} />
     <div class="preset-actions">
-      <button onclick={duplicatePreset} disabled={!editable} title="Duplicate this preset">Duplicate preset</button>
-      <button onclick={startRenamePreset} disabled={!storedPreset || isDefaultKey(tab.preset)} title="Rename this preset">Rename preset</button>
-      <button class="danger" onclick={deletePreset}
+      <Button onclick={duplicatePreset} disabled={!editable}
+              disabledReason="This preset cannot be duplicated"
+              title="Duplicate this preset">Duplicate preset</Button>
+      <Button onclick={startRenamePreset} disabled={!storedPreset || isDefaultKey(tab.preset)}
+              disabledReason="A built-in profile cannot be renamed"
+              title="Rename this preset">Rename preset</Button>
+      <Button variant="danger" onclick={deletePreset}
               disabled={!storedPreset || isDefaultKey(tab.preset) || (data?.presets.length ?? 0) <= 1}
-              title="Delete this preset">Delete preset</button>
+              disabledReason={isDefaultKey(tab.preset)
+                ? "A built-in profile cannot be deleted"
+                : "The last preset cannot be deleted"}
+              title="Delete this preset">Delete preset</Button>
     </div>
     {#if editable}
       <div class="preset-contents">
         <div class="contents-head">
           <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
-          <input class="group-filter" type="text" placeholder="Filter groups…" bind:value={typedFilter} />
+          <!-- controlClass, not class: the spec reads `.group-filter`'s value,
+               so the hook has to land on the input. -->
+          <Field
+            controlClass="group-filter"
+            ariaLabel="Filter groups"
+            placeholder="Filter groups…"
+            bind:value={typedFilter} />
         </div>
 
         <h4 class="section-heading">Types Shown</h4>
 
         {#if unknownIds.length}
-          <div class="unknown-groups">
+          <InlineMessage variant="warn" class="unknown-groups">
             Unrecognized groups (not in the catalog):
             {#each unknownIds as id}
-              <label><input type="checkbox" checked onchange={() => setPresetGroup(id, false)} /> #{id}</label>
+              <Field kind="checkbox" label="#{id}" value={true} onchange={() => setPresetGroup(id, false)} />
             {/each}
-          </div>
+          </InlineMessage>
         {/if}
 
         {#each visibleCategories as cat (cat.id)}
@@ -258,20 +279,23 @@
             <summary>
               <span class="cat-name">{cat.name}</span>
               <span class="cat-bulk">
-                <button onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
-                        title="Select every group shown in {cat.name}">All</button>
-                <button onclick={(e) => { e.preventDefault(); setCategory(cat, false); }}
-                        title="Deselect every group shown in {cat.name}">None</button>
+                <Button variant="ghost" size="sm"
+                        onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
+                        title="Select every group shown in {cat.name}">All</Button>
+                <Button variant="ghost" size="sm"
+                        onclick={(e) => { e.preventDefault(); setCategory(cat, false); }}
+                        title="Deselect every group shown in {cat.name}">None</Button>
               </span>
             </summary>
             {#if isOpen(cat.id)}
               <div class="group-grid">
                 {#each cat.groups as g (g.id)}
-                  <label class="group-item">
-                    <input type="checkbox" checked={presetGroupSet.has(g.id)}
-                           onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
-                    {g.name}
-                  </label>
+                  <Field
+                    kind="checkbox"
+                    class="group-item"
+                    label={g.name}
+                    value={presetGroupSet.has(g.id)}
+                    onchange={(e) => setPresetGroup(g.id, (e.currentTarget as HTMLInputElement).checked)} />
                 {/each}
               </div>
             {/if}
@@ -284,12 +308,15 @@
             {@const choice = exceptionOf(presetFiltered, presetAlwaysShown, row.id)}
             <div class="exception-row">
               <span class="exception-label">{row.label}</span>
-              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "show"}
-                            onchange={() => setException(row.id, "show")} /> Show</label>
-              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "hide"}
-                            onchange={() => setException(row.id, "hide")} /> Hide</label>
-              <label><input type="radio" name={`exc-${row.id}`} checked={choice === "always"}
-                            onchange={() => setException(row.id, "always")} /> Always show</label>
+              <Field kind="radio" name={`exc-${row.id}`} label="Show"
+                     value={choice} radioValue="show"
+                     onchange={() => setException(row.id, "show")} />
+              <Field kind="radio" name={`exc-${row.id}`} label="Hide"
+                     value={choice} radioValue="hide"
+                     onchange={() => setException(row.id, "hide")} />
+              <Field kind="radio" name={`exc-${row.id}`} label="Always show"
+                     value={choice} radioValue="always"
+                     onchange={() => setException(row.id, "always")} />
             </div>
           {/each}
         </div>
@@ -297,13 +324,13 @@
     {/if}
     {#if pending}
       <div class="name-entry">
-        <input type="text" bind:value={pending.value} use:focusInput placeholder="Preset name"
-               onkeydown={(e) => {
+        <Field bind:value={pending.value} bind:element={renameInput} ariaLabel="Preset name" placeholder="Preset name"
+               onkeydown={(e: KeyboardEvent) => {
                  if (e.key === "Enter") { e.preventDefault(); submitPending(); }
                  else if (e.key === "Escape") pending = null;
                }} />
-        <button onclick={submitPending}>Rename preset</button>
-        <button onclick={() => (pending = null)}>Cancel</button>
+        <Button variant="primary" onclick={submitPending}>Rename preset</Button>
+        <Button onclick={() => (pending = null)}>Cancel</Button>
       </div>
     {/if}
   </div>
@@ -312,43 +339,28 @@
 <style>
   /* Same flex-wrap row layout the shared tab strip used, kept local now that
      the preset controls have their own panel instead of sharing a row with it. */
-  .filters-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
-  .filters-controls label { display: flex; gap: 0.4rem; align-items: center; }
-  .preset-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-  .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
-  .name-entry input { flex: 1; max-width: 16rem; }
-  button.danger { border-color: #a33; }
-  /* Dark native controls: the app runs in a dark WebView2; give selects, their
-     options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, .name-entry input, .group-filter {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
-  }
+  /* Both dark-native-control blocks are gone — the selects, their options and
+     optgroups, the two text inputs and the radios are all Fields now. */
+  .filters-controls { display: flex; gap: var(--s4); margin-bottom: var(--s2); align-items: center; flex-wrap: wrap; }
+  .preset-actions { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+  .name-entry { display: flex; gap: var(--s1); align-items: center; margin-bottom: var(--s2); }
+  .name-entry :global(.field) { flex: 1; max-width: 16rem; }
+  .name-entry :global(input) { width: 100%; }
   /* Full-width so the box below can size a real column grid — it's a flex item
      inside the wrapping .filters-controls row otherwise. */
-  .preset-contents { flex-basis: 100%; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.35rem; }
-  .contents-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  .preset-contents { flex-basis: 100%; margin-top: var(--s2); display: flex; flex-direction: column; gap: var(--s1); }
+  .contents-head { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
   .contents-title { font-weight: 600; }
-  .section-heading { margin: 0.2rem 0 0; font-size: 0.9em; }
-  .group-cat > summary { cursor: pointer; padding: 0.2rem 0; }
-  .cat-bulk { margin-left: 0.6rem; }
-  .cat-bulk button {
-    background: var(--bg-panel); color: var(--fg-dim);
-    border: 1px solid var(--border); border-radius: 3px;
-    padding: 0 0.35rem; margin-left: 0.2rem; font: inherit; font-size: 0.85em; cursor: pointer;
+  .section-heading { margin: var(--s1) 0 0; font-size: var(--t-body); }
+  .group-cat > summary { cursor: pointer; padding: var(--s1) 0; }
+  .cat-bulk { margin-left: var(--s2); }
+  .group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 0 var(--s3);
+    padding: var(--s1) 0 var(--s1) var(--s4);
   }
-  .cat-bulk button:hover { color: var(--fg); border-color: var(--accent); }
-  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.15rem 0.8rem; padding: 0.2rem 0 0.4rem 1rem; }
-  .group-item { display: flex; gap: 0.35rem; align-items: center; }
-  .preset-contents input[type="checkbox"] { accent-color: var(--accent); }
-  .unknown-groups { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; color: var(--warn); }
-  .exceptions-list { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.2rem 0 0.4rem 1rem; }
-  .exception-row { display: flex; gap: 0.8rem; align-items: center; }
+  .exceptions-list { display: flex; flex-direction: column; gap: 0; padding: var(--s1) 0 var(--s1) var(--s4); }
+  .exception-row { display: flex; gap: var(--s3); align-items: center; }
   .exception-label { min-width: 14rem; }
-  .exception-row label { display: flex; gap: 0.3rem; align-items: center; }
-  /* Radios render as a light circle in this app's dark WebView2 shell unless
-     given explicit dark colors (see the dark-native-controls memo). */
-  .exceptions-list input[type="radio"] {
-    background: var(--bg-panel); color: var(--fg); accent-color: var(--accent);
-  }
 </style>

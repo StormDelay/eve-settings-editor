@@ -2,6 +2,12 @@
   import { api, errMessage, type Keybinds, type KeybindEntry } from "./api";
   import { labelFor, groupFor, GROUP_ORDER, defaultFor, keysToLabel, eventToKeys } from "./keybinds";
   import { message } from "@tauri-apps/plugin-dialog";
+  import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import ScopeBanner from "./ui/ScopeBanner.svelte";
+  import SearchField from "./ui/SearchField.svelte";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, sharedLabel = "" }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
@@ -80,25 +86,35 @@
   }
 </script>
 
+<!-- Both of these used `class="empty"`, which NO stylesheet in the repo ever
+     declared, so two shipped empty states rendered as bare unstyled paragraphs
+     and nobody noticed. That is the sharpest single piece of evidence for this
+     phase: there was no shared thing whose absence would show. -->
 {#if !userOpen}
-  <p class="empty">
-    No account file open. <button class="link" onclick={onShowAccounts}>Pair this character…</button>
-  </p>
+  <EmptyState title="No account file open.">
+    {#snippet action()}
+      <Button onclick={onShowAccounts}>Pair this character…</Button>
+    {/snippet}
+  </EmptyState>
 {:else if error}
-  <p class="error">{error}</p>
+  <InlineMessage variant="error">{error}</InlineMessage>
 {:else if binds && !binds.available}
-  <p class="empty">
-    This account has no keybinding table yet. EVE only writes one once you have opened
-    the in-game keybinding screen at least once on this account.
-    <button class="link" onclick={onShowBatch}>Copy bindings from another account…</button>
-  </p>
+  <EmptyState
+    title="This account has no keybinding table yet."
+    description="EVE only writes one once you have opened the in-game keybinding screen at least once on this account.">
+    {#snippet action()}
+      <Button onclick={onShowBatch}>Copy bindings from another account…</Button>
+    {/snippet}
+  </EmptyState>
 {:else if binds}
-  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
-  <div class="searchbar">
+  <ScopeBanner label={sharedLabel ?? ""} />
+  <!-- Its own class, not the global `.searchbar`: that rule belongs to the
+       tree's search bar and is deleted with it. -->
+  <div class="search-row">
     <!-- No "(Ctrl+F)" hint: that shortcut still opens the Tree search from the
          page-level handler. Wiring it per-view is being done on the layout
          branch; this placeholder gains the hint when that lands. -->
-    <input class="search" bind:value={query} placeholder="Search commands and keys" />
+    <SearchField verb="search" nouns="commands and keys" bind:value={query} class="search" />
     <span class="meta">Click a binding, then press the combination you want.</span>
   </div>
   {#each grouped as [group, entries] (group)}
@@ -115,15 +131,18 @@
             <td class="label" title={e.command}>{labelFor(e.command)}</td>
             <td class="combo">
               {#if e.malformed}
-                <span class="chip readonly" title="Unrecognised value; left untouched">unreadable</span>
+                <Chip class="readonly" title="Unrecognised value; left untouched">unreadable</Chip>
               {:else}
-                <button
+                <!-- Keeps `class="chip"`: KeybindsView.spec finds this control
+                     by that class. It is a toggle, so it says so with
+                     aria-pressed rather than only a border colour. -->
+                <Button
                   class="chip"
-                  class:listening={listening === e.command}
+                  pressed={listening === e.command}
                   onclick={() => (listening = e.command)}
-                  onkeydown={(ev) => listening === e.command && onKeydown(ev, e.command)}>
+                  onkeydown={(ev: KeyboardEvent) => listening === e.command && onKeydown(ev, e.command)}>
                   {listening === e.command ? "press a key…" : keysToLabel(e.keys)}
-                </button>
+                </Button>
               {/if}
               {#if stolenFrom[e.command]}
                 <span class="meta" title={stolenFrom[e.command]}
@@ -132,11 +151,15 @@
             </td>
             <td class="default">{keysToLabel(defaultFor(e.command))}</td>
             <td>
-              <button
-                class="mini"
+              <!-- Was `.mini`, and so invisible: it sits outside any `.row`. -->
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
                 disabled={defaultFor(e.command) === null}
-                title="Reset to EVE's default (not yet captured)"
-                onclick={() => commit(e.command, defaultFor(e.command))}>↺</button>
+                disabledReason="Reset to EVE's default (not yet captured)"
+                title="Reset to EVE's default"
+                onclick={() => commit(e.command, defaultFor(e.command))}>↺</Button>
             </td>
           </tr>
         {/each}
@@ -152,15 +175,19 @@
 {/if}
 
 <style>
-  /* Native controls render light in the dark WebView2 shell unless told
-     otherwise — see the dark-native-controls note in the repo memory. */
-  .search { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); }
-  .chip { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); min-width: 7rem; }
-  .chip.listening { border-color: var(--accent); }
-  .chip.readonly { opacity: 0.6; }
-  .default { opacity: 0.5; }
-  tr.malformed { opacity: 0.6; }
-  .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  /* The dark-native-control rules are gone; Field owns that once, and Button
+     owns the capture control's own colours and its pressed state. */
+  /* Scoped through .combo, which is authored here — a bare :global(.chip) would
+     reach every Chip in the app. */
+  .combo :global(.chip) { min-width: 7rem; }
+  /* A binding EVE wrote in a form we cannot read is genuinely unavailable, so
+     it takes the one disabled treatment rather than a bespoke dimness. */
+  .combo :global(.chip.readonly) { opacity: var(--o-disabled); }
+  /* Rank by colour weight, not by dimming: the default column is reference
+     information beside the live value, and at opacity .5 it was unreadable. */
+  .default { color: var(--text-muted); }
+  tr.malformed { color: var(--text-muted); }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
   /* Ellipsised, not wrapped: the combo column is a fixed 16rem in a
      `table-layout: fixed` table, so a long command name ("Activate High Power
      Slot 4") used to spill out of the row and overlap the one beneath. The full
@@ -180,12 +207,15 @@
   .c-default { width: 9rem; }
   .c-reset { width: 3rem; }
   .capture-bar {
-    position: sticky; bottom: 0; margin: 0.5rem 0 0;
-    padding: 0.4rem 0.6rem; background: var(--bg-panel);
-    border-top: 1px solid var(--accent); color: var(--fg);
+    position: sticky; bottom: 0; margin: var(--s2) 0 0;
+    padding: var(--s1) var(--s2); background: var(--surface);
+    border-top: 1px solid var(--accent); color: var(--text);
   }
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
+  .search-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-bottom: var(--s2);
   }
+  .search-row :global(.search) { flex: 1; max-width: 20rem; }
 </style>

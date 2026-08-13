@@ -11,6 +11,9 @@
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
@@ -824,7 +827,7 @@
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
 {#if layout === null}
-  <p class="hint">Loading layout…</p>
+  <EmptyState title="Loading layout…" />
 {:else}
   <div class="layout-view">
     <div class="canvas-wrap" bind:clientWidth={containerWidth}>
@@ -923,10 +926,12 @@
       </div>
       <p class="ref">
         reference {layout.reference_w}×{layout.reference_h}
-        <label class="det">
-          <input type="checkbox" checked={detailOn()} onchange={(e) => setDetail(e.currentTarget.checked)} />
-          Detail
-        </label>
+        <Field
+          kind="checkbox"
+          class="det"
+          label="Detail"
+          value={detailOn()}
+          onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
         {#if !readOnly}
           <span class="hintish">· Shift-drag onto another window to stack · drag a tab to reorder or pull out</span>
         {/if}
@@ -937,13 +942,13 @@
                  user narrowed, and hiding clutter is the view they started
                  from rather than something they chose. Showing every window is
                  one click away on the toggle itself. -->
-            <button class="linkish" onclick={() => (filter = { ...DEFAULT_FILTER })}>reset</button>
+            <Button variant="ghost" size="sm" class="linkish" onclick={() => (filter = { ...DEFAULT_FILTER })}>reset</Button>
           </span>
         {/if}
         {#if overrideCount(documentWindowIds) > 0}
           <span class="showing">
             · {overrideCount(documentWindowIds)} overridden
-            <button class="linkish" onclick={() => clearClutterOverrides(documentWindowIds)}>clear</button>
+            <Button variant="ghost" size="sm" class="linkish" onclick={() => clearClutterOverrides(documentWindowIds)}>clear</Button>
           </span>
         {/if}
       </p>
@@ -1014,7 +1019,7 @@
   }
   .canvas-wrap {
     overflow: auto;
-    padding: 0.5rem;
+    padding: var(--s2);
   }
   .side {
     display: flex;
@@ -1024,18 +1029,24 @@
   }
   .canvas {
     position: relative;
-    background: #1b1f27;
-    background-image: linear-gradient(#2a2f3a 1px, transparent 1px),
-      linear-gradient(90deg, #2a2f3a 1px, transparent 1px);
+    /* --surface, so the canvas stays a step lighter than the app ground the way
+       it always was — the relationship survives, the second palette does not. */
+    background: var(--surface);
+    background-image: linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
     background-size: 40px 40px;
-    border: 1px solid #444;
+    border: 1px solid var(--border-strong);
   }
   .furniture {
     position: absolute;
     box-sizing: border-box;
-    background: rgba(148, 163, 184, 0.12);
-    border: 1px dashed #64748b;
-    color: #94a3b8;
+    background: var(--muted-veil);
+    border: 1px dashed var(--border-strong);
+    /* --text-secondary, not --text-muted: composited over the furniture veil
+       this is Lc 80 where #94a3b8 was Lc 47. It stays quieter than a window
+       label, which is the distinction that was worth keeping. */
+    color: var(--text-secondary);
+    /* Canvas-scale type. */
     font-size: 11px;
     overflow: hidden;
     /* Clickable so it can be selected, but furniture is drawn BEFORE the window
@@ -1060,9 +1071,9 @@
   /* The same amber as .win.selected, so a selection reads identically whether
      it's a window or furniture; the dashed border still says "not a window". */
   .furniture.selected {
-    border-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.25);
-    color: #fde68a;
+    border-color: var(--warn);
+    background: var(--warn-veil);
+    color: var(--text);
     z-index: 1;
   }
   .anchor-dot {
@@ -1073,8 +1084,8 @@
     /* Straddles the corner, so it reads as ON the point rather than inside the
        box — the point is what moves, and it is often outside the drawn list. */
     margin: -5px;
-    background: #f59e0b;
-    border: 1px solid #1c1917;
+    background: var(--warn);
+    border: 1px solid var(--bg);
     pointer-events: none;
   }
   .anchor-dot.tl { top: 0; left: 0; }
@@ -1091,17 +1102,18 @@
   .win {
     position: absolute;
     box-sizing: border-box;
-    background: rgba(96, 165, 250, 0.25);
-    border: 1px solid #60a5fa;
-    color: #dbeafe;
+    background: var(--accent-veil);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    /* Canvas-scale type. */
     font-size: 11px;
     overflow: hidden;
     cursor: move;
     touch-action: none;
   }
   .win.selected {
-    border-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.25);
+    border-color: var(--warn);
+    background: var(--warn-veil);
     z-index: 1;
   }
   /* A stack rectangle gets a heavier border so it reads as a group of windows,
@@ -1112,16 +1124,16 @@
   /* The unit a Shift-drag would stack onto. Deliberately NOT the amber of a
      selection — this is a transient "drop here", not a state. */
   .win.droptarget {
-    border-color: #34d399;
-    background: rgba(52, 211, 153, 0.3);
-    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.5);
+    border-color: var(--ok);
+    background: var(--ok-veil);
+    box-shadow: 0 0 0 2px var(--ok);
     z-index: 1;
   }
   /* Snap feedback: the edge the dragged rect locked onto. Same amber as a
      selection, above every rect, never in the way of the pointer. */
   .guide {
     position: absolute;
-    background: #f59e0b;
+    background: var(--warn);
     pointer-events: none;
     z-index: 2;
   }
@@ -1150,24 +1162,26 @@
   .tabs {
     display: flex;
     gap: 1px;
-    background: #11141a;
+    background: var(--bg);
     overflow: hidden;
     /* Above the detail layer, which is an absolutely-positioned sibling. */
     position: relative;
     z-index: 1;
   }
   .tab {
-    padding: 1px 4px;
-    background: #2a2f3a;
-    color: #dbeafe;
+    padding: 1px var(--s1);
+    background: var(--surface-raised);
+    color: var(--text-secondary);
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* A light tone on its own dim ground, not dark text on a saturated fill:
+     that pattern measured Lc 59.6 here, and this measures 69.2. */
   .tab.active {
-    background: #f59e0b;
-    color: #1b1f27;
+    background: var(--warn-dim);
+    color: var(--warn);
   }
   /* The tab being dragged. No floating ghost rect: the target highlight and
      this are enough to read the gesture, and a ghost would need its own
@@ -1187,39 +1201,30 @@
   .resize.tr { right: 0; top: 0; cursor: nesw-resize; }
   .resize.bl { left: 0; bottom: 0; cursor: nesw-resize; }
   .resize.br { right: 0; bottom: 0; cursor: nwse-resize; }
+  /* Not canvas-scale: this is a status line BELOW the canvas, so it takes the
+     type scale like the rest of the chrome. */
   .ref {
-    color: #888;
-    font-size: 11px;
-    margin: 0.3rem 0 0;
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+    margin: var(--s1) 0 0;
   }
   .showing {
     color: var(--warn);
   }
+  /* Was #666 on the app ground: Lc 21.9, which is effectively invisible, for
+     text that explains the canvas's gestures. --text-muted is Lc 72. */
   .hintish {
-    color: #666;
+    color: var(--text-muted);
   }
-  /* Explicit colours per the dark-native-controls note: an unstyled checkbox
-     renders light-on-light in this theme. */
-  .det {
-    color: #888;
+  /* The dark-native-control rule is gone — Field owns it. */
+  .side :global(.det) {
+    color: var(--text-secondary);
     cursor: pointer;
-    margin-left: 0.4rem;
+    margin-left: var(--s1);
   }
-  .det input {
-    accent-color: var(--accent);
-    vertical-align: -1px;
-  }
-  .linkish {
-    background: none;
-    border: none;
+  :global(.linkish) {
     color: var(--accent);
-    cursor: pointer;
-    font: inherit;
     padding: 0;
     text-decoration: underline;
-  }
-  .hint {
-    color: #888;
-    padding: 1rem;
   }
 </style>

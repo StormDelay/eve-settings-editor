@@ -2,6 +2,10 @@
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
   import { EFFECT_COUNT_MAX, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
+  import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
@@ -184,37 +188,52 @@
 
 <div class="hud-panel">
   {#if anyAccountRow}
-    <p class="account-legend">
-      <span class="badge">account</span> rows are stored once for the whole account{sharedNames.length
+    <!-- InlineMessage directly rather than ScopeBanner: this legend's text is
+         not a string — it opens with a live `account` chip — and ScopeBanner
+         takes a `label`. It is the same treatment either way, since ScopeBanner
+         IS an info InlineMessage with a fixed shape. The class stays because
+         HudPanel.spec finds the legend by it. -->
+    <InlineMessage class="account-legend">
+      <Chip tone="neutral" size="sm">account</Chip> rows are stored once for the whole account{sharedNames.length
         ? ` — editing one also changes ${sharedNames.join(", ")}`
         : " — every character on it"}.
-    </p>
+    </InlineMessage>
   {/if}
   {#each GROUPS as g (g.title)}
     <div class="group" class:selected={selectedKind === g.kind}>
-      <h4><button class="group-title" onclick={() => onSelectKind(g.kind)}>{g.title}</button></h4>
+      <h4>
+        <Button variant="ghost" class="group-title" onclick={() => onSelectKind(g.kind)}>{g.title}</Button>
+      </h4>
       {#each g.rows as row (row.name)}
         {@const e = find(row.name)}
         {#if e}
+          <!-- The row stays a wrapping <label> around a bare Field: the label
+               names the control, and HudPanel.spec walks `.row input`. Passing
+               Field a `label` here would nest one label inside another. -->
           <label class="row" title={title(e)}>
             {#if e.kind === "bool"}
-              <input
-                type="checkbox"
-                checked={shown(row.name) === "true"}
+              <Field
+                kind="checkbox"
+                value={shown(row.name) === "true"}
                 disabled={disabled(e)}
+                disabledReason="Not present in this file"
                 onchange={(ev) => onSet(row.name, (ev.target as HTMLInputElement).checked ? "true" : "false")} />
               <span class="label">{row.label}</span>
             {:else}
               <span class="label">{row.label}</span>
-              <input
-                type="number"
-                step={e.kind === "float" && !AXIS[row.name] ? undefined : "1"}
+              <Field
+                kind="number"
+                width="5.5rem"
+                step={e.kind === "float" && !AXIS[row.name] ? undefined : 1}
                 value={shown(row.name)}
                 disabled={disabled(e)}
+                disabledReason="Not present in this file"
                 onchange={numberEdit(row.name, e.kind)} />
             {/if}
-            {#if e.scope === "account"}<span class="badge">account</span>{/if}
-            {#if e.value === null && e.set.how !== "unavailable"}<span class="badge">default</span>{/if}
+            {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
+            {#if e.value === null && e.set.how !== "unavailable"}
+              <Chip tone="neutral" size="sm">default</Chip>
+            {/if}
           </label>
         {/if}
       {/each}
@@ -224,14 +243,15 @@
              to be told, and telling it writes nothing. -->
         <label class="row view" title="How many effect icons the canvas draws under the ship HUD. A view setting — it writes nothing.">
           <span class="label">Effects drawn</span>
-          <input
-            type="number"
-            min="0"
+          <Field
+            kind="number"
+            width="5.5rem"
+            min={0}
             max={EFFECT_COUNT_MAX}
-            step="1"
+            step={1}
             value={effects}
             onchange={viewEdit(() => effects, onEffects)} />
-          <span class="badge">view</span>
+          <Chip tone="neutral" size="sm">view</Chip>
         </label>
       {/if}
       {#if g.kind === "target"}
@@ -239,14 +259,15 @@
              because changing it writes nothing. HudPanel.spec pins that. -->
         <label class="row view" title="How many locked targets the canvas draws. A view setting — it writes nothing.">
           <span class="label">Targets drawn</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            step="1"
+          <Field
+            kind="number"
+            width="5.5rem"
+            min={1}
+            max={10}
+            step={1}
             value={targets}
             onchange={viewEdit(() => targets, onTargets)} />
-          <span class="badge">view</span>
+          <Chip tone="neutral" size="sm">view</Chip>
         </label>
       {/if}
       {#if g.kind === "neocom" && neocom}
@@ -266,77 +287,52 @@
 <style>
   .hud-panel {
     border-bottom: 1px solid var(--border);
-    padding: 0.4rem 0.5rem;
-    font-size: 12px;
+    padding: var(--s1) var(--s2);
+    font-size: var(--t-caption);
   }
-  .account-legend {
-    margin: 0 0 0.5rem;
-    padding: 0.25rem 0.4rem;
-    color: var(--fg-dim);
-    background: var(--bg-panel);
-    border-left: 2px solid var(--accent);
-    font-size: 11px;
+  .hud-panel :global(.account-legend) {
+    margin: 0 0 var(--s2);
+    padding: var(--s1) var(--s2);
   }
   .group {
-    margin-bottom: 0.4rem;
+    margin-bottom: var(--s1);
     /* Transparent by default so selecting a group doesn't shift the layout. */
     border-left: 2px solid transparent;
-    padding-left: 0.3rem;
+    padding-left: var(--s1);
   }
-  /* The two ambers below are deliberately NOT app.css variables: they match
-     the canvas's selected-furniture colour (LayoutView's own #f59e0b/#fde68a),
-     and the pair has to move together or the panel stops agreeing with the
-     rectangle it describes. Everything else here now follows the palette. */
+  /* The selected-group treatment shares --warn with the canvas's selected
+     rectangle (LayoutView's .win.selected / .furniture.selected). The panel and
+     the rectangle it describes must agree; the token is what makes them.
+     This used to be a hardcoded pair of ambers in two files with a comment
+     asking two humans to remember — the weakest possible way to couple two
+     things. The no-hardcoded-hex guard now enforces it. */
   .group.selected {
-    border-left-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.08);
+    border-left-color: var(--warn);
+    background: var(--warn-dim);
   }
   h4 {
-    margin: 0.2rem 0;
+    margin: var(--s1) 0;
   }
   /* A button so it's keyboard-reachable, styled as the heading it replaces
      (same pattern as WindowPanel's window-name button). */
-  .group-title {
+  .hud-panel :global(.group-title) {
     padding: 0;
-    background: none;
-    border: none;
-    color: var(--fg-dim);
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: var(--t-caption);
     font-weight: 600;
     text-transform: uppercase;
-    cursor: pointer;
   }
-  .group.selected .group-title {
-    color: #fde68a;
+  .group.selected :global(.group-title) {
+    color: var(--warn);
   }
   .row {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 1px 0;
+    gap: var(--s1);
+    padding: 0;
   }
   .label {
-    color: var(--fg);
+    color: var(--text);
     min-width: 8.5rem;
-  }
-  /* Native controls render light in WebView2 unless told otherwise. */
-  input[type="number"] {
-    width: 5.5rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-  }
-  input[type="number"]:disabled {
-    color: var(--fg-dim);
-  }
-  input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
-  .badge {
-    color: var(--fg-dim);
-    background: var(--bg-panel);
-    border-radius: 3px;
-    padding: 0 4px;
-    font-size: 10px;
   }
 </style>

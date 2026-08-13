@@ -4,6 +4,8 @@
   // it is handed items and hands back the indices that were ticked.
   import type { FormationSpec } from "./api";
   import { formatUnit } from "./probes";
+  import Button from "./ui/Button.svelte";
+  import Sheet from "./ui/Sheet.svelte";
 
   let { title, items, confirmLabel, onconfirm, oncancel }:
     { title: string; items: FormationSpec[]; confirmLabel: string;
@@ -26,45 +28,51 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="overlay" role="none" data-testid="picker-backdrop" onclick={oncancel}>
-  <div class="modal" role="none" onclick={(e) => e.stopPropagation()}>
-    <h2>{title}</h2>
-    <ul>
-      {#each items as f, i}
-        <li>
-          <label>
-            <!-- Without this, the label's own text (name + meta) becomes the
-                 accessible name; this pins it to just the formation's name. -->
-            <input type="checkbox" checked={picked[i]} aria-label={f.name}
-                   onchange={(e) => (picked[i] = e.currentTarget.checked)} />
-            <span class="name">{f.name}</span>
-            <span class="meta">
-              {f.probes.length} {f.probes.length === 1 ? "probe" : "probes"} · {rangeLabel(f)}
-            </span>
-          </label>
-        </li>
-      {/each}
-    </ul>
-    <div class="form-actions">
-      <button onclick={() => (picked = picked.map(() => !allOn))}>
-        {allOn ? "Select none" : "Select all"}
-      </button>
-      <span class="spacer"></span>
-      <button onclick={oncancel}>Cancel</button>
-      <button disabled={chosen.length === 0} onclick={() => onconfirm(chosen)}>
-        {confirmLabel} {chosen.length}
-      </button>
-    </div>
-  </div>
-</div>
+<Sheet {title} onclose={oncancel} data-testid="picker-backdrop">
+  <h2>{title}</h2>
+  <ul>
+    {#each items as f, i}
+      <li>
+        <!-- The row stays a wrapping <label> rather than becoming a Field: the
+             whole row, meta included, is the hit target, and the spec clicks the
+             meta text to toggle the tick. A Field would put the control and its
+             label side by side and lose that. -->
+        <label>
+          <!-- Without this, the label's own text (name + meta) becomes the
+               accessible name; this pins it to just the formation's name. -->
+          <input type="checkbox" checked={picked[i]} aria-label={f.name}
+                 onchange={(e) => (picked[i] = e.currentTarget.checked)} />
+          <span class="name">{f.name}</span>
+          <span class="meta">
+            {f.probes.length} {f.probes.length === 1 ? "probe" : "probes"} · {rangeLabel(f)}
+          </span>
+        </label>
+      </li>
+    {/each}
+  </ul>
+
+  {#snippet footer()}
+    <Button onclick={() => (picked = picked.map(() => !allOn))}>
+      {allOn ? "Select none" : "Select all"}
+    </Button>
+    <span class="spacer"></span>
+    <Button onclick={oncancel}>Cancel</Button>
+    <Button
+      variant="primary"
+      disabled={chosen.length === 0}
+      disabledReason="Tick at least one formation"
+      onclick={() => onconfirm(chosen)}>
+      {confirmLabel} {chosen.length}
+    </Button>
+  {/snippet}
+</Sheet>
 
 <style>
-  /* `.overlay`, `.modal`, `.form-actions` and `.spacer` are global (app.css) —
-     this is the same modal the tree's insert form uses, not a second one. */
-  h2 { margin: 0 0 0.6rem; font-size: 1em; font-weight: 600; }
+  /* `.spacer` is global (app.css). */
+  h2 { margin: 0 0 var(--s2); font-size: var(--t-title); font-weight: 600; }
   ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
-  li label { display: flex; align-items: baseline; gap: 0.5rem; padding: 3px 2px; cursor: pointer; }
+  li label { display: flex; align-items: baseline; gap: var(--s2); padding: var(--s1); cursor: pointer; }
+  input[type="checkbox"] { accent-color: var(--accent); }
   .name { flex: 1; }
-  .meta { opacity: 0.7; font-size: 0.85em; white-space: nowrap; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); white-space: nowrap; }
 </style>

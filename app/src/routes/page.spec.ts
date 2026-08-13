@@ -175,8 +175,13 @@ describe("the view tabs", () => {
     await mount(profile(file("core_char_950.dat", "char", 950)));
     await openFile("core_char_950.dat");
     await screen.findByText("editable");
+    // role="tab", not "button": the view strip was a bare <span> of role-less
+    // buttons and is a real tablist as of the Phase 1 token/primitive work.
+    // These three queries had to move with it — left as "button" the two
+    // absence assertions here and below would pass vacuously, and could no
+    // longer fail whatever the strip rendered.
     for (const v of ["Tree", "Layout", "Overview", "Autofill", "Keybinds", "Probes"]) {
-      expect(screen.queryByRole("button", { name: v })).toBeNull();
+      expect(screen.queryByRole("tab", { name: v })).toBeNull();
     }
   });
 
@@ -187,7 +192,7 @@ describe("the view tabs", () => {
     await mount(profile(file("core_char_950.dat", "char", 950)));
     await openFile("core_char_950.dat");
     for (const v of ["Overview", "Autofill", "Keybinds", "Probes"]) {
-      expect(await screen.findByRole("button", { name: v })).toBeTruthy();
+      expect(await screen.findByRole("tab", { name: v })).toBeTruthy();
     }
   });
 
@@ -199,6 +204,6 @@ describe("the view tabs", () => {
     await mount(profile(file("core_char_950.dat", "char", 950)));
     await openFile("core_char_950.dat");
     await waitFor(() => expect(calls.of("window_layout").length).toBeGreaterThan(0));
-    expect(screen.queryByRole("button", { name: "Layout" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Layout" })).toBeNull();
   });
 });

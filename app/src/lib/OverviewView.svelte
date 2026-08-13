@@ -7,6 +7,13 @@
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import ScopeBanner from "./ui/ScopeBanner.svelte";
+  import Tabs from "./ui/Tabs.svelte";
 
   let { userOpen, userId, charId, charOpen, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
@@ -44,6 +51,33 @@
   const currentWindow = $derived(data?.windows.find((w) => w.tab_indices.includes(tabIndex ?? -1)) ?? null);
   const currentWindowIndex = $derived(currentWindow?.index ?? null);
 
+  /** The Tab picker's options, grouped by overview window. Tabs that belong to
+   * no window fall into "Other" rather than vanishing from the list. */
+  const tabOptions = $derived.by(() => {
+    const d = data;
+    if (!d) return [];
+    const label = (i: number) => {
+      const t = d.tabs.find((x) => x.index === i);
+      return t ? plainTabName(t.name) : `Tab ${i}`;
+    };
+    if (d.windows.length === 0) {
+      return d.tabs.map((t) => ({ value: t.index, label: plainTabName(t.name) }));
+    }
+    const grouped = new Set(d.windows.flatMap((w) => w.tab_indices));
+    return [
+      ...d.windows.flatMap((w) =>
+        w.tab_indices.map((idx) => ({
+          value: idx,
+          label: label(idx),
+          group: `Overview ${w.index + 1}`,
+        })),
+      ),
+      ...d.tabs
+        .filter((t) => !grouped.has(t.index))
+        .map((t) => ({ value: t.index, label: plainTabName(t.name), group: "Other" })),
+    ];
+  });
+
   // The tab a create just added, which is always the highest index: the backend
   // allocates max+1, and the gap-compaction that follows keeps it last. Diffing
   // the index set against a snapshot taken before the call does NOT survive that
@@ -64,7 +98,19 @@
     | { kind: "addWindow"; value: string }
     | null
   >(null);
-  function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
+  // Was a `use:` action, which Svelte cannot apply to a component. Field hands
+  // back its control node instead, and this focuses it when the name box
+  // appears — same moment, same effect.
+  let nameInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  $effect(() => {
+    if (!nameInput) return;
+    nameInput.focus();
+    if (nameInput instanceof HTMLInputElement) nameInput.select();
+  });
+
+  /** Cleared as soon as the pick is acted on, so the control returns to its
+   * prompt rather than showing the window you just moved the tab to. */
+  let movePick = $state("");
 
   function startCreateTab() {
     if (!data || data.tabs.length === 0) return;
@@ -322,124 +368,121 @@
 }} />
 
 {#if !userOpen && charId !== null}
-  <div class="hint pair">
+  <!-- Same prompt AutofillView renders, and now with the same button
+       treatment — which was §5.7's actual complaint about the pair. -->
+  <div class="pair">
     <p>Link this character to an account to edit shared settings — overview columns live in the account file.</p>
-    <button onclick={onShowAccounts}>Pair…</button>
+    <Button onclick={onShowAccounts}>Pair…</Button>
   </div>
 {:else if !userOpen}
-  <p class="hint">Open a character or account file to edit overview columns.</p>
+  <EmptyState title="Open a character or account file to edit overview columns." />
 {:else if error}
-  <p class="error">{error}</p>
+  <InlineMessage variant="error">{error}</InlineMessage>
 {:else if data}
-  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
+  <ScopeBanner label={sharedLabel ?? ""} />
   {#if data.tabs.length === 0}
-    <p class="hint">This account file has no overview tabs.</p>
+    <EmptyState title="This account file has no overview tabs." />
   {:else}
     <div class="ov-controls">
-      <label>Tab
-        <select bind:value={tabIndex}>
-          {#if data.windows.length > 0}
-            {@const grouped = new Set(data.windows.flatMap((w) => w.tab_indices))}
-            {@const orphans = data.tabs.filter((t) => !grouped.has(t.index))}
-            {#each data.windows as w (w.index)}
-              <optgroup label="Overview {w.index + 1}">
-                {#each w.tab_indices as idx (idx)}
-                  {@const t = data.tabs.find((x) => x.index === idx)}
-                  <!-- plain text: an <option> can't carry the colour, and raw
-                       `<color=0x…>` in the dropdown is worse than neither. -->
-                  <option value={idx}>{t ? plainTabName(t.name) : `Tab ${idx}`}</option>
-                {/each}
-              </optgroup>
-            {/each}
-            {#if orphans.length > 0}
-              <optgroup label="Other">
-                {#each orphans as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
-              </optgroup>
-            {/if}
-          {:else}
-            {#each data.tabs as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
-          {/if}
-        </select>
-      </label>
+      <!-- Plain text in the options: an <option> cannot carry the colour, and
+           raw `<color=0x...>` in the dropdown is worse than neither. -->
+      <Field kind="select" label="Tab" bind:value={tabIndex} options={tabOptions} />
       <div class="tab-actions">
-        <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
-        <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
-        <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
+        <Button onclick={startCreateTab} disabled={!data || data.tabs.length === 0}
+                disabledReason="This account file has no overview tabs" title="New tab">+ New</Button>
+        <Button onclick={startRenameTab} disabled={!tab} disabledReason="Pick a tab first"
+                title="Rename selected tab">Rename</Button>
+        <Button variant="danger" onclick={deleteTab} disabled={!tab} disabledReason="Pick a tab first"
+                title="Delete selected tab">Delete</Button>
         <div class="swatch-wrap" bind:this={swatchEl}>
-          <button class="swatch" disabled={!tab} title="Tab name colour"
+          <!-- aria-label as well as title: the swatch's only content is a dash
+               or nothing at all, and the spec finds it by its label. -->
+          <Button class="swatch" disabled={!tab} disabledReason="Pick a tab first" title="Tab name colour"
+                  aria-label="Tab name colour"
                   style={nameParts?.color ? `background:${cssColor(nameParts.color)}` : ""}
-                  onclick={() => (swatchOpen = !swatchOpen)}
-                  aria-label="Tab name colour">{nameParts?.color ? "" : "—"}</button>
-          {#if swatchOpen}
-            <div class="palette">
+                  onclick={() => (swatchOpen = !swatchOpen)}>{nameParts?.color ? "" : "—"}</Button>
+          <!-- A Popover, so it clamps inside the viewport and closes on Escape.
+               As a bare absolutely-positioned div it did neither, and near the
+               right edge of the window it rendered partly offscreen. -->
+          {#if swatchOpen && swatchEl}
+            <Popover
+              anchor={swatchEl}
+              placement="bottom-start"
+              ariaLabel="Tab name colour"
+              class="palette"
+              onclose={() => (swatchOpen = false)}>
               <div class="palette-grid">
                 {#each EVE_PALETTE as c (c)}
                   <button style="background:#{c}" title="#{c}" aria-label="#{c}"
                           onclick={() => { setNameFormat({ color: `FF${c.toUpperCase()}` }); swatchOpen = false; }}></button>
                 {/each}
               </div>
-              <button class="palette-none"
-                      onclick={() => { setNameFormat({ color: null }); swatchOpen = false; }}>No colour</button>
-            </div>
+              <Button variant="ghost" size="sm" class="palette-none"
+                      onclick={() => { setNameFormat({ color: null }); swatchOpen = false; }}>No colour</Button>
+            </Popover>
           {/if}
         </div>
-        <button class="bold-toggle" class:on={nameParts?.bold} disabled={!tab} title="Bold tab name"
-                aria-pressed={!!nameParts?.bold}
-                onclick={() => setNameFormat({ bold: !nameParts?.bold })}>B</button>
+        <Button class="bold-toggle" pressed={!!nameParts?.bold} disabled={!tab}
+                disabledReason="Pick a tab first" title="Bold tab name"
+                onclick={() => setNameFormat({ bold: !nameParts?.bold })}>B</Button>
         {#if currentWindow && data.windows.length > 1}
           {@const cw = currentWindow}
-          <select aria-label="Move to window" value=""
-                  onchange={(e) => {
-                    const el = e.currentTarget as HTMLSelectElement;
-                    const v = el.value;
-                    el.value = "";
-                    if (v) moveTab(Number(v));
-                  }}>
-            <option value="" disabled>Move to window…</option>
-            {#each data.windows as w (w.index)}
-              {#if w.index !== cw.index}
-                <option value={w.index}>Overview {w.index + 1}</option>
-              {/if}
-            {/each}
-          </select>
+          <Field
+            kind="select"
+            aria-label="Move to window"
+            bind:value={movePick}
+            onchange={() => {
+              const v = movePick;
+              movePick = "";
+              if (v) moveTab(Number(v));
+            }}
+            options={[
+              { value: "", label: "Move to window…", disabled: true },
+              ...data.windows
+                .filter((w) => w.index !== cw.index)
+                .map((w) => ({ value: String(w.index), label: `Overview ${w.index + 1}` })),
+            ]} />
         {/if}
         {#if data.windows.length >= 1}
-          <button onclick={startAddWindow} title="Add a new overview window">+ Window</button>
+          <Button onclick={startAddWindow} title="Add a new overview window">+ Window</Button>
         {/if}
         {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
-          <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
+          <Button variant="danger" onclick={removeWindow}
+                  title="Remove this (last) overview window">Remove Window</Button>
         {/if}
       </div>
       {#if data.windows.length === 0}
-        <div class="no-windows">
-          <span>
-            Tabs aren't assigned to specific overview windows on this account — EVE spreads them
-            across your windows itself. That's normal: importing an overview pack through the
-            client removes the assignment.
-          </span>
-          <button onclick={setUpWindowMapping}>Set up per-window tabs</button>
-        </div>
+        <InlineMessage class="no-windows">
+          Tabs aren't assigned to specific overview windows on this account — EVE spreads them
+          across your windows itself. That's normal: importing an overview pack through the
+          client removes the assignment.
+          <Button size="sm" onclick={setUpWindowMapping}>Set up per-window tabs</Button>
+        </InlineMessage>
       {/if}
       {#if pending}
         <div class="name-entry">
-          <input type="text" bind:value={pending.value} use:focusInput
+          <Field bind:value={pending.value} bind:element={nameInput}
+                 ariaLabel={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
                  placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
-                 onkeydown={(e) => {
+                 onkeydown={(e: KeyboardEvent) => {
                    if (e.key === "Enter") { e.preventDefault(); submitPending(); }
                    else if (e.key === "Escape") pending = null;
                  }} />
-          <button onclick={submitPending}>
+          <Button variant="primary" onclick={submitPending}>
             {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
-          </button>
-          <button onclick={() => (pending = null)}>Cancel</button>
+          </Button>
+          <Button onclick={() => (pending = null)}>Cancel</Button>
         </div>
       {/if}
-      <label>Character (for widths)
-        <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
-          <option value="" disabled>Select…</option>
-          {#each characters as c (c)}<option value={c}>{names[c]?.name ?? c}</option>{/each}
-        </select>
-      </label>
+      <Field
+        kind="select"
+        label="Character (for widths)"
+        value={charId ?? ""}
+        onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}
+        options={[
+          { value: "", label: "Select…", disabled: true },
+          ...characters.map((c) => ({ value: c, label: names[c]?.name ?? String(c) })),
+        ]} />
     </div>
     {#if currentWindow && currentWindow.tab_indices.length > 1}
       {@const cw = currentWindow}
@@ -465,20 +508,31 @@
       </ul>
     {/if}
     {#if characters.length === 0}
-      <p class="hint">No characters associated with this account yet — pair one in Accounts to edit widths.</p>
+      <EmptyState title="No characters associated with this account yet — pair one in Accounts to edit widths." />
     {/if}
   {/if}
 
-  <div class="subtabs" role="tablist">
+  <!-- The pack buttons sat INSIDE the tablist, carrying no role at all, which
+       made it an invalid ARIA tree that svelte-check does not catch. They are
+       beside it now; Phase 4 moves them properly. -->
+  <div class="sub-row">
     {#if data.tabs.length > 0}
-      {#each ["Columns", "Filters", "Appearance"] as name}
-        <button role="tab" aria-selected={sub === name} class:active={sub === name}
-                onclick={() => (sub = name)}>{name}</button>
-      {/each}
+      <Tabs
+        variant="underline"
+        class="subtabs"
+        ariaLabel="Overview section"
+        tabs={[
+          { id: "Columns", label: "Columns" },
+          { id: "Filters", label: "Filters" },
+          { id: "Appearance", label: "Appearance" },
+        ]}
+        bind:value={sub} />
     {/if}
     <span class="pack-actions">
-      <button onclick={importPack} disabled={packBusy} title="Replace this account's overview from an EVE overview pack">Import pack…</button>
-      <button onclick={exportPack} disabled={packBusy} title="Write this account's overview out as an EVE overview pack">Export pack…</button>
+      <Button onclick={importPack} disabled={packBusy} disabledReason="A pack command is in flight"
+              title="Replace this account's overview from an EVE overview pack">Import pack…</Button>
+      <Button onclick={exportPack} disabled={packBusy} disabledReason="A pack command is in flight"
+              title="Write this account's overview out as an EVE overview pack">Export pack…</Button>
     </span>
   </div>
   {#if data.tabs.length > 0}
@@ -495,82 +549,41 @@
 {/if}
 
 <style>
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
-  }
-  .pair { display: flex; align-items: center; gap: 0.6rem; }
-  .pair button {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
-  }
-  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
-  .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
-  .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-  .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
-  .name-entry input { flex: 1; max-width: 16rem; }
-  .no-windows {
-    flex-basis: 100%;
-    display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-    padding: 0.35rem 0.4rem;
-    font-size: 0.85em;
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-  }
-  .no-windows button { flex: none; }
-  button.danger { border-color: #a33; }
-  /* Dark native controls: the app runs in a dark WebView2; give selects, their
-     options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, .name-entry input {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
-  }
-  .ov-tabs { list-style: none; padding: 0; margin: 0 0 0.6rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  /* The dark-native-control block is gone — every select, option, optgroup and
+     text input here is a Field now. */
+  .pair { display: flex; align-items: center; gap: var(--s2); }
+  .ov-controls { display: flex; gap: var(--s4); margin-bottom: var(--s2); align-items: center; flex-wrap: wrap; }
+  .tab-actions { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+  .name-entry { display: flex; gap: var(--s1); align-items: center; margin-bottom: var(--s2); }
+  .name-entry :global(.field) { flex: 1; max-width: 16rem; }
+  .name-entry :global(input) { width: 100%; }
+  :global(.no-windows) { flex-basis: 100%; }
+  /* A reorderable list with a colour swatch and a bold toggle per item, not a
+     tab strip — Tabs is the wrong shape for it. Tokenised in place; Phase 4
+     restructures it as a ListRow set. */
+  .ov-tabs { list-style: none; padding: 0; margin: 0 0 var(--s2); display: flex; gap: var(--s1); flex-wrap: wrap; }
   .ov-tabs li {
-    display: flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.5rem;
-    border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+    display: flex; align-items: center; gap: var(--s1); padding: 0 var(--s2);
+    border: 1px solid var(--border); border-radius: var(--r-sm); cursor: pointer;
   }
   .ov-tabs li.selected { border-color: var(--accent); }
   .ov-tabs button.tab-chip { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
+  .grip { cursor: grab; color: var(--text-muted); }
   /* Tab-name markup controls (see tabName.ts). */
   .swatch-wrap { position: relative; display: inline-flex; }
-  .swatch {
-    width: 1.9rem; height: 1.6rem; padding: 0; cursor: pointer;
-    background: var(--bg-panel); color: var(--fg-dim);
-    border: 1px solid var(--border); border-radius: 3px; font: inherit;
+  .tab-actions :global(.swatch) { width: 1.9rem; }
+  .tab-actions :global(.bold-toggle) { font-weight: 700; }
+  :global(.palette) { display: block; }
+  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: var(--s1); }
+  /* --border-strong, not --border: this outline has to read against an
+     arbitrary user colour on either side of it. */
+  .palette-grid button {
+    width: 1.1rem; height: 1.1rem; border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm); padding: 0; cursor: pointer;
   }
-  .bold-toggle {
-    background: var(--bg-panel); color: var(--fg-dim); font-weight: 700;
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; cursor: pointer;
-  }
-  .bold-toggle.on { color: var(--fg); border-color: var(--accent); }
-  .palette {
-    position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
-    padding: 0.35rem; background: var(--bg-panel);
-    border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  }
-  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: 3px; }
-  .palette-grid button { width: 1.1rem; height: 1.1rem; border: 1px solid #0006; border-radius: 2px; padding: 0; cursor: pointer; }
-  .palette-grid button:hover { outline: 1px solid var(--fg); }
-  .palette-none {
-    display: block; width: 100%; margin-top: 0.35rem; cursor: pointer;
-    background: none; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px;
-    padding: 1px 4px; font: inherit; font-size: 0.85em;
-  }
-  .grip { cursor: grab; opacity: 0.6; }
-  /* New in the sub-tab split (Task 8) — Columns/Filters/Appearance selector. */
-  .subtabs { display: flex; gap: 0.3rem; margin: 0.6rem 0 0.5rem; border-bottom: 1px solid var(--border); }
-  .subtabs button {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    color: var(--fg-dim); padding: 0.3rem 0.7rem; font: inherit; cursor: pointer;
-  }
-  .subtabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
-  /* The pack Import/Export buttons live inside .subtabs for layout only — they
-     aren't tab selectors, so undo the flat tab styling above and look like the
-     normal action buttons (.tab-actions) instead. */
-  .pack-actions button { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; color: var(--fg); }
-  .pack-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+  .palette-grid button:hover { outline: 1px solid var(--text); }
+  :global(.palette-none) { display: block; width: 100%; margin-top: var(--s1); }
+  .sub-row { display: flex; align-items: flex-end; gap: var(--s2); margin: var(--s2) 0; }
+  .sub-row :global(.subtabs) { flex: 1; }
+  .pack-actions { margin-left: auto; display: flex; gap: var(--s1); }
 </style>
