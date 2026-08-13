@@ -233,6 +233,14 @@ export interface CaptureResult {
   detected: [number, number] | null;
 }
 
+/** One char↔account pairing the EVE launcher's logs assert. */
+export interface Proposal {
+  char_id: number;
+  user_id: number;
+  /** Where the store currently puts this character, when it disagrees. */
+  conflict: number | null;
+}
+
 export interface OverviewColumn {
   name: string;
   label: string;
@@ -427,6 +435,9 @@ export const api = {
     invoke<AccountRoster>("confirm_pairing", { charId, userId }),
   unpairCharacter: (charId: number) =>
     invoke<AccountRoster>("unpair_character", { charId }),
+  confirmPairings: (pairs: [number, number][]) =>
+    invoke<AccountRoster>("confirm_pairings", { pairs }),
+  launcherProposals: () => invoke<Proposal[]>("launcher_proposals"),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
   overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
