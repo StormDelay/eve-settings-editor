@@ -138,11 +138,16 @@ test("no-undefined-tokens", () => {
 // --- 4. one type scale -----------------------------------------------------
 // `em` compounds: 0.85em resolves to three different pixel sizes depending on
 // which block it lands in (§2.2), which is the mechanical source of the "text
-// sizes don't match" complaint. The allowlist is the seven canvas-scale lines
-// of §4.3 — drawings of EVE's screen, where --t-caption's 12px would overflow
-// the rectangles the labels name.
+// sizes don't match" complaint.
+//
+// The allowlist is three lines, not §4.3's seven. Those are genuine drawings of
+// EVE's screen, where --t-caption's 12px would overflow the rectangles the
+// labels name. §4.3 also listed ChatSplit's four 10px lines as canvas-scale,
+// but ChatSplit renders inside WindowPanel — the side panel, not the canvas —
+// so it is chrome and takes the scale like everything else. §4.2's own table
+// converts all four to --t-caption, which is the half of the spec that is
+// right; the two sections disagreed and this is the resolution.
 const CANVAS_TYPE: Record<string, string[]> = {
-  "lib/ChatSplit.svelte": ["10px", "10px", "10px", "10px"],
   "lib/DetailParts.svelte": ["9px"],
   "lib/LayoutView.svelte": ["11px", "11px"],
 };

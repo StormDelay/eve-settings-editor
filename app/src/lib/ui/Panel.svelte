@@ -8,6 +8,7 @@
     bordered = true,
     class: klass = "",
     children,
+    ...rest
   }: {
     as?: "section" | "aside" | "div";
     padded?: boolean;
@@ -15,6 +16,9 @@
     bordered?: boolean;
     class?: string;
     children: Snippet;
+    /** Spread onto the root, so a panel can also carry a role and a name —
+        AccountsView's calibration panel is a labelled dialog. */
+    [key: string]: unknown;
   } = $props();
 </script>
 
@@ -23,7 +27,8 @@
   class="panel {klass}"
   class:padded
   class:scroll
-  class:bordered>{@render children()}</svelte:element>
+  class:bordered
+  {...rest}>{@render children()}</svelte:element>
 
 <style>
   .panel {
