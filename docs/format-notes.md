@@ -1654,3 +1654,41 @@ to `Original`** (up to 9 of them), so removal is something players really do.
 reset baseline, but it is not the answer to "what buttons exist" — the
 editor's bundled catalog supplies the rest, unioned with `Original` in the
 frontend.
+
+### The EVE launcher logs char↔account membership (2026-08-13)
+
+Neither settings file states which account a character belongs to. Measured over
+the `2026-07-27T131810Z_baseline` corpus, every profile folder, checking each
+file for the opposite kind's ids as LE32, LE64 and decimal ASCII in both
+directions: **zero hits**. This extends the M0 finding (a char file does not
+contain its own character id) to the cross-reference.
+
+The in-file name heuristic is also dead, and now measured rather than assumed:
+against a known-correct mapping on a live Tranquility profile, a character's ESI
+name uniquely identified its account for **4 of 27** characters. Most names
+appear in *every* account file in the folder — chat channel labels and contact
+lists, not membership.
+
+**The launcher does state it**, in
+`%APPDATA%\EVE Online\logs\eve-online-launcher-*.log`:
+
+```
+[esi] Fetching character details for <char_id>, <char_id>, <char_id>
+[esi] Fetched 3 character details for <user_id>
+```
+
+The two lines sit a few lines apart with unrelated output between them. On one
+real install: **186 paired observations → 10 accounts, exactly 3 characters
+each, fully disjoint**, every `user_id` matching a discovered
+`core_user_<id>.dat`. Logs were retained back to 2023-11 (98 files, 8.1 MB), so
+coverage is not limited to recent sessions.
+
+Two hazards, both handled in `launcher.rs`: concurrent launches interleave the
+pair (3 of 189 `Fetching` lines had no matching `Fetched`), and an account's
+character set legitimately changes over a multi-year log. The parse votes,
+prefers the most recent surviving set per account, and drops any character two
+accounts claim.
+
+Also present and unused: `[client-queue] Queued client startup { userId,
+characterId: <slot>, profile: '<name>' }`, which additionally names the profile
+folder. `characterId` there is a slot index, not a character id.

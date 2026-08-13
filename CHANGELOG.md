@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The Accounts view now offers your characters' accounts straight from the EVE launcher, and tells you when a pairing you already made disagrees with it.
+
 ## [0.33.0] - 2026-08-12
 
 Less clicking in the overview editor, and tab names in colour.
