@@ -1532,11 +1532,11 @@ independently revertable in reverse order.
 one prop each on a component that has real users today, and adding them later
 means reshaping an API with 20+ call sites.
 
-**Needs a decision:** whether `ChatSplit`'s scope legend (`ChatSplit.svelte:45`,
-styled at `:88`, currently `--warn`) should move to `--info` as §5.9 proposes.
+**Decided (2026-08-13, repo owner had no preference — recommendation stands):**
+`ChatSplit`'s scope legend (`ChatSplit.svelte:45`, styled at `:88`) moves from
+`--warn` to `--info`; `.area.bad` at `:119` keeps `--warn`.
 
-The argument for is stronger than "two panels disagree", and worth stating
-precisely. **`--warn` carries both meanings inside this one 135-line file.**
+The reasoning, recorded so it is not relitigated. **`--warn` carries both meanings inside this one 135-line file.**
 `:88` colours the legend — *"Chat layout — account-wide"*, a statement of scope
 — and `:119` colours `.area.bad`, a genuine warning that the computed split
 leaves a negative area. Same token, one file, two meanings, and the reader has
@@ -1549,13 +1549,14 @@ is not the established convention for scope — it is one file's local choice.
 (An earlier draft of this section cited `HudPanel.svelte:57` as if it were a
 style rule; it is a comment. The conclusion holds, but for this reason instead.)
 
-The argument against: the whole point of the legend is that editing a chat split
-changes every character on the account, and amber makes people look.
+The argument against, weighed and rejected: the whole point of the legend is that
+editing a chat split changes every character on the account, and amber makes
+people look. But that is an argument for the *message* being prominent, not for
+it borrowing the warning colour — and it is exactly the argument that produced
+the collision. `ScopeBanner` (§5.9) now owns the account-scope signal app-wide,
+so the legend inherits a consistent treatment rather than inventing one.
 
-Recommendation: **`--info` for the legend, `--warn` stays on `.area.bad`.** That
-leaves `--warn` meaning exactly one thing, and lets the account-scope signal be
-unified with `ScopeBanner` (§5.9), which is the component that should own it.
-One-line change either way.
+Net effect: **`--warn` means exactly one thing again.**
 
 ---
 

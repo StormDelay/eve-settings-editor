@@ -174,19 +174,37 @@ per-step one.
 - **`opacity` is retired as a hierarchy device**, reserved for disabled state at
   one value. Rank comes from size, weight and position.
 
-## Open decisions
+## Decisions taken
 
-Five judgement calls were left open because they are genuinely yours. Each has a
-recommendation and the reasoning both ways in its spec; none blocks starting the
-phase it belongs to.
+All five open questions were settled by the repo owner on **2026-08-13**. Each
+spec now reads as decided; the reasoning is recorded there so none of it gets
+relitigated. Three of the five overturned the spec's own recommendation, and the
+reasoning for the override is captured in each case.
 
-| # | Decision | Recommendation | Spec |
+| # | Question | Outcome | Spec |
 | --- | --- | --- | --- |
-| 1 | Single-select profile in the sidebar, or keep every profile listed at once as today? | Single-select — it is the only way account grouping stays unambiguous when one id appears in ten folders, and it makes the live/not-live warning one unmissable chip | `02-shell.md` §5 |
-| 2 | Should `ChatSplit`'s scope legend move from `--warn` to `--info`? | `--info` — `--warn` currently carries *both* meanings inside that one file: the account-wide legend (`:88`) and a real negative-area warning (`:119`) | `01-tokens-and-primitives.md` §8 |
-| 3 | Calibrate-capture `Cancel` leaves `AppState.capture` set; there is no `clear_capture` command | Pre-existing, not caused by the sheet conversion — log it in `small-tasks.md` rather than widen Phase 3 | `03-sheets.md` §4 |
-| 4 | Should `overview_copy_columns` undo in one press or two? | Two, as specced — one press per document write. A group flag with an RAII guard is ~15 lines if you disagree | `05b-undo.md` §3 |
-| 5 | Take the free atomicity? Once `edit_reshared` holds a before-state, restoring it on `Err` costs one line and makes `apply_mutations` atomic — contradicting its own doc comment | Take it; it is strictly better and free, but it changes documented behaviour so it is called out rather than assumed | `05b-undo.md` §13 |
+| 1 | Sidebar: single-select profile, and group characters by account? | **Single-select profile: yes. Account grouping: no** — it breaks alphabetical sorting and makes a character harder to find. Flat alphabetical list within the selected profile, account carried as a per-row chip. *(Overrode the spec.)* | `02-shell.md` §5 |
+| 2 | Should `ChatSplit`'s scope legend move from `--warn` to `--info`? | **Yes.** Owner had no preference; recommendation stood. `--warn` was carrying both meanings inside one file — the account-wide legend (`:88`) and a real negative-area warning (`:119`). | `01-tokens-and-primitives.md` §8 |
+| 3 | Calibrate-capture `Cancel` leaves `AppState.capture` set, with no `clear_capture` command | **Fix it now**, rather than defer to `small-tasks.md`. *(Overrode the spec.)* | `03-sheets.md` §4 |
+| 4 | Should `overview_copy_columns` undo in one press or two? | **One.** "You are undoing one action; it would feel wrong to have to Ctrl+Z multiple times to go back on a single action." This is now a governing principle: **one Tauri command = at most one undo entry.** *(Overrode the spec.)* | `05b-undo.md` §3 |
+| 5 | Take the free atomicity in `apply_mutations`? | **Yes** — own commit, own test, and `ops.rs:206-208`'s doc comment rewritten in the same change. | `05b-undo.md` §13 |
+
+### Why account grouping was rejected, in full
+
+It is worth recording because the proposal argued for it at some length. The
+sidebar's primary job is **finding a character**, which happens constantly;
+understanding *which characters share settings* matters at **edit** time, not at
+browse time. Grouping paid for the second with the first.
+
+Nothing is lost, because the sharing relationship is surfaced at both moments it
+actually matters, and neither is the sidebar: the **save cluster's impact
+disclosure** names the other characters an account write will change
+(`02-shell.md`), and **`ScopeBanner`** says so inside every account-scoped view
+(`01-tokens-and-primitives.md` §5.9).
+
+The flat list also wins a case the grouped one buried: with the account as a
+per-row chip, **a character with no chip is unpaired** — and an unpaired
+character silently cannot receive account-scoped aspects in a batch copy.
 
 ## Conventions for these specs
 
@@ -195,8 +213,8 @@ Each carries a file-by-file change list, so an implementer can work down it.
 Claims about current behaviour cite `path/file.ext:LINE`; where a spec says the
 code does something, someone read the code.
 
-Where a genuine judgement call was left to the repo owner it is marked
-**Needs a decision:** in the relevant spec. Everything else has been decided, with
+**There are no open questions left.** The five that were are recorded above with
+their outcomes, and each spec now reads as settled. Everything is decided with
 the reasoning stated — overturn any of it, but the reasoning is there to argue
 against rather than a blank.
 

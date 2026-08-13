@@ -234,8 +234,9 @@ purely a draft that costs seconds to rebuild (the Copy settings form). So:
 - `Esc` / close / scrim always dismiss immediately, with no confirmation. A
   confirm-on-close for a form that has written nothing is exactly the
   learned-to-disbelieve dialog the redesign is trying to reduce.
-- The capture flow does not block dismissal either — it **survives** it. See
-  §4.3 for why that is the right answer rather than the lazy one.
+- The capture flow does not block dismissal either — it **survives** it, and
+  dismissal does not discard its backend baseline (§4.4.4). See §4.3 for why
+  that is the right answer rather than the lazy one.
 
 ### 3.5 Scroll containment
 
@@ -373,22 +374,174 @@ badge in the context bar is Phase 2's real estate and would need its own
 justification. If it turns out to be needed, `captureState.active` is now a
 module-level rune and any component can read it.
 
-**Needs a decision:** `Cancel` clears the frontend flag but leaves
-`AppState.capture` set — there is no `clear_capture` command
-(`app/src-tauri/src/lib.rs:178-186` exposes only `begin_capture` and
-`resolve_capture`). A stale baseline that survives until the next
-`begin_capture` can, in principle, make a later `resolve_capture` report a
-detection from unrelated file activity. This is **pre-existing** — today's
-Cancel button has exactly the same hole (`AccountsView.svelte:119`) — and the
-diff only reports a pairing when precisely one char file and one user file
-advanced, so the realistic outcome of a stale baseline is one of the "several
-files changed" messages at `:88-95`, not a wrong pairing. My recommendation is to
-leave it and add a line to `docs/small-tasks.md`, because fixing it means a new
-backend command and a new IPC surface for a hazard nobody has hit. If the owner
-would rather close it now, `clear_capture` is about eight lines including the
-test.
+### 4.4 `clear_capture` — the baseline gets an end as well as a beginning
 
-### 4.4 Refresh
+`Cancel` clears the frontend flag and nothing else. The baseline sits in
+`AppState.capture` (`app/src-tauri/src/ops.rs:38`) until the next
+`begin_capture` overwrites it, because there is no command that discards it:
+`app/src-tauri/src/lib.rs:178-186` exposes `begin_capture` and
+`resolve_capture` and nothing more.
+
+**Decision (the owner's): close it, here, in this phase.** The hole is
+**pre-existing** — today's Cancel button (`AccountsView.svelte:119`) has it
+exactly as written, with no sheet anywhere in sight — so this is a bug fix
+riding along with the phase, not scope creep, and it does not go to
+`docs/small-tasks.md`. It shares exactly one call site with the sheet
+conversion, so **it can ship independently**, before or after the rest of
+Phase 3, in either order.
+
+#### 4.4.1 The command
+
+One function beside its two siblings in `ops.rs`, one `#[tauri::command]`
+one-liner beside theirs in `lib.rs`, one line in `api.ts`:
+
+```rust
+/// Discard the guided-capture baseline. Cancelling the wizard — or finishing
+/// it — must leave nothing behind for the next `resolve_capture` to diff
+/// against.  (ops.rs, beside begin_capture at :383)
+pub fn clear_capture(state: &AppState) {
+    *state.capture.lock().unwrap() = None;
+}
+```
+
+```rust
+// lib.rs, after resolve_capture at :183-186
+#[tauri::command]
+fn clear_capture(state: tauri::State<'_, AppState>) {
+    ops::clear_capture(&state);
+}
+```
+
+Registered by adding the name to the existing capture line of
+`generate_handler!` — `begin_capture, resolve_capture, clear_capture,`
+(`lib.rs:623`).
+
+**No `ErrDto`, and no return value.** It cannot fail: it writes `None` into a
+`Mutex` the caller already owns. A poisoned mutex panics on `.unwrap()` exactly
+as `begin_capture` (`ops.rs:389`) and every other `AppState` accessor in the
+file already does; making this the one fallible-looking capture command would
+force a `catch` at a call site with nothing to do about it. It takes no `roots`
+either — unlike both siblings it does no discovery.
+
+```ts
+// api.ts, after resolveCapture (:431)
+clearCapture: () => invoke<void>("clear_capture"),
+```
+
+#### 4.4.2 `resolve_capture` must first learn what "no baseline" means
+
+This is the part that makes the fix worth more than tidiness, and it must land
+in the same commit. `resolve_capture` reads the slot as
+
+```rust
+let baseline = state.capture.lock().unwrap().clone().unwrap_or_default();
+```
+(`ops.rs:396`)
+
+and `capture_diff` treats a path the baseline does not contain as advanced —
+`None => true, // appeared since baseline` (`app/src-tauri/src/accounts.rs:173-176`).
+An **empty** baseline therefore means *every* discovered file changed. In a
+profile holding one character and one account file that is
+`detected: Some((char_id, user_id))`: a confident, entirely fabricated pairing,
+one `confirm_pairing` away from being written to the store.
+
+Today that state is unreachable — the only caller is the wizard's Done button,
+which exists only once `begin_capture` has run. `clear_capture` makes it
+reachable. So:
+
+```rust
+pub fn resolve_capture(state: &AppState, roots: &[PathBuf]) -> accounts::CaptureResult {
+    // No baseline is not an empty baseline: `capture_diff` reads an absent path
+    // as "appeared since baseline", so diffing against `default()` would report
+    // every file on disk as having changed.
+    let Some(baseline) = state.capture.lock().unwrap().clone() else {
+        return accounts::CaptureResult::default();
+    };
+    …
+}
+```
+
+`CaptureResult` (`accounts.rs:157-164`) gains `Default` in its derive list — one
+word, and the three fields' defaults are precisely the right answer. The
+frontend needs no new branch: `r.changed_users.length === 0` already prints "The
+account file didn't change…" (`AccountsView.svelte:86-88`), which is the honest
+thing to say when there was nothing to compare against.
+
+#### 4.4.3 `resolve_capture` does not clear the slot, and must not start
+
+Checked: it clones the baseline and puts nothing back (`ops.rs:395-403`). The
+slot survives the call, and that is correct, because **Done is retryable** —
+every ambiguous outcome at `AccountsView.svelte:86-96` leaves the wizard open
+and asks the user to try again, and each retry diffs against the same baseline.
+A backend that cleared on resolve would make the second press diff against
+nothing (and, before §4.4.2, against everything).
+
+Clearing therefore belongs to the frontend, which is the only side that knows
+the flow has ended.
+
+#### 4.4.4 Which endings clear, and which dismissals preserve
+
+| Event | Baseline | Why |
+| --- | --- | --- |
+| **Cancel** (`AccountsView.svelte:119`) | **cleared** | The user abandoned the flow. This is the hole being closed. |
+| **Done → `detected` → `confirmPairing` succeeds** (`:75-84`) | **cleared** | Spent. The pairing is written, the wizard closes, and nothing will ever diff against this baseline again. |
+| **Done → `confirmPairing` throws** (`:81-83`, the `MAX = 3` cap) | preserved | The wizard stays open; this is a retry, not an ending. |
+| **Done → ambiguous or nothing detected** (`:86-96`) | preserved | The retry the message asks for diffs against it. |
+| **`Esc`, the close button, the scrim** | **preserved** | §4.3. The user is on their way to EVE. |
+| **Opening a document or a preset pair** (`+page.svelte:262, 300`, now `sheet = null`) | **preserved** | Same dismissal by another route, same reason. |
+| **App shutdown** | nothing to do | `AppState.capture` is an in-process `Mutex` with no persistence; it dies with the process. No `Drop`, no shutdown hook, no `on_window_event`. |
+
+The three preserved rows are the point. §4.3 argued the capture must survive
+dismissal *because the baseline is expensive* — it costs the user a launch of
+EVE, a settings change and a logout to recreate. Calling `clear_capture` on
+dismissal would destroy exactly the thing §4.3 exists to protect, and would do
+it silently: the user comes back, presses Calibrate again, re-baselines to
+*after* EVE's write, and detection is then guaranteed to find nothing. That is
+the same silent failure §4.3 describes, arrived at from the other side. **Only
+an ending clears. A dismissal never does.**
+
+One asymmetry left deliberately alone: `begin_capture` excludes the documents
+open *then* (`ops.rs:386-388`), `resolve_capture` excludes those open *now*
+(`:399-401`). Opening a different file mid-capture therefore drops it out of the
+"after" snapshot, so it can no longer be reported as changed. That can only
+suppress a detection, never invent one; it is pre-existing, and the user-visible
+result is one of the retry messages. Not this phase's business.
+
+#### 4.4.5 One caller, next to the state it owns
+
+§4.3 moves the capture flags into `accounts.svelte.ts`. The clear goes with
+them, so no component reaches for `api.clearCapture` directly:
+
+```ts
+// The only place the backend baseline is discarded. Both endings of the flow —
+// cancelled, and resolved into a confirmed pairing — come through here, so
+// `captureState` and `AppState.capture` cannot disagree. Dismissing the sheet
+// is not an ending (§4.4.4) and does not call it.
+export async function endCapture(note: string | null = null): Promise<void> {
+  captureState.active = false;
+  captureState.note = note;
+  await api.clearCapture();
+}
+```
+
+The flag is cleared *before* the await, so a rejected `invoke` cannot strand the
+wizard on screen. There is no `try`/`catch`: `clear_capture` returns `()` and
+cannot fail (§4.4.1), and if the IPC bridge itself is gone the baseline is gone
+with it.
+
+`AccountsView` then contains no `clearCapture` call of its own. Cancel (`:119`)
+becomes `onclick={() => endCapture()}`, and the success branch (`:79-80`)
+replaces its two assignments with one call:
+
+```ts
+await confirmPairing(charId, userId);          // already refreshes the roster
+await endCapture(`Paired ${nameOf(charId)} ↔ account ${userId}.`);
+```
+
+Every other branch of `finishCapture` (`:86-96`) keeps writing
+`captureState.note` directly and leaves the baseline where it is.
+
+### 4.5 Refresh
 
 Unchanged. `loadRoster()` refreshes the shared rune, which the editor behind the
 sheet also reads — see §7.1.
@@ -717,9 +870,13 @@ mount (`:11`); nothing it does changes pairings, so no further work.
 | --- | --- |
 | `app/src/lib/ui/Sheet.svelte` *(Phase 1)* | Consumed. Needs the three additions in §3.6: `width` variant, `actions` header snippet, `--shell-inset-*` positioning. |
 | `app/src/routes/+page.svelte` | `mainView` (`:30`) → `sheet: "accounts" \| "batch" \| null`. Retarget six assignments (`:485, 486, 572, 582, 591, 592, 601`) and the two resets (`:262, 300`). Delete the `{#if}/{:else if}/{:else}` chain (`:496-500`) and its `{/if}` (`:678`); the editor, backups panel and insert modal become unconditional. Render the two views as fixed-position siblings. Pass `openCharPath` / `openUserPath` to `BatchView` and `onClose` to both. Add `onBatchApplied`. Suppress `Ctrl+F` while `sheet !== null` (`:469-476`). |
-| `app/src/lib/AccountsView.svelte` | Wrap in `<Sheet title="Accounts">`. Delete `.accounts-head` (`:104-110`); its buttons become the sheet's `actions`. Read capture state from the store instead of local `$state` (`:48-50`). Guard `startCapture` against re-entry (`:67-71`). Drop `.accounts`'s own `padding`/`overflow` (`:182`) — the sheet owns both. Scope from `slots.char ?? slots.user` (§4.2). |
+| `app/src/lib/AccountsView.svelte` | Wrap in `<Sheet title="Accounts">`. Delete `.accounts-head` (`:104-110`); its buttons become the sheet's `actions`. Read capture state from the store instead of local `$state` (`:48-50`). Guard `startCapture` against re-entry (`:67-71`). Cancel (`:119`) and the paired-successfully branch (`:79-80`) call `endCapture()` (§4.4.5); no other branch does. Drop `.accounts`'s own `padding`/`overflow` (`:182`) — the sheet owns both. Scope from `slots.char ?? slots.user` (§4.2). |
 | `app/src/lib/BatchView.svelte` | Wrap in `<Sheet title="Copy settings" width="wide">`; the dynamic `<h2>` (`:267`) becomes a subtitle. `openPath` → `openCharPath` + `openUserPath`. Replace `targetsOpenFile` (`:172`) with `willWrite` / `openTargets` and name the file in the warning (`:357-363`). Add `onApplied`. Tokenise the three hardcoded colours (`:425-427`). |
-| `app/src/lib/accounts.svelte.ts` | Add the `captureState` rune (§4.3), ~6 lines with its comment. |
+| `app/src/lib/accounts.svelte.ts` | Add the `captureState` rune (§4.3) and `endCapture()` (§4.4.5) beside it, ~14 lines with their comments. |
+| `app/src/lib/api.ts` | One line: `clearCapture: () => invoke<void>("clear_capture")`, after `resolveCapture` (`:431`). |
+| `app/src-tauri/src/ops.rs` | Add `clear_capture` (§4.4.1) beside `begin_capture` (`:383`). Give `resolve_capture` (`:395-403`) an early return when the slot is `None` instead of `unwrap_or_default()` (`:396`) — §4.4.2. |
+| `app/src-tauri/src/lib.rs` | The `#[tauri::command] clear_capture` one-liner beside its two siblings (`:178-186`), and its name added to the capture line of `generate_handler!` (`:623`). |
+| `app/src-tauri/src/accounts.rs` | One word: `Default` into `CaptureResult`'s derive (`:157`), for §4.4.2's early return. |
 | `app/src/app.css` | No change. `.overlay` / `.modal` (`:101-104`) stay for the insert form until Phase 1 retires them. |
 | `app/src/lib/Sidebar.svelte` | **No change.** The buttons already call `onShowAccounts` / `onShowBatch`. |
 | `AutofillView` / `KeybindsView` / `OverviewView` / `ProbeFormationsView` | **No change.** Their nudges already call the same callbacks. |
@@ -727,13 +884,18 @@ mount (`:11`); nothing it does changes pairings, so no further work.
 Nothing is deleted from any view's feature set. The only markup removed anywhere
 is `AccountsView`'s own header, whose contents move up into the sheet frame.
 
+The `clear_capture` fix (§4.4) is the four backend/api rows plus two lines of
+`AccountsView` and one function in `accounts.svelte.ts`. It shares no line with
+the sheet conversion and can be committed and shipped on its own.
+
 ---
 
 ## 9 Tests
 
-Vitest + jsdom, `*.spec.ts`, following `BatchView.spec.ts`'s house pattern
-(stub `invoke` through `calls`, drive with `@testing-library/svelte`, assert on
-the IPC shape rather than on internals).
+Frontend: Vitest + jsdom, `*.spec.ts`, following `BatchView.spec.ts`'s house
+pattern (stub `invoke` through `calls`, drive with `@testing-library/svelte`,
+assert on the IPC shape rather than on internals). Backend: one plain `#[test]`
+in the module `ops.rs` already has.
 
 ### `app/src/routes/page.spec.ts` — the shell rules
 
@@ -767,23 +929,65 @@ There is no test for this view today, and the capture flow is the one part of
 this phase with a failure mode that is silent.
 
 1. **`a capture survives the sheet being dismissed and reopened`** — start a
-   capture, unmount, remount, assert the wizard is still showing and that
-   `begin_capture` has been called exactly **once**. This is the test that
-   catches the re-baseline bug described in §4.3.
+   capture, unmount, remount, assert the wizard is still showing, that
+   `begin_capture` has been called exactly **once**, and `calls.never
+   ("clear_capture")`. This is the test that catches the re-baseline bug
+   described in §4.3, and the last assertion is what stops a later
+   well-meaning "clean up on unmount" from reintroducing it (§4.4.4).
 2. **`Calibrate cannot re-baseline a capture already in flight`** —
    `calls.never` a second `begin_capture` on a second press.
-3. **`Done pairs the detected character and clears the wizard`** — stub
-   `resolve_capture` with a `detected` pair; assert `confirm_pairing` and that
-   the note names the character.
-4. **`an ambiguous capture keeps the wizard open and explains why`** — stub two
-   `changed_users`; assert the wizard is still rendered
-   (`AccountsView.svelte:90`).
-5. **`the sheet is labelled and dismissable`** — `role="dialog"`,
+3. **`Cancel discards the backend baseline`** — start a capture, press Cancel,
+   assert exactly one `clear_capture` call and that the wizard is gone. Fails on
+   `master`, where the command does not exist and Cancel touches only the flag.
+4. **`Done pairs the detected character and clears the wizard`** — stub
+   `resolve_capture` with a `detected` pair; assert `confirm_pairing`, one
+   `clear_capture` after it, and that the note names the character.
+5. **`a retryable capture keeps its baseline`** — stub `resolve_capture` with
+   two `changed_users`, press Done, assert the wizard is still rendered
+   (`AccountsView.svelte:90`), the message explains why, and
+   `calls.never("clear_capture")`. One test for §4.4.4's two retry rows.
+6. **`the sheet is labelled and dismissable`** — `role="dialog"`,
    accessible name "Accounts", `Esc` calls `onClose`.
 
 Note for the implementer: the capture panel currently carries its own
 `role="dialog"` (`AccountsView.svelte:113`). Inside a sheet that is a dialog
 within a dialog and must be dropped — it becomes a plain `Panel` with a heading.
+
+### `app/src-tauri/src/ops.rs` — `clear_capture`
+
+One `#[test]` in the existing `mod tests` (`ops.rs:962`), beside the two capture
+tests at `:1180-1200` and built the same way — a temp discovery tree with one
+char and one user file:
+
+```rust
+#[test]
+fn clear_capture_discards_the_baseline_and_resolve_then_detects_nothing() {
+    let root = std::env::temp_dir().join(format!("app-cap-clear-{}", std::process::id()));
+    …                                       // same tree setup as :1182-1189
+    let state = AppState::new();
+    begin_capture(&state, std::slice::from_ref(&root));
+    assert!(state.capture.lock().unwrap().is_some());
+
+    clear_capture(&state);
+    assert!(state.capture.lock().unwrap().is_none(), "the slot is empty");
+
+    // Both files advance after the discarded baseline. Without §4.4.2's early
+    // return this reports a confident false pairing, because `capture_diff`
+    // counts every path the baseline does not hold as "appeared".
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(&cf, b"xy").unwrap();
+    fs::write(&uf, b"xy").unwrap();
+
+    let r = resolve_capture(&state, &[root]);
+    assert_eq!(r.detected, None);
+    assert!(r.changed_chars.is_empty() && r.changed_users.is_empty());
+}
+```
+
+The two assertions are the two halves of the fix: the first pins `clear_capture`
+itself, the last three pin §4.4.2. Write the last three first and watch them
+fail against a `clear_capture` that ships without the early return — that is the
+only way this fix can be got half right.
 
 ### `app/src/lib/BatchView.spec.ts` — extend
 
@@ -828,10 +1032,21 @@ on Phase 2 — the `--shell-inset-*` fallbacks degrade to a full-window sheet
 (§3.6), which is still closable and still keeps the editor mounted, so the
 critical fault is fixed either way.
 
-**Rollback** is a single revert. `mainView` is one variable, the two views'
-bodies are structurally unchanged, and no backend command, no IPC shape and no
-persisted format is touched by this phase. The one piece of new shared state
-(`captureState`) is additive and inert if unused.
+**`clear_capture` is the phase's only backend change, and it is additive.** One
+new command that writes `None` into a `Mutex`; no existing command's signature,
+shape or behaviour moves, with the single exception of `resolve_capture`
+returning an empty result instead of a false-positive one when no baseline is
+set (§4.4.2) — a state that is unreachable today and only becomes reachable
+because of this fix. Nothing persists, so there is no format to migrate and
+nothing to migrate back.
+
+**Rollback** is a single revert, or two. `mainView` is one variable and the two
+views' bodies are structurally unchanged; no IPC shape and no persisted format
+is touched by this phase. The one piece of new shared state (`captureState`) is
+additive and inert if unused. Because §4.4 shares no line with the sheet
+conversion (§8), it can be reverted separately in either direction: the sheets
+without the fix behave as `master` does today, and the fix without the sheets is
+a strictly better Cancel button.
 
 ---
 
@@ -853,6 +1068,13 @@ persisted format is touched by this phase. The one piece of new shared state
       — verified by hand as well as by test, since scroll is not asserted.
 - [ ] A capture started in the Accounts sheet survives dismissal; reopening
       shows it still in flight; `begin_capture` fires once per capture.
+- [ ] `clear_capture` exists, is registered in `generate_handler!`, and is
+      wrapped in `api.ts`; `AppState.capture` is empty after it runs.
+- [ ] Cancel and a successfully-confirmed Done each call it exactly once;
+      `Esc`, the close button, the scrim, and opening a document call it
+      **never**, and a capture survives all four with its baseline intact.
+- [ ] `resolve_capture` with no baseline reports nothing detected rather than
+      diffing against an empty snapshot and inventing a pairing.
 - [ ] Pairing in the Accounts sheet visibly enables the account-scoped tabs
       behind it, and renaming an account renames the subject in the context bar.
 - [ ] Copy settings warns, by name, when a run will write either open document —
