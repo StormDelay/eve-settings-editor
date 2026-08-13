@@ -20,6 +20,9 @@
 
   let {
     switcherOpen = $bindable(false),
+    /** Measured, not tokenised: the bar's height is its content's, and a sheet
+     *  inset by a guessed constant would either clip it or float below it. */
+    height = $bindable(0),
     onOpen,
     onOpenPreset,
     onGoto,
@@ -29,6 +32,7 @@
     onRestored,
   }: {
     switcherOpen?: boolean;
+    height?: number;
     onOpen: (path: string) => void;
     onOpenPreset: (p: PresetInfo) => void;
     onGoto: (v: View) => void;
@@ -67,7 +71,7 @@
   );
 </script>
 
-<header class="context-bar">
+<header class="context-bar" bind:clientHeight={height}>
   <span bind:this={menuEl}>
     <Button
       variant="ghost"

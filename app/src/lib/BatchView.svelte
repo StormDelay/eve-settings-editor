@@ -9,8 +9,24 @@
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
+  import Sheet from "./ui/Sheet.svelte";
 
-  let { openPath }: { openPath: string | null } = $props();
+  // Two paths, not one. `openPath` was the tab-derived active slot, so which
+  // editor tab happened to be selected decided whether the source seeded at all
+  // — and the open-file warning could only ever check one of the two documents.
+  let {
+    openCharPath,
+    openUserPath,
+    onClose,
+    onApplied,
+  }: {
+    openCharPath: string | null;
+    openUserPath: string | null;
+    onClose: () => void;
+    /** Every path this run actually wrote, so the shell can re-read the ones it
+     *  has open. Called only on a successful apply. */
+    onApplied?: (written: string[]) => void;
+  } = $props();
 
   loadRoster();
   loadPresets();
@@ -41,7 +57,7 @@
   const folder = $derived(folderPick ?? autoFolder);
 
   let sourcePath = $state<string | null>(
-    untrack(() => (openPath && openPath.includes("core_char_") ? openPath : null)),
+    untrack(() => (openCharPath && openCharPath.includes("core_char_") ? openCharPath : null)),
   );
 
   function pickFolder(dir: string) {
@@ -173,7 +189,7 @@
   // stale and the only thing that notices is the save-time on-disk check, two
   // steps later. Warn at the point of decision instead. Dirty state doesn't
   // matter — the on-screen copy is out of date either way.
-  const targetsOpenFile = $derived(openPath !== null && effectiveTargets.includes(openPath));
+  //
 
   function selectAllTargets() {
     const next = new Set(selectedTargets);
@@ -197,6 +213,7 @@
   const nameOf = (kind: string, id: number | null, fileName: string) =>
     id == null ? fileName : (resolvedName(kind, id) ?? `${kind === "user" ? "account" : "char"} ${id}`);
   const nameOfChar = (id: number | null, fileName: string) => nameOf("char", id, fileName);
+
   const accountLabel = (id: number) => {
     const alias = resolvedName("user", id);
     return alias ? `${alias} (${id})` : `${id}`;
@@ -225,6 +242,35 @@
   // Preview from the backend whenever source/aspects/targets settle. Guarded
   // by a request token so a slow, stale response can't clobber a newer plan.
   let plan = $state<SetupPlan | null>(null);
+
+  // Every path this run will write, character targets AND the account writes the
+  // backend plans, intersected with BOTH open slots. The old check compared one
+  // tab-derived path against the character targets only, so it missed two real
+  // cases: the open ACCOUNT file being rewritten (a keybinds copy onto a paired
+  // sibling writes it, and it may be the very one open), and the open character
+  // file whenever the user sat on a user-scoped tab.
+  const willWrite = $derived(
+    fileMode
+      ? effectiveTargets
+      : [...effectiveTargets, ...(plan?.account_writes ?? []).map((w) => w.path)],
+  );
+  const openTargets = $derived(
+    ([openCharPath, openUserPath] as const).filter(
+      (p): p is string => p !== null && willWrite.includes(p),
+    ),
+  );
+  // Named, not counted: "one target" does not say which file is about to go
+  // stale behind the sheet.
+  const openTargetNames = $derived(
+    openTargets.map((p) => {
+      if (p === openUserPath) {
+        const m = p.match(/core_user_(\d+)\.dat$/);
+        return m ? `the ${accountLabel(Number(m[1]))} account file` : "the open account file";
+      }
+      const c = chars.find((x) => x.path === p);
+      return c ? nameOfChar(c.id, c.file_name) : "the open character file";
+    }),
+  );
   let previewSeq = 0;
   $effect(() => {
     const src = batchSource;
@@ -259,6 +305,10 @@
         if (!batchSource) return;
         results = await api.setupApply(batchSource, effectiveTargets, [...selected] as Aspect[], allowOtherFolders);
       }
+      // Only what actually landed. The shell re-reads any slot in this list that
+      // is open and clean, so every projection-based view refreshes through the
+      // `savedAt` token it already watches. Not called when apply throws.
+      onApplied?.(results.filter((r) => r.ok).map((r) => r.path));
     } catch (e) {
       error = errMessage(e);
     } finally {
@@ -267,8 +317,20 @@
   }
 </script>
 
+<!-- `wide`, because a target row carries three pieces — name, filename, and a
+     folder label when it is out of folder — and the plan preview's account
+     warnings list collateral characters by name. Cramping those is how a
+     destructive screen gets misread. The title stays fixed so the sheet's
+     identity does not change under the user when they click a source radio; what
+     varies moves to the subtitle, verbatim. -->
+<Sheet
+  title="Copy settings"
+  subtitle={fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}
+  titled
+  placement="work"
+  onclose={onClose}
+  data-testid="batch-backdrop">
 <div class="batch">
-  <h2>{fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}</h2>
 
   <section>
     <Field
@@ -384,11 +446,15 @@
 
     <!-- Applies to both modes, so it sits outside the plan: a file copy fetches
          no plan, and in the character flow this warns before the plan lands. -->
-    {#if targetsOpenFile}
+    {#if openTargets.length > 0}
       <section class="preview">
-        <InlineMessage variant="warn">⚠ One target is the file open in the editor. Its on-screen
-          copy will be out of date after this runs — reload it before editing
-          further, or your next save will collide with what this wrote.</InlineMessage>
+        <!-- Names the document rather than saying "one target". With the editor
+             standing behind the sheet, the file it is talking about is right
+             there — warning about a document behind a curtain while holding the
+             curtain shut was the wrong way round. -->
+        <InlineMessage variant="warn">⚠ This will rewrite {openTargetNames.join(" and ")},
+          open in the editor behind this sheet. The on-screen
+          {openTargetNames.length === 1 ? "copy" : "copies"} will be out of date afterwards.</InlineMessage>
       </section>
     {/if}
 
@@ -442,13 +508,19 @@
     {/if}
   {/if}
 </div>
+</Sheet>
 
 <style>
   /* The select/option and accent-color rules are gone — Field owns them. The
      .warn/.err/.ok colour trio is gone too: those were three more spellings of
      --warn/--danger/--ok, and the paragraphs they coloured are InlineMessages
      now, which carry the meaning in a rail rather than in the body text. */
-  .batch { padding: var(--s4); max-width: 46rem; }
+  /* The Sheet owns the padding and the scrolling. The column is wider than the
+     46rem it capped itself at: a target row carries a name, a filename and
+     sometimes a folder label, and the account warnings list collateral
+     characters by name. Still bounded, so a sentence never runs the full width
+     of a 2560px screen. */
+  .batch { max-width: 60rem; }
   section { margin: var(--s3) 0; }
   /* BatchView.spec finds each section through this class. */
   .head { font-weight: 600; margin-bottom: var(--s1); display: flex; gap: var(--s4); align-items: baseline; }
