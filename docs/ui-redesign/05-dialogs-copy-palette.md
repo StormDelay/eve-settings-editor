@@ -9,6 +9,29 @@ care, because it is the only phase that can silently swallow an error.
 Undo is **not** in this phase. It is Phase 5b, it is optional, and nothing here
 waits on it — see §3.3.
 
+### What v0.34 changed
+
+Re-verified against v0.34.0 (launcher-log association, PR #79; overview tab
+reorder, PR #77). Every line number below is re-anchored; the working-tree `†`
+caveat that used to hang off `OverviewView.svelte` is gone, because those changes
+are committed now.
+
+- **The dialog audit is unchanged in substance.** A fresh raw grep still returns
+  75 matches; the two false positives are still false positives, at the same
+  lines; the real figure is still **73 blocking dialogs in 13 files** (§2.1).
+  Nine of `OverviewView`'s fifteen call sites moved; none were added or removed.
+  Re-counting turned up one off-by-one of this spec's own: the distinct dialog
+  titles are **46**, not 45 (§2.2). v0.34 added none of them.
+- **`AccountsView` makes no blocking dialogs at all** — 170 new lines, a whole
+  proposals UI, zero `message`/`confirm`/`ask`. It is this phase's argument,
+  already shipped and already tested. §2.1 and §3.1 point at it.
+- **It also invented two more inline-message classes** (`.conflict`,
+  `.from-launcher`) and a twenty-second `.hint`. Seven names for four jobs is now
+  nine (§2.3) — the drift this phase exists to stop is still happening.
+- **Eight new strings** join the rename table (§5.1), and R5 gains one
+  clarification the launcher UI forced: *a count is not a name.*
+- **The registry grows by one** — `accounts.acceptAll` — to 72.
+
 ---
 
 ## 1. Goal
@@ -16,13 +39,13 @@ waits on it — see §3.3.
 Three problems, one phase, because they are the same problem seen from three
 angles: **the app has no idea how loudly to talk.**
 
-1. **Seventy-five blocking native dialogs**, in fifteen files, for everything
+1. **Seventy-three blocking native dialogs**, in thirteen files, for everything
    from "you saved a file" to "this deletes a preset for ever". A modal that
    fires on success is a modal the user learns to dismiss without reading, and
    once that reflex is trained the five dialogs that *matter* are dismissed the
    same way. The fix is not fewer dialogs for their own sake; it is **friction
    proportional to consequence**, which then makes the survivors readable again.
-2. **Forty-five distinct dialog titles, two incompatible error grammars, one
+2. **Forty-six distinct dialog titles, two incompatible error grammars, one
    action under three labels, and an ellipsis that means nothing.** Labels
    drifted exactly the way the colours did, for the same reason — nothing was
    shared, so nothing agreed.
@@ -47,8 +70,9 @@ undo stack, no light theme, no removal of any feature.
 ### 2.1 The counts, verified
 
 The proposal's headline figure is 75 blocking dialogs — 58 `message()`, 13
-`confirm()`, 4 `ask()`, across 15 files. Counting the raw imports reproduces it
-exactly:
+`confirm()`, 4 `ask()`. A raw `\b(message|confirm|ask)\(` across `app/src` still
+returns exactly 75, in **13** files (not the proposal's 15), and the same two
+matches are still not dialogs:
 
 | Call | Raw matches | Verified count |
 | --- | --- | --- |
@@ -57,13 +81,14 @@ exactly:
 | `ask()` | 4 | **4** |
 | **Total** | **75** | **73** |
 
-Two of the thirteen `confirm(` matches are not dialogs:
+Two of the thirteen `confirm(` matches are not dialogs. Both survived v0.34 at
+their original line numbers:
 
 - `app/src/lib/NeocomButtons.svelte:50` is a *comment* — "The Tauri dialog, not
   the bare browser `confirm()` — titled and iconed like every other destructive
   prompt in this app". The real call is on line 54.
 - `app/src/lib/ProbeFormationsView.svelte:417` is `await p.confirm(...)`, the
-  picker's own callback prop (`app/src/lib/ProbeFormationsView.svelte:353`).
+  picker's own callback prop (`app/src/lib/ProbeFormationsView.svelte:354`).
   That file does not import `confirm` at all
   (`app/src/lib/ProbeFormationsView.svelte:6`).
 
@@ -76,16 +101,50 @@ picker, which is not a message dialog and is not counted here or touched by this
 phase. `AutofillView.spec.ts`, `NeocomButtons.spec.ts` and
 `ProbeFormationsView.spec.ts` mock the module; they are tests, not call sites.
 
+**v0.34 added none.** PR #77 shifted `OverviewView.svelte` by twenty lines and
+nine of its fifteen call sites with it; the set is identical.
+`AccountsView.svelte` grew by
+170 lines — a whole launcher-proposals UI, a batch write, a partial-failure
+report — and **makes no blocking dialogs at all.** Every failure lands in one
+`error` string rendered as `<p class="error">` at
+`app/src/lib/AccountsView.svelte:214`; every proposal is an inline `.conflict`
+line or a ghost chip with its own buttons; the partial-failure report from a
+batch accept is inline prose built by `rejectionText`
+(`app/src/lib/AccountsView.svelte:95-97`), not a modal.
+
+That is this phase's whole argument, already in the repo. It is also *tested* the
+way §11 asks for: `app/src/lib/AccountsView.spec.ts` is 219 lines, covers accept,
+dismiss, conflict routing, scoping and rejection, mocks no dialog module, and
+asserts the failure by its text —
+`screen.getByText(/Alpha could not join Main/i)`
+(`app/src/lib/AccountsView.spec.ts:145`). Implementers doing the 48
+`InlineMessage` conversions in §2.7 should read that file before the first one,
+and test 13 in §11 should be written in its shape rather than invented.
+
+One thing it gets wrong, and this phase inherits: the launcher-log read at
+`app/src/lib/AccountsView.svelte:184` is `.catch(() => {})`. A failed read is
+indistinguishable from "the logs say nothing", and the hint at `:218` then
+asserts the latter. Inline is not the same as reported; §3.1's rule that the
+message clears only when the operation *succeeds* is what stops this, and the
+`catch` becomes an `InlineMessage` at the Accounts header like every other
+failure.
+
 ### 2.2 Distinct dialog titles
 
-`grep -o 'title: "[^"]*"'` across `app/src` returns 46 distinct literals, but
+`grep -o 'title: "[^"]*"'` across `app/src` returns 47 distinct literals, but
 five of them are `HudPanel` *section headings*, not dialogs
 (`app/src/lib/HudPanel.svelte:60,64,70,71,79`). Adding the titles passed as
 arguments rather than literals — `"Preset not created"`, `"Rename failed"`,
 `"Delete failed"` via `run(fn, title)` at
-`app/src/lib/PresetGroup.svelte:37-47,69,117,125` — plus the one template
-literal at `app/src/routes/+page.svelte:450` gives **45 distinct dialog titles**.
-The proposal says 47; the shape of the finding is identical.
+`app/src/lib/PresetGroup.svelte:37-47,69,117,125`; `"Export failed"` is passed at
+`:105` but already counted as a literal — plus the one template literal at
+`app/src/routes/+page.svelte:450` gives **46 distinct dialog titles**. The
+proposal says 47.
+
+(This spec said 45 on the strength of 46 literals. Re-counting at v0.34 gives 47,
+and v0.34 introduced none of them — `AccountsView` passes no dialog title at all.
+It was an off-by-one here, corrected: 46, not 45. Nothing downstream turns on it
+except the arithmetic in §5.5.)
 
 The two grammars are exactly as reported:
 
@@ -105,33 +164,43 @@ One file — `ProbeFormationsView` — uses the second grammar exclusively, and 
 other file uses it at all. It is not drift within a view; it is one view that was
 written later, by someone applying a better rule to their own file only.
 
-### 2.3 The seven inline-message classes
+### 2.3 The nine inline-message classes
 
 Verified by grepping `class="…"` in `app/src/**/*.svelte`:
 
 | Class | Count | Where the style lives |
 | --- | --- | --- |
-| `hint` | 19 exact + 2 as `hint pair` = **21** | `app/src/app.css:64` |
+| `hint` | 20 exact + 2 as `hint pair` = **22** | `app/src/app.css:64` |
 | `error` | 8 | `app/src/app.css:65` |
 | `muted` | 7 | `BatchView` local styles only |
 | `field-error` | 4 | `app/src/app.css:70` |
 | `flash` | 3 | `app/src/app.css:66-69` |
 | `err` | 2 | `BatchView` local styles only |
 | `empty` | 2 | `KeybindsView` local styles only |
+| `from-launcher` | 2 | `AccountsView` local styles only — **new in v0.34** |
+| `conflict` | 1 | `AccountsView` local styles only — **new in v0.34** |
 
-Seven names for four jobs: *this is fine but quiet* (`hint`, `muted`), *this
-failed* (`error`, `err`, `field-error`), *this worked, briefly* (`flash`), and
-*there is nothing here* (`empty`, and most of the 21 `hint`s). All of them
-collapse into two Phase 1 primitives — `InlineMessage` and `EmptyState` — plus
-`Toast`. §5.4 lists every call site.
+Nine names for four jobs: *this is fine but quiet* (`hint`, `muted`,
+`from-launcher`), *this failed* (`error`, `err`, `field-error`), *this worked,
+briefly* (`flash`), *there is something to decide* (`conflict`), and *there is
+nothing here* (`empty`, and most of the 22 `hint`s). All of them collapse into
+two Phase 1 primitives — `InlineMessage` and `EmptyState` — plus `Toast`. §5.4
+lists every call site.
+
+It was seven when this spec was written. v0.34 added two more class names and one
+more `hint` in a single feature, without anyone deciding to — which is the
+finding, not an aside. Nothing shared, so nothing agreed; the rate is roughly one
+new message class per feature and it will not stop on its own.
 
 `.flash` is worth calling out: `app/src/app.css:66-69` gives it a 2-second
-CSS `fade-out` animation, and all three users
-(`app/src/lib/Sidebar.svelte:140`, `app/src/lib/AccountsView.svelte:125`,
-`app/src/lib/ProbeFormationsView.svelte:503`) also run a `setTimeout` to null the
-state. That is a hand-rolled toast, invented three times, with `aria-live="polite"`
-already on two of the three. `Toast` is not a new idea in this codebase — it is
-the third copy, promoted.
+CSS `fade-out` animation, and two of its three users pair it with a `setTimeout`
+that nulls the state (`app/src/lib/Sidebar.svelte:87,104`,
+`app/src/lib/ProbeFormationsView.svelte:306`). The third —
+`app/src/lib/AccountsView.svelte:215` — does not, so `captureNote` fades to
+invisible and then stays in the accessibility tree, under `aria-live="polite"`,
+until the next capture. That is a hand-rolled toast, invented three times, got
+subtly wrong once. `Toast` is not a new idea in this codebase — it is the third
+copy, promoted, with the timer in one place so there is nothing left to forget.
 
 ### 2.4 The rule
 
@@ -201,7 +270,7 @@ surrounding control flow moves.
 
 - **Set up per-window tabs** (`app/src/lib/OverviewView.svelte:111`) — the
   dialog's own text is good, and it is *already on screen*. The `no-windows`
-  band at `app/src/lib/OverviewView.svelte:393-402` explains the same thing one
+  band at `app/src/lib/OverviewView.svelte:413-422` explains the same thing one
   line above the button that opens the dialog. Move the dialog's one extra
   sentence ("The editor can't undo this — it can't remove the last overview
   window…") into that band and delete the dialog. This is a deletion, not a
@@ -224,9 +293,9 @@ surrounding control flow moves.
 
 ### 2.7 Complete call-site disposition table
 
-All 73. `†` marks a line number in a file with uncommitted working-tree changes
-at the time of writing (`app/src/lib/OverviewView.svelte`); the anchor text is
-given so the site is findable if the line has moved.
+All 73, re-anchored against v0.34.0. Nine `OverviewView` sites moved (PR #77);
+nothing was added or removed anywhere. `AccountsView` contributes no rows —
+that is not an omission, it is §2.1's point.
 
 **Legend for *Becomes*:** `toast` · `inline` (an `InlineMessage` at the named
 control) · `confirm` (the in-app `ConfirmDialog`) · `delete` (no replacement
@@ -298,25 +367,25 @@ surface — the information already exists on screen) · `EmptyState`.
 | 199 | `confirm` | `Delete preset "{X}"? Tabs using it will move to "{Y}".` / "Delete preset" | **toast** — in-memory, Discard reverses. The toast is *more* informative than the dialog it replaces, because it can count: "Deleted “{X}”. {n} tab{s} now use “{Y}”." The dialog can only name the neighbour, not the count. |
 | 205 | `message` | `errMessage(e)` / "Edit failed" | **inline** at the `Delete preset` button: "The preset wasn't deleted — {reason}" |
 
-#### `app/src/lib/OverviewView.svelte` — 15 †
+#### `app/src/lib/OverviewView.svelte` — 15
 
-| Line † | Kind | Says today | Becomes |
+| Line | Kind | Says today | Becomes |
 | --- | --- | --- | --- |
 | 92 | `message` | `errMessage(e)` / "Edit failed" (`setNameFormat`) | **inline** at the colour swatch / bold toggle: "The tab name wasn't changed — {reason}" |
-| 111 | `confirm` | "Put all {n} tab{s} in one overview window? …" / "Set up per-window tabs" | **delete** — fold the irreversibility sentence into the `no-windows` band at `:393-402`, which is already on screen next to the button. Then **toast**: "All {n} tabs are now in one overview window." |
+| 111 | `confirm` | "Put all {n} tab{s} in one overview window? …" / "Set up per-window tabs" | **delete** — fold the irreversibility sentence into the `no-windows` band at `:413-422`, which is already on screen next to the button. Then **toast**: "All {n} tabs are now in one overview window." |
 | 125 | `message` | `errMessage(e)` / "Edit failed" | **inline** in the `no-windows` band: "The windows weren't set up — {reason}" |
 | 167 | `message` | `errMessage(e)` / "Edit failed" (`submitPending`) | **inline** under the name-entry row, which stays open: "That wasn't saved — {reason}" |
 | **171** | `confirm` | `Delete tab "{name}"? This can't be undone.` / "Delete tab" | **toast** — **the false claim, fixed.** See §2.8. Toast: "Deleted “{name}”. Save to write it to disk." |
 | 182 | `message` | `errMessage(e)` / "Edit failed" (`deleteTab`) | **inline** at the tab actions row: "That tab wasn't deleted — {reason}" |
-| 188 | `message` | `errMessage(e)` / "Edit failed" (`moveTab`) | **inline** at the *Move to window* select: "That tab wasn't moved — {reason}" |
-| 192 | `confirm` | `Remove Overview {n}? Its tabs move to Overview 1.` / "Remove overview window" | **toast** — in-memory. Toast: "Removed Overview {n}. Its {k} tab{s} moved to Overview 1." Again the toast counts and the dialog cannot. |
-| 204 | `message` | `errMessage(e)` / "Edit failed" (`removeWindow`) | **inline** at the tab actions row: "That window wasn't removed — {reason}" |
-| 217 | `message` | `errMessage(e)` / "Edit failed" (`dropTab`) | **inline** above the tab chip strip: "The tabs weren't reordered — {reason}" |
-| 256 | `confirm` | "This pack contains: {what}. Each of those replaces your account's current overview settings.{columnsNote}{ignored}" / "Import overview pack" | **confirm-shaped, but not a survivor** — this is a *preview* the user has not seen anywhere else, so it cannot become a toast. It stays a modal, but as the in-app `ConfirmDialog` and reworded per §5.3. Counted as a seventh modal surface, not a seventh *confirmation*: it is disclosure, and it appears only when a pack was picked. |
-| 270 | `message` | "Pack imported. Save to write it to the account file.{warnings}" / "Import overview pack" | **toast**, with warnings as a second line in the same toast; if `warnings.length > 3` the toast says "{n} warnings" and links to History. |
-| 272 | `message` | `errMessage(e)` / "Import failed" | **inline** at the `Import overview pack…` button: "The pack wasn't imported — {reason}" |
-| 288 | `message` | "Exported {n} section(s).{warnings}" / "Export overview pack" | **toast**: "Exported {n} section{s} to {basename}." |
-| 290 | `message` | `errMessage(e)` / "Export failed" | **inline** at the `Export overview pack…` button: "The pack wasn't exported — {reason}" |
+| 192 | `message` | `errMessage(e)` / "Edit failed" (`moveTab`) | **inline** at the *Move to window* select: "That tab wasn't moved — {reason}" |
+| 196 | `confirm` | `Remove Overview {n}? Its tabs move to Overview 1.` / "Remove overview window" | **toast** — in-memory. Toast: "Removed Overview {n}. Its {k} tab{s} moved to Overview 1." Again the toast counts and the dialog cannot. |
+| 208 | `message` | `errMessage(e)` / "Edit failed" (`removeWindow`) | **inline** at the tab actions row: "That window wasn't removed — {reason}" |
+| 237 | `message` | `errMessage(e)` / "Edit failed" (`dropTab`) | **inline** above the tab chip strip: "The tabs weren't reordered — {reason}" |
+| 276 | `confirm` | "This pack contains: {what}. Each of those replaces your account's current overview settings.{columnsNote}{ignored}" / "Import overview pack" | **confirm-shaped, but not a survivor** — this is a *preview* the user has not seen anywhere else, so it cannot become a toast. It stays a modal, but as the in-app `ConfirmDialog` and reworded per §5.3. Counted as a seventh modal surface, not a seventh *confirmation*: it is disclosure, and it appears only when a pack was picked. |
+| 290 | `message` | "Pack imported. Save to write it to the account file.{warnings}" / "Import overview pack" | **toast**, with warnings as a second line in the same toast; if `warnings.length > 3` the toast says "{n} warnings" and links to History. |
+| 292 | `message` | `errMessage(e)` / "Import failed" | **inline** at the `Import overview pack…` button: "The pack wasn't imported — {reason}" |
+| 308 | `message` | "Exported {n} section(s).{warnings}" / "Export overview pack" | **toast**: "Exported {n} section{s} to {basename}." |
+| 310 | `message` | `errMessage(e)` / "Export failed" | **inline** at the `Export overview pack…` button: "The pack wasn't exported — {reason}" |
 
 #### `app/src/lib/prefs.svelte.ts` — 1
 
@@ -378,6 +447,7 @@ surface — the information already exists on screen) · `EmptyState`.
 | `Toast` | 13 |
 | `ConfirmDialog` (6 survivors + the pack-import preview) | 8 call sites |
 | Deleted outright — information already on screen (`OverviewView:111`, `PresetGroup:67`, `PresetGroup:138`) | 3 |
+| Blocking dialogs `AccountsView` makes | 0 — §2.1 |
 | Full-pane `EmptyState variant="error"` (`LayoutView:122` — layout unavailable) | 1 |
 | Unchanged file/save pickers (`openDialog` / `saveDialog`) | not counted — untouched |
 | **Total** | **73** ⇒ **7 modal surfaces, 6 of them confirmations** |
@@ -463,7 +533,9 @@ own dismissal.
 
 ### 2.10 `errMessage` leaks a machine code into every error
 
-`app/src/lib/api.ts:550-553`:
+`app/src/lib/api.ts:573-576` (v0.34 added 23 lines to `api.ts` — the launcher
+types and two commands — all of them above this function, which is untouched;
+only its line numbers moved):
 
 ```ts
 export function errMessage(e: unknown): string {
@@ -485,8 +557,13 @@ was never the app's to control.
   human is *diagnosing*: the History popover's detail line, and the `title`
   attribute of the `InlineMessage` so the code is one hover away.
 
-This is a two-line change in one file that fixes 58 strings at once, which is
-why it is here and not in the rename table.
+This is a three-line change in one file that fixes 58 strings at once, which is
+why it is here and not in the rename table. It fixes a fifty-ninth for free:
+`AccountsView`'s two inline error paths (`:119`, `:129`) both assign
+`errMessage(e)` straight into the `error` string that renders at `:214`, so the
+bracketed code already leaks into an inline message, not just into a dialog.
+Moving inline does not fix this on its own — that is the point of doing the
+split first (§10, step 2).
 
 ---
 
@@ -506,7 +583,22 @@ control itself — reserve the row, or render as an overlay band above the contr
 group, never below it in a way that pushes a button out from under the cursor.
 
 Props (from Phase 1): `variant: "error" | "warning" | "info"`, `text`,
-optional `detail` (goes to `title=`), optional `action` (a `Button`).
+optional `detail` (goes to `title=`), optional `action`.
+
+**`action` takes up to two `Button`s, not one.** v0.34 shipped the case: the
+launcher-conflict line at `app/src/lib/AccountsView.svelte:290-298` is an inline
+message with two mutually exclusive answers — `Move it` and `Keep mine` — and a
+one-`Button` prop would force that one site back into bespoke markup, which is
+how the ninth message class got written in the first place. Two is the ceiling:
+a third answer is a form, not a message.
+
+**The shipped model.** `app/src/lib/AccountsView.svelte` is what this section
+describes, already merged. Read it before converting anything: one `error` string
+per view, nulled at the top of every handler (`:100`, `:124`) — which is the
+"one live message per owning control" rule, implemented; the failure rendered
+adjacent, not modally (`:214`); a *partial* failure of a batch reported as prose
+that names each casualty (`rejectionText`, `:95-97`). It gets three of the four
+rules below right without having been told them.
 
 Rules:
 
@@ -524,10 +616,11 @@ Rules:
 change happened that the user should be able to walk back.
 
 The app has already invented this three times — `.flash` at `app/src/app.css:66-69`
-plus `setTimeout` at `app/src/lib/Sidebar.svelte:86-87`,
-`app/src/lib/ProbeFormationsView.svelte:305-306`, and the state at
-`app/src/lib/AccountsView.svelte:125`. Two of the three already carry
-`aria-live="polite"`. This is a promotion, not an invention.
+plus `setTimeout` at `app/src/lib/Sidebar.svelte:87,104`,
+`app/src/lib/ProbeFormationsView.svelte:306`, and the untimed state at
+`app/src/lib/AccountsView.svelte:215`. Two of the three already carry
+`aria-live="polite"`; the third has the `aria-live` and no timer (§2.3). This is
+a promotion, not an invention.
 
 Spec:
 
@@ -666,6 +759,24 @@ app owns the first half; the backend owns the second. Where the backend's
 sentence is already a full explanation, the app's half is still written, because
 it is what names *which* thing failed when three controls can fail the same way.
 
+**The one shipped example, and its one-word gap.** `rejectionText`
+(`app/src/lib/AccountsView.svelte:95-97`) builds:
+
+```
+Alpha could not join Main — account already has 3 characters. Unpair one there
+and try again.
+```
+
+Its own comment says why it is shaped that way: *"'Account already has 3
+characters' does not say WHICH account, and the user has to know that to fix
+it."* That is R4's second half — *then what to do* — and R5 — *name people, not
+files* — arrived at independently, in the app layer, over a backend string
+(`app/src-tauri/src/accounts.rs:72`) that owns only the reason. It is the model,
+and §5.1 changes exactly one clause of it: `could not join` is the
+`Could not <verb>` grammar this rule retires, and becomes `wasn't paired with`.
+Everything else about it stays, including the sentence after the full stop, which
+is the half most of the 48 new error strings will be tempted to omit.
+
 ### R5 — Name people, not files
 
 `Baguette Commander`, not `core_char_95465499.dat`. `stormdelay2`, not
@@ -676,6 +787,32 @@ it is what names *which* thing failed when three controls can fail the same way.
 Paths and filenames belong in exactly three places: a `title=` tooltip, the
 History popover, and an OS file dialog. They never appear in a heading, a toast,
 or an error sentence.
+
+**A count is not a name either.** v0.34 forced this clarification and the owner's
+live test found it immediately. `Accept all — {n} character{s}`
+(`app/src/lib/AccountsView.svelte:194`) passes R1 and passes R5's letter — it
+names no file — but it fails R5's purpose. Three named ghost chips are on screen;
+the button that acts on exactly those three refuses to say which three, and the
+one thing a bulk action must disclose is its blast radius. "3 characters" is also
+the *scoped* count (`:82-84` filters to the cards on screen), so the number is
+right and still says nothing.
+
+> **Rule.** When a bulk action's objects are known, named and few, the label
+> names them. Fall back to a count only above three, or when the names are
+> unresolved. Never both.
+
+So: `Accept Alpha, Bravo and Charlie` at n ≤ 3; `Accept all 5 characters` above
+it; `Accept all — 3 characters` never. The same rule already governs
+`WindowPanel:401` `Delete them` → `Delete empty frames` (§5.1) and
+`BatchView:403` (§5.1) — an action label that needs the sentence above it to be
+understood is not a label.
+
+This rule is the *wording* half. The interaction half — whether a three-name
+label at a fixed button width is the right control at all, versus naming them
+under it — belongs to `03-sheets.md`, which owns the Accounts sheet. Whatever it
+ships must satisfy the rule above. Note that
+`app/src/lib/AccountsView.spec.ts:201` pins the current string exactly
+(`/^accept all — 1 character$/i`), so that assertion is part of the change.
 
 ### R6 — Say what an action costs before it is taken, in the control's own words
 
@@ -696,7 +833,7 @@ component from a platform-aware `Accel` value — see §9.1. The same applies to
 ### Spelling
 
 The app is written in British English — `colour`
-(`app/src/lib/OverviewView.svelte:349,352,362`), `licence`
+(`app/src/lib/OverviewView.svelte:369,372,382`), `licence`
 (`app/src/lib/Sidebar.svelte:131`), `centre`
 (`app/src/lib/ProbeViewer.svelte:634`), `Unrecognised`
 (`app/src/lib/KeybindsView.svelte:118`). One outlier:
@@ -709,9 +846,14 @@ The app is written in British English — `colour`
 
 Every user-facing string that changes. Strings that already comply are absent —
 their absence is the statement that they were checked. Line numbers are as of
-the working tree at the time of writing; `app/src/lib/OverviewView.svelte` has
-uncommitted changes, so its numbers are marked `†` and the old text is given in
-full so the site is findable regardless.
+v0.34.0, committed; the old text is given in full so every site is findable
+regardless.
+
+Checked and left alone from v0.34: `Calibrate an account…` (R2 — a three-step
+guided flow *is* more input), `Accept anyway` (matches §5.3's `Export anyway`),
+the ghost chip's `Accept {name}` / `Dismiss {name}` tooltips (R5), and
+`From your launcher log.` (R1). They are absent from the table because they
+passed, which is what the table's absences mean.
 
 ### 5.1 Control labels, headings and placeholders
 
@@ -729,13 +871,26 @@ full so the site is findable regardless.
 
 #### `app/src/lib/AccountsView.svelte`
 
+Eight of these thirteen rows are v0.34 strings, marked **new**. The file is the
+one this phase holds up as the model (§2.1, §3.1); it earns that on structure,
+not on wording, and the wording is where it drifted.
+
 | Line | Old | New | Rule |
 | --- | --- | --- | --- |
-| 79 | `Paired {name} ↔ account {userId}.` | `Paired {name} with {alias}.` (→ toast) | R5 |
-| 107 | `Refresh` | `Refresh accounts` | R3 — bare `Refresh` collides with `Refresh character names` |
-| 146 | title `Unpair` | title `Unpair {name} from this account` | R5 |
-| 156 | `＋ add character` | `Add a character` | R1, and drop the fullwidth `＋` |
-| 171 | `Unassigned characters` | `Characters not on any account` | plain language |
+| 90 | `accountLabel` falls back to `core_user_{userId}` | fall back to `account {userId}` | **new** — R5. This is the one function that puts a filename-shaped token into two user-facing sentences (`:96`, `:292`). The `<input>` placeholder at `:237` keeps `core_user_{id}`: it is naming the file the alias replaces, which is the field's whole job. |
+| 95-97 | `{name} could not join {account} — {reason}. Unpair one there and try again.` | `{name} wasn't paired with {account} — {reason}. Unpair one there and try again.` | **new** — R4. One clause; see the note under R4. Everything else about this string is the model. |
+| 153 | `Paired {name} ↔ account {userId}.` | `Paired {name} with {alias}.` (→ toast) | R5 |
+| 194 | `Accept all — {n} character{s}` | `Accept {a}, {b} and {c}` at n ≤ 3; `Accept all {n} characters` above it | **new** — R5, *a count is not a name*. `03-sheets.md` owns the control; this owns the rule. Breaks `AccountsView.spec.ts:201`. |
+| 197 | `Refresh` | `Refresh accounts` | R3 — bare `Refresh` collides with `Refresh character names` |
+| 219-220 | `Your EVE launcher logs say nothing about these accounts — use “Calibrate an account…” to pair a character by hand.` | `Your EVE launcher logs say nothing about these accounts. Calibrate an account to pair a character by hand.` | **new** — the em-dash clause is R4's *error* grammar on a non-error, and quoting a control label inside prose means the §5.1 rename has to be made twice. Name the action, don't quote the button. |
+| 225 | `No accounts in this profile yet. Open a profile file, or run a calibration.` | `EmptyState` — heading `No accounts here yet` / body `Open a profile file, or calibrate an account to identify one.` / Button `Calibrate an account…` | R3 — "run a calibration" and "Calibrate an account…" are one concept in two verb forms, and v0.34 put them two lines apart |
+| 246 | title `Unpair` | title `Unpair {name} from this account` | R5 |
+| 269 | `＋ add character` | `Add a character` | R1, and drop the fullwidth `＋` |
+| 286 | `Your launcher log also puts {name} here, but all three slots are full.` | `Your launcher log also puts {name} here, but this account is full.` | **new** — R3 reserves `all` for bulk selection (as at `ProbeFormationsView:516` and `ChatSplit:76`), and "three" hardcodes `MAX` (`:18`) into prose |
+| 292 | `Your launcher log puts {name} on {account}.` | unchanged text; `{account}` gains R5's fallback via the `:90` fix | **new** — listed so the `:90` change is traceable to its two readers |
+| 294 | `Move it` | `Move to {account}` — and delete the `aria-label="Move {name}"` at `:293`, which now duplicates the visible label | **new** — R3. "It" needs the sentence above it to parse, exactly like `WindowPanel:401`'s `Delete them`; and a visible label that disagrees with its accessible name is `WindowPanel:474-475`'s fault a second time |
+| 296 | `Keep mine` | `Keep here` — and delete the `aria-label="Keep {name}"` at `:295` | **new** — R3, same two faults. "Mine" is not a word this app uses for anything; the answer the button gives is *which account holds this character*, so it says that |
+| 305 | `Unassigned characters` | `Characters not on any account` | plain language |
 
 #### `app/src/routes/+page.svelte`
 
@@ -767,29 +922,32 @@ full so the site is findable regardless.
 | 59 | `No backups yet. Every save creates one.` | `EmptyState` — heading `No history yet` / body `Every save leaves a restorable copy here.` | §3.3 |
 | 66 | `restore` | `Restore` | R1 |
 
-#### `app/src/lib/OverviewView.svelte` †
+#### `app/src/lib/OverviewView.svelte`
 
-| Line † | Old | New | Rule |
+PR #77 shifted this file's template by twenty lines; the strings are unchanged,
+so every row below is the same finding at a new anchor.
+
+| Line | Old | New | Rule |
 | --- | --- | --- | --- |
-| 306 | `Link this character to an account to edit shared settings — overview columns live in the account file.` | `EmptyState` — heading `No account paired` / body `Overview columns live in the account file.` / Button below | §3.3 |
-| 307 | `Pair…` | `Pair this character…` | R3 — one label, four sites |
-| 310 | `Open a character or account file to edit overview columns.` | `EmptyState` — heading `No file open` / body `Open a character or an account file to edit its overview.` | §3.3 |
-| 316 | `This account file has no overview tabs.` | `EmptyState` — heading `No overview tabs` / body `This account file holds none. Importing an overview pack adds some.` | §3.3 |
-| 345 | `+ New` | `New tab…` | R1, R2 (a name is required) |
-| 346 | `Rename` | `Rename tab…` | R2, R3 |
-| 347 | `Delete` | `Delete tab` | R2 (no ellipsis — it just happens now), R3 |
-| 349 | title `Tab name colour` | unchanged | — |
-| 387 | `+ Window` | `Add window…` | R1, R2, R3 |
-| 390 | `Remove Window` | `Remove window` | **R1 — the headline casing bug** |
-| 390 | title `Remove this (last) overview window` | `Remove the last overview window. Its tabs move to Overview 1.` | R6 |
-| 400 | `Set up per-window tabs` | `Assign tabs to windows` | R3 ("set up" is not a verb this app uses anywhere else) |
-| 406 | placeholder `First tab name` / `Tab name` | unchanged | — |
-| 412 | `Add window` / `Rename` / `Add tab` | `Add window` / `Rename tab` / `Add tab` | R3 |
-| 417 | `Character (for widths)` | `Column widths from` | R5 — "Character" here is EVE's word for the wrong thing; the field selects a *source of widths* |
-| 419 | `Select…` | `Choose a character` | R2 — a `<select>` placeholder is not an action label |
-| 448 | `No characters associated with this account yet — pair one in Accounts to edit widths.` | `No characters are paired with this account yet. Pair one to edit column widths.` | plain |
-| 460 | `Import pack…` | `Import overview pack…` | R3 — "pack" alone is ambiguous next to Presets |
-| 461 | `Export pack…` | `Export overview pack…` | R3 |
+| 326 | `Link this character to an account to edit shared settings — overview columns live in the account file.` | `EmptyState` — heading `No account paired` / body `Overview columns live in the account file.` / Button below | §3.3 |
+| 327 | `Pair…` | `Pair this character…` | R3 — one label, four sites |
+| 330 | `Open a character or account file to edit overview columns.` | `EmptyState` — heading `No file open` / body `Open a character or an account file to edit its overview.` | §3.3 |
+| 336 | `This account file has no overview tabs.` | `EmptyState` — heading `No overview tabs` / body `This account file holds none. Importing an overview pack adds some.` | §3.3 |
+| 365 | `+ New` | `New tab…` | R1, R2 (a name is required) |
+| 366 | `Rename` | `Rename tab…` | R2, R3 |
+| 367 | `Delete` | `Delete tab` | R2 (no ellipsis — it just happens now), R3 |
+| 369 | title `Tab name colour` | unchanged | — |
+| 407 | `+ Window` | `Add window…` | R1, R2, R3 |
+| 410 | `Remove Window` | `Remove window` | **R1 — the headline casing bug** |
+| 410 | title `Remove this (last) overview window` | `Remove the last overview window. Its tabs move to Overview 1.` | R6 |
+| 420 | `Set up per-window tabs` | `Assign tabs to windows` | R3 ("set up" is not a verb this app uses anywhere else) |
+| 426 | placeholder `First tab name` / `Tab name` | unchanged | — |
+| 432 | `Add window` / `Rename` / `Add tab` | `Add window` / `Rename tab` / `Add tab` | R3 |
+| 437 | `Character (for widths)` | `Column widths from` | R5 — "Character" here is EVE's word for the wrong thing; the field selects a *source of widths* |
+| 439 | `Select…` | `Choose a character` | R2 — a `<select>` placeholder is not an action label |
+| 468 | `No characters associated with this account yet — pair one in Accounts to edit widths.` | `No characters are paired with this account yet. Pair one to edit column widths.` | plain |
+| 480 | `Import pack…` | `Import overview pack…` | R3 — "pack" alone is ambiguous next to Presets |
+| 481 | `Export pack…` | `Export overview pack…` | R3 |
 
 #### `app/src/lib/OverviewColumnsTab.svelte`
 
@@ -941,7 +1099,7 @@ full so the site is findable regardless.
 | Site | Old | New |
 | --- | --- | --- |
 | `app/src/lib/AutofillView.svelte:87` | `Pair…` | `Pair this character…` |
-| `app/src/lib/OverviewView.svelte:307` † | `Pair…` | `Pair this character…` |
+| `app/src/lib/OverviewView.svelte:327` | `Pair…` | `Pair this character…` |
 | `app/src/lib/KeybindsView.svelte:85` | `Pair this character…` | *unchanged* — this one was already right |
 | `app/src/lib/ProbeFormationsView.svelte:467` | `Pair this character with its account` | `Pair this character…` |
 
@@ -1016,7 +1174,7 @@ alive (§2.6).
 > `[ Cancel ]` `[ Export anyway ]`
 
 **7 (disclosure, not confirmation) — Import an overview pack**
-(`app/src/lib/OverviewView.svelte:256` †)
+(`app/src/lib/OverviewView.svelte:276`)
 
 > **Import {basename}?**
 > It replaces: {sections}.
@@ -1026,8 +1184,8 @@ alive (§2.6).
 
 ### 5.4 Inline-message class migration
 
-Every site from §2.3, and what it becomes. This is the table that lets the seven
-classes be deleted from `app.css` and from three sets of local styles.
+Every site from §2.3, and what it becomes. This is the table that lets the nine
+classes be deleted from `app.css` and from four sets of local styles.
 
 | Site | Class | Becomes |
 | --- | --- | --- |
@@ -1041,9 +1199,13 @@ classes be deleted from `app.css` and from three sets of local styles.
 | `AutofillView.svelte:93` | `error` | `InlineMessage variant="error"` |
 | `AutofillView.svelte:95` | `hint` | `EmptyState` |
 | `AutofillView.svelte:103` | `hint` | `EmptyState` |
-| `AccountsView.svelte:124` | `error` | `InlineMessage variant="error"` |
-| `AccountsView.svelte:125` | `flash` | `toast()` |
-| `AccountsView.svelte:128` | `hint` | `EmptyState` |
+| `AccountsView.svelte:214` | `error` | `InlineMessage variant="error"` |
+| `AccountsView.svelte:215` | `flash` | `toast()` (and the missing timer stops mattering — §2.3) |
+| `AccountsView.svelte:218` | `hint` | `InlineMessage variant="info"` at the Accounts header — **new in v0.34**. Not an `EmptyState`: the cards below it are not empty, and this explains only why none of them carry ghosts. |
+| `AccountsView.svelte:225` | `hint` | `EmptyState` |
+| `AccountsView.svelte:282` | `from-launcher` | **new in v0.34** — not a message; it is provenance for the chips beside it, so it becomes the chip group's `meta` text, exactly like `BatchView:348` |
+| `AccountsView.svelte:285` | `from-launcher` | `InlineMessage variant="info"` with one action (`Accept anyway`) — **new in v0.34** |
+| `AccountsView.svelte:291` | `conflict` | `InlineMessage variant="warning"` with **two** actions (`Move to {account}`, `Keep here`) — **new in v0.34**, and the site that fixes `action`'s arity in §3.1 |
 | `KeybindsView.svelte:84` | `empty` | `EmptyState` + Button |
 | `KeybindsView.svelte:88` | `error` | `InlineMessage variant="error"` |
 | `KeybindsView.svelte:90` | `empty` | `EmptyState` + Button |
@@ -1054,9 +1216,9 @@ classes be deleted from `app.css` and from three sets of local styles.
 | `Sidebar.svelte:140` | `flash` | `toast()` |
 | `Sidebar.svelte:141` | `error` | `InlineMessage variant="error"` |
 | `Sidebar.svelte:143,145` | `hint` | `EmptyState` (2 sites) |
-| `OverviewView.svelte:305` † | `hint pair` | `EmptyState` + Button |
-| `OverviewView.svelte:310,316,448` † | `hint` | `EmptyState` (3 sites) |
-| `OverviewView.svelte:312` † | `error` | `InlineMessage variant="error"` |
+| `OverviewView.svelte:325` | `hint pair` | `EmptyState` + Button |
+| `OverviewView.svelte:330,336,468` | `hint` | `EmptyState` (3 sites) |
+| `OverviewView.svelte:332` | `error` | `InlineMessage variant="error"` |
 | `ProbeFormationsView.svelte:465` | `hint` | `EmptyState` + Button |
 | `ProbeFormationsView.svelte:471` | `error` | `InlineMessage variant="error"` |
 | `ProbeFormationsView.svelte:503` | `flash` | `toast()` |
@@ -1070,24 +1232,30 @@ classes be deleted from `app.css` and from three sets of local styles.
 
 Then delete from `app/src/app.css`: `.hint` (`:64`), `.error` (`:65`), `.flash`
 (`:66-69`), `.field-error` (`:70`), and `@keyframes fade-out` (`:81`). Delete
-`.muted`/`.err` from `BatchView`'s local styles and `.empty` from
-`KeybindsView`'s.
+`.muted`/`.err` from `BatchView`'s local styles, `.empty` from `KeybindsView`'s,
+and `.conflict`/`.from-launcher` from `AccountsView`'s
+(`app/src/lib/AccountsView.svelte:331-332`).
 
 ### 5.5 Count
 
 | What changes | Strings |
 | --- | --- |
-| Labels, headings, placeholders and tooltips renamed (§5.1) | **119** |
+| Labels, headings, placeholders and tooltips renamed (§5.1) | **127** — 119, plus 8 v0.34 strings |
 | The `Pair` action, unified (§5.2) | **3** of 4 sites; the fourth was already right |
 | Dialog bodies + titles collapsed into 7 confirmation surfaces (§5.3) | **8** bodies + **8** titles → 7 |
 | Error sentences newly written at the failing control (§2.7) | **48** |
 | Success/reversal sentences newly written as toasts (§2.7) | **13** |
-| Inline-message class sites re-homed onto primitives (§5.4) | **47** |
-| **Distinct dialog titles remaining** | **0** — a `ConfirmDialog` title is part of its copy, not a reusable string. Forty-five go away; seven bespoke ones replace them. |
+| Inline-message class sites re-homed onto primitives (§5.4) | **51** — 47, plus 4 in `AccountsView` |
+| **Distinct dialog titles remaining** | **0** — a `ConfirmDialog` title is part of its copy, not a reusable string. Forty-six go away; seven bespoke ones replace them. |
 
-**190 user-facing strings change in total.** The largest single block is the 48
+**198 user-facing strings change in total.** The largest single block is the 48
 error sentences, which exist because the current app has *one* sentence
 (`errMessage(e)`) for 58 different failures.
+
+Eight of the 198 were written *after* this spec was, in v0.34. That is the cost
+of not having the standard yet: one feature, by someone who got the *structure*
+right without being told it (§3.1), still needed eight wording fixes and still
+invented two class names. The standard is not for the careless.
 
 ---
 
@@ -1132,7 +1300,7 @@ export interface Command {
 open slots, dirty flags, current view, `layoutAvailable`, `openCharId`,
 `openUserId`, and the handful of action callbacks `+page.svelte` already owns.
 
-### 6.1 The registry — 71 commands
+### 6.1 The registry — 72 commands
 
 `Accel` column shows the Windows/Linux form; §9.1 covers the macOS rendering.
 `Enabled when` is prose for the predicate; the string it returns when false is
@@ -1183,14 +1351,35 @@ the reason shown.
 | `preset.delete` | Delete preset | — | selected and not open — else "Close the preset first" | preset row ⋯ + right-click |
 | `preset.open` | Open preset | — | a preset is selected | the preset row itself |
 
-#### Accounts — 4
+#### Accounts — 5
 
 | id | Label | Accel | Enabled when | Also appears |
 | --- | --- | --- | --- | --- |
 | `accounts.pair` | Pair this character with an account… | — | a character is open and unpaired | Accounts sheet; four inline `EmptyState` buttons (§5.2) |
 | `accounts.unpair` | Unpair a character… | — | any pairing exists | Accounts sheet chip `✕` |
+| `accounts.acceptAll` | Accept the launcher's pairings | — | at least one undisputed proposal is on screen — else "Your launcher logs propose nothing for these accounts" | Accounts sheet header button (`AccountsView.svelte:193`) |
 | `accounts.calibrate` | Calibrate an account… | — | always | Accounts sheet header; app menu |
 | `accounts.refresh` | Refresh accounts | — | always | Accounts sheet header |
+
+`accounts.calibrate` and `accounts.refresh` were already here and v0.34 shipped
+both with labels this spec had already chosen — `Calibrate an account…`
+verbatim, `Refresh` pending §5.1's rename. Only `accounts.acceptAll` is new.
+
+Its registry label names no characters, and R5's *a count is not a name* still
+holds: that rule binds a label whose objects are **on screen beside it**. In the
+palette they are not — the sheet may not even be open — so the registry takes the
+general form and the sheet button takes the naming one, the same split `accounts.pair`
+already makes (§5.2).
+
+**What deliberately stays out**, because homes are not the only test — a command
+also needs a subject the palette can name. The per-ghost `Accept {name}` /
+`Dismiss {name}` chip buttons (`:254-259`), `Accept anyway` (`:287`) and the
+conflict pair (`:293-296`) all act on *one proposal picked from a list*, with no
+selection model behind them. `preset.rename` and `keybinds.reset` are in the
+registry because "the selected preset" and "the focused row" are things `Ctx`
+already knows; "the ghost you meant" is not. The registry's label is what the
+palette shows, and `Accept Alpha` × 30 is not a command list. `accounts.acceptAll`
+is the one that generalises, so it is the one that is here.
 
 #### Layout — 11
 
@@ -1273,7 +1462,7 @@ the reason shown.
 | `help.shortcuts` | Keyboard shortcuts | `Ctrl+/` | always | app menu |
 | `help.repo` | Source and issues on GitHub | — | always | About sheet |
 
-**Total: 71.** `help.shortcuts` is the visible home for the shortcuts that are
+**Total: 72.** `help.shortcuts` is the visible home for the shortcuts that are
 not commands (`Esc`, `Ctrl+Z`, the nudge arrows, `Enter` to commit) — it is one
 static table rendered in a sheet, and it is what keeps §9's map honest.
 
@@ -1283,7 +1472,7 @@ The palette searches four sources. Only the first is the registry.
 
 | Source | Rows come from | Row shows | Enter does |
 | --- | --- | --- | --- |
-| **Commands** | the 71 above, filtered to `enabled(ctx) === true` first, then the disabled ones below a divider with their reason | label · group · accelerator | `run(ctx)` |
+| **Commands** | the 72 above, filtered to `enabled(ctx) === true` first, then the disabled ones below a divider with their reason | label · group · accelerator | `run(ctx)` |
 | **Characters** | `profiles` (`app/src/routes/+page.svelte:75`) × `names` (`app/src/lib/names.svelte`) | character name · account alias · profile label | `openFile(path)` |
 | **Presets** | `allPresets()` (`app/src/lib/presetLibrary.svelte`) | preset name · `summarise(p)` | `openPresetPair(p)` |
 | **Views** | the six tabs | view name | `go.<view>` |
@@ -1298,7 +1487,7 @@ character that is not in the list.
 ### 6.3 Fuzzy matching
 
 Hand-rolled, ~40 lines, no dependency. A fuzzy library is not worth a dependency
-for a candidate set that peaks around 71 commands plus a few dozen characters
+for a candidate set that peaks around 72 commands plus a few dozen characters
 and presets; at that size an O(n·m) subsequence scan is free.
 
 ```
@@ -1361,7 +1550,7 @@ prefs.palette = {
 - Entity rows (characters, presets) are **not** recorded: their ordering already
   comes from `filesort.svelte.ts` and recency there would fight the sidebar's
   own ordering.
-- `counts` is never pruned — 71 keys is nothing — but an id no longer in the
+- `counts` is never pruned — 72 keys is nothing — but an id no longer in the
   registry is ignored on read, so a removed command cannot resurrect.
 
 ---
@@ -1431,7 +1620,9 @@ visible with scroll.
 ### 8.1 The four discovery rules, and how each is enforced
 
 **1 — Nothing is palette-only.** Every command carries `homes: Home[]` and a
-vitest test asserts `homes.length >= 1` for all 71 (§11). This is the rule the
+vitest test asserts `homes.length >= 1` for all 72 (§11) — including v0.34's
+`accounts.acceptAll`, whose home is the header button that already exists at
+`app/src/lib/AccountsView.svelte:193`. This is the rule the
 other three rest on: it means the palette can be missed entirely with zero cost,
 which is the only honest basis for shipping one.
 
@@ -1562,8 +1753,16 @@ Today: `app/src/routes/+page.svelte:469-476` focuses the tree search box, except
 on Layout where it calls `layoutFocusFilter?.()` — a callback bound down two
 component levels (`:96`, `:556`) purely to make that one exception work. On
 Overview, Autofill, Keybinds and Probes it focuses the *tree* box, which is not
-rendered, so it silently does nothing. Four of six views have a search field and
-`Ctrl+F` reaches one of them.
+rendered, so it silently does nothing. Five views have a search or filter field
+and `Ctrl+F` reaches two of them (Raw, Layout).
+
+Re-verified at v0.34: unchanged, at the same lines. The count of divergent boxes
+is still **five** — `+page.svelte:616` (the only one that advertises its
+shortcut, by hardcoding `Ctrl` into the placeholder), `WindowPanel:362`,
+`OverviewFiltersTab:237`, `AutofillView:99`, `KeybindsView:101`. Three of the five
+put a trailing `…` on a filter placeholder and two do not. `AccountsView` added no
+sixth: its only `<input>` is the alias field (`:234-239`), which edits rather than
+narrows, so `Ctrl+F` on Accounts is a no-op like Probes.
 
 After: **`Ctrl+F` always focuses the current view's search field.** Each view
 registers its field with the shell; the shell focuses and selects whatever the
@@ -1599,7 +1798,7 @@ by hardcoding `Ctrl` into the placeholder):
 | any key | capture a binding | Keybinds, while a chip is listening (`app/src/lib/KeybindsView.svelte:72-80`) |
 | `Backspace` | unbind | Keybinds, while listening (`:76`) |
 | `Esc` | stop listening | Keybinds (`:75`) — folds into the global `Esc` ladder |
-| `Enter` | commit an inline name entry | Overview (`:408`), Overview→Filters (`:302`), Presets (`:199`), Autofill (`:134`), Accounts (`:139`), Raw (`TreeNode:100`) |
+| `Enter` | commit an inline name entry | Overview (`:428`), Overview→Filters (`:302`), Presets (`:199`), Autofill (`:134`), Accounts (`:239`), Raw (`TreeNode:100`) |
 | `Esc` | cancel an inline name entry | same six sites — the last rung of the `Esc` ladder |
 
 **Reserved, never bound:** `Ctrl+W`, `Ctrl+Q`, `Ctrl+N`, `Ctrl+P`, `F5`,
@@ -1619,7 +1818,7 @@ Ordered so each step leaves the app working.
 | `app/src/lib/ui/Toast.svelte`, `ToastHost.svelte` | Phase 1 primitive + the single host (mounted in `+layout.svelte`) |
 | `app/src/lib/ui/ConfirmDialog.svelte` | §2.5 — overlay, focus trap, `Promise<boolean>` |
 | `app/src/lib/toast.svelte.ts` | `toast(text, opts)` and the queue state |
-| `app/src/lib/commands.ts` | the 71-command registry, `Command`/`Home`/`Group` types |
+| `app/src/lib/commands.ts` | the 72-command registry, `Command`/`Home`/`Group` types |
 | `app/src/lib/accel.ts` | `Accel`, `IS_MAC`, `accelLabel` |
 | `app/src/lib/keymap.ts` | the single global handler, §9.2 |
 | `app/src/lib/CommandPalette.svelte` | §8 |
@@ -1631,7 +1830,7 @@ Ordered so each step leaves the app working.
 
 | File | Changes |
 | --- | --- |
-| `app/src/lib/api.ts` | `:550-553` split into `errText` (user prose) and `errMessage` (diagnostic, keeps the code) |
+| `app/src/lib/api.ts` | `:573-576` split into `errText` (user prose) and `errMessage` (diagnostic, keeps the code) |
 | `app/src/routes/+layout.svelte` | mount `ToastHost` and `useKeymap()` |
 | `app/src/routes/+page.svelte` | 12 dialogs → §2.7; `saveFile` reporting moves out of the loop (§2.9); the inline `svelte:window` handler at `:459-479` moves to `keymap.ts`; `layoutFocusFilter` (`:96,556`) deleted; 17 strings (§5.1); `EmptyState` at `:503,637,642` |
 | `app/src/lib/Sidebar.svelte` | toolbar → app menu (Phase 2 moves it; this phase supplies the registry entries and the labels); `flash` → `toast()`; 3 `EmptyState`s; 7 strings |
@@ -1652,7 +1851,7 @@ Ordered so each step leaves the app working.
 | `app/src/lib/ProbeFormationsView.svelte` | 11 dialogs; 14 strings; `flash` → `toast()`; `Ctrl+C`/`Ctrl+V` guards stay, labels go through `accelLabel` |
 | `app/src/lib/ProbeViewer.svelte` | 3 strings |
 | `app/src/lib/BatchView.svelte` | 3 strings; `muted`/`err` → primitives (8 sites); already satisfies the confirm rule (§2.6) |
-| `app/src/lib/AccountsView.svelte` | 5 strings; `flash` → `toast()`; `EmptyState` |
+| `app/src/lib/AccountsView.svelte` | **0 dialogs** — nothing to convert; 13 strings (8 of them v0.34's); `flash` → `toast()`; 7 message sites → primitives, incl. the two-action conflict line; `EmptyState`; `.conflict`/`.from-launcher` deleted; the swallowed `catch` at `:184` gets a message |
 | `app/src/lib/FormationPicker.svelte` | 1 string |
 | `app/src/lib/TreeNode.svelte` | 5 strings |
 | `app/src/lib/InsertForm.svelte` | 5 strings; `field-error` → `InlineMessage` |
@@ -1687,13 +1886,20 @@ existing `calls` harness in `app/src/lib/test/setup.ts`. Dialogs are already
 mocked per-file where needed (`app/src/lib/NeocomButtons.spec.ts:10`), which is
 the pattern to follow for `ConfirmDialog`.
 
+For the *other* 66 call sites — the ones that stop being dialogs — the pattern to
+follow is `app/src/lib/AccountsView.spec.ts`, added in v0.34: no dialog mock at
+all, IPC stubbed through `calls`, and the failure asserted by the text it renders
+(`:145`). Nothing below needs inventing; tests 13 and 14 are that file
+generalised.
+
 ### Registry invariants — `app/src/lib/commands.spec.ts`
 
 These are the tests that make the discovery rules mechanical rather than
 aspirational.
 
 1. **Nothing is palette-only.** Every command has `homes.length >= 1`. This is
-   discovery rule 1, and it is one assertion.
+   discovery rule 1, and it is one assertion. All 72 satisfy it, `accounts.acceptAll`
+   included.
 2. **Ids are unique and stable-shaped** — `^[a-z]+\.[a-zA-Z]+$`, no duplicates.
 3. **Labels obey the copy standard** — sentence case (first char upper, no
    second capitalised word unless it is in an allow-list of proper nouns), no
@@ -1723,10 +1929,14 @@ aspirational.
     over `+page.svelte` proving the claim the new toast makes.
 13. **A refused edit renders an `InlineMessage` at the control and no dialog** —
     one test per view that has one (Autofill, Keybinds, Layout, Overview×4,
-    Probes, Presets). Nine tests, one shape.
+    Probes, Presets). Nine tests, one shape — the shape of
+    `AccountsView.spec.ts:137-149`, which already asserts exactly this for the
+    one view that never had a dialog.
 14. **A refused edit leaves the control usable** — specifically, the rename field
     at `OverviewFiltersTab:170` and the copy panel at `OverviewColumnsTab:85`
-    stay open with their state intact.
+    stay open with their state intact. Same claim as
+    `AccountsView.spec.ts:148`: the rejected ghost survives its own rejection, so
+    the retry is still there.
 15. **`ConfirmDialog` cancels on `Esc`, resolves `false`, and returns focus.**
 16. **`ConfirmDialog` focuses the safe button on open**, not the destructive one.
 
@@ -1746,8 +1956,8 @@ aspirational.
 ### Keyboard
 
 23. **`Ctrl+F` focuses the search field of each of the five views that has one**,
-    parameterised — the current bug is that four of them get nothing.
-24. **`Ctrl+F` on Probes does nothing and throws nothing.**
+    parameterised — the current bug is that three of them get nothing.
+24. **`Ctrl+F` on Probes and on Accounts does nothing and throws nothing.**
 25. **`Esc` unwinds exactly one layer** — with a palette over a sheet over a
     popover, three presses close three things in order.
 26. **The Layout nudge still works** and is not swallowed by the new global
@@ -1756,8 +1966,14 @@ aspirational.
 
 ### Regression floor
 
-`00-overview.md` records the baseline as **35 frontend test files**. This phase
-adds roughly 8 files and must not reduce the count or skip anything.
+`00-overview.md`'s baseline is now **37 frontend test files / 1064 tests** (v0.34
+added `AccountsView.spec.ts` and `launcher.test.ts`). This phase adds roughly 8
+files and must not reduce the count or skip anything. `AccountsView.spec.ts` is
+the one file this phase edits rather than adds: `:201` pins the
+`Accept all — 1 character` string that §5.1 changes, and §5.1's `Move to {account}`
+/ `Keep here` renames touch the `/move Zulu/i` and `/keep Zulu/i` accessible-name
+queries at `:86,105`. Nothing else in it should need to move — which is the real
+assertion about whether these renames changed behaviour.
 `npm run check` (`svelte-check --fail-on-warnings`) stays clean — the new
 `role`/`aria-*` attributes on `ConfirmDialog`, `CommandPalette` and `AppMenu` are
 where that will bite, so write them right the first time.
@@ -1768,9 +1984,9 @@ where that will bite, so write them right the first time.
 
 | Risk | Why it is real | Mitigation |
 | --- | --- | --- |
-| **A failure becomes invisible.** 48 modals become inline messages; an inline message in a collapsed panel, a hidden sub-tab, or a scrolled-away row is a silent failure — and a modal never was. | This is the one way this phase can be *worse* than what it replaces. `OverviewColumnsTab`/`FiltersTab`/`AppearanceTab` are mounted-but-`hidden` (`app/src/lib/OverviewView.svelte:465-473`), so an error can render into a sub-tab nobody is looking at. | Every `InlineMessage` that is not in the viewport when it appears also raises a `Toast` with the same text. One rule, applied by the primitive rather than by each call site: `InlineMessage` takes an `escalate` prop, default `true`, and uses an `IntersectionObserver` on mount. Test 13 asserts both surfaces for a hidden sub-tab. |
+| **A failure becomes invisible.** 48 modals become inline messages; an inline message in a collapsed panel, a hidden sub-tab, or a scrolled-away row is a silent failure — and a modal never was. | This is the one way this phase can be *worse* than what it replaces. `OverviewColumnsTab`/`FiltersTab`/`AppearanceTab` are mounted-but-`hidden` (`app/src/lib/OverviewView.svelte:485-493`), so an error can render into a sub-tab nobody is looking at. | Every `InlineMessage` that is not in the viewport when it appears also raises a `Toast` with the same text. One rule, applied by the primitive rather than by each call site: `InlineMessage` takes an `escalate` prop, default `true`, and uses an `IntersectionObserver` on mount. Test 13 asserts both surfaces for a hidden sub-tab. |
 | **Toasts are missed.** A 5-second toast on a second monitor is not a report. | Toasts only ever carry *successes* and *reversible* changes, both of which are also visible in the state itself (the tab is gone; the unsaved badge is lit). The two exceptions — `prefs` and clipboard paste — are warnings about things with no other home, and both are non-destructive. | — |
-| **The rename table breaks muscle memory.** 119 labels move. | Real, and it is why the deprecated labels go into `keywords` (§6.3) — the palette finds `Remove Window` for a release or two even though nothing shows it. | Ship the renames and the palette in the same release, never renames first. |
+| **The rename table breaks muscle memory.** 127 labels move, five of them shipped in v0.34 and barely a release old. | Real, and it is why the deprecated labels go into `keywords` (§6.3) — the palette finds `Remove Window` for a release or two even though nothing shows it. | Ship the renames and the palette in the same release, never renames first. |
 | **`Ctrl+F` regresses on Layout.** The current special case works; the general mechanism might not. | Test 23 parameterises all five, and `LayoutView.spec.ts` must stay green unmodified (test 26). | Roll back to the `layoutFocusFilter` prop — it is a two-line revert in `+page.svelte`. |
 | **The palette becomes the only route to something.** Six months from now someone adds a command with `homes: []`. | Test 1 fails the build. | — |
 | **`ConfirmDialog` traps focus badly** and the app becomes unusable by keyboard. | In-app modals get this wrong more often than they get it right. | Tests 15 and 16; `svelte-check --fail-on-warnings` catches the missing ARIA. If it goes wrong in the field, `ConfirmDialog` can fall back to `ask()` behind a one-line change in one file, because it has the same `Promise<boolean>` signature (§2.5). |
@@ -1796,14 +2012,15 @@ lines.
       deleting an overview tab is provably reversed by Discard (test 12).
 - [ ] `.hint`, `.error`, `.flash`, `.field-error`, `@keyframes fade-out` are gone
       from `app/src/app.css`; `.muted`/`.err` gone from `BatchView`; `.empty`
-      gone from `KeybindsView`. All 47 sites in §5.4 use a Phase 1 primitive.
+      gone from `KeybindsView`; `.conflict`/`.from-launcher` gone from
+      `AccountsView`. All 51 sites in §5.4 use a Phase 1 primitive.
 - [ ] Every string in §5's rename table is changed, and `Pair` reads
       `Pair this character…` at all four sites.
 - [ ] Every dialog title from §2.2 is gone; the seven surviving modal surfaces
       have the copy in §5.3 verbatim.
 - [ ] `errText`/`errMessage` are split; no bracketed code reaches a user-facing
       sentence (test 9).
-- [ ] `app/src/lib/commands.ts` holds 71 commands; every one has a non-empty
+- [ ] `app/src/lib/commands.ts` holds 72 commands; every one has a non-empty
       `homes` (test 1) and a reason string when disabled (test 5).
 - [ ] The app menu renders every `app-menu`-homed command with its accelerator,
       disabled-with-a-reason rather than hidden.
@@ -1818,7 +2035,8 @@ lines.
       (`Ctrl+Z` is *unbound and documented as such* until 5b — that is
       "identical", not "implemented".)
 - [ ] The launch `EmptyState` names the palette once.
-- [ ] `npm test` green, no skips, file count ≥ 43. `npm run check` clean.
+- [ ] `npm test` green, no skips, file count ≥ 45 (37 at v0.34 + ~8).
+      `npm run check` clean.
 - [ ] Nothing was removed: §6.1's *Also appears* column accounts for every
       control the sidebar toolbar used to hold, and the §5 rename table changes
       no control's behaviour.
