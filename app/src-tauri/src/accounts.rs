@@ -262,6 +262,26 @@ pub fn confirm_pairing(
     Ok(load_roster(roots, dir))
 }
 
+/// Apply many pairings, saving once. All-or-nothing: the first rejection (the
+/// hard cap) aborts and nothing is written, because a half-applied batch is
+/// harder to reason about than one the user re-runs.
+///
+/// This exists because `confirm_pairing` reloads the whole roster per call (see
+/// the `ponytail:` note above) and "accept everything the launcher proposes" is
+/// thirty of them.
+pub fn confirm_pairings(
+    roots: &[PathBuf],
+    dir: &Path,
+    pairs: &[(u64, u64)],
+) -> Result<AccountRoster, String> {
+    let mut store = load_store(dir);
+    for &(char_id, user_id) in pairs {
+        confirm(&mut store, char_id, user_id)?;
+    }
+    let _ = save_store(dir, &store);
+    Ok(load_roster(roots, dir))
+}
+
 pub fn unpair_character(roots: &[PathBuf], dir: &Path, char_id: u64) -> AccountRoster {
     let mut store = load_store(dir);
     unpair(&mut store, char_id);
@@ -582,5 +602,60 @@ mod tests {
         assert_eq!(snap.len(), 1, "only the excluded file is omitted");
         assert!(!snap.contains_key(&user_path), "excluded file omitted");
         assert!(snap.contains_key(&char_path), "other file still present");
+    }
+
+    #[test]
+    fn confirm_pairings_applies_every_pair_and_persists_once() {
+        let root = temp_dir("many-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_80000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_user_80000002.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_char_90000002.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("many-appdata");
+
+        let roster = confirm_pairings(
+            std::slice::from_ref(&root),
+            &appdir,
+            &[(90000001, 80000001), (90000002, 80000002)],
+        )
+        .unwrap();
+
+        let a = roster.accounts.iter().find(|a| a.user_id == 80000001).unwrap();
+        assert_eq!(a.characters, vec![90000001]);
+        let b = roster.accounts.iter().find(|a| a.user_id == 80000002).unwrap();
+        assert_eq!(b.characters, vec![90000002]);
+        assert!(roster.unassigned.is_empty());
+        let store = load_store(&appdir);
+        assert_eq!(store.accounts[&80000001].characters, vec![90000001]);
+        assert_eq!(store.accounts[&80000002].characters, vec![90000002]);
+    }
+
+    #[test]
+    fn confirm_pairings_writes_nothing_when_one_pair_is_rejected() {
+        let root = temp_dir("many-abort-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_80000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("many-abort-appdata");
+
+        // A fourth character on one account trips the hard cap.
+        let err = confirm_pairings(
+            std::slice::from_ref(&root),
+            &appdir,
+            &[
+                (90000001, 80000001),
+                (90000002, 80000001),
+                (90000003, 80000001),
+                (90000004, 80000001),
+            ],
+        )
+        .unwrap_err();
+        assert!(err.contains('3'), "the cap message names the limit: {err}");
+        assert!(
+            load_store(&appdir).accounts.is_empty(),
+            "an aborted batch leaves the store untouched"
+        );
     }
 }
