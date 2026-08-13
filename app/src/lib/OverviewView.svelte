@@ -175,12 +175,20 @@
       data = result;
       tabIndex = result.tabs[0]?.index ?? null;
       onUserDirty();
+      // A delete renumbers the account's tabs, and the backend carries the open
+      // character's per-tab column widths and sort setting across with them —
+      // so that slot has unsaved work too whenever a character is open.
+      if (charOpen) onCharDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   async function moveTab(toWindow: number) {
     if (!tab || !currentWindow) return;
     const pos = data?.windows.find((w) => w.index === toWindow)?.tab_indices.length ?? 0;
-    try { data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos); onUserDirty(); }
+    try {
+      data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos);
+      tabIndex = keepSelection(toWindow, pos);
+      onUserDirty();
+    }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   async function removeWindow() {
@@ -200,6 +208,17 @@
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
 
+  // Reordering or moving a tab RENUMBERS the tab table — EVE draws a window's
+  // tabs in ascending tab index, so that is the only way an order reaches the
+  // game. The selected tab's index therefore changes under us, and left alone
+  // `tabIndex` would silently come to name a different tab. Re-point it by
+  // POSITION instead: whatever the backend now lists where the tab landed is
+  // that tab, without this file repeating the backend's renumbering arithmetic.
+  function keepSelection(windowIdx: number, pos: number): number | null {
+    const strip = data?.windows.find((w) => w.index === windowIdx)?.tab_indices ?? [];
+    return strip[pos] ?? tabIndex;
+  }
+
   // Drag-reorder of tabs within the current window (same pattern as the column list).
   let tabDragFrom = $state<number | null>(null);
   async function dropTab(to: number) {
@@ -208,8 +227,13 @@
     const [moved] = order.splice(tabDragFrom, 1);
     order.splice(to, 0, moved);
     const windowIdx = currentWindow.index;
+    const selectedAt = tabIndex === null ? -1 : order.indexOf(tabIndex);
     tabDragFrom = null;
-    try { data = await api.tabReorder(windowIdx, order); onUserDirty(); }
+    try {
+      data = await api.tabReorder(windowIdx, order);
+      if (selectedAt >= 0) tabIndex = keepSelection(windowIdx, selectedAt);
+      onUserDirty();
+    }
     catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
 
