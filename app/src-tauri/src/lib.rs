@@ -202,6 +202,12 @@ fn resolve_capture(state: tauri::State<'_, AppState>) -> accounts::CaptureResult
     ops::resolve_capture(&state, &settings_model::default_roots())
 }
 
+/// Takes no roots, unlike both its siblings: it does no discovery.
+#[tauri::command]
+fn clear_capture(state: tauri::State<'_, AppState>) {
+    ops::clear_capture(&state);
+}
+
 #[tauri::command]
 fn overview_columns(state: tauri::State<'_, AppState>) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::overview_columns(&state)
@@ -638,7 +644,7 @@ pub fn run() {
             window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
             launcher_proposals,
-            begin_capture, resolve_capture,
+            begin_capture, resolve_capture, clear_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             overview_copy_columns,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
