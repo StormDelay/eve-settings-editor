@@ -48,8 +48,13 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
 ///
 /// Three passes, each of which can only remove pairings:
 ///  1. **Vote.** Tally `sorted(char ids) → user id` over every matched pair.
-///     A second `Fetching` before a `Fetched` discards the first: that is the
-///     shape a concurrent launch leaves behind.
+///     A `Fetching` arriving while one is still unanswered discards it AND
+///     poisons the next `Fetched`: with two requests in flight a `Fetched` can
+///     be answering either, and pairing it with whichever is pending attributes
+///     one account's whole character list to the other account. Both drop.
+///     This is not airtight — a longer interleave can still leave exactly one
+///     plausible candidate — which is why the vote exists rather than a single
+///     reading being trusted.
 ///  2. **Recency.** Per account, keep only the most recently seen surviving set.
 ///     Logs span years and an account's characters do change.
 ///  3. **Disjointness.** A character claimed by two surviving accounts is
@@ -59,21 +64,29 @@ pub fn parse_logs<I: IntoIterator<Item = String>>(lines: I) -> LauncherRoster {
     let mut votes: HashMap<Vec<u64>, HashMap<u64, u32>> = HashMap::new();
     let mut last_seen: HashMap<Vec<u64>, usize> = HashMap::new();
     let mut pending: Option<Vec<u64>> = None;
+    // Set when a `Fetching` displaced one that was never answered. The next
+    // `Fetched` could be answering either request, so it may not pair.
+    let mut contested = false;
 
     for (seq, line) in lines.into_iter().enumerate() {
         if let Some(ids) = fetching_ids(&line) {
+            contested = pending.is_some();
             pending = Some(ids);
             continue;
         }
         if let Some((n, user)) = fetched_count_and_user(&line) {
             // `take` clears the pending set either way: an unmatched count is a
             // mis-pairing, not something to hold on to.
-            if let Some(ids) = pending.take() {
-                if ids.len() == n {
-                    *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
-                    last_seen.insert(ids, seq);
+            let candidate = pending.take();
+            if !contested {
+                if let Some(ids) = candidate {
+                    if ids.len() == n {
+                        *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
+                        last_seen.insert(ids, seq);
+                    }
                 }
             }
+            contested = false;
         }
     }
 
@@ -98,10 +111,12 @@ pub fn parse_logs<I: IntoIterator<Item = String>>(lines: I) -> LauncherRoster {
         }
     }
 
-    // 2. Recency, per account.
+    // 2. Recency, per account. `last_seen` is written beside every vote, so the
+    // lookup cannot miss — but index-panicking on that invariant is a footgun for
+    // whoever edits this next, and dropping the entry is the safe direction anyway.
     let mut newest: HashMap<u64, (usize, Vec<u64>)> = HashMap::new();
     for (ids, user) in winners {
-        let seq = last_seen[&ids];
+        let Some(&seq) = last_seen.get(&ids) else { continue };
         match newest.get(&user) {
             Some((s, _)) if *s >= seq => {}
             _ => {
@@ -119,7 +134,7 @@ pub fn parse_logs<I: IntoIterator<Item = String>>(lines: I) -> LauncherRoster {
     }
     let mut accounts: HashMap<u64, Vec<u64>> = HashMap::new();
     for (user, (_, ids)) in newest {
-        let kept: Vec<u64> = ids.into_iter().filter(|c| claims[c] == 1).collect();
+        let kept: Vec<u64> = ids.into_iter().filter(|c| claims.get(c) == Some(&1)).collect();
         if !kept.is_empty() {
             accounts.insert(user, kept);
         }
@@ -162,15 +177,30 @@ mod tests {
     }
 
     #[test]
-    fn an_interleaved_launch_drops_the_orphaned_set() {
-        // Two launches overlap: A's ids are never confirmed, B's are.
+    fn an_interleaved_launch_drops_both_sets() {
+        // Two launches overlap and only one answer arrives. WHICH request it
+        // answers is not knowable from the log, so neither set is claimed.
         let r = parse_logs([
             fetching(&[90000001, 90000002, 90000003]),
             fetching(&[90000004, 90000005, 90000006]),
             fetched(3, 80000002),
         ]);
-        assert_eq!(chars(&r, 80000002), vec![90000004, 90000005, 90000006]);
-        assert_eq!(r.accounts.len(), 1, "the orphaned set claims nothing");
+        assert!(r.accounts.is_empty(), "an unanswered request poisons the next answer");
+    }
+
+    #[test]
+    fn two_overlapping_launches_pair_nothing_rather_than_guessing() {
+        // The dangerous shape, and the reason `contested` exists: both requests
+        // are answered. Pairing the first answer with what is pending hands one
+        // account the OTHER account's three characters — a confident, wrong,
+        // unopposed pairing. Real logs contain this shape.
+        let r = parse_logs([
+            fetching(&[90000001, 90000002, 90000003]),
+            fetching(&[90000004, 90000005, 90000006]),
+            fetched(3, 80000001),
+            fetched(3, 80000002),
+        ]);
+        assert!(r.accounts.is_empty(), "a guess here misattributes a whole account");
     }
 
     #[test]
