@@ -1,5 +1,9 @@
 # Phase 3 — Sheets for Accounts and Copy settings
 
+> **Implemented on `feat/ui-redesign-phase-3`.** §12 at the end lists every
+> place the shipped result differs from the plan below, and why. Each divergence
+> is also commented at its site in the code; that section is the index.
+
 _Part of the v0.33.0 UI/UX redesign. Phase 1 (`01-tokens-and-primitives.md`)
 supplies the tokens and the twelve primitives; Phase 2 (`02-shell.md`) supplies
 the always-visible context bar and save cluster. This phase consumes both and
@@ -1539,3 +1543,90 @@ would be state moved for no reason.
       results list are all present and reachable — plus v0.34's ghosts, accept
       all, conflicts with *Move it* / *Keep mine*, overflow ghosts with *Accept
       anyway*, and the "logs say nothing" hint.
+
+---
+
+## 12. What shipped, and where it differs from the above
+
+Added after the phase landed. §§1–11 are the plan as written; this is the diff.
+
+**Landed in two commits.** `clear_capture` (§4.4) went first and alone, exactly
+as §8 says it can: four backend/api rows, revertable on its own in either
+direction.
+
+### Already done by the time this phase started
+
+Phase 2 delivered three things §§2–4 specify, so they are not in this diff:
+
+- **The critical fault was already fixed.** The context bar and save cluster
+  moved outside the `mainView` branch in Phase 2, so Save and the unsaved count
+  already survived both takeovers. §9's test 2 ("write it first and watch it
+  fail against `master`") shipped there.
+- **§4.2's scoping fix** — `AccountsView`'s scope taken from
+  `slots.char ?? slots.user` rather than the tab-derived `current` — shipped in
+  Phase 2 as `subjectPath`.
+- **Most of §4.7.** Phase 1 had already made the ghost a `Chip state="proposed"`
+  in `--info` on `--info-dim`, dashed, with no `opacity`. What was left here was
+  §4.7.1: the labelled Accept.
+
+### Divergences
+
+- **§9's "one existing assertion this phase invalidates" is wrong; there are
+  five.** Every test querying `/accept all/i` against a single-undisputed-pair
+  fixture now finds `Accept`, because §4.8 drops "all" at one. Four of them are
+  about the IPC payload, the pruning or the rejection copy rather than the
+  label, and take a label-agnostic `/^accept( all)?$/i` helper. The fifth is the
+  deliberate rewrite §9 names, and keeps its `confirm_pairings` payload
+  assertion byte-for-byte.
+
+- **The work-area inset is a 2×2 grid on the overlay, not padding.** §3.1
+  specifies `--shell-inset-*` and this uses them — but through
+  `grid-template-columns/rows` rather than a four-value `padding`, which Phase
+  1's `space-scale` guard rejects and is right to: these are measured offsets,
+  not steps on a 4px ramp. The overlay's second cell IS the work-area rectangle,
+  which says it more clearly anyway.
+
+- **`--shell-inset-top` is measured, not tokenised**, from the context bar plus
+  the tab row. Both are content-sized rows, so a guessed constant would clip
+  them or float below them. It also insets past the TAB ROW, which §3.1 does not
+  mention because it was written before Phase 2 gave the tabs their own row —
+  the sheet covers the work area, and the tabs stay visible above it.
+
+- **`Sheet` gained `titled` rather than always drawing a header.** §3.6 assumes
+  a header exists; it did not. Making it unconditional would have shown two
+  headings in each of the three Phase-1 callers, which draw their own.
+
+- **`width: "default" | "wide"` was not added.** `Sheet` already takes a
+  free-form `width` with three callers using it, and `placement="work"` makes
+  width moot for both sheets — they fill the work area. `BatchView`'s own column
+  cap went 46rem → 60rem instead, which is what §5.1's argument was actually
+  about.
+
+- **`AccountsView` keeps a `<div class="accounts">` wrapper** inside the Sheet.
+  Its scoped rules need an element in its own scope to hang off; the Sheet's
+  root belongs to the Sheet.
+
+- **§7.2(c)'s message lives in the shell, above the work area**, not "in the
+  save cluster" — the cluster is a control, and this is a paragraph about two
+  documents. It clears itself when the slot stops being dirty, so acting on it
+  by either route is what dismisses it.
+
+- **`resetAccountsSession()` joins the shared test `afterEach`** rather than a
+  per-file `beforeEach` as §9 suggests, matching where `resetSubject`,
+  `resetNames` and `resetRoster` already are.
+
+### Not verified
+
+- **Neither sheet was opened in the running app.** The shell renders correctly
+  after the rebuild, and every behaviour above is under test — but opening a
+  sheet needs a click, and the desktop was in use both times it was tried. The
+  scrim geometry, the focus trap in a real browser and the panel landing exactly
+  on the work-area rectangle are unconfirmed by eye.
+
+### Numbers
+
+55 test files / 1235 tests before, **55 / 1259 after** (+24; no new frontend
+file). 236 Rust tests, including the new `clear_capture` one, whose last two
+assertions were seen to fail against a `clear_capture` shipped without §4.4.2's
+early return. `npm run check` clean over 492 files. One new Tauri command: the
+IPC pin went 85 → 86 on its own.
