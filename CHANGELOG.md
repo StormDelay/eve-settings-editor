@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - **Deleting an overview tab no longer changes the other tabs' columns.** The open character's column widths and sort order now follow each tab, instead of staying on the slot the deleted tab freed up.
+- **Reordering overview tabs now changes their order in game.** Dragging a tab, or moving one to another window, rearranged them in the editor only.
 
 ## [0.33.0] - 2026-08-12
 

@@ -415,7 +415,7 @@ Workflow:
   with tabs whose `overview`/`bracket` names the account has no preset for.
   _Added 2026-07-26._ _Done 2026-07-27. Community pack imports and renders; EVE's own importer accepts our export; `applyOnlyToShips` has no key on current clients; EVE emits UNSUFFIXED state-list names. Two bugs found and fixed. Remaining pack questions are tracked as their own tasks above._
 
-- [ ] **Tab order inside a window is not expressible in a pack, so export → re-import
+- [x] **Tab order inside a window is not expressible in a pack, so export → re-import
   resets it.** A window's tab order comes from the per-window list in
   `tabsByWindowInstanceID`, and that mapping has no representation in EVE's pack
   format at all — `read_pack` writes `tabSetup` sorted ascending by index, and
@@ -427,6 +427,13 @@ Workflow:
   Decide whether that asymmetry is worth the code. _Added 2026-07-26 (overview
   pack whole-branch review)._
   **Confirmed 2026-07-28 by the client itself:** `tabsByWindowInstanceID` appears in neither our export nor EVE's own (0 occurrences in both), and EVE's importer deletes the key from the account outright. So this is inherent to the format, exactly as suspected — the decision left is only what to do for a user re-importing their own export.
+  **Closed 2026-08-13 — the premise was wrong.** A window's tab order does NOT
+  come from the per-window list: EVE draws a window's tabs in ascending tab
+  index, and the strip only says which tabs the window shows (0 of 1,314 real
+  files with a mapping lists one non-ascending). Tab order therefore lives in
+  the `tabSetup` index, which a pack does carry, so a round trip preserves it and
+  there is no asymmetry to decide about. Same finding is what fixed drag-reorder
+  — see the ordering note under `renumber_to_strip_order` in `overview_tabs.rs`.
 
 - [x] **Per-environment canvas views (in space / NPC station / player structure).**
   A player's screen differs by environment, and the canvas currently mixes all of
