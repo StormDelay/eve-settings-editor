@@ -1,16 +1,82 @@
+/* The token system. Every colour, size, space and radius in the app resolves
+   here; `app/src/lib/ui/tokens.test.ts` fails the build if one does not.
+   The ramp is built in OKLCH so the lightness steps are perceptually even, and
+   each text token's lightness was then solved by binary search against an APCA
+   target, measured against the lightest surface it is allowed to sit on.
+   `apca.test.ts` re-checks all 41 pairings, so changing a hex here without
+   re-solving it fails a named test rather than shipping.
+
+   Scored with APCA, not WCAG 2 — see the note in `lib/ui/apca.ts` for why the
+   old palette's 5.60 : 1 was exactly why none of this was caught. */
 :root {
   color-scheme: dark;
   font-family: system-ui, "Segoe UI", sans-serif;
   font-size: 14px;
-  --bg: #16181d;
-  --bg-panel: #1e2128;
-  --fg: #d5d9e0;
-  --fg-dim: #8a919e;
-  --accent: #4f9cf0;
-  --danger: #e06c60;
-  --ok: #62b268;
-  --warn: #d9a441;
-  --border: #2c3038;
+
+  /* --- surfaces: four evenly-stepped OKLCH elevations ------------------- */
+  --bg:               #0f1216;   /* app ground */
+  --surface:          #181b20;   /* panels, rails, the layout canvas */
+  --surface-raised:   #22252a;   /* inputs, hover, cards, group headers */
+  --surface-overlay:  #2c3034;   /* menus, popovers, sheets */
+
+  /* --- text: each lightness solved to an APCA floor --------------------- */
+  --text:             #edeff3;   /* floor 90 — body, values, primary labels */
+  --text-secondary:   #d8dce4;   /* floor 78 — field labels, secondary rows */
+  --text-muted:       #c3c7ce;   /* floor 65 — captions; NEVER below 12px */
+
+  /* --- decorative only: these carry no text, so they carry no floor ----- */
+  --border:           #32363b;
+  --border-strong:    #4f5358;
+
+  /* --- roles: the light tone is text/icon, the -dim is its ground ------- */
+  --accent: #8dceff;  --accent-dim: #14283c;
+  --danger: #ffb4ab;  --danger-dim: #3a1d1b;
+  --warn:   #f3bd6e;  --warn-dim:   #33230a;
+  --ok:     #8ad79b;  --ok-dim:     #152d1a;
+  --info:   #5fd4f7;  --info-dim:   #052b36;
+
+  /* --- syntax: one hue the role palette does not have ------------------- */
+  --syntax-number:    #dcb2fe;   /* OKLCH L .826 C .114 h -51 */
+
+  /* --- translucent variants, for graphics drawn over other graphics -----
+     Eight-digit hex rather than color-mix(): the Linux target links
+     libwebkit2gtk-4.1 and Ubuntu 22.04 can ship 2.36, which predates
+     color-mix()'s 2.40. Seven declared tokens beat a platform-specific
+     rendering bug nobody can reproduce on Windows. */
+  --accent-veil:      #8dceff40; /* 25% — window rects on the layout canvas */
+  --warn-veil:        #f3bd6e40; /* 25% — the selected rect */
+  --ok-veil:          #8ad79b4d; /* 30% — the Shift-drag drop target */
+  --muted-veil:       #c3c7ce1f; /* 12% — furniture blocks, HUD bands */
+  --muted-line:       #c3c7ce73; /* 45% — HUD part outlines */
+  --scrim:            #00000080; /* 50% — dialog backdrops */
+  --shadow:           0 4px 12px #00000080;
+
+  /* --- space: 4px base. A dense tool; half-steps matter. ---------------- */
+  --s1: 4px;  --s2: 8px;  --s3: 12px;
+  --s4: 16px; --s5: 24px; --s6: 32px;
+
+  /* --- type: one scale, px only. `em` compounds, so a single 0.85em used
+     40 times resolved to three different sizes depending on which block it
+     landed in — the mechanical source of "the text sizes don't match". ---- */
+  --t-caption: 12px;  --t-body:  13px;
+  --t-ui:      14px;  --t-title: 16px;
+  --t-head:    20px;
+
+  /* --- radius: three steps, tied to element size ------------------------ */
+  --r-sm:   4px;    /* chips, inputs, buttons */
+  --r-md:   8px;    /* cards, panels, popovers, sheets */
+  --r-pill: 999px;
+
+  /* --- the one opacity value. Hierarchy comes from size, weight and
+     position; opacity is disabled state and nothing else. ---------------- */
+  --o-disabled: 0.5;
+
+  /* TEMPORARY — deleted in step 5 of the Phase 1 migration. These keep every
+     not-yet-migrated file rendering while the swap proceeds file by file, and
+     their deletion is what proves the swap is complete. */
+  --bg-panel: var(--surface);
+  --fg: var(--text);
+  --fg-dim: var(--text-muted);
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); }
