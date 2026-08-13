@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Reordering overview tabs now changes their order in game.** Dragging a tab, or moving one to another window, rearranged them in the editor only.
+
 ## [0.33.0] - 2026-08-12
 
 Less clicking in the overview editor, and tab names in colour.
