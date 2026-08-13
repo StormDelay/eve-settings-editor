@@ -175,6 +175,10 @@
       data = result;
       tabIndex = result.tabs[0]?.index ?? null;
       onUserDirty();
+      // A delete renumbers the account's tabs, and the backend carries the open
+      // character's per-tab column widths and sort setting across with them —
+      // so that slot has unsaved work too whenever a character is open.
+      if (charOpen) onCharDirty();
     } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
   async function moveTab(toWindow: number) {
