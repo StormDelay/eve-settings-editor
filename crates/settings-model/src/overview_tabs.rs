@@ -452,7 +452,12 @@ pub fn create_tab(v: &mut Value, window_idx: usize, name: &str, from_tab: Option
     Ok(order.binary_search(&new_idx).map_or(new_idx, |i| i as i64))
 }
 
-pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
+/// Delete a tab and close the gap it leaves. Returns the SURVIVING tabs' old
+/// indices in their new order — a tab's new index is its position in that slice —
+/// which is what `remap_tab_scoped_settings` needs to carry each survivor's
+/// char-side widths and sort setting across with it. Empty when nothing was
+/// renumbered (see `compact_tabs`).
+pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<Vec<i64>, OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
     {
@@ -479,8 +484,7 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<(), OverviewTabError> {
         }
     }
     // Close the gap the removal just opened: EVE draws a blank tab in it.
-    compact_tabs(ov);
-    Ok(())
+    Ok(compact_tabs(ov))
 }
 
 pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<(), OverviewTabError> {
@@ -735,6 +739,64 @@ pub fn remove_overview_window_geometry(v: &mut Value, window_idx: usize) {
     for (_, subval) in subdicts.iter_mut() {
         if let Some(entries) = dict_inner_mut(subval) {
             entries.retain(|(k, _)| !is_b(k, key.as_bytes()));
+        }
+    }
+}
+
+/// The two char-file containers keyed by tab index. `SortHeadersSizes` holds each
+/// tab's column widths (696 of the corpus's character files carry it);
+/// `SortHeadersSettings2` holds its sort column and direction (765). Both live
+/// under `ui` and key on `(overviewScroll2, tabIndex)`. Measured across the whole
+/// corpus, these are the ONLY tab-index-keyed containers in a character file, so
+/// remapping the pair is the whole of the char-side work.
+const TAB_KEYED_CHAR_CONTAINERS: [&[u8]; 2] = [b"SortHeadersSizes", b"SortHeadersSettings2"];
+
+/// The tab index in an `(overviewScroll2, N)` key — `None` for every other key,
+/// including the other things these containers may be keyed by.
+fn scroll_key_tab(k: &Value) -> Option<i64> {
+    let Value::Tuple(items) = k else { return None };
+    if items.len() != 2 || !is_b(&items[0], b"overviewScroll2") {
+        return None;
+    }
+    as_int(&items[1])
+}
+
+/// Char-file half of a tab renumbering: carry each surviving tab's own column
+/// widths and sort setting onto its new index, and drop the deleted tab's.
+///
+/// `surviving` is the old indices in their new order — exactly what `delete_tab`
+/// returns — so a tab's new index is its position in that slice. Anything the
+/// slice does not name belonged to a tab that is gone, and its settings go with
+/// it; keys that are not `(overviewScroll2, N)` at all are left untouched, since
+/// these containers are shared with other scrolling lists.
+///
+/// Without this, deleting a tab silently re-pointed every higher tab's widths and
+/// sort order at its neighbour — the user's complaint was that deleting one tab
+/// changed the others, and the account-side renumbering alone is what caused it.
+///
+/// Empty `surviving` means "nothing was renumbered" and is a no-op — never an
+/// instruction to drop every key.
+pub fn remap_tab_scoped_settings(v: &mut Value, surviving: &[i64]) {
+    if surviving.is_empty() {
+        return;
+    }
+    // Position, not binary search: tab counts are tiny and this drops the
+    // "caller must pass it sorted" precondition entirely.
+    let new_index = |old: i64| surviving.iter().position(|&s| s == old);
+    inline_all(v);
+    let Value::Dict(root) = v else { return };
+    let Some((_, ui)) = root.iter_mut().find(|(k, _)| is_b(k, b"ui")) else { return };
+    let Value::Dict(entries) = ui else { return };
+    for (key, val) in entries.iter_mut() {
+        if !TAB_KEYED_CHAR_CONTAINERS.iter().any(|c| is_b(key, c)) {
+            continue;
+        }
+        let Some(inner) = dict_inner_mut(val) else { continue };
+        inner.retain(|(k, _)| scroll_key_tab(k).is_none_or(|n| new_index(n).is_some()));
+        for (k, _) in inner.iter_mut() {
+            let Some(n) = scroll_key_tab(k).and_then(new_index) else { continue };
+            let Value::Tuple(items) = k else { continue };
+            items[1] = Value::Int(n as i64);
         }
     }
 }
@@ -1629,6 +1691,118 @@ mod tests {
         let mut v = user_with_gaps();
         assert!(matches!(rename_tab(&mut v, 9, "X"), Err(OverviewTabError::UnknownTab { index: 9 })));
         assert_eq!(tab_indices(&v), vec![0, 3, 7], "gaps still there after a refusal");
+    }
+
+    /// A char tree carrying both tab-index-keyed containers, for tabs 0..2, plus
+    /// one key that is NOT an `(overviewScroll2, N)` tuple — these containers are
+    /// shared with other scrolling lists, and a remap must not touch those.
+    fn char_with_tab_settings() -> Value {
+        let scroll = |n: i64| Value::Tuple(vec![Value::Bytes(b"overviewScroll2".to_vec()), Value::Int(n)]);
+        let widths = |w: i64| Value::Dict(vec![(Value::Bytes(b"NAME".to_vec()), Value::Int(w))]);
+        let sort = |col: &str| Value::Tuple(vec![Value::Bytes(col.as_bytes().to_vec()), Value::Bool(true)]);
+        Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), Value::Dict(vec![
+            (Value::Bytes(b"SortHeadersSizes".to_vec()), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (scroll(0), widths(100)),
+                (scroll(1), widths(110)),
+                (scroll(2), widths(120)),
+                (Value::Bytes(b"somethingElse".to_vec()), widths(999)),
+            ])])),
+            (Value::Bytes(b"SortHeadersSettings2".to_vec()), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (scroll(0), sort("DISTANCE")),
+                (scroll(1), sort("NAME")),
+                (scroll(2), sort("TYPE")),
+            ])])),
+        ]))])
+    }
+
+    /// The `(overviewScroll2, N)` entries of one container, as `(N, label)`.
+    fn scroll_entries(v: &Value, container: &[u8]) -> Vec<(i64, String)> {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ui) = root.iter().find(|(k, _)| is_b(k, b"ui")).unwrap();
+        let Value::Dict(entries) = ui else { panic!() };
+        let (_, c) = entries.iter().find(|(k, _)| is_b(k, container)).unwrap();
+        dict_inner(c).unwrap().iter().filter_map(|(k, val)| {
+            let n = scroll_key_tab(k)?;
+            let label = match val {
+                Value::Dict(d) => match d.first() {
+                    Some((_, Value::Int(w))) => w.to_string(),
+                    _ => "?".into(),
+                },
+                Value::Tuple(items) => match items.first() {
+                    Some(Value::Bytes(b)) => String::from_utf8_lossy(b).into_owned(),
+                    _ => "?".into(),
+                },
+                _ => "?".into(),
+            };
+            Some((n, label))
+        }).collect()
+    }
+
+    /// The whole point of the char half: a tab that survives keeps the widths and
+    /// sort setting it had, and the deleted tab's go with it. Without this,
+    /// deleting tab 1 handed tab 2's settings to the tab that used to be 2.
+    #[test]
+    fn remap_carries_each_surviving_tabs_settings_onto_its_new_index() {
+        let mut v = char_with_tab_settings();
+        // Tab 1 deleted: 0 stays 0, old 2 becomes 1.
+        remap_tab_scoped_settings(&mut v, &[0, 2]);
+        assert_eq!(
+            scroll_entries(&v, b"SortHeadersSizes"),
+            vec![(0, "100".to_string()), (1, "120".to_string())],
+            "old tab 2's widths moved to index 1; the deleted tab's are gone",
+        );
+        assert_eq!(
+            scroll_entries(&v, b"SortHeadersSettings2"),
+            vec![(0, "DISTANCE".to_string()), (1, "TYPE".to_string())],
+            "sort column follows its tab too",
+        );
+    }
+
+    /// These containers are shared with other scrolling lists, so a key that is
+    /// not an `(overviewScroll2, N)` tuple is none of this function's business.
+    #[test]
+    fn remap_leaves_keys_that_name_no_tab_alone() {
+        let mut v = char_with_tab_settings();
+        remap_tab_scoped_settings(&mut v, &[0]);
+        let Value::Dict(root) = &v else { panic!() };
+        let (_, ui) = root.iter().find(|(k, _)| is_b(k, b"ui")).unwrap();
+        let Value::Dict(entries) = ui else { panic!() };
+        let (_, sizes) = entries.iter().find(|(k, _)| is_b(k, b"SortHeadersSizes")).unwrap();
+        assert!(
+            dict_inner(sizes).unwrap().iter().any(|(k, _)| is_b(k, b"somethingElse")),
+            "a non-tab key must survive a tab remap",
+        );
+    }
+
+    /// Empty means "nothing was renumbered" — the no-op that `compact_tabs`
+    /// returns on an already-dense table. Reading it as "no tab survives" would
+    /// delete every width and sort setting the character has.
+    #[test]
+    fn remap_with_an_empty_map_changes_nothing() {
+        let mut v = char_with_tab_settings();
+        let before = v.clone();
+        remap_tab_scoped_settings(&mut v, &[]);
+        assert_eq!(v, before);
+    }
+
+    /// End to end across the two files: the account-side delete reports the map,
+    /// and the char side applied with it leaves every survivor's settings intact.
+    #[test]
+    fn a_delete_reports_the_map_the_char_side_needs() {
+        let mut user = user_with_tabs();
+        create_tab(&mut user, 0, "B", Some(0)).unwrap(); // tab 1
+        create_tab(&mut user, 0, "C", Some(0)).unwrap(); // tab 2
+        let surviving = delete_tab(&mut user, 1).unwrap();
+        assert_eq!(surviving, vec![0, 2], "old indices, in their new order");
+
+        let mut ch = char_with_tab_settings();
+        remap_tab_scoped_settings(&mut ch, &surviving);
+        assert_eq!(
+            scroll_entries(&ch, b"SortHeadersSizes"),
+            vec![(0, "100".to_string()), (1, "120".to_string())],
+            "tab C kept its own widths after moving from index 2 to 1",
+        );
+        assert_eq!(tab_name(&user, 1), "C", "and it is tab C that now sits at 1");
     }
 
     /// An EXISTING wrapper's own timestamp must survive — the repair is for a
