@@ -1,6 +1,9 @@
 <script lang="ts">
   import { chatStackTargets, historyArea } from "$lib/detail";
   import type { ChatPanel, Stack } from "$lib/api";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
+  import ScopeBanner from "./ui/ScopeBanner.svelte";
 
   let { windowId, geom, panel, stack, readOnly, sharedNames, onSet }: {
     windowId: string;
@@ -41,22 +44,32 @@
 </script>
 
 <div class="chat-split">
-  <div class="legend">
-    Chat layout — account-wide{#if sharedNames.length > 0}, shared with {sharedNames.join(", ")}{/if}
-  </div>
+  <ScopeBanner
+    compact
+    label="Chat layout — account-wide{sharedNames.length > 0
+      ? `, shared with ${sharedNames.join(', ')}`
+      : ''}" />
   <div class="fields">
-    <label>
-      Member list
-      <input type="number" min="0" value={panel?.userlist_width ?? ""} disabled={readOnly}
-        title={readOnly ? "Not present in this file" : undefined}
-        onchange={edit("userlist")} />
-    </label>
-    <label>
-      Input box
-      <input type="number" min="0" value={panel?.input_height ?? ""} disabled={readOnly}
-        title={readOnly ? "Not present in this file" : undefined}
-        onchange={edit("input")} />
-    </label>
+    <Field
+      kind="number"
+      label="Member list"
+      layout="column"
+      width="5rem"
+      min={0}
+      value={panel?.userlist_width ?? ""}
+      disabled={readOnly}
+      disabledReason="Not present in this file"
+      onchange={edit("userlist")} />
+    <Field
+      kind="number"
+      label="Input box"
+      layout="column"
+      width="5rem"
+      min={0}
+      value={panel?.input_height ?? ""}
+      disabled={readOnly}
+      disabledReason="Not present in this file"
+      onchange={edit("input")} />
   </div>
   {#if area}
     <!-- Unclamped on purpose: a negative area means this account-wide split does
@@ -68,68 +81,50 @@
   {#if targets.length > 1}
     <!-- Disabled when this channel has neither value stored: there would be
          nothing to copy out, and the click would be a silent no-op. -->
-    <button
+    <Button
+      size="sm"
       class="stack-apply"
       disabled={readOnly || nothingToCopy}
-      title={nothingToCopy ? "This channel has no stored sizes to copy" : undefined}
+      disabledReason={nothingToCopy
+        ? "This channel has no stored sizes to copy"
+        : "Not present in this file"}
       onclick={applyToStack}>
       Apply to all {targets.length} channels in this stack
-    </button>
+    </Button>
   {/if}
 </div>
 
 <style>
+  /* The scope legend moved from --warn to --info. --warn was carrying both
+     meanings inside this one file: the legend below, which is a statement of
+     scope, and `.area.bad`, which is a real warning that the computed split
+     leaves a negative area. Same token, one file, two meanings, and no way for
+     a reader to tell which. --warn now means exactly one thing again.
+
+     The 10px type went with it. §4.3 listed these four lines as canvas-scale,
+     but this component renders inside WindowPanel's side panel, not on the
+     canvas, so it is chrome and takes the scale. */
   .chat-split {
-    border-top: 1px solid #333;
-    margin-top: 0.3rem;
-    padding-top: 0.3rem;
+    border-top: 1px solid var(--border);
+    margin-top: var(--s1);
+    padding-top: var(--s1);
   }
-  .legend {
-    color: var(--warn);
-    font-size: 10px;
-    margin-bottom: 0.2rem;
+  .chat-split :global(.scope) {
+    margin-bottom: var(--s1);
   }
   .fields {
     display: flex;
-    gap: 0.5rem;
-  }
-  .fields label {
-    color: #aaa;
-    display: flex;
-    flex-direction: column;
-    font-size: 10px;
-    gap: 1px;
-  }
-  /* Explicit dark styling per the repo's dark-native-controls note: an unstyled
-     number input renders light-on-light in this theme. */
-  .fields input {
-    background: #11141a;
-    border: 1px solid #444;
-    color: #dbeafe;
-    font: inherit;
-    padding: 1px 3px;
-    width: 5rem;
+    gap: var(--s2);
   }
   .area {
-    color: #888;
-    font-size: 10px;
-    margin-top: 0.2rem;
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+    margin-top: var(--s1);
   }
   .area.bad {
     color: var(--warn);
   }
-  .stack-apply {
-    background: #2a2f3a;
-    border: 1px solid #444;
-    color: #dbeafe;
-    cursor: pointer;
-    font: inherit;
-    font-size: 10px;
-    margin-top: 0.3rem;
-    padding: 2px 6px;
-  }
-  .stack-apply:disabled {
-    cursor: default;
-    opacity: 0.5;
+  .chat-split :global(.stack-apply) {
+    margin-top: var(--s1);
   }
 </style>
