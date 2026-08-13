@@ -227,6 +227,18 @@ export interface AccountRoster {
   accounts: AccountView[];
   unassigned: number[];
 }
+/** One pair a batch confirm could not apply, and the reason it gave. */
+export interface Rejected {
+  char_id: number;
+  user_id: number;
+  reason: string;
+}
+/** A batch confirm applies what fits and reports what did not — a rejection is
+ * data, not an error, so nothing here throws. */
+export interface BatchConfirm {
+  roster: AccountRoster;
+  rejected: Rejected[];
+}
 export interface CaptureResult {
   changed_chars: number[];
   changed_users: number[];
@@ -436,7 +448,7 @@ export const api = {
   unpairCharacter: (charId: number) =>
     invoke<AccountRoster>("unpair_character", { charId }),
   confirmPairings: (pairs: [number, number][]) =>
-    invoke<AccountRoster>("confirm_pairings", { pairs }),
+    invoke<BatchConfirm>("confirm_pairings", { pairs }),
   launcherProposals: () => invoke<Proposal[]>("launcher_proposals"),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),

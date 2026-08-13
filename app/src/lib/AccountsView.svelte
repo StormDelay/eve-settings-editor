@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage, type Profile, type Proposal } from "./api";
+  import { api, errMessage, type Profile, type Proposal, type Rejected } from "./api";
   import { names, resolveNames } from "./names.svelte";
   import { resolvedName } from "./filesort.svelte";
   import {
@@ -65,14 +65,31 @@
   // roster refresh would be waste.
   let proposals = $state<Proposal[]>([]);
   let proposalsLoaded = $state(false);
+  // Whether the logs ever said anything. `proposals` empties as they are
+  // accepted, and "your logs say nothing" is a lie once they have been acted on.
+  let everFound = $state(false);
   // Session-only, like the M3b suggestion dismissals: a "keep mine" is a
   // judgement about this sitting, not something to persist.
   let dismissed = $state<number[]>([]);
   const dismissedSet = $derived(new Set(dismissed));
   const byCard = $derived(proposalsByCard(proposals, dismissedSet));
-  const allPairs = $derived(acceptAllPairs(proposals, dismissedSet));
+  // Exactly the cards on screen, and nothing else. `accounts` is scoped to the
+  // profile folder the open file lives in; an unscoped accept would write
+  // pairings for accounts the user has no card for, never saw a ghost for, and
+  // had no way to dismiss — the one thing this feature may never do.
+  const onScreen = $derived(new Set(accounts.map((a) => a.user_id)));
+  const allPairs = $derived(
+    acceptAllPairs(proposals, dismissedSet).filter(([, userId]) => onScreen.has(userId)),
+  );
 
   const accountLabel = (userId: number) => aliasFor(userId) ?? `core_user_${userId}`;
+
+  // Name the character and the account rather than echoing a bare cap message —
+  // "Account already has 3 characters" does not say WHICH account, and the user
+  // has to know that to fix it.
+  const rejectionText = (r: Rejected) =>
+    `${nameOf(r.char_id)} could not join ${accountLabel(r.user_id)} — ` +
+    `${r.reason.charAt(0).toLowerCase()}${r.reason.slice(1)}. Unpair one there and try again.`;
 
   async function acceptAll() {
     error = null;
@@ -84,12 +101,15 @@
     // duplicate ghost — the exact bug this filtering exists to prevent.
     const pairs = allPairs;
     try {
-      await confirmMany(pairs);
-      // Drop what was just accepted. `proposalsByCard` cannot see the roster, so
-      // a proposal left in the list re-renders as a ghost in the next empty slot
-      // — the same character twice on one card.
-      const accepted = new Set(pairs.map(([charId]) => charId));
+      const rejected = await confirmMany(pairs);
+      // Drop what actually landed — NOT everything sent. `proposalsByCard`
+      // cannot see the roster, so a proposal left in the list re-renders as a
+      // ghost in the next empty slot; and a rejected one must stay, because its
+      // ghost is the affordance for retrying after an unpair.
+      const failed = new Set(rejected.map((r) => r.char_id));
+      const accepted = new Set(pairs.map(([charId]) => charId).filter((c) => !failed.has(c)));
       proposals = proposals.filter((p) => !accepted.has(p.char_id));
+      if (rejected.length > 0) error = rejected.map(rejectionText).join(" ");
     } catch (e) {
       error = errMessage(e);
     }
@@ -121,6 +141,10 @@
       const [charId, userId] = r.detected;
       try {
         await confirmPairing(charId, userId); // already refreshes the roster
+        // Same pruning `onConfirm` does: a character the launcher also proposed
+        // would otherwise stay a ghost on the very card it now fills, and still
+        // count towards Accept all.
+        proposals = proposals.filter((p) => p.char_id !== charId);
         captureNote = `Paired ${nameOf(charId)} ↔ account ${userId}.`;
         capturing = false;
       } catch (e) {
@@ -147,6 +171,7 @@
     .launcherProposals()
     .then(async (p) => {
       proposals = p;
+      everFound = p.length > 0;
       await resolveNames(p.map((x) => x.char_id));
     })
     .catch(() => {})
@@ -180,7 +205,7 @@
   {#if error}<p class="error">{error}</p>{/if}
   {#if captureNote}<p class="flash" aria-live="polite">{captureNote}</p>{/if}
 
-  {#if proposalsLoaded && proposals.length === 0}
+  {#if proposalsLoaded && !everFound}
     <p class="hint">
       Your EVE launcher logs say nothing about these accounts — use “Calibrate an account…”
       to pair a character by hand.
@@ -195,6 +220,7 @@
     {#each accounts as acct (acct.user_id)}
       {@const card = byCard.get(acct.user_id)}
       {@const ghosts = card?.ghosts ?? []}
+      {@const free = Math.max(0, MAX - acct.characters.length)}
       <li class="card">
         <input
           class="alias"
@@ -241,10 +267,12 @@
             {/if}
           {/each}
         </div>
-        {#if ghosts.length > 0}
+        <!-- Only when a ghost actually got a slot: with the card full, every
+             ghost is overflow and each carries its own line already. -->
+        {#if ghosts.length > 0 && free > 0}
           <p class="from-launcher">From your launcher log.</p>
         {/if}
-        {#each ghosts.slice(Math.max(0, MAX - acct.characters.length)) as gid (gid)}
+        {#each ghosts.slice(free) as gid (gid)}
           <p class="from-launcher">
             Your launcher log also puts {nameOf(gid)} here, but all three slots are full.
             <button onclick={() => onConfirm(gid, acct.user_id)}>Accept anyway</button>
