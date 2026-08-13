@@ -6,6 +6,40 @@
 
 ---
 
+## What v0.34 changed
+
+**The design holds. Nothing in it moves.** 0.34 added roughly a thousand backend
+lines — `app/src-tauri/src/launcher.rs` (796, new), `accounts.rs` (+184),
+`ops.rs` (+77) — and PR #77 put another 366 into
+`crates/settings-model/src/overview_tabs.rs`. This spec rests on backend
+internals, so every claim below was re-derived against the merged tree rather
+than re-read. The four that decide whether it still stands:
+
+- **The chokepoint survives.** Writes to a document's `value` are still four
+  lines in two functions, at the same line numbers (§2.1). `launcher.rs` imports
+  exactly one thing from the rest of the app — `crate::accounts::AccountsStore`
+  (`launcher.rs:29`) — and never sees `AppState`, a `Document` or a `Value`.
+- **`try_edit_char` still has three call sites**, unchanged at `ops.rs:525`,
+  `:615` and `:628`, across a release that rewrote tab handling (§2.2). It did
+  not grow this time. §3.4 explains why that is not a reason to drop the
+  tripwire.
+- **The multi-write list is still exactly four** (§3.5), re-derived mechanically
+  over every writer in `ops.rs` rather than by eye. 0.34's two new commands,
+  `confirm_pairings` and `launcher_proposals` (`lib.rs:179-193`), take
+  `tauri::AppHandle` and not `tauri::State<AppState>`, so they cannot reach an
+  open document at all.
+- **Account pairing is a new class of state change and it stays outside undo.**
+  §8 now says so, says why, and records the design that keeps a bulk `Accept all`
+  safe without one. That is the one genuinely new question 0.34 asked of this
+  spec, and the answer is that nothing needs building.
+
+`ops.rs`'s +77 landed almost entirely inside `tab_delete` and one new test, both
+of which this spec already accounted for, so its citations are untouched. The
+only stale numbers were in `lib.rs` (+1 for `mod launcher;`, +16 for the two new
+commands) and `api.ts` (+23); both are corrected in place.
+
+---
+
 ## 1 Goal, and why it is separable
 
 The app has no undo. Every mutating command writes the in-memory document and
@@ -72,6 +106,15 @@ returns four lines in two functions:
 (`app/src-tauri/src/setup.rs:660-668`, `&d.value` twice) and never writes one.
 `presets.rs` does not import `AppState` at all.
 
+0.34's new backend does not change that table, which is the first thing this
+revision checked. `launcher.rs` (796 lines) imports one name from the rest of the
+app — `use crate::accounts::AccountsStore;` (`launcher.rs:29`) — and reads the
+EVE launcher's log files; it has no `AppState`, no `Document` and no `Value`.
+`accounts.rs` (+184) writes only `accounts.json` through `save_store`
+(`accounts.rs:45`). **Neither can write a document, so neither can bypass the
+chokepoint.** That is what keeps the whole pairing feature outside this spec's
+boundary rather than inside it — see §8.
+
 Whole-slot replacement is separate and matters for lifecycle (§5.3), not for
 push points: `open_file` at `ops.rs:173`, `close_file` at `ops.rs:190-192`, and
 `restore_backup`, which re-opens through `open_file` at `ops.rs:349`.
@@ -90,11 +133,11 @@ The proposal, and the brief for this spec, say `try_edit_char`
 | `ops.rs:615` | `overview_window_add` | `edit_slot(Slot::User, add_overview_window)` at `ops.rs:609-614` |
 | `ops.rs:628` | `overview_window_remove` | `edit_slot(Slot::User, remove_overview_window)` at `ops.rs:622-627` |
 
-`tab_delete` arrived with the overview-editor work on the current branch
-(`d2ae9b4`, "Overview editor: bulk category select, column copy, tab-name
-markup"), after the proposal was written. Its char-side write carries the
-surviving tabs' per-tab settings onto their new indices
-(`remap_tab_scoped_settings`, `ops.rs:525`).
+`tab_delete`'s char-side write arrived with PR #76 (`d66e9e2`, "Keep each tab's
+own columns when another tab is deleted"), after the proposal was written. It
+carries the surviving tabs' per-tab settings onto their new indices
+(`remap_tab_scoped_settings`, `ops.rs:525`), because deleting a tab renumbers the
+account's tab table and the char file keys widths and sort order by tab index.
 
 The invariant survives — all three run their `try_edit_char` **after** an
 `edit_slot` on the user document, inside one Tauri command, so all three are
@@ -102,6 +145,16 @@ already inside a step that has been snapshotted. But the hazard the brief asked
 me to guard against as hypothetical is **not hypothetical**: a third caller was
 added without anyone noticing that a rule existed. §3.4 specs the two tripwires,
 and they are a hard requirement rather than a nicety.
+
+**Re-counted at v0.34: still three, at the same three lines.** PR #77 rewrote tab
+handling substantially — `overview_tabs.rs` gained 366 lines and tab reordering
+now renumbers rather than permutes — but all of that landed in
+`crates/settings-model`, over `&mut Value`, and added no command. `ops.rs` is
+byte-identical outside `tab_delete` and one new test. So the set was stable
+across a release that had every opportunity to grow it. That is one data point
+for stability against one for growth, which is not enough to retire §3.4: the
+tripwire costs nothing at runtime and its whole value is in the release where the
+set *does* move, which is precisely the release nobody is watching for it.
 
 ### 2.3 A second two-slot shape the proposal does not mention
 
@@ -419,6 +472,13 @@ They are tripwires, not proofs: A cannot check that the preceding call really
 snapshots, and B cannot check that the guard is on the *first* line rather than
 after a slot lock. The behavioural tests in §12 do that, one per command.
 
+Both were run by hand against v0.34's `ops.rs` while revising this spec: A's
+`KNOWN` list is still exactly the three names above, and B still finds exactly
+the four commands of §3.5. They would have passed unchanged. That is the right
+outcome for a tripwire and not an argument for dropping one — a guard that fires
+in every release is a design problem, and a guard that fires in one release out
+of five is the guard doing its job.
+
 **Rejected alternatives.** A `debug_assert!` inside `try_edit_char` that the
 newest entry exists is weak — it passes for any command that is not the first
 of a session. A proof token returned by `edit_reshared` would be exact but
@@ -506,8 +566,10 @@ before any slot lock, as the first statement of the command.**
 #### Which commands need it — the definitive list
 
 Every `edit_slot` / `edit_reshared` / `try_edit_char` call site in
-`app/src-tauri/src` was re-read for this list. Four commands write more than
-once; **no others do, directly or transitively.**
+`app/src-tauri/src` was re-read for this list, and at v0.34 the list was
+re-derived mechanically — the count in §3.4's tripwire B, run by hand over the
+non-test half of `ops.rs` — rather than by eye. Four commands write more than
+once; **no others do, directly or transitively, and 0.34 added none.**
 
 | Command | Writes | Grouping does |
 | --- | --- | --- |
@@ -535,8 +597,18 @@ How that was established, since it is the claim everything else rests on:
 - Outside `ops.rs`: `setup.rs` reads both documents and writes neither
   (`setup.rs:660-668`), `presets.rs` never imports `AppState`, and the only
   `lib.rs` command that composes two backend calls is
-  `settings_preset_create` (`lib.rs:515-516`) — `setup::preset_save` plus a
+  `settings_preset_create` (`lib.rs:532-533`) — `setup::preset_save` plus a
   directory listing, neither of which touches an open document.
+- **0.34's launcher commands are outside it too, and the reason is structural
+  rather than a promise.** `confirm_pairings` (`lib.rs:182-184`) and
+  `launcher_proposals` (`lib.rs:191-193`) take `tauri::AppHandle`, not
+  `tauri::State<'_, AppState>`, so they have no handle on either slot; the batch
+  one is `accounts::confirm_pairings` (`accounts.rs:289-299`), which loads the
+  store, applies every pair and calls `save_store` **once**. Its one write is to
+  `accounts.json`, not to `doc.value`. The obvious candidate for a hidden
+  multi-write — "the batched pairing confirm writes once per pair" — is exactly
+  what that function was written to avoid, and it is not a document write in any
+  case.
 
 `tab_delete` and the two window commands carry the guard even though it
 currently suppresses nothing, and that is deliberate for two reasons. It makes
@@ -887,7 +959,7 @@ alone is the mirror.
 ## 6 Backend API
 
 Three commands in `lib.rs`, delegating to `ops.rs` as every other command does
-(`lib.rs:47-112` for the pattern), plus three lines in `api.ts` (`api.ts:399-515`).
+(`lib.rs:48-113` for the pattern), plus three lines in `api.ts` (`api.ts:419-571`).
 
 ```rust
 #[derive(Serialize)]
@@ -962,6 +1034,16 @@ today after a Discard and after a backup restore — `discardChanges` bumps
 (`+page.svelte:656`), and all three ignore it. That is a pre-existing bug this
 phase must fix regardless, and it is three props and three one-line `$effect`
 edits.
+
+**0.34 did not fix it.** `+page.svelte`, `AutofillView.svelte`,
+`KeybindsView.svelte`, `ProbeFormationsView.svelte`, `LayoutView.svelte` and
+`layout.ts` are byte-identical to the version this table was built from — the
+release's frontend work went into `AccountsView.svelte` (+170) and the new
+`launcher.ts`. Every line number in this section still resolves, and the bug is
+still live in the shipped 0.34 build. `AccountsView` is not a seventh row: it
+renders the roster and the launcher proposals, never a projection of an open
+document, so no refresh token needs to reach it and an undo cannot change what
+it shows.
 
 Note also that `LayoutView`'s `load()` (`LayoutView.svelte:115-135`) is what
 fetches `api.hud`, `api.neocomBar`, `api.overviewColumns` and `api.chatPanels`
@@ -1062,12 +1144,90 @@ through `edit_reshared`, which is the set of things §2.1 proved is closed.
 
 | Action | Where | Why not | Its safety net |
 | --- | --- | --- | --- |
-| Settings-preset create / rename / delete / import / export | `presets.rs:218-219`, `:348-367`, `:370-375`, `:390-404`, `:409` | writes and deletes directories on disk; never touches an open document | keeps its confirm; delete is `remove_dir_all` and genuinely irreversible |
+| Settings-preset create / rename / delete / import / export | `presets.rs:217-218`, `:348-368`, `:370-376`, `:390-405`, `:409` | writes and deletes directories on disk; never touches an open document | keeps its confirm; delete is `remove_dir_all` (`presets.rs:375`) and genuinely irreversible |
 | Backup restore | `ops.rs:340-350` | overwrites the target file, then re-opens | the backup chain itself; the restored file is still backed up on the next save |
-| Batch copy / "Copy settings" | `setup.rs` (`plan_batch`, `setup_apply`) | writes other characters' files directly | every target is backed up first |
+| Batch copy / "Copy settings" | `setup.rs` (`plan_setup` `:148`, `setup_apply` `:511`, `copy_files` `:605`) | writes other characters' files directly | every target is backed up first |
 | Overview pack **export** | `ops.rs:708-720` | writes a YAML file | it is a new file; delete it |
 | Save | `ops.rs:223-236`, `save.rs:42-83` | the write is the point | the backup taken at `save.rs:64` |
 | View preferences — clutter overrides, the Detail toggle, target and effect counts | `prefs.svelte.ts:83`, `:109`, `:118`, `:129`, `:143` → `api.setPreferences` | application preferences, not document content | each is a toggle you can toggle back |
+| **Account pairing** — `Confirm`, `Keep mine`, `Accept all`, unpair | `accounts.rs:65-79`, `:289-299`, `:301-306`, via `lib.rs:151-193` | writes `accounts.json`; the roster is not a settings document and never reaches `doc.value` | `unpair_character` (`accounts.rs:301-306`), one click per character in the same view, and it restores the exact prior state — see below |
+
+### Account pairing: 0.34's new class, and why it stays out
+
+v0.34 added a second kind of persisted state this app can change on a click: the
+char↔account roster, mined from the EVE launcher's own logs and confirmed one
+card at a time or all at once. It is not a settings document, and this is the one
+question the original spec could not have answered.
+
+**Decision: pairing is not reachable by `Ctrl+Z`.** Three reasons, in order of
+weight:
+
+1. **Structural, not a preference.** §2.1's boundary is a closure proof, not a
+   taste call: undo covers what routes through `edit_reshared`, and pairing does
+   not — `launcher.rs` cannot see `AppState` and `accounts.rs` writes only
+   `accounts.json`. Admitting it means `Entry` (§3.1) stops being two document
+   trees and becomes an enum over two unrelated kinds of state, which is the
+   history browser §1 explicitly rules out. That is not a small change to this
+   design; it is a different design.
+2. **It would break rule 1 of "How the UI says so", below, in the worst
+   available way.** `Ctrl+Z` means the document stack and never reinterprets
+   itself. A user who accepts a pairing in
+   the Accounts view, switches to the file view and edits a column, then presses
+   `Ctrl+Z` twice would have the second press rewrite `accounts.json` — a file
+   they cannot see, from a view that is not on screen. Rule 1 exists to stop
+   `Ctrl+Z` reverting something the user is not looking at; pairing is that
+   failure with a whole `mainView` between the action and the reversal.
+3. **The persistence argument points the same way, not the other.** The owner
+   made the proposal dismissals deliberately session-only
+   (`AccountsView.svelte:72-75`) — a "keep mine" is a judgement about this
+   sitting, not a stored fact. A shortcut that could reach into `accounts.json`
+   would be the mirror image of that decision: a keypress with the power to
+   rewrite persisted state that nothing on screen reflects.
+
+**`Accept all` is already reversible, and the reason is worth recording.**
+`confirm` is single-membership — before adding the character it removes it from
+whatever account currently holds it (`accounts.rs:74-76`) — which reads at first
+like a bulk accept could silently re-home characters the user paired by hand. It
+cannot. `launcher::proposals` classifies every launcher claim against the store
+before the UI ever sees it (`launcher.rs:367-371`): agreement emits nothing, a
+character the store already puts elsewhere emits `conflict: Some(other)`, and
+only a character the store holds **no** pairing for emits `conflict: None`.
+`acceptAllPairs` then sends exactly the `conflict === null` set
+(`launcher.ts:44-46`). So every pair `Accept all` submits is for an unpaired
+character, and `confirm`'s displacement loop is a no-op on all of them.
+
+**That routing is the thing that makes a bulk accept safe, and it is load-bearing
+rather than incidental.** Disputes go to the card that holds the chip today, with
+both accounts named and a per-character *Move it* / *Keep mine*
+(`launcher.ts:33-34`, `AccountsView.svelte:290-296`) — never into the batch. A future
+change that folded conflicts back into `Accept all`, for symmetry or for
+convenience, would turn one click into exactly the silent re-homing this
+paragraph exists to say does not happen. Keep the two paths separate — and note
+that `launcher.test.ts:62-65` ("acceptAllPairs never includes a disputed
+proposal") is what stands between them, so that test is a boundary guard and not
+a unit test of a filter.
+
+**The residual gap, at its true size:** accepting a ghost — by the per-chip ✓ or
+by `Accept all` — writes a pairing with no confirm and no undo. That is
+deliberate, and the reversal already ships: `unpair_character`
+(`accounts.rs:301-306`) puts the character back to having no account, which is
+*exactly* the state it was in, precisely because the batch only ever touches
+unpaired characters. It is one click per character rather than one for the batch.
+Nothing here needs building, and **5b builds nothing for it** — a mechanism
+specced against a hazard that does not occur is worse than no mechanism.
+
+**One adjacent trap, owned elsewhere.** Guided capture can fabricate a pairing
+out of nothing: `resolve_capture` reads its baseline slot as `unwrap_or_default()`
+(`ops.rs:396`) and `capture_diff` counts a path the baseline does not contain as
+advanced (`accounts.rs:173-176`, `None => true`), so with no baseline ever set
+every discovered file reads as changed, and a user with exactly one char file and
+one user file gets a confident, entirely invented `detected` pair. Both still
+hold at 0.34, at those lines, after `accounts.rs` grew by 184. It is not
+undo-shaped and it is not this phase's to fix — `03-sheets.md` §4.4.2 specs the
+early return and the test that pins it. Named here only so that "the launcher
+path cannot invent a pairing" is not generalised into "no path can": guided
+capture is a different route to `confirm`, with no `Proposal` and no
+classification step in front of it.
 
 ### Undoable, including two that are worth advertising
 
@@ -1088,7 +1248,7 @@ of this boundary:
 - `ops.rs:550-560` — `preset_create`, `preset_rename`, `preset_delete` are
   **overview presets stored inside the account document**. Fully undoable.
 - `presets.rs` — `settings_preset_*`, exposed as `api.settingsPresetCreate` etc.
-  (`api.ts:494-504`), are **on-disk settings-preset folders**. Not undoable.
+  (`api.ts:517-527`), are **on-disk settings-preset folders**. Not undoable.
 
 Whoever writes the UI copy for §9 must not conflate them. An overview preset
 delete should get a toast with Undo; a settings-preset delete must keep its
@@ -1106,7 +1266,10 @@ Three rules, in priority order:
 2. **A non-undoable action's toast carries no Undo button** and, where there is
    a real remedy, names it instead. A backup restore's toast points at the
    History popover. A settings-preset delete keeps its confirm and gets a plain
-   toast.
+   toast. A pairing toast — including `Accept all`'s — is a plain toast: its
+   remedy is `unpair`, already on the card, so it names that and offers no Undo
+   button at all. Whatever it does, it must **never** call `api.undo()`; the
+   document stack is neither touched by a pairing nor able to reverse one.
 3. **`Ctrl+Z` with an empty stack toasts "Nothing to undo."** — never silence.
    Silence after a delete is exactly how a user concludes the undo did something
    they cannot see.
@@ -1202,7 +1365,7 @@ carries three comments about exactly this:
 - `ops.rs:245-250` — `window_layout` locks user before the requested slot, and
   skips the user lock when the caller asked for the user slot, because "locking
   `user` twice would deadlock (std Mutex is not reentrant)".
-- `ops.rs:262-263` — `hud_layout`: "Lock user before char, matching
+- `ops.rs:261-263` — `hud_layout`: "Lock user before char, matching
   `overview_columns` — the only other spot that holds both slots at once. A
   consistent order across the file rules out lock-order-inversion deadlock
   between concurrently invoked commands."
@@ -1244,15 +1407,17 @@ are none: every `edit_slot`/`edit_reshared` call in `ops.rs` is at the top level
 of a command, and every command that re-projects does so *after* the edit's
 guard has dropped — which is the rule `ops.rs:285-287` states and every
 re-projecting command follows (`ops.rs:429-430`, `:451-452`, `:496-497`,
-`:734-735`, `:771`, `:779-780`, `:818-819`, `:851-852`). Verified by reading;
-re-verify if this spec is implemented against a newer `ops.rs`.
+`:734-735`, `:771`, `:779-780`, `:818-819`, `:851-852`). Re-verified at v0.34:
+all eight anchors still resolve, and `tab_delete` — the one command the release
+rewrote — re-projects through `overview_columns(state)` at `ops.rs:526`, after
+both of its writes have dropped their guards.
 
 Holding the history lock across the `edit` closure is safe because the closures
 are `settings_model` functions over a `&mut Value` — they have no access to
 `AppState` and cannot re-enter. Worth a one-line comment at the lock site.
 
 Whether two commands can actually run concurrently is not worth relitigating
-here: `lib.rs` has `async` commands (`lib.rs:115`, `:127`) that run on the async
+here: `lib.rs` has `async` commands (`lib.rs:116`, `:128`) that run on the async
 runtime's pool, the existing comments assume concurrency, and the cost of one
 consistent order is a comment.
 
@@ -1270,9 +1435,9 @@ consistent order is a comment.
 
 ### Backend
 
-- **`app/src-tauri/src/lib.rs`** — `mod undo;` beside `mod ops;` (`:1-8`); three
+- **`app/src-tauri/src/lib.rs`** — `mod undo;` beside `mod ops;` (`:1-9`); three
   `#[tauri::command]` one-liners for `undo`, `redo`, `undo_state`, matching the
-  shape at `:47-112`; three names in `generate_handler!`.
+  shape at `:48-113`; three names in `generate_handler!`.
 - **`app/src-tauri/src/ops.rs`**
   - `AppState` gains `history: Mutex<undo::History>` (`:35-39`) and
     `AppState::new` initialises it (`:42-44`).
@@ -1299,7 +1464,7 @@ consistent order is a comment.
 
 ### Frontend
 
-- **`app/src/lib/api.ts`** — three entries beside the rest (`:399-515`):
+- **`app/src/lib/api.ts`** — three entries beside the rest (`:419-571`):
   `undo: () => invoke<UndoOutcome | null>("undo")`, `redo`, `undoState`; plus the
   `UndoOutcome` / `UndoState` types.
 - **`app/src/routes/+page.svelte`**
@@ -1437,6 +1602,8 @@ Following `OverviewView.spec.ts` and `routes/page.spec.ts`, using
 | `savedAt` now means two things | low | comment updated; rename deferred to avoid colliding with the Phase 2 and 5 diffs |
 | Encoded fallback taken and `encode` fails mid-session | low | `Fidelity::Editable` (§2.5) makes it near-impossible; if it happens, drop the stack and report `can_undo = false` rather than failing the user's edit |
 | Toast's Undo button undoes a newer step | low | dismiss the toast on any subsequent edit (§9.2) |
+| A pairing toast gets an Undo button wired to `api.undo()` | medium — same shape as the naming trap: it would revert an unrelated document edit while leaving the roster written | §8's pairing section states the rule and the DoD pins it; the two paths share no command, so the mistake is a wrong import rather than a subtle one |
+| A later change folds disputed proposals into `Accept all` | low today, but it would create the silent bulk re-homing that §8 records as impossible | the separation is stated in §8 with its two anchors (`launcher.rs:367-371`, `launcher.ts:44-46`), and `launcher.test.ts:62-65` — "acceptAllPairs never includes a disputed proposal" — already fails if it is |
 
 **Rollback** is unusually clean, and worth stating because it is the reason this
 phase can be attempted at all. Undo adds a field to `AppState`, three commands,
@@ -1493,7 +1660,9 @@ else; reverting 3 takes 4 with it.
 - [ ] `try_edit_char` carries the §3.3 comment and both §3.4 tripwires pass.
 - [ ] Every lock acquisition in `ops.rs` follows user → char → history, and the
       group guard holds none of them between acquire and drop.
-- [ ] No `settings_preset_*`, backup-restore or batch-copy toast offers Undo.
+- [ ] No `settings_preset_*`, backup-restore, batch-copy or account-pairing toast
+      offers Undo. A pairing toast names `unpair` as its remedy and never calls
+      `api.undo()`.
 - [ ] All Rust tests in §12 pass; all vitest tests in §12 pass;
       `npm run check` clean.
 - [ ] `docs/ui-redesign/00-overview.md`'s phase table still describes this phase

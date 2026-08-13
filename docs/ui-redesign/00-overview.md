@@ -8,6 +8,12 @@ directory is the *how*.
 
 Nothing here has been implemented. Every file is a plan.
 
+**Current as of v0.34.0.** Every spec was re-reviewed against that release on
+2026-08-13: counts re-measured, `file:line` citations re-anchored, and the
+launcher-log account rework folded in. Each spec carries a "What v0.34 changed"
+note. 0.34 fixed **none** of the seven pre-existing bugs below and added two of
+its own (§"Pre-existing bugs"), so every phase's premise still holds.
+
 ## Why
 
 The app is not badly designed; it is **undesigned**. Eight views were built one
@@ -20,15 +26,24 @@ at a time, each locally sensible, none sharing a vocabulary. What reads as
 | `rgba()` literals | 25 | 0 |
 | CSS variables referenced but never defined | 2 (`--line`, `--panel`) | 0 |
 | CSS classes used but never defined | 1 (`.empty`) | 0 |
-| Hand-rolled "dark native control" style rules | 28, in 15 files | 1 primitive |
+| Hand-rolled "dark native control" style rules | 28, in 16 files | 1 primitive |
 | Border radii | 8 | 3 |
 | Font sizes (mixing `px` and `em`) | 10 | 5 |
 | Padding values | 55 | 6 |
-| Gap values | 22 | 6 |
+| Gap values | 23 | 6 |
+| `opacity` declarations used as hierarchy | 35, at 10 values | 1, disabled only |
+| Meanings carried by the class name `chip` | 5 | 1 |
 | Blocking native dialogs | 73 | 7 |
-| Class names for inline messages | 7 | 1 |
+| Class names for inline messages | 9 | 1 |
 | Disabled-state treatments | 3 | 1 |
-| Distinct dialog titles | 45 | ~10 |
+| Distinct dialog titles | 46 | ~10 |
+
+Re-measured at v0.34.0. Most held exactly; the ones that moved all moved the
+**wrong way** — `gap` 22→23, `opacity` 33→35 declarations across 9→10 distinct
+values, `chip` meanings 4→5, and inline-message classes 7→**9** (0.34 added
+`.conflict` and `.from-launcher`). That is the case for doing Phase 1 rather
+than deferring it again: absent a shared vocabulary, every feature adds to the
+pile, and 0.34 was a well-reviewed feature written by people who knew better.
 
 Three root causes produce nearly all of it, and each phase below attacks a cause
 rather than a symptom:
@@ -96,9 +111,29 @@ real work. Every one is fixed by a phase below.
 ## Pre-existing bugs found while specifying
 
 These are not redesign work. They are defects in the shipping app that surfaced
-because six people read the code closely at once. Each is fixable on its own,
-today, without any of the phases below — and each is specified in the phase that
-found it.
+because several people read the code closely at once. Each is fixable on its
+own, today, without any of the phases below — and each is specified in the phase
+that found it.
+
+**All seven were re-checked against v0.34.0 and all seven are still live.** The
+files carrying them — `+page.svelte`, `BatchView.svelte`, `app.css`,
+`BackupsPanel.svelte` — are byte-identical to v0.33.
+
+**v0.34 added two more:**
+
+- **A failed launcher-log read is reported as an empty one.**
+  `AccountsView.svelte:184` is `.catch(() => {})`, and `.finally` still sets
+  `proposalsLoaded`. So when the read *breaks*, `proposals` and `foundCards`
+  stay empty, `everFound` is false, and the view states *"Your EVE launcher logs
+  say nothing about these accounts"* — which is false. Broken and empty are
+  indistinguishable to the user. → `05-dialogs-copy-palette.md`.
+- **Which editor tab you are on decides what `Accept all` writes.** The
+  pre-existing `active`-derived-from-`view` fault (bug 3 below) now reaches
+  further than the Backups panel: `AccountsView`'s folder scope gates
+  `onScreen`/`allPairs` (`AccountsView.svelte:81-84`), so `slots[active]`
+  determines *which pairings a bulk accept commits*, not merely which cards are
+  listed. A write whose scope depends on an unrelated tab selection.
+  → `02-shell.md`.
 
 - **`refreshToken` reaches only two of six views.** Autofill, Keybinds and Probes
   key their reload `$effect` on `userOpen`/`userId` alone, so they never see a
@@ -189,6 +224,16 @@ reasoning for the override is captured in each case.
 | 4 | Should `overview_copy_columns` undo in one press or two? | **One.** "You are undoing one action; it would feel wrong to have to Ctrl+Z multiple times to go back on a single action." This is now a governing principle: **one Tauri command = at most one undo entry.** *(Overrode the spec.)* | `05b-undo.md` §3 |
 | 5 | Take the free atomicity in `apply_mutations`? | **Yes** — own commit, own test, and `ops.rs:206-208`'s doc comment rewritten in the same change. | `05b-undo.md` §13 |
 
+### Settled during the v0.34 review
+
+Two more, from specs disagreeing with each other. Both are recorded at the point
+of the rule, not just here.
+
+| Question | Outcome |
+| --- | --- |
+| What colour is a *proposed* pairing? | **`--info` on `--info-dim`**, not `--accent`. `--accent` is already the focus ring, `ListRow`'s selected state, the primary `Button` and the active tab; an accent chip carrying its own focus ring would be one colour saying two things. A dispute is `--warn`. `02-shell.md` §5.7.2 is the binding statement. |
+| Does anything tell you proposals are waiting? | **Yes, one thing: a count on the `Accounts…` menu item** (`02-shell.md` §5.10.1) — computed when the menu opens, never at app start, and it counts without naming. The sidebar still shows no per-character proposal chip, because a proposed character *is* unpaired everywhere that matters. |
+
 ### Why account grouping was rejected, in full
 
 It is worth recording because the proposal argued for it at some length. The
@@ -221,7 +266,9 @@ against rather than a blank.
 ## Working on these
 
 - Frontend tests are vitest, beside the component (`*.spec.ts` / `*.test.ts`),
-  using `@testing-library/svelte`. Baseline: **35 frontend test files**.
+  using `@testing-library/svelte`. Baseline at v0.34.0: **37 frontend test
+  files, 1064 tests passing**, and `npm run check` clean over 445 files.
+  Phase 1's acceptance gate is that all 37 still pass **untouched**.
   Run `npm test` from `app/` (it does `svelte-kit sync && vitest run`).
 - Rust tests are in-file `#[cfg(test)]` modules. Baseline: **40 modules** across
   `crates/` and `app/src-tauri/`.

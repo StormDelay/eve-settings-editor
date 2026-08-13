@@ -9,6 +9,31 @@ tokens (`--surface`, `--text-muted`, `--accent`) and primitives (`Button`,
 `Tabs`, `Chip`, `Popover`, `ListRow`, `EmptyState`, `ScopeBanner`) and never
 redefines either.
 
+### What v0.34 changed
+
+Every citation below is re-anchored against v0.34.0. What that release did to
+this document:
+
+- **A character now has three pairing states, not two.** The launcher-log
+  association feature mines char↔account pairings from the EVE launcher's logs
+  and offers them in the Accounts view, so a character can be *confirmed*,
+  *unpaired*, or **proposed** — claimed by a log line the user has not accepted
+  (§2.11). §5.7's chip rule was written when "no chip" could only mean
+  "unpaired"; it is re-decided in §5.7.1 and holds, and §5.7.2 states the
+  "proposed" visual language this document and `03-sheets.md` both obey.
+- **Fault (b) got a bigger blast radius.** `AccountsView` is still scoped by
+  `openPath` — which is `slots[active]` — but that scope now gates *which
+  pairings a click writes*, not merely which cards are listed (§2.4).
+- **None of the three structural faults were fixed, and none were touched.**
+  `+page.svelte`, `Sidebar.svelte`, `app.css`, `BackupsPanel.svelte` and
+  `LayoutView.svelte` are byte-identical to their v0.33 selves; their line
+  numbers below are unchanged. `OverviewView.svelte` moved (0.34 plus PR #77's
+  tab reorder) and `AccountsView.svelte` grew ~170 lines, so citations into
+  those two are new.
+- **One claim in §2.7 was wrong and is corrected.** `--warn` *is* defined
+  (`app/src/app.css:12`); the undefined-token problem lives in `AccountsView`,
+  not the sidebar.
+
 ---
 
 ## 1. Goal
@@ -69,7 +94,8 @@ by em dashes. It is the only place the subject is stated.
 
 ### 2.3 Fault (a) — Save disappears
 
-Verified. `mainView` is `"file" | "accounts" | "batch"` (`+page.svelte:30`).
+Verified against v0.34.0, unchanged. `mainView` is
+`"file" | "accounts" | "batch"` (`+page.svelte:30`).
 The Accounts and Copy-settings views are the `{#if}` / `{:else if}` branches at
 `+page.svelte:496-499`; **the entire `<section class="editor">` — file bar,
 both dirty badges, Discard and Save — lives in the `{:else}` at
@@ -83,10 +109,16 @@ returned to `"file"` inside `openFile()` (`+page.svelte:262`) and
 — so the only exit is to open another file, which is also the action that
 prompts to discard (`+page.svelte:198-208`).
 
+0.34 made the takeover a longer stay rather than a shorter one: the Accounts
+view now carries an "Accept all — N characters" action
+(`AccountsView.svelte:192-196`) plus per-card Accept / Dismiss / Move / Keep
+buttons (`:254-259, :290-298`), so there is real work to do in there — with
+Save and both unsaved badges off the screen for the whole of it.
+
 ### 2.4 Fault (b) — the Backups panel silently changes subject
 
-Verified. The active slot is derived from the view
-(`+page.svelte:53-59`):
+Verified against v0.34.0, unchanged and now worse (below). The active slot is
+derived from the view (`+page.svelte:53-59`):
 
 ```ts
 const active = $derived<Slot>(
@@ -117,9 +149,19 @@ they are not obviously part of the same bug:
   Overview to Autofill retitles the window from "Baguette Commander — EVE
   Settings Editor" to the account alias or the bare `core_user_140.dat`.
 - **`AccountsView` and `BatchView` are scoped by it too.** Both take
-  `openPath={current?...path}` (`+page.svelte:497,499`) and use it to find
-  the profile folder (`AccountsView.svelte:17-27`). Harmless today only
-  because both files sit in the same folder.
+  `openPath={current?...path}` (`+page.svelte:497,499`) and use it to find the
+  profile folder (`AccountsView.svelte:16, 26-37`). Harmless today only because
+  both files sit in the same folder.
+
+  **0.34 raised the stakes on that "harmless".** That folder scope no longer
+  only chooses which cards are listed: `onScreen` (`AccountsView.svelte:81`)
+  and `allPairs` (`:82-84`) filter "Accept all" down to the cards the scope
+  produced, deliberately, so an accept can never write a pairing for an account
+  the user never saw. Sound rule — but its input is `current`, so *which
+  pairings one click writes* is now a function of the tab the user happened to
+  be on when they opened Accounts. It stays harmless only while the char and
+  user files share a folder, which is an invariant nothing enforces and which
+  `docs/small-tasks.md:32-45` already records failing one level down.
 
 The derivation's own comment (`+page.svelte:49-52`) claims the active document
 "is a consequence of the current view", and lists backups among the things
@@ -127,7 +169,7 @@ that "follow the character" — which is precisely what they do not do.
 
 ### 2.5 Fault (c) — the tab strip rearranges
 
-Verified. The whole strip is behind one condition
+Verified against v0.34.0, unchanged. The whole strip is behind one condition
 (`+page.svelte:527`) and each of the five non-Tree tabs is behind its own
 (`+page.svelte:530-534`). The conditions are duplicated a second time, in
 prose-identical form, inside `viewAvailable()` (`+page.svelte:85-91`), which
@@ -145,20 +187,21 @@ the other five views exist at all.
 `sharedLabel` is built once in the shell (`+page.svelte:153-159`) from
 `sharedWith()` (`app/src/lib/overview.ts:13-23`), then threaded as a prop into
 four views and rendered by each with its own identical markup and its own
-identical CSS block:
+identical CSS block. Re-counted at v0.34.0: **still exactly four**, and no
+fifth view has acquired one.
 
 | File | Markup | CSS |
 |---|---|---|
-| `OverviewView.svelte` | :314 | :478-481 |
+| `OverviewView.svelte` | :334 | :498-501 |
 | `AutofillView.svelte` | :97 | :159-162 |
 | `KeybindsView.svelte` | :96 | :187-190 |
 | `ProbeFormationsView.svelte` | :477 | :704-707 |
 
-All four CSS blocks are byte-identical:
+All four CSS blocks are still byte-identical:
 `margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em; color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);`
 
 Separately, `LayoutView` passes `sharedNames` down to `HudPanel`
-(`HudPanel.svelte:188-189`) and `ChatSplit` (`ChatSplit.svelte:45`), which
+(`HudPanel.svelte:186-191`) and `ChatSplit` (`ChatSplit.svelte:43-46`), which
 state scope *per row* inside a view that edits both files. Those are a
 different thing and stay — see §5.4.
 
@@ -175,8 +218,15 @@ lines, the presets group, then one `<details>` per profile directory
 `name · alias   <size in KB>` (`:167-171`). The "in use by EVE" text
 (`profiles.ts:65-67`) is a `<span class="meta">` inside the `<summary>`
 (`:160`), so it wraps with the profile label; when not primary it is
-recoloured with `var(--warn, #d08770)` (`:198`) — an inline fallback for a
-token the app does not define.
+recoloured with `var(--warn, #d08770)` (`:198`).
+
+**Correction.** An earlier draft called that a fallback for an undefined token.
+It is not: `--warn` is defined at `app/src/app.css:12`, so `#d08770` is dead
+and has never rendered. Phase 1 deletes the literal as noise, not as a bug. The
+app's real undefined-token instances are `--line` and `--panel`, both in
+`AccountsView.svelte` (`:319, :323, :335-336`) — which is exactly why 0.34's
+proposal chips came out invisible, and why §5.7 is careful about where that
+lands.
 
 Grouping is by `p.dir` and ordering pins the profile EVE wrote last
 (`:52-58`, `profiles.ts:35-57`).
@@ -192,20 +242,58 @@ application is one dim sentence in the top-left corner.
 ### 2.9 The one existing inspector
 
 `LayoutView` runs its own two-column grid
-(`LayoutView.svelte:1010-1013`): `minmax(0, 1fr) minmax(14rem, 20rem)`, with
-`.canvas-wrap` scrolling on the left (`:1014-1017`) and `.side` scrolling on
-the right (`:1019-1024`), holding `HudPanel` and `WindowPanel`
-(`:953, :974`). No other view has a right-hand region, so the right edge of
-the application means "backups" on five tabs and "window properties" on one.
+(`LayoutView.svelte:1007-1014`): `minmax(0, 1fr) minmax(14rem, 20rem)` at
+`:1011`, with `.canvas-wrap` scrolling on the left (`:1015-1018`) and `.side`
+scrolling on the right (`:1019-1024`), holding `HudPanel` and `WindowPanel`
+(`:953, :974`, inside `.side` at `:951`). No other view has a right-hand
+region, so the right edge of the application means "backups" on five tabs and
+"window properties" on one.
 
 ### 2.10 Ctrl+F means two things, and nothing on four tabs
 
-`+page.svelte:469-476` intercepts Ctrl+F, calls `preventDefault()`, and routes
-to `layoutFocusFilter?.()` on Layout, otherwise to `openSearch()`. But
-`openSearch()` (`:186-189`) focuses `searchBox`, which is `bind:this` on an
-input that only exists inside the Tree branch (`:611-616`). On Overview,
-Autofill, Keybinds and Probes `searchBox` is `undefined`, so Ctrl+F is
-suppressed *and* does nothing — four of six tabs.
+Re-checked at v0.34.0: still true, still four. `+page.svelte:469-476`
+intercepts Ctrl+F, calls `preventDefault()`, and routes to
+`layoutFocusFilter?.()` on Layout, otherwise to `openSearch()`. But
+`openSearch()` (`:186-189`) focuses `searchBox`, which is `bind:this` at
+`:614` on an input that only exists inside the Tree branch (`:611-616`). On
+Overview, Autofill, Keybinds and Probes `searchBox` is `undefined`, so Ctrl+F
+is suppressed *and* does nothing — four of six tabs.
+
+### 2.11 A character's pairing state is no longer binary
+
+New in v0.34.0, and the one change in that release this document has to design
+against. `AccountsView` loads `api.launcherProposals()` once on mount
+(`AccountsView.svelte:175-185`), which mines char↔account pairings out of the
+EVE launcher's own logs (`app/src-tauri/src/launcher.rs:318-341, 357-377`). A
+character is therefore one of:
+
+| State | Definition | `accountOf()` |
+|---|---|---|
+| **Confirmed** | in the roster's `accounts[].characters` | the account id |
+| **Unpaired** | in neither the roster nor the logs | `null` |
+| **Proposed** | a `Proposal` with `conflict === null` (`api.ts:249-254`) — the logs claim an account, nobody has accepted it | **`null`** |
+| **Disputed** | a `Proposal` carrying `conflict` — a variety of proposed, where the logs contradict a chip the roster already holds | the *roster's* account |
+
+Session-only dismissals are one more shade on top: `dismissed`
+(`AccountsView.svelte:74-75`) is plain component state, deliberately not
+persisted — "keep mine" is a judgement about this sitting (`:72-73`).
+
+**The load-bearing fact for §5.7 is the third column.** A proposed character is
+`accountOf() === null`. It is disabled in a batch copy exactly like an unpaired
+one (`BatchView.svelte:151-152`, labelled at `:349`), and all four
+account-scoped views nag it exactly like an unpaired one
+(`OverviewView.svelte:324-328`, `AutofillView.svelte:85-87`,
+`KeybindsView.svelte:85`, `ProbeFormationsView.svelte:467`). Nothing about what
+the user can do changes until they accept.
+
+The 0.34 live test also found the proposal's treatment inside the Accounts view
+too weak to see: the ghost chip differs from a confirmed one by
+`border-style: dashed` and `opacity: 0.85` only (`AccountsView.svelte:329`), on
+a border painted with the undefined `var(--line, #3333)` (`:323`) — so in
+practice it differs by nothing. Phase 1 retires `opacity` as a hierarchy device
+(`01-tokens-and-primitives.md` §3.2), which removes half of that treatment
+outright. §5.7 states the replacement rule; `03-sheets.md` owns applying it
+inside the sheet.
 
 ---
 
@@ -233,7 +321,7 @@ asking.** The audit lists them; here is where each one lands:
 | Composite filename | `+page.svelte:507` | Subject block, §5.2 |
 | Backups panel whose subject flips | §2.4 | History popover, both files named, §5.6 |
 | "Character file / Account file" toggle | `+page.svelte:605-610` | Stays — it is the *raw* view, where files are the subject |
-| "Character (for widths)" selector | `OverviewView.svelte:417-418` | Phase 4 (folds into the subject switcher) |
+| "Character (for widths)" selector | `OverviewView.svelte:437` | Phase 4 (folds into the subject switcher) |
 | Shared-settings banner ×4 | §2.6 | One `ScopeBanner`, rendered by the shell, §5.4 |
 | Window title follows the tab | §2.4 | Follows the subject, §5.13 |
 
@@ -315,7 +403,9 @@ tabs in a row about a file.
 
 One flat list, alphabetical, with the account as a chip on the row rather than
 as a heading above it — §5.7 says why. Fourth Pilot has no chip because it has
-no account, which is a fact worth seeing while scanning.
+no account, which is a fact worth seeing while scanning. A chip means a
+*confirmed* account and nothing else: a launcher proposal is not an account and
+never draws one (§5.7's shared rule).
 
 The context bar wraps to two lines only in the diagram; in the app it is one
 row, `flex-wrap: nowrap`, with the subject block and the palette control each
@@ -389,7 +479,7 @@ where today the left rail is 24px (`app.css:28`) and the right column is
 
 Row 3 is `minmax(0, 1fr)` so a scrolling child cannot push the grid past the
 viewport — the same reason `LayoutView` already writes `minmax(0, 1fr)` for
-its canvas column (`LayoutView.svelte:1011-1012`).
+its canvas column (`LayoutView.svelte:1011`).
 
 ### 4.5 How a view fills two columns
 
@@ -417,7 +507,7 @@ participating in layout:
 The two children become direct grid items of `.shell` and land in columns 2
 and 3. No portal, no prop hoisting, no new dependency — for `LayoutView` it is
 a three-line CSS change, because `.canvas-wrap` and `.side` already own their
-own `overflow: auto` (`LayoutView.svelte:1014-1023`) and the root's
+own `overflow: auto` (`LayoutView.svelte:1015-1024`) and the root's
 `height: 100%; overflow: hidden` (`:1012-1013`) is exactly what
 `display: contents` makes redundant.
 
@@ -483,8 +573,8 @@ name simply stops being the headline for a subject that has a real name.
 
 **The switcher** (`SubjectSwitcher.svelte`) is a Popover over a type-ahead field
 and **the same flat list the sidebar renders** — same source, same
-`byResolvedName` order, same account `Chip`, same "no chip means no account"
-rule (§5.7):
+`byResolvedName` order, same account `Chip`, same "a Chip is a confirmed
+pairing and nothing else" rule (§5.7, §5.7.1):
 
 ```
   ⌕ Type a character or account name
@@ -641,8 +731,8 @@ removal. What goes away is the duplication: the `sharedLabel` prop leaves four
 component signatures, four `<p class="shared-banner">` disappear, and four
 identical CSS blocks are deleted (§2.6).
 
-`HudPanel` and `ChatSplit`'s per-row scope text (`HudPanel.svelte:188-189`,
-`ChatSplit.svelte:45`) is **out of scope and stays**: those mark individual
+`HudPanel` and `ChatSplit`'s per-row scope text (`HudPanel.svelte:186-191`,
+`ChatSplit.svelte:43-46`) is **out of scope and stays**: those mark individual
 rows inside Layout, which edits both files, so a view-level strip cannot
 replace them. Phase 4 may restyle them onto the primitive.
 
@@ -763,10 +853,10 @@ deliberately lists characters, not account files).
 Profile   tranquility / Default  ▾        ← selector, not a group header
 ● in use by EVE                           ← Chip, status, not a wrapped fragment
 ──────────────────────────────────────
-  ● Baguette Commander  ⟨stormdelay2⟩     ← ListRow; ● = open, Chip = its account
+  ● Baguette Commander  ⟨stormdelay2⟩     ← ListRow; ● = open, Chip = confirmed account
     Clea Otsada         ⟨stormdelay2⟩
     De l'Opera          ⟨stormdelayghost⟩
-    Fourth Pilot                 [Link…]  ← no chip = no account
+    Fourth Pilot                 [Link…]  ← no chip = no account (§5.7.1)
 ▾ Presets                                 ← PresetGroup.svelte, unchanged
     A1_layout_preset
 ──────────────────────────────────────
@@ -807,21 +897,27 @@ information, same position, legible, and not one row moves.
 > (for widths)" selector inherits the rule when it folds into the switcher.
 
 **A character with no chip is unpaired, and that is worth seeing.** Absence is
-the whole rule — `accountOf()` returning `null` means no chip, so no
-intersection with `roster.unassigned` is needed at all. What the absence tells
-the user is not cosmetic:
+the whole rule — `accountOf()` (`overview.ts:25-27`) returning `null` means no
+chip, so no intersection with `roster.unassigned` is needed at all. What the
+absence tells the user is not cosmetic:
 
 - an unpaired character **cannot receive account-scoped aspects in a batch
   copy**: `targetDisabled` (`BatchView.svelte:151-152`) disables its checkbox
   outright and labels it "pair in the Accounts view to include" (`:349`);
 - four of the six views refuse account-scoped editing until it is paired and
-  nag to do so — `OverviewView.svelte:304-307`, `AutofillView.svelte:85-87`,
+  nag to do so — `OverviewView.svelte:324-328`, `AutofillView.svelte:85-87`,
   `KeybindsView.svelte:85`, `ProbeFormationsView.svelte:467`.
 
 Under grouping this was a single heading the eye passes once; as a per-row
 property it is visible while scanning, which is when the user can still act on
 it. The rows keep a `Link…` action opening the Accounts sheet — the same
-affordance those four views already offer from inside themselves.
+affordance those four views already offer from inside themselves, and since
+0.34 often a one-click fix rather than a manual pairing chore, because the
+launcher's own proposal is waiting there with an Accept button
+(`AccountsView.svelte:250-260`).
+
+v0.34.0 gave "no chip" a second thing it can mean, and §5.7.1 re-decides the
+rule against it. The rule holds.
 
 **The sharing relationship is not lost — it moves to where it bites.** Two
 places, both already specified in this document: the save disclosure names the
@@ -853,8 +949,9 @@ click further away rather than visible. The selector carries the folder count,
 so it is never a secret that other folders exist.
 
 **The "in use by EVE" chip.** Today it is a `<span class="meta">` inside the
-`<summary>` (`Sidebar.svelte:160`) using `var(--warn, #d08770)` — an inline
-fallback for an undefined token (`:198`). It becomes a `Chip`: `● in use by EVE`
+`<summary>` (`Sidebar.svelte:160`) using `var(--warn, #d08770)` (`:198`), whose
+inline fallback is dead code — `--warn` is defined (`app.css:12`) — and goes
+with the rest of the literals in Phase 1. It becomes a `Chip`: `● in use by EVE`
 in the success role when primary, `▲ not in use — EVE has not written here` in
 the warning role otherwise. Text comes from `profileNote()`
 (`profiles.ts:65-67`) unchanged; only its treatment and position change. The
@@ -881,11 +978,108 @@ the save result (`api.ts:63-66`) and per-backup size in History
 (`:142-150`) — all three of which have tests (`Sidebar.spec.ts:50-81`), and the
 resolved-name sorting via `byResolvedName` (`filesort.svelte.ts:22-32`).
 
-The intersection with `roster.unassigned` that `AccountsView` has to do
-(`AccountsView.svelte:29-33`) has **no counterpart here**, and that is a
-consequence of the flat list rather than a coincidence: a grouped sidebar needs
-to know the membership of an extra bucket, a per-row chip only needs
-`accountOf()` to return `null`.
+The folder-scoped intersections `AccountsView` has to do — `unassigned`
+against the profile's character ids (`AccountsView.svelte:41-43`), the roster
+against its account ids (`:38-40`), and since 0.34 the proposal set against the
+cards actually on screen (`:81-84`) — have **no counterpart here**, and that is
+a consequence of the flat list rather than a coincidence: a grouped sidebar
+needs the membership of an extra bucket, a per-row chip only needs
+`accountOf()` to return `null`. §5.7.1 keeps it that way; the third of those
+three intersections is the one the sidebar would have had to grow.
+
+#### 5.7.1 The third state: the sidebar shows no chip for a proposal
+
+v0.34.0 broke the binary this section's chip rule was written against (§2.11).
+A character can now be confirmed, unpaired, **proposed** — the launcher log
+claims an account nobody has accepted — or disputed, with session-only
+dismissals on top (`AccountsView.svelte:74-75`).
+
+> **Decided: the sidebar surfaces no chip for a proposal. The account chip stays
+> strictly binary — a Chip means a confirmed pairing, absence means no account —
+> and a proposed character therefore renders exactly as an unpaired one does.**
+
+Three reasons, in the order they decided it.
+
+**1. Proposed and unpaired are the same state everywhere the chip's
+justification lives.** The two bullets under "A character with no chip is
+unpaired" are the entire case for the absence signal, and a proposal moves
+neither of them: `accountOf()` still returns `null`, so `targetDisabled` still
+greys the batch checkbox and all four account-scoped views still nag. A chip
+reading `⟨stormdelay2⟩` beside a character the Copy-settings view will refuse
+would be a **false statement about capability** — and capability is the only
+thing this chip was ever asserting. Two rows that behave identically must not
+read differently in a column whose job is telling you what you can do next.
+
+**2. A proposal is a task, and the sidebar is not a task list.** This is the
+same principle that rejected account grouping above: browsing is the sidebar's
+whole job, it happens every session, and a fact that matters at *edit* time
+does not earn a permanent per-row slot in the app's most-scanned column. A
+proposal is a weaker case than grouping was, on two counts. It matters at
+*pairing* time, which is rarer than editing. And it is **transient** — accepted
+or dismissed, it stops existing — so it would be a permanent slot encoding a
+temporary condition. Grouping at least described something stable.
+
+**3. It would put a launcher-log scan on app start.** `read_roster_from`
+(`launcher.rs:318-337`) reads and UTF-8-decodes *every* `.log` in the
+launcher's log directory. Exactly one surface pays for that today, once, on
+mount (`AccountsView.svelte:175-185`). Making the sidebar a second consumer
+moves the scan to launch, for a signal that changes nothing the user can do
+from the sidebar. The Phase 2 shell adds no Tauri call it did not already make.
+
+**What is not lost.** The discovery path is one hop and already specified: no
+chip → `Link…` → the Accounts sheet, where the proposal is on screen with its
+Accept. The rule that survives untouched is the one that mattered: **no chip
+still means "no account", and after 0.34 it still means it truthfully** — a
+proposed character genuinely has no account until someone accepts it.
+
+Proposed, disputed and dismissed therefore never reach the sidebar, and so
+never need syncing into it: no proposals fetch, no `dismissed` set to mirror,
+no third chip tone, and no question about what a dismissed proposal should look
+like an hour later. The flat list stays flat and stays two-valued.
+
+#### 5.7.2 The shared rule for "proposed" — binding on this document and `03-sheets.md`
+
+The Accounts sheet *does* render proposals, and `03-sheets.md` owns how. The
+0.34 live test found the current treatment unreadable — a ghost chip separated
+from a confirmed one by `border-style: dashed` plus `opacity: 0.85`
+(`AccountsView.svelte:329`), on a border painted with the undefined
+`var(--line, #3333)` (`:323`). So the two surfaces need one agreed language,
+stated here so neither can drift into inventing its own:
+
+1. **A `Chip` is only ever a confirmed pairing.** No surface renders a Chip —
+   of any tone, size or border style — for a proposal, a dispute or a
+   dismissal. In the sidebar that means nothing at all (§5.7.1); in the sheet
+   it means the proposal is not a chip sitting in a slot.
+2. **Proposed is never the confirmed treatment weakened.** Not by border-style,
+   not by opacity, not by a paler tone of the same colour. Confirmed and
+   proposed must differ in *what is drawn*, not in how faintly — a difference
+   of strength is precisely what the live test could not see. Phase 1 forbids
+   half of the current mechanism anyway: `opacity` is retired as a hierarchy
+   device (`01-tokens-and-primitives.md` §3.2) and renders no part of any of
+   these states.
+3. **A proposal is drawn as a claim plus its two answers**, never as an
+   identity: the character's name, the words that say where it came from, and
+   Accept / Dismiss as `Button`s. It should read as a question nobody has
+   answered, because that is what it is.
+4. **Roles.** Proposed is `--info` on `--info-dim` — "waiting on you", distinct
+   from a confirmed chip's `neutral` and from `--ok`. A dispute is `--warn` on
+   `--warn-dim`, because it contradicts something already asserted. No literal
+   colours, and never `var(--line)` or `var(--panel)`: neither token exists
+   (§2.7).
+
+   > **Reconciled 2026-08-13.** This clause first said `--accent`. It is
+   > `--info` because `--accent` is already the focus ring, `ListRow`'s selected
+   > state, the primary `Button` and the active tab — an accent chip carrying
+   > its own focus ring would be one colour saying two things.
+   > `01-tokens-and-primitives.md` §5.4 and `03-sheets.md` §4.7 both spec
+   > `--info`; this is the binding statement of the rule and they agree with it.
+5. **A dismissal renders nothing, anywhere.** `dismissed` is a session
+   judgement about this sitting (`AccountsView.svelte:72-75`), not a state of
+   the character, and a shade for it would outlive its own meaning.
+6. **`accountOf()` is the only source of a character's account on any surface.**
+   No list may derive a chip from `Proposal.user_id`. This is the clause that
+   keeps rules 1–5 honest, and the one to cite if a future surface argues for
+   an exception.
 
 ### 5.8 Work area and the launch empty state
 
@@ -914,7 +1108,8 @@ that offers the thing the sentence describes:
 
 - The list is **the same data the subject list already has, rendered the same
   way** — the selected profile's characters, resolved-named, sorted by
-  `byResolvedName`, account as a chip, no chip when unpaired (§5.7). No recents
+  `byResolvedName`, confirmed account as a chip, no chip otherwise (§5.7.1).
+  No recents
   store, no new backend command, no new state. Show up to eight, then "… N
   more" which focuses the subject list.
 - Clicking a row is `openFile(path)`, identical to a sidebar click.
@@ -940,7 +1135,7 @@ backend-side struct field plus three lines here.
 
 Phase 2 establishes the rule, the column, and the slot mechanism (§4.5). It
 fills it for one view, because one view already has it: `LayoutView`'s `.side`
-(`LayoutView.svelte:1019`) becomes `.inspector` and its root becomes
+(`LayoutView.svelte:951`, CSS `:1019-1024`) becomes `.inspector` and its root becomes
 `display: contents`. Nothing about `HudPanel` or `WindowPanel` changes.
 
 For every other view in Phase 2 the column shows the shell's placeholder —
@@ -972,6 +1167,39 @@ specifies **where it lives and what arrives in it from the sidebar**:
 **One free line while we are here:** clicking any view tab sets
 `mainView = "file"`. That alone gives Accounts and Copy settings a way out
 before Phase 3 lands, at the cost of one assignment.
+
+#### 5.10.1 The proposal count lives here, and only here
+
+§5.7.1 refuses a per-character proposal chip in the sidebar, which leaves a real
+question unanswered: **how does anyone learn there are proposals waiting at
+all?** §5.7.1's answer — you notice an unpaired character, click `Link…`, and
+land on an Accept button — is need-driven and works, but it is entirely passive.
+The launcher can propose a dozen pairings at once and, with nothing on screen
+saying so, they sit unseen until something else sends the user to Accounts.
+
+So: the **`Accounts…` menu item carries a count** — `Accounts… ` + a
+`Chip state="proposed" size="sm"` reading the number of undisputed, on-screen
+proposals. That is the aggregate consumer
+`01-tokens-and-primitives.md` §5.4 designs the no-actions variant for; without
+this it would be API with no user, which this project does not ship.
+
+Two constraints make it cheap and keep it inside §5.7.1's reasoning:
+
+- **Computed when the menu opens, never at app start.** §5.7.1 rejects the
+  sidebar chip partly because it would move `read_roster_from`'s scan of every
+  launcher `.log` (`launcher.rs:318-337`) onto startup. A menu is opened on
+  demand, and opening Accounts already pays that cost, so this adds no work to
+  a path that did not already do it. A count that is briefly absent while the
+  scan runs is correct — it is not yet known.
+- **It counts, it does not name.** Naming characters is `Accept all`'s job
+  inside the sheet (`03-sheets.md` §4.8), where there is room and the objects
+  are on screen. Here the count is a *signpost*, and R5's "a count is not a
+  name" rule (`05-dialogs-copy-palette.md` §5) is satisfied because the menu
+  item is navigation, not the action itself.
+
+This does not weaken clause 6 of §5.7.2: the count is derived from
+`Proposal`s, but it names no character and attaches to no character's row. No
+list gains a chip from `Proposal.user_id`.
 
 ### 5.11 Status chips
 
@@ -1139,8 +1367,8 @@ list, with one call site, in `+page.svelte`. A file for it is scaffolding.
 | `app/src/routes/+page.svelte` | The bulk. Delete the file bar (`:505-542`) and the conditional tab strip (`:527-536`); hoist `ContextBar` + `ViewTabs` above the `mainView` branch (`:496`); delete the first clause of `active` (`:53-59`) and rename to `editSlot`; delete `openDisplay` (`:118-122`) and `sharedLabel` (`:156-159`); repoint `setTitle` at `subjectLabel` (`:125-129`); replace the `.hint` launch state (`:502-503`) with `EmptyState`; drop `BackupsPanel` and its rail (`:646-663`); rename `backupsOpen`→`inspectorOpen`, `layoutFocusFilter`→`viewFocusSearch`; drop the `.tree-area` wrappers around each view (`:543-604`); move most state to `subject.svelte.ts` and re-import. Rename view `"tree"`→`"raw"`. Target: under 300 lines. |
 | `app/src/lib/Sidebar.svelte` | §5.7. Delete the action toolbar (`:120-132`) and its `onShowAccounts`/`onShowBatch` props; add the profile selector + chip; collapse the per-profile `<details>` loop (`:152-177`) into one flat list of the selected folder's characters, sorted by the same `byName`/`byResolvedName` (`:34, :155`); the `· alias` suffix (`:169`) becomes a `Chip` and `.acct` (`:195`) is deleted; fold KB into the row `title` (`:167-171`); keep the filter toggle, hints and `PresetGroup` untouched. |
 | `app/src/lib/BackupsPanel.svelte` | Becomes the History popover's body: takes a list of `{slot, subjectName, fileName}` groups instead of one `slot`+`subtitle`; the collapse chevron (`:52-53`) goes with the column; the fetch effect (`:23-33`) runs per group; restore's confirm names the file it replaces (`:36-40`). |
-| `app/src/lib/LayoutView.svelte` | `.layout-view` → `display: contents` (`:1010-1013`); `.side` → `.inspector` (`:829-831, 1019`); `focusFilter` prop renamed `focusSearch` (`:32, 51-53, 997`). No logic touched. |
-| `app/src/lib/OverviewView.svelte` | Drop the `sharedLabel` prop (`:11, 14`), its `<p>` (`:314`) and its CSS (`:478-481`). |
+| `app/src/lib/LayoutView.svelte` | `.layout-view` → `display: contents` (`:1007-1014`); `.side` → `.inspector` (markup `:951`, CSS `:1019-1024`); `focusFilter` prop renamed `focusSearch` (`:32, 51-53, 997`). No logic touched. |
+| `app/src/lib/OverviewView.svelte` | Drop the `sharedLabel` prop (`:11, 14`), its `<p>` (`:334`) and its CSS (`:498-501`). |
 | `app/src/lib/AutofillView.svelte` | Same: `:6, 11, 97, 159-162`. |
 | `app/src/lib/KeybindsView.svelte` | Same: `:6, 8, 96, 187-190`. |
 | `app/src/lib/ProbeFormationsView.svelte` | Same: `:11, 13, 477, 704-707`. |
@@ -1152,8 +1380,13 @@ list, with one call site, in `+page.svelte`. A file for it is scaffolding.
 `AboutPanel.svelte`, `TreeNode.svelte`, `InsertForm.svelte`, `WindowPanel.svelte`,
 `HudPanel.svelte`, `ChatSplit.svelte`, every `.ts` helper
 (`overview.ts`, `profiles.ts`, `filesort.svelte.ts`, `accounts.svelte.ts`,
-`names.svelte.ts`, `prefs.svelte.ts`, `api.ts`), and the **entire Rust
-backend**. No new Tauri command, no new dependency in `app/package.json`.
+`launcher.ts`, `names.svelte.ts`, `prefs.svelte.ts`, `api.ts`), and the
+**entire Rust backend**. No new Tauri command, no new dependency in
+`app/package.json`.
+
+`launcher.ts` and the `launcher_proposals` command keep the single consumer
+0.34 gave them (`AccountsView.svelte:175-185`). §5.7.1 is what makes that true:
+the shell fires no new backend call on start.
 
 ---
 
@@ -1162,6 +1395,10 @@ backend**. No new Tauri command, no new dependency in `app/package.json`.
 vitest + jsdom, `*.spec.ts` beside the component, following `page.spec.ts` and
 `Sidebar.spec.ts`: stub commands through `calls.stub` from `$lib/test/setup`,
 mount, assert on roles and text.
+
+**Baseline at v0.34.0: 37 test files, 1064 tests, `npm run check` clean.**
+Everything below adds to that; §8.7 is the only place anything existing
+changes.
 
 ### 8.1 The three faults, pinned
 
@@ -1214,32 +1451,38 @@ These are the tests the phase exists for. Each fails on `master`.
     fails if anyone reintroduces a grouping level (§5.7).
 14. A paired character's row carries its account alias as a chip; a character
     in `roster.unassigned` carries **no** account chip and does carry `Link…`.
-15. Changing the profile selector replaces the rows with the other folder's.
-16. The five migrated actions are **not** in the sidebar
+15. **A character the launcher proposes but nobody has confirmed renders
+    identically to an unpaired one** (§5.7.1). Stub `launcher_proposals` with a
+    proposal for a character that is in `roster.unassigned`; assert the row has
+    no account chip, carries `Link…`, and that **`launcher_proposals` was never
+    invoked** — the sidebar must not become a second consumer of the log scan.
+    This is the assertion that fails if anyone adds a third chip state.
+16. Changing the profile selector replaces the rows with the other folder's.
+17. The five migrated actions are **not** in the sidebar
     (`queryByRole("button", {name: /accounts|copy settings|about|refresh names/i})`
     is null) **and are** in the app menu. Both halves, in one test file each —
     this pair is what stops the migration silently dropping one.
-17. "Open file…" is still in the sidebar and still routes an account file to
+18. "Open file…" is still in the sidebar and still routes an account file to
     the user slot (`page.spec.ts:110-121` survives with a new query).
-18. The existing empty-hint tests (`Sidebar.spec.ts:50-81`) pass unchanged
+19. The existing empty-hint tests (`Sidebar.spec.ts:50-81`) pass unchanged
     except for the mount props. If any needs rewording, the list is wrong.
 
 ### 8.5 Subject switcher
 
-19. **`SubjectSwitcher.spec.ts` — the switcher's order is the sidebar's order.**
+20. **`SubjectSwitcher.spec.ts` — the switcher's order is the sidebar's order.**
     Mount both against the same fixture and assert the character rows come out
     in the same sequence. One assertion, and it is the one that fails if either
     surface reintroduces a grouping level (§5.2, §5.7).
-20. Typing an account alias filters to that account's characters, still in
+21. Typing an account alias filters to that account's characters, still in
     `byResolvedName` order — the flat list's answer to "my other character on
     this account" (§5.2).
 
 ### 8.6 Empty state
 
-21. Nothing open → the character rows are listed, in the same order and with
+22. Nothing open → the character rows are listed, in the same order and with
     the same chips as the sidebar; clicking one calls `open_file` with that
     path.
-22. Nothing open, profile has no characters → the existing hint text appears
+23. Nothing open, profile has no characters → the existing hint text appears
     (same string as the sidebar's).
 
 ### 8.7 Existing tests that change, and why
@@ -1274,11 +1517,13 @@ per §10 — on all three platforms for the `display: contents` question (§4.5)
 | Module-level rune state poisons the vitest suite (§6.3) | **High if unguarded** | `resetSubject()` in `afterEach`, mandatory. The suite already documents this failure mode for two smaller stores. |
 | Single-select profile hides a character a user expected | Medium | Accepted with the decision (§5.7) — it is the only way one flat list can be unambiguous with ids duplicated across folders. Selector shows the folder count; the empty-profile hint names the alternative. |
 | A user wants to see at a glance which characters share an account | Low | The chip on every row is the same fact without reordering; the consequence is stated where it bites, in the save disclosure and `ScopeBanner` (§5.4). Grouping was considered and rejected (§5.7). |
+| A user with launcher proposals expects the sidebar to show them | Low | Decided against, with reasons (§5.7.1): a proposal changes nothing the user can do, and the row's `Link…` reaches the Accept in one click. If it ever earns a place, it belongs on the *action*, not on the account chip — rule 6 of §5.7.2 stands either way. |
+| `03-sheets.md` and this document drift on what "proposed" looks like | Medium | The six-clause shared rule in §5.7.2, owned here and applied there. Test 15 pins this document's half. |
 | Multiboxing: "switch to my other character on this account" is slower without grouping | Low | The switcher's type-ahead matches the account alias, which filters to that account's characters without permanently reordering anything (§5.2). If that proves insufficient it earns its own affordance as a follow-up — not a second ordering. |
 | History being a popover makes restore less discoverable than a docked column | Medium | Persistent labelled control in the context bar, present on every tab (today the column vanishes entirely with nothing open, `+page.svelte:646`). Phase 5's save toast will name the backup it wrote. |
 | The 679-line shell is rewritten in one commit and something silently drops | Medium | Land it as **two commits** (below). |
 | Six tabs at minimum window width overflow | Low | Short labels below 900px (§4.3); check at the app's minimum size, which is where the current bar already wraps. |
-| A view's markup does not tolerate `display: contents` | Low | Only `LayoutView` uses it in this phase, and its two children already own their own scrolling (`LayoutView.svelte:1014-1023`). |
+| A view's markup does not tolerate `display: contents` | Low | Only `LayoutView` uses it in this phase, and its two children already own their own scrolling (`LayoutView.svelte:1015-1024`). |
 
 ### 9.1 Land it in two commits
 
@@ -1318,8 +1563,11 @@ backend, so there is no data-shape or file-format exposure at any point.
 - [ ] The sidebar is **one flat list** in `byResolvedName` order — byte-for-byte
       the ordering it has today — with a single-select profile at the top and
       "in use by EVE" as a chip.
-- [ ] Every paired character's row carries its account as a chip; an unpaired
-      character carries none, and no "Not linked" grouping level exists.
+- [ ] Every **confirmed**-paired character's row carries its account as a chip;
+      an unpaired *or proposed* character carries none, and no "Not linked"
+      grouping level exists.
+- [ ] The sidebar invokes `launcher_proposals` zero times, and no surface
+      derives an account chip from a `Proposal` (§5.7.1, §5.7.2 rule 6).
 - [ ] The subject switcher lists the **same characters in the same order with
       the same chips** as the sidebar — one rule for every character list in the
       app — and its type-ahead matches the account alias as well as the name.
@@ -1349,8 +1597,9 @@ backend, so there is no data-shape or file-format exposure at any point.
 
 **Hygiene**
 
-- [ ] `npm run test` green, including the three rewritten assertions of §8.7
-      and `resetSubject()` in every mounting suite.
+- [ ] `npm run test` green — 37 files / 1064 tests at v0.34.0 plus this
+      phase's, including the three rewritten assertions of §8.7 and
+      `resetSubject()` in every mounting suite.
 - [ ] `npm run check` clean (`--fail-on-warnings`).
 - [ ] No new dependency in `app/package.json`; no change under `app/src-tauri/`.
 - [ ] No hardcoded colour, radius or spacing value — Phase 1 tokens only.

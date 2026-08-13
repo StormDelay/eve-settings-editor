@@ -3,6 +3,34 @@
 Status: **planned, nothing implemented.** Prerequisite for phases 2–5b.
 Behaviour change: **none.** Layout moves: **none.**
 
+### What v0.34 changed
+
+Re-measured against v0.34.0. The palette is **unchanged**: still 45 distinct hex
+literals, 9 of them `:root`, 36 hardcoded elsewhere; still 25 `rgba()` in 9
+files; still 8 radii, 10 font sizes, 55 paddings, 28 native-control rules, and
+the same four permanently-invisible `.mini` buttons. `--line` and `--panel` are
+still undeclared and still only in `AccountsView.svelte` — at
+`:319, 323, 335` and `:336` now, not `:185-198`. Only two view files moved:
+`AccountsView.svelte` (+170, launcher-log association) and `OverviewView.svelte`
+(+24, PR #77's tab-reorder fix); every citation in those two is re-anchored
+below and every other file's line numbers still hold.
+
+Three counts moved, all of them in `AccountsView`:
+
+- **`gap` went 22 → 23** distinct values and **`opacity` went 33 → 35
+  declarations across 10 distinct values** (was 9). Both new opacity
+  declarations are in the launcher feature: `.chip.ghost` at
+  `AccountsView.svelte:329` (`opacity: 0.85`, the new tenth value) and
+  `.from-launcher` at `:331` (`opacity: 0.7`). §3.2 retires both.
+- **`.chip` now carries five unrelated meanings**, one more than `.badge`'s
+  four. The new one is `.chip.ghost` — a *launcher-proposed* pairing, marked by
+  a dashed border and 15% less opacity than a settled chip. It is the first
+  thing in the app that uses opacity to say "not committed yet", and it is
+  reported as **not visible enough**, which is what dimming a thing to make it
+  matter always produces. §5.4 gives `Chip` a first-class `proposed` state so
+  neither the Accounts fix (Phase 3) nor the sidebar (Phase 2) has to re-invent
+  it.
+
 ---
 
 ## 1 Goal
@@ -21,7 +49,7 @@ and 5. Phase 1's value comes precisely from being reviewable as a mechanical
 diff — if it also moves a control, the reviewer has to think about two things at
 once and the "revert the whole phase" escape hatch stops working.
 
-Three things do get *fixed* here, because they are bugs in the styling layer
+Four things do get *fixed* here, because they are bugs in the styling layer
 itself and fixing them is what building the primitive means:
 
 - **Four buttons that are invisible but clickable.** `app.css:96` sets
@@ -37,10 +65,20 @@ itself and fixing them is what building the primitive means:
   score **Lc 51 / 55 / 43** — all of them at 12px, where APCA wants Lc 75+.
   §3 and §7 make the floor a test rather than a hope.
 - **Two undefined variables.** `--line` (3 uses) and `--panel` (1 use) are
-  referenced in `AccountsView.svelte:185,189,197,198` and declared nowhere, so
-  every card, chip and panel border in that view falls back to `#3333` — a
+  referenced in `AccountsView.svelte:319, 323, 335, 336` and declared nowhere,
+  so every card, chip and panel border in that view falls back to `#3333` — a
   colour no other view uses. The `no-undefined-tokens` test in §7 is the thing
-  that would have caught this.
+  that would have caught this. v0.34 added 170 lines to this file without
+  adding a fourth `--line` use, but also without noticing the three — the
+  bug survives a rewrite because nothing looks for it.
+- **The thing that needs an answer is drawn the quietest.** v0.34's
+  `AccountsView.svelte:329` `.chip.ghost` marks a launcher-proposed pairing with
+  `border-style: dashed; opacity: 0.85` — a settled chip *minus* contrast. The
+  report from the live test is that proposals are not visible enough, which is
+  the predictable result. `Chip state="proposed"` (§5.4) keeps the dashed border,
+  drops the opacity, and defaults the tone to `--info`, so a proposal reads
+  louder than the settled chips around it rather than fainter. Phase 3 owns what
+  the Accounts card *does*; Phase 1 owns whether you can see it.
 
 Everything else is find-and-replace.
 
@@ -48,10 +86,9 @@ Everything else is find-and-replace.
 
 ## 2 Current state, with evidence
 
-Every number below was counted against `app/src` on branch
-`worktree-ui-redesign-specs`, excluding `*.spec.ts` and `*.test.ts`. Where a
-count differs from the proposal artifact, the measured number is used and the
-difference is noted.
+Every number below was counted against `app/src` at **v0.34.0**, excluding
+`*.spec.ts` and `*.test.ts`. Where a count differs from the proposal artifact,
+the measured number is used and the difference is noted.
 
 ### 2.1 Colour
 
@@ -60,19 +97,19 @@ difference is noted.
 | Distinct hex literals in source | **45** | 9 of them are the `:root` declarations at `app.css:5-13`; the other **36** are hardcoded at their point of use |
 | `rgba()` literals | **25**, in 9 files | `app.css` ×2, `ContextMenu` ×1, `DetailParts` ×5, `HudPanel` ×1, `LayoutView` ×6, `OverviewView` ×1, `ProbeFormationsView` ×1, `ProbeViewer` ×4, `WindowPanel` ×4 |
 | Custom properties declared | **9** | `app.css:5-13` — `--bg --bg-panel --fg --fg-dim --accent --danger --ok --warn --border` |
-| Custom properties referenced but never declared | **2** | `--line` at `AccountsView.svelte:185,189,197`; `--panel` at `AccountsView.svelte:198` |
+| Custom properties referenced but never declared | **2** | `--line` at `AccountsView.svelte:319, 323, 335`; `--panel` at `AccountsView.svelte:336` |
 
 The 36 hardcoded values are not 36 different intentions. They are six
 intentions expressed six different ways each:
 
 | Meaning | Declared token | Also written as |
 | --- | --- | --- |
-| Danger / error | `--danger` `#e06c60` | `#e06c6c` (`BatchView:426`, `ProbeViewer:786`), `#c0392b` (`AccountsView:196`), `#e66` (`AutofillView:169`), `#a33` (×4 — `AutofillView:158`, `OverviewFiltersTab:320`, `OverviewView:504`, `ProbeFormationsView:658`) |
+| Danger / error | `--danger` `#e06c60` | `#e06c6c` (`BatchView:426`, `ProbeViewer:786`), `#c0392b` (`AccountsView:334`), `#e66` (`AutofillView:169`), `#a33` (×4 — `AutofillView:158`, `OverviewFiltersTab:320`, `OverviewView:524`, `ProbeFormationsView:658`) |
 | Warning | `--warn` `#d9a441` | `#d0a000` (`BatchView:425`), `#d08770` (`Sidebar:198`, as a dead fallback), `#f59e0b` (`HudPanel:287,291`, `LayoutView:1063,1076,1103,1124,1169`), `#fde68a` (`HudPanel:287,310`, `LayoutView:1065`) |
 | Accent | `--accent` `#4f9cf0` | `#60a5fa` (`LayoutView:1095`), `#6c9ce0` (`ProbeViewer:788`), `#dbeafe` (`ChatSplit:108,124`, `LayoutView:1096,1162`) |
 | Success | `--ok` `#62b268` | `#6cc06c` (`BatchView:427`), `#7bc47b` (`ProbeViewer:787`), `#34d399` (`LayoutView:1115`) |
 | Dim text | `--fg-dim` `#8a919e` | `#888` (`ChatSplit:114`, `LayoutView:1191,1204,1222`), `#666` (`LayoutView:1199`), `#aaa` (`ChatSplit:97`), `#94a3b8` (`DetailParts:43`, `LayoutView:1038`), `#64748b` (`LayoutView:1037`) |
-| Border | `--border` `#2c3038` | `#444` (`ChatSplit:107,123`, `LayoutView:1031`, `NeocomButtons:128`), `#333` (`ChatSplit:83`), `#3333` (×3, `AccountsView`), `#0006` (`OverviewView:536`), `#0001` (`AccountsView:198`) |
+| Border | `--border` `#2c3038` | `#444` (`ChatSplit:107,123`, `LayoutView:1031`, `NeocomButtons:128`), `#333` (`ChatSplit:83`), `#3333` (×3, `AccountsView:319, 323, 335`), `#0006` (`OverviewView:556`), `#0001` (`AccountsView:336`) |
 
 Four files — `LayoutView`, `HudPanel`, `ChatSplit` and `DetailParts` — run an
 entirely second palette lifted from Tailwind (`#60a5fa`, `#f59e0b`, `#94a3b8`,
@@ -98,12 +135,12 @@ structural instead of a comment asking two humans to remember.
 | Dimension | Distinct values | Detail |
 | --- | --- | --- |
 | `border-radius` | **8** | `3px` ×29, `4px` ×7, `8px` ×3, `50%` ×3, `999px` ×1, `6px` ×1, `2px` ×1, `0` ×1 |
-| `font-size` | **10** | `0.85em` ×39, `10px` ×9, `11px` ×8, `0.9em` ×6, `12px` ×4, `1em` ×2, `9px`, `13px`, `14px`, `0.8em` |
+| `font-size` | **10** | `0.85em` ×40, `10px` ×9, `11px` ×8, `0.9em` ×7, `12px` ×4, `1em` ×2, `9px`, `13px`, `14px`, `0.8em` |
 | `padding` | **55** | px and rem mixed freely; `0.25rem 0.1rem 0.5rem`, `0.2rem 0 0.4rem 1rem`, `0.15em 0.5em` all appear once each |
-| `gap` | **22** | `0.4rem` ×14, `0.6rem` ×9, `0.5rem` ×9, `0.3rem` ×9, `0.35rem` ×7, `6px` ×6, `1rem` ×6, then a tail of 15 more |
-| `opacity` | **33 declarations**, 9 distinct values | `0`, `0.3`, `0.4`, `0.45`, `0.5`, `0.6`, `0.7`, `0.75`, `1` across 17 files |
+| `gap` | **23** | `0.4rem` ×14, `0.6rem` ×9, `0.5rem` ×9, `0.3rem` ×9, `0.35rem` ×7, `6px` ×6, `1rem` ×6, then a tail of 16 more |
+| `opacity` | **35 declarations**, 10 distinct values | `0`, `0.3`, `0.4`, `0.45`, `0.5`, `0.6`, `0.7`, `0.75`, `0.85`, `1` across 17 files. `0.85` is new in v0.34 and has exactly one site — `AccountsView.svelte:329` `.chip.ghost` |
 
-`0.85em` used 39 times is the mechanical source of the "text sizes don't match"
+`0.85em` used 40 times is the mechanical source of the "text sizes don't match"
 complaint. `em` compounds, so `0.85em` resolves to 11.9px inside the 14px root,
 11.05px inside `WindowPanel`'s 13px block (`WindowPanel.svelte:524`), and
 10.2px inside `HudPanel`'s 12px block (`HudPanel.svelte:270`) — three different
@@ -113,13 +150,14 @@ sizes from one declaration that reads as if it names one.
 
 | Thing | Copies | Where |
 | --- | --- | --- |
-| `.shared-banner` — byte-identical | **4** | `AutofillView:159-162`, `KeybindsView:187-190`, `OverviewView:478-481`, `ProbeFormationsView:704-707`. A fifth variant with different words is `HudPanel:272-279` `.account-legend`; a sixth, compressed to 10px, is `ChatSplit:45` `.legend` |
-| `button.danger { border-color: #a33 }` | **4** | `AutofillView:158`, `OverviewFiltersTab:320`, `OverviewView:504`, `ProbeFormationsView:658` |
-| "Give the native control explicit dark colours" | **28 rules in 15 files** | 20 set `background`+`color`, 7 set only `accent-color`, 1 sets a disabled colour. Listed in full in §4.6 |
+| `.shared-banner` — byte-identical | **4** | `AutofillView:159-162`, `KeybindsView:187-190`, `OverviewView:498-501`, `ProbeFormationsView:704-707`. A fifth variant with different words is `HudPanel:272-279` `.account-legend`; a sixth, compressed to 10px, is `ChatSplit:45` `.legend` |
+| `button.danger { border-color: #a33 }` | **4** | `AutofillView:158`, `OverviewFiltersTab:320`, `OverviewView:524`, `ProbeFormationsView:658` |
+| "Give the native control explicit dark colours" | **28 rules in 16 files** | 20 set `background`+`color`, 7 set only `accent-color`, 1 sets a disabled colour. Two `:focus` companions ride along with them. Listed in full in §4.6 |
 | Search / filter boxes | **5** | `routes/+page.svelte:611-623`, `KeybindsView:101`, `AutofillView:99`, `OverviewFiltersTab:237`, `WindowPanel:361`. Two verbs ("Search", "Filter"), three placeholder conventions (bare, trailing `…`, trailing `(Ctrl+F)`), three different style blocks |
-| Tab strips | **3 visual styles** | `.viewtabs` (`app.css:119-121`), `.subtabs` (`OverviewView:545-550` and `OverviewAppearanceTab:180-185`, identical), `.tree-file` (`app.css:122`) |
+| Tab strips | **3 visual styles** | `.viewtabs` (`app.css:119-121`), `.subtabs` (`OverviewView:565-570` and `OverviewAppearanceTab:180-185`, identical), `.tree-file` (`app.css:122`) |
 | `.badge` — four unrelated meanings | **4 definitions** | `app.css:59-62` (file status), `HudPanel:335` (scope tag), `NeocomButtons:117` (a child count), `WindowPanel:609` (a warning) |
-| Empty-state class names | **3, one unstyled** | `.hint` (17 sites), `.muted` (`BatchView`), and `.empty` — used at `KeybindsView:84` and `:90` and **defined nowhere in the codebase**, so it renders as a bare `<p>` |
+| `.chip` — five unrelated meanings | **5 definitions** | `KeybindsView:158` (a clickable capture button), `AccountsView:322` in three states — `.filled` a settled pairing with an unpair `✕` (`:244-247`), `.empty` a wrapper around an add-character `<select>` (`:262-274`), and **new in v0.34** `.ghost` a launcher-*proposed* pairing with accept/dismiss buttons (`:252-260`, styled `:329`) — and `OverviewView:537` `.tab-chip` (a tab selector). One word, five jobs, and one more than `.badge` |
+| Empty-state class names | **3, one unstyled** | `.hint` (17 sites), `.muted` (`BatchView`), and `.empty` — used at `KeybindsView:84` and `:90` and **still defined nowhere**, so it renders as a bare `<p>`. Re-checked at v0.34: the only `.empty` rule in the tree is `AccountsView`'s `.chip.empty select`/`option` (`:324-328`), a compound selector for an unrelated thing in a scoped `<style>` — so the class remains a name with two owners and no styling |
 | Inline-message class names | **7** | `hint`, `error`, `muted`, `field-error`, `flash`, `err`, `empty` |
 | The `.flash` toast and its 2000 ms timer | **3 hand-rolled copies** | `Sidebar:85-88`, `Sidebar:102-104`, `ProbeFormationsView:304-306` |
 
@@ -132,15 +170,17 @@ and nobody noticed, because there is no shared thing whose absence would show.
 `app/src-tauri/tauri.conf.json` sets no theme override, and `app.css:2` declares
 `color-scheme: dark`. A native `<select>`, `<option>`, `<input>` or `<input
 type="checkbox">` in this shell renders light-on-light unless given explicit
-colours. Fourteen files independently discovered this and independently wrote
-the same rule; the comments record fourteen separate rediscoveries:
+colours. Sixteen files independently discovered this and independently wrote the
+same rule; **fourteen comments across thirteen of them** record the separate
+rediscoveries (`OverviewFiltersTab` wrote it twice; `app.css`, `AccountsView`
+and `BatchView` wrote the rule with no comment at all):
 
 - `AutofillView:152` — "Dark native controls: the app runs in a dark WebView2 (see the memo)."
 - `ChatSplit:103-104` — "an unstyled number input renders light-on-light in this theme."
 - `HudPanel:322` — "Native controls render light in WebView2 unless told otherwise."
 - `KeybindsView:155-156` — "…see the dark-native-controls note in the repo memory."
 - `NeocomButtons:124`, `OverviewAppearanceTab:190-191`, `OverviewColumnsTab:164-165`,
-  `OverviewFiltersTab:321-322` and `:349-350`, `OverviewView:505-506`,
+  `OverviewFiltersTab:321-322` and `:349-350`, `OverviewView:525-526`,
   `PresetGroup:218-219`, `ProbeFormationsView:642-643`, `WindowPanel:677-679`,
   `LayoutView:1201-1202` — the same sentence again.
 
@@ -250,9 +290,17 @@ Lc 71.1 on `--surface` against the old `--fg-dim`'s Lc 40.6 in the same place.
 ### 3.2 `opacity` is retired as a hierarchy device
 
 It has exactly one sanctioned use in HTML chrome: `--o-disabled` on a disabled
-control, at one value. Twenty of the 33 current declarations are dimming text
-and get replaced by a `--text-*` token (§4.7). Three are the `.mini` trap and
-get deleted with it.
+control, at one value. Twenty-two of the 35 current declarations are dimming
+text and get replaced by a `--text-*` token (§4.7). Three are the `.mini` trap
+and get deleted with it.
+
+The two v0.34 additions are the clearest case for the rule. `AccountsView`'s
+`.chip.ghost` (`:329`, `opacity: 0.85`) and `.from-launcher` (`:331`,
+`opacity: 0.7`) both mark a launcher-proposed pairing, and both do it by making
+it **quieter than the settled pairing beside it** — a proposal the user must act
+on, rendered as the least prominent thing on the card. The reported symptom is
+that proposals are not visible enough; the mechanism is right here. §5.4 fixes
+it by making "proposed" a tone-and-border state instead of a subtraction.
 
 Ten survive, and the rule has to name them or the guard test in §7.1 becomes
 a nuisance. They survive because they modulate a **drawing**, not the legibility
@@ -478,15 +526,28 @@ Three global rules apply to every row:
 
 Every one of the 36 hardcoded hex values and 25 `rgba()` literals, by file.
 
-**`AccountsView.svelte`**
+**`AccountsView.svelte`** — re-anchored at v0.34; the launcher feature moved this
+whole block down and added four rules to it.
 
 | Line | Current | Becomes |
 | --- | --- | --- |
-| 185, 189, 197 | `var(--line, #3333)` | `var(--border)` |
-| 190-194 | `.chip.empty select` / `option`, `var(--bg-panel)`/`var(--fg)` | delete — `Field kind="select"` |
-| 196 | `.error { color: #c0392b }` | delete — `InlineMessage variant="error"` |
-| 198 | `background: var(--panel, #0001)` | `var(--surface-raised)` |
-| 200 | `.unassigned h3 { opacity: 0.7 }` | `color: var(--text-muted); font-size: var(--t-caption)` |
+| 319, 323, 335 | `var(--line, #3333)` | `var(--border)` |
+| 322-323 | `.chip { … border-radius: 999px; padding: 0.15em 0.5em; font-size: 0.9em }` | delete — `Chip` (§5.4) |
+| 324-328 | `.chip.empty select` / `option`, `var(--bg-panel)`/`var(--fg)` | delete — `Field kind="select"` |
+| **329** | **`.chip.ghost { border-style: dashed; opacity: 0.85 }`** | **delete — `Chip state="proposed"` (§5.4). The dashed border is kept as a token-level treatment; the opacity is not.** |
+| 330 | `.ok { border: none; background: transparent; … }` | delete — `Button variant="ghost" iconOnly` (the accept `✓` at `:254-256`) |
+| 331 | `.from-launcher { font-size: 0.85em; opacity: 0.7 }` | `InlineMessage variant="info"` — `var(--text)` body, `var(--t-caption)`, no opacity |
+| 332 | `.conflict { font-size: 0.9em }` | `InlineMessage variant="warn"` — it reports a disagreement with the store |
+| 333 | `.x { border: none; background: transparent; … }` | delete — `Button variant="ghost" iconOnly` |
+| 334 | `.error { color: #c0392b }` | delete — `InlineMessage variant="error"` |
+| 335-336 | `.capture { … background: var(--panel, #0001) }` | `Panel` — `var(--surface-raised)`, `var(--r-md)`, `var(--s3)` |
+| 338 | `.unassigned h3 { opacity: 0.7; font-size: 0.9em }` | `color: var(--text-muted); font-size: var(--t-caption)` |
+
+The `.from-launcher` and `.conflict` paragraphs (`:282`, `:285-288`, `:291-297`)
+each carry inline `<button>`s with no class at all, so they inherit the global
+`button` rule this phase deletes — they become `InlineMessage` with `Button
+size="sm"` children. Phase 3 owns whether they should exist in that shape;
+Phase 1 only stops them being unstyled.
 
 **`AutofillView.svelte`**
 
@@ -627,23 +688,25 @@ keeps its own local block. Only the colours and scales change.
 | 344 | `.unknown-groups { color: var(--warn) }` | `InlineMessage variant="warn"` |
 | 349-353 | `.exceptions-list input[type=radio]` | delete — `Field kind="radio"` |
 
-**`OverviewView.svelte`**
+**`OverviewView.svelte`** — re-anchored at v0.34; PR #77 added 20 lines of
+script (`keepSelection`), shifting the whole `<style>` block down by 20. No
+style rule was added, removed or changed.
 
 | Line | Current | Becomes |
 | --- | --- | --- |
-| 478-481 | `.shared-banner` | delete — `ScopeBanner` |
-| 483-486 | `.pair button` | delete — `Button` |
-| 492-502 | `.no-windows { … 0.85em … border: 1px solid var(--border) }` | `InlineMessage variant="info"` |
-| 504 | `button.danger { border-color: #a33 }` | delete — `Button variant="danger"` |
-| 505-510 | `select, option, optgroup, .name-entry input` | delete — `Field` |
-| 511-517 | `.ov-tabs` | **keep for now** — a reorderable list with per-item controls, not a tab strip. Tokenise (`var(--border)`, `var(--r-sm)`, `var(--s1)`) and leave the structure to Phase 4 |
-| 520-529 | `.swatch`, `.bold-toggle` | `Field kind="color"` / `Button pressed` |
-| 530-534 | `.palette { … box-shadow: 0 4px 12px rgba(0,0,0,0.5) }` | `Popover` — gains the viewport clamp and Escape handling it lacks today |
-| 536 | `.palette-grid button { border: 1px solid #0006 }` | `var(--border-strong)` — must read against an arbitrary user colour on either side |
-| 538-542 | `.palette-none` | delete — `Button variant="ghost" size="sm"` |
-| 543 | `.grip { opacity: 0.6 }` | `color: var(--text-muted)` |
-| 545-550 | `.subtabs` | delete — `Tabs variant="underline"` |
-| 554 | `.pack-actions button` | delete — `Button` |
+| 498-501 | `.shared-banner` | delete — `ScopeBanner` |
+| 503-506 | `.pair button` | delete — `Button` |
+| 512-522 | `.no-windows { … 0.85em … border: 1px solid var(--border) }` | `InlineMessage variant="info"` |
+| 524 | `button.danger { border-color: #a33 }` | delete — `Button variant="danger"` |
+| 525-530 | `select, option, optgroup, .name-entry input` | delete — `Field` |
+| 531-537 | `.ov-tabs` | **keep for now** — a reorderable list with per-item controls, not a tab strip. Tokenise (`var(--border)`, `var(--r-sm)`, `var(--s1)`) and leave the structure to Phase 4 |
+| 539-549 | `.swatch-wrap`, `.swatch`, `.bold-toggle` | `Field kind="color"` / `Button pressed` |
+| 550-554 | `.palette { … box-shadow: 0 4px 12px rgba(0,0,0,0.5) }` | `Popover` — gains the viewport clamp and Escape handling it lacks today |
+| 556 | `.palette-grid button { border: 1px solid #0006 }` | `var(--border-strong)` — must read against an arbitrary user colour on either side |
+| 558-562 | `.palette-none` | delete — `Button variant="ghost" size="sm"` |
+| 563 | `.grip { opacity: 0.6 }` | `color: var(--text-muted)` |
+| 565-570 | `.subtabs` | delete — `Tabs variant="underline"` |
+| 574-575 | `.pack-actions button`, `.pack-actions` | delete — `Button` |
 
 **`PresetGroup.svelte`**
 
@@ -783,42 +846,54 @@ compile-time-ish guarantee, and the `no-hardcoded-hex` test now enforces it.
 
 `.hint` is used 17 times for two different jobs. Do not migrate it mechanically:
 
-- **"There is nothing here"** → `EmptyState`. `AccountsView:128`,
-  `AutofillView:90,95,103`, `BackupsPanel:59`, `OverviewView:310,316,448`,
+- **"There is nothing here"** → `EmptyState`. `AccountsView:218,225`,
+  `AutofillView:90,95,103`, `BackupsPanel:59`, `OverviewView:330,336,468`,
   `PresetGroup:192`, `ProbeFormationsView:465,630`, `Sidebar:143,145`,
   `routes/+page.svelte:503,637`, `LayoutView:1222`, plus the two **unstyled**
   `.empty` at `KeybindsView:84,90` and `.muted` at `BatchView:303,341`.
+  `AccountsView:218` is new in v0.34 ("your launcher logs say nothing about
+  these accounts") and is a genuine empty state, not a hint.
 - **"Here is something you should know about this control"** →
   `InlineMessage variant="info"`. `PresetGroup:183` (what a preset copies),
   `InsertForm:137` (what an empty insert does), `LayoutView:931` `.hintish`
   (the canvas gesture hints), `AutofillView:85` (the pair prompt — this one
   takes `EmptyState`'s `action` snippet, because it is an empty state *with* a
-  button, and `OverviewView:305` is the same shape with a different button
+  button, and `OverviewView:325` is the same shape with a different button
   treatment; unifying those two is the point).
 
 ### 4.6 The 28 native-control rules, in deletion order
 
 All of these are deleted and replaced by `Field`'s single style block.
 Twenty set `background` + `color`; seven set only `accent-color`; one sets a
-disabled colour.
+disabled colour. Thirty entries are listed: the two extras are the `:focus`
+outlines that only exist to serve the rules above them and go with them.
 
-`app.css:106-109` · `AccountsView:190-194` (×2) · `AutofillView:153-157` ·
+`app.css:106-109` · `AccountsView:324-327`, `:328` · `AutofillView:153-157` ·
 `BatchView:421`, `:422` · `ChatSplit:105-112` · `HudPanel:323-328`, `:329-331`,
 `:332-334` · `KeybindsView:157`, `:158` · `LayoutView:1208-1211` ·
 `NeocomButtons:125-131` · `OverviewAppearanceTab:192` ·
 `OverviewColumnsTab:166-170`, `:195` · `OverviewFiltersTab:323-326`, `:343`,
-`:351-353` · `OverviewView:507-510` · `PresetGroup:220-227`, `:228` ·
+`:351-353` · `OverviewView:527-530` · `PresetGroup:220-227`, `:228` ·
 `ProbeFormationsView:644-647` · `WindowPanel:551-560`, `:561-563`, `:680-688`,
 `:689-692`, `:711-720`, `:721-723`.
 
-### 4.7 The 33 `opacity` declarations, by disposition
+Unchanged in count by v0.34 — `AccountsView`'s launcher work added markup and
+four style rules but no new native control, because the one `<select>` it needed
+was already there (`:263-273`).
 
-**Delete, replace with a `--text-*` token** (20): `AccountsView:200` ·
+### 4.7 The 35 `opacity` declarations, by disposition
+
+**Delete, replace with a `--text-*` token** (22): `AccountsView:331`, `:338` ·
 `AutofillView:151` · `BackupsPanel:90` · `FormationPicker:69` ·
 `KeybindsView:161`, `:162`, `:163` · `OverviewAppearanceTab:189` ·
-`OverviewColumnsTab:163` · `OverviewView:543` · `PresetGroup:233` ·
+`OverviewColumnsTab:163` · `OverviewView:563` · `PresetGroup:233` ·
 `ProbeFormationsView:703` · `ProbeViewer:780` · `Sidebar:189` — plus the six
 `opacity` uses folded into `Button`/`Field` below.
+
+**Deleted with the `.chip.ghost` rule** (1): `AccountsView:329`. It is the only
+declaration in the tree whose job is "this thing is not settled yet", and it is
+the only one that becomes a *state on a primitive* rather than a colour swap —
+see §5.4.
 
 **Becomes `--o-disabled`** (7): `app.css:118` · `BatchView:417` ·
 `ChatSplit:133` · `KeybindsView:160` · `OverviewAppearanceTab:199` ·
@@ -893,14 +968,15 @@ Replaces: the global `button` rule (`app.css:17-22`), `button:disabled`
 `.mini-visible` (`:41`), `.rail` (`:27-31`), `.twisty` (`:86`), the four
 `border-color: #a33` copies, `.linkbtn` (`AboutPanel:49`, `BatchView:419`),
 `.linkish` (`LayoutView:1212`), `.collapse` (`BackupsPanel:84`, `Sidebar:211`),
-`.x` (`AccountsView:195`), `.caret` (`WindowPanel:644`), `.stack-btn`
+`.x` (`AccountsView:333`), `.ok` (`AccountsView:330`, new in v0.34),
+`.caret` (`WindowPanel:644`), `.stack-btn`
 (`WindowPanel:662`), `.stack-apply` (`ChatSplit:121`), `.cat-bulk button`
 (`OverviewFiltersTab:335`), `.reset` (`OverviewAppearanceTab:201`),
-`.palette-none` (`OverviewView:538`), `.pack-actions button` (`:554`),
+`.palette-none` (`OverviewView:558`), `.pack-actions button` (`:574`),
 `.col-actions button` (`OverviewColumnsTab:173`), `.pair button`
-(`AutofillView:164`, `OverviewView:483`), `.units button` and
+(`AutofillView:164`, `OverviewView:503`), `.units button` and
 `.list-actions .danger` (`ProbeFormationsView:675, 658`), `.group-title`
-(`HudPanel:299`), `.bold-toggle` (`OverviewView:525`), `.tab-chip` (`:517`),
+(`HudPanel:299`), `.bold-toggle` (`OverviewView:545`), `.tab-chip` (`:537`),
 `button { padding: 0.35rem 0.9rem }` (`BatchView:428`), `.mv, .rm`
 (`NeocomButtons:121`).
 
@@ -948,7 +1024,7 @@ input::placeholder { color: var(--text-muted); }
 ```
 
 `options[].group` renders `<optgroup>` — `OverviewFiltersTab:323` and
-`OverviewView:507` both style `optgroup` today, so the capability is required,
+`OverviewView:527` both style `optgroup` today, so the capability is required,
 not speculative.
 
 Replaces all 28 rules in §4.6.
@@ -988,8 +1064,10 @@ count and the invisible `.mini` clear button), `KeybindsView:101` + `:157`,
 ```ts
 type ChipProps = {
   tone?: "neutral" | "accent" | "ok" | "warn" | "danger" | "info";  // default "neutral"
+  state?: "settled" | "proposed";   // default "settled"
   size?: "sm" | "md";          // --t-caption / --t-body
-  title?: string;
+  title?: string;              // required when state="proposed" — see below
+  actions?: Snippet;           // trailing icon Buttons, inside the chip
   class?: string;
   children: Snippet;
 };
@@ -999,19 +1077,73 @@ type ChipProps = {
 var(--{tone}); border-radius: var(--r-pill); padding: 1px var(--s2)`.
 `neutral` uses `--surface-raised` / `--text-secondary` / `--border`.
 
-**A Chip never renders dark text on a saturated fill** (§3.4). It is a
-non-interactive label; anything clickable is a `Button`.
+**A Chip never renders dark text on a saturated fill** (§3.4).
+
+#### `state="proposed"` — the fifth meaning of "chip", made first-class
+
+v0.34 added `AccountsView .chip.ghost` (`:329`): `border-style: dashed;
+opacity: 0.85`, marking a pairing the EVE launcher's logs assert but the user
+has not accepted (`api.ts` `Proposal`, rendered at `AccountsView:252-260`). It
+is reported as **not visible enough**, and the reason is structural: today a
+proposed chip is a settled chip *minus* 15% opacity, so the thing that needs an
+answer is drawn quieter than the thing that does not.
+
+`state="proposed"` inverts that with two changes and no subtraction:
+
+| | `settled` | `proposed` |
+| --- | --- | --- |
+| Border | `1px solid var(--{tone})` | `1px dashed var(--{tone})` |
+| Default `tone` | `neutral` | `info` |
+| Text | `var(--{tone})` | `var(--{tone})` — same weight, same opacity |
+| Ground | `var(--{tone}-dim)` | `var(--{tone}-dim)` |
+| `opacity` | none | **none** |
+
+- **Dashed stays.** It is the honest carrier of "not committed yet": a real,
+  non-opacity signal that survives §3.2 and reads at a glance without colour.
+- **The default tone flips to `info`.** A proposed pairing on a card of settled
+  neutral ones now reads *louder* than its neighbours (`--info` Lc 71.6 on
+  `--bg`, against `--text-secondary`'s neutral), which is what "needs your
+  answer" should look like. `tone` is still free, so a *conflicting* proposal —
+  `Proposal.conflict != null`, the case `AccountsView:290-297` renders as a
+  separate `.conflict` paragraph — takes `tone="warn"` and stays dashed.
+- **`title` is required on a proposed chip** and states the source, e.g. *"From
+  your launcher log"*. That is the accessible description of why this chip is
+  different, and it is free: `title` already exists on the primitive, and the
+  copy already exists at `AccountsView:282`.
+
+`actions` renders trailing icon `Button`s inside the chip's pill. This is not a
+new capability — `.chip.filled` already carries an unpair `✕` (`:246`) and
+`.chip.ghost` carries accept `✓` and dismiss `✕` (`:254-259`) — it is the
+existing shape, named. The **chip itself is still never clickable**; anything
+clickable inside it is a `Button variant="ghost" iconOnly`, which is also what
+makes the accept/dismiss pair keyboard-reachable, which it is today only by
+accident of being bare `<button>`s.
+
+**Sufficient for both consumers, and neither has to extend it.** Phase 3 owns
+the Accounts fix and needs per-slot proposed chips with accept/dismiss
+(`tone` default + `actions`) and a conflict variant (`tone="warn"`); Phase 2
+owns the sidebar and needs an aggregate count (`Chip state="proposed"
+size="sm"`, no `actions`). Two axes — semantic tone and settled/proposed — cover
+both. Do not add a third; if a case needs one, it is a `Button`.
 
 Replaces: `.badge` and its three variants (`app.css:59-62`, rendered at
 `routes/+page.svelte:510-518`), `HudPanel .badge` (`:335`, rendered at
 `:188, 216, 217, 234, 249`), `NeocomButtons .badge` (`:117`, rendered at `:67`),
 `WindowPanel .badge.warn` (`:609`, rendered at `:238, 242`), `AccountsView
-.chip` (`:188`), `WindowPanel .stack-count` (`:630`), `ProbeFormationsView`'s
-unit annotations.
+.chip` (`:322-323`) and **`.chip.ghost` (`:329`)**, `WindowPanel .stack-count`
+(`:630`), `ProbeFormationsView`'s unit annotations.
 
 Not replaced: `KeybindsView .chip` (`:158`) — that is a clickable capture
 button, so it is `Button` with `pressed={listening === command}`.
 `KeybindsView.spec.ts:29` queries `.chip`, so **keep the class name on it.**
+`AccountsView .chip.empty` (`:324-328`) is not a chip either — it is a
+`<select>` wearing a pill, and it becomes `Field kind="select"` (§4.2).
+
+**Behaviour-change guard.** Phase 1 renders the proposed chip with the same
+markup and the same handlers it has today; only the border, tone and the
+removal of `opacity` change. `AccountsView.spec.ts` (219 lines, new in v0.34)
+must pass untouched — it queries by `aria-label` (`"Accept …"` / `"Dismiss …"`),
+not by `.ghost`, so the class may go.
 
 ### 5.5 `Tabs.svelte`
 
@@ -1030,15 +1162,22 @@ type TabsProps = {
   (`:122`).
 - `underline`: flat buttons over a `1px solid var(--border)` rule; active =
   `--text` with a `2px solid var(--accent)` bottom border. Replaces `.subtabs`
-  (`OverviewView:545-550` and `OverviewAppearanceTab:180-185`, which are
+  (`OverviewView:565-570` and `OverviewAppearanceTab:180-185`, which are
   identical).
 
 Accessibility, done once: `role="tablist"` on the container, `role="tab"` +
 `aria-selected` + roving `tabindex` on each, Left/Right/Home/End keyboard
-movement, `aria-controls` when the caller supplies panel ids. Today
-`OverviewView:452` sets `role="tablist"` but its children have no `role="tab"`,
-which is an invalid ARIA tree that `svelte-check` does not catch;
-`routes/+page.svelte:528` is a bare `<span>` of buttons with no roles at all.
+movement, `aria-controls` when the caller supplies panel ids.
+
+Today `OverviewView:472` sets `role="tablist"` and its three sub-tab buttons do
+carry `role="tab"` + `aria-selected` (`:474-477`) — but the same container also
+holds the two pack buttons (`:479-482`), which carry no role at all, so the
+tablist has non-tab children. That is an invalid ARIA tree, and `svelte-check`
+does not catch it. There is no roving `tabindex`, no arrow-key movement and no
+`aria-controls` on any of the three. `routes/+page.svelte:528` is worse: a bare
+`<span>` of buttons with no roles at all. (Phase 4 moves the pack buttons out of
+the strip for the same reason from the other direction — a container whose
+members opt out of its styling.)
 
 `disabled` + `disabledReason` render the tab with `aria-disabled="true"` and a
 `title`, rather than omitting it. **Phase 1 does not use this.** The call sites
@@ -1048,7 +1187,7 @@ passes `disabled` instead. The capability ships here so Phase 2 is a
 one-line-per-tab diff, and shipping it unused is cheaper than reshaping the API
 later.
 
-Not replaced: `OverviewView .ov-tabs` (`:511-517`) — a reorderable list of
+Not replaced: `OverviewView .ov-tabs` (`:531-537`) — a reorderable list of
 overview tabs with a colour swatch and a bold toggle per item. It is a
 `ListRow` set, and Phase 4 restructures it. Tokenise it in place.
 `LayoutView .tabs/.tab` (`:1150-1177`) is a **drawing of EVE's own tab bar** on
@@ -1093,7 +1232,9 @@ makes it legible (`opacity: .7` at Lc 40.6 → `--text-muted` at Lc 71.1);
 Phase 2 changes what it says.
 
 Replaces the ad-hoc headers at: `BackupsPanel:73-83` (`.backups-head`),
-`Sidebar:201-213` (`.sidebar-top`), `AccountsView:183` (`.accounts-head`),
+`Sidebar:201-213` (`.sidebar-top`), `AccountsView:189-200` (`.accounts-head`,
+which gained an `Accept all — N characters` action at `:193-195` in v0.34 and is
+now exactly `PanelHeader`'s `actions` snippet),
 `AutofillView:146` (`.af-list header`), `BatchView:415` (`.head`),
 `NeocomButtons:101` (`.head`), `OverviewColumnsTab:185` (`.copy-head`),
 `OverviewFiltersTab:330` (`.contents-head`), `WindowPanel:620` (`.stack-head`)
@@ -1114,7 +1255,7 @@ type EmptyStateProps = {
 Centred, `padding: var(--s6) var(--s4)`, `max-width: 44ch`, `gap: var(--s2)`.
 
 The `action` snippet is the point: `AutofillView:85-89` and
-`OverviewView:305-309` render *the same "pair this character" prompt with two
+`OverviewView:325-328` render *the same "pair this character" prompt with two
 different button treatments*. One component, one treatment.
 
 Replaces the "nothing here" half of `.hint` (§4.5), the **unstyled** `.empty`
@@ -1142,17 +1283,19 @@ say it is a sentence.
 
 `role="alert"` on warn and error is new. Today `.error` is a bare `<p>` at nine
 sites with no live region, so a validation failure is silent to a screen
-reader; only the three `.flash` sites have `aria-live` (`AccountsView:125`,
+reader; only the three `.flash` sites have `aria-live` (`AccountsView:215`,
 `ProbeFormationsView:503`, `Sidebar:140`).
 
-Replaces: `.error` (`app.css:65` + `AccountsView:124`, `AutofillView:93`,
-`BackupsPanel:57`, `KeybindsView:88`, `OverviewView:312`,
+Replaces: `.error` (`app.css:65` + `AccountsView:214`, `AutofillView:93`,
+`BackupsPanel:57`, `KeybindsView:88`, `OverviewView:332`,
 `ProbeFormationsView:471`, `Sidebar:141`, `routes/+page.svelte:642`),
 `.field-error` (`app.css:70` + `InsertForm:104, 115, 135, 140`), `.err`/`.fail`
 (`BatchView:426`, used at `:377, 395`), `BatchView`'s `.warn`/`.ok`
 (`:425, 427`), `.orphans` (`WindowPanel:529-539`), `.no-windows`
-(`OverviewView:492-502`), `.unknown-groups` (`OverviewFiltersTab:344`), and the
-"note beside a control" half of `.hint` (§4.5).
+(`OverviewView:512-522`), `.unknown-groups` (`OverviewFiltersTab:344`),
+`AccountsView`'s new `.from-launcher` (`:331`, variant `info`) and `.conflict`
+(`:332`, variant `warn`), and the "note beside a control" half of `.hint`
+(§4.5).
 
 ### 5.9 `ScopeBanner.svelte`
 
@@ -1174,9 +1317,9 @@ component in this phase** — that changes four component signatures and their
 specs, which is a Phase 4 tidy, not a token swap.
 
 Replaces four byte-identical CSS blocks (`AutofillView:159-162`,
-`KeybindsView:187-190`, `OverviewView:478-481`,
+`KeybindsView:187-190`, `OverviewView:498-501`,
 `ProbeFormationsView:704-707`), rendered at `AutofillView:97`,
-`KeybindsView:96`, `OverviewView:314`, `ProbeFormationsView:477`.
+`KeybindsView:96`, `OverviewView:334`, `ProbeFormationsView:477`.
 
 Also absorbs two near-copies:
 - `HudPanel:272-279` `.account-legend`, rendered at `:186-191`. Use
@@ -1260,7 +1403,7 @@ a ~15-line `MenuItem[]` renderer over `Popover`, keeping its exported
 `MenuItem` interface (`ContextMenu.svelte:1-6`) so its three importers
 (`LayoutView:13`, `PresetGroup:5`, `WindowPanel:5`) do not change.
 
-Second user, immediately: `OverviewView:530-534`'s colour palette dropdown,
+Second user, immediately: `OverviewView:550-554`'s colour palette dropdown,
 which today has **no viewport clamp and no Escape handler** — it is a bare
 `position: absolute` div. It gains both by being a `Popover`.
 
@@ -1331,7 +1474,7 @@ does not have.
 
 Replaces `.flash` (`app.css:66-69`) and its three hand-rolled timer pairs:
 `Sidebar:85-88`, `Sidebar:102-104`, `ProbeFormationsView:304-306`, plus
-`AccountsView`'s `captureNote` (`:125`). Phase 5 routes the ~58 `message()`
+`AccountsView`'s `captureNote` (`:215`). Phase 5 routes the ~58 `message()`
 dialogs through it; Phase 1 changes only the three existing call sites, keeping
 their exact wording.
 
@@ -1393,7 +1536,7 @@ this step, keeping its module-level `MenuItem` export.
 | 4 | `Sidebar.svelte` | 32 lines, one dead fallback | `PanelHeader`, `ListRow`, `Button`, `Field`, `EmptyState`, `Toast` |
 | 5 | `NeocomButtons.svelte` | 39 lines | `Field`, `Chip`, `ListRow`, `PanelHeader` |
 | 6 | `ContextMenu.svelte` | already done in step 2 | — |
-| 7 | `AccountsView.svelte` | the two undefined vars live here | `Field`, `Chip`, `Button`, `InlineMessage`, `EmptyState`, `Panel` |
+| 7 | `AccountsView.svelte` | the two undefined vars live here; `Chip`'s `proposed` state has its only Phase 1 user here, and `AccountsView.spec.ts` (219 lines) must pass untouched | `Field`, `Chip`, `Button`, `InlineMessage`, `EmptyState`, `Panel`, `PanelHeader` |
 | 8 | `AutofillView.svelte` | 2 invisible buttons | `Field`, `Button`, `ScopeBanner`, `EmptyState`, `ListRow`, `SearchField` |
 | 9 | `PresetGroup.svelte` | right-click menu — leave it right-click-only | `Field`, `Button`, `ListRow`, `EmptyState` |
 | 10 | `KeybindsView.svelte` | 1 invisible button; `.chip` and `.default` | `SearchField`, `Button`, `ScopeBanner`, `EmptyState`, `InlineMessage` |
@@ -1477,12 +1620,14 @@ the cases this phase exists to fix.
 
 ### 7.3 Component specs
 
-One file per primitive with behaviour worth asserting. Chip, Panel,
-PanelHeader and EmptyState have none beyond what §7.1 already checks — skip
-them.
+One file per primitive with behaviour worth asserting. Panel, PanelHeader and
+EmptyState have none beyond what §7.1 already checks — skip them. `Chip` used
+to be on that list; `state="proposed"` puts it back on, with exactly two
+assertions.
 
 | Spec | Asserts |
 | --- | --- |
+| `Chip.spec.ts` | `state="proposed"` renders **no `opacity`** declaration (the §3.2 regression, and the direct guard on `.chip.ghost`'s `0.85`) and a dashed border; `proposed` without a `title` throws in dev |
 | `Button.spec.ts` | a `ghost` button is visible without hover (`getComputedStyle(...).opacity !== "0"`) — the §1 regression; `disabled` blocks `onclick` and carries `title={disabledReason}`; `pressed` sets `aria-pressed`; `iconOnly` without `title` throws in dev |
 | `Field.spec.ts` | `kind="select"` with grouped options renders `<optgroup>`; `bind:value` round-trips for text/number/checkbox; `error` renders the message, sets `aria-invalid` and wires `aria-describedby`; the generated `id` pairs `<label for>` |
 | `SearchField.spec.ts` | the placeholder is built from `verb`/`nouns`/`shortcut`; the clear button is absent when empty and calls `onclear` when clicked; Escape clears |
@@ -1496,17 +1641,21 @@ them.
 
 ### 7.4 Regression
 
-- **All 35 existing frontend test files must pass untouched.** That is the
-  acceptance criterion for "no behaviour change", and it is why §4's rule 1
-  forbids renaming a class. If a spec needs editing, the change was not a
-  refactor — stop and re-read.
+- **All 37 existing frontend test files (1064 tests) must pass untouched.**
+  That is the acceptance criterion for "no behaviour change", and it is why
+  §4's rule 1 forbids renaming a class. If a spec needs editing, the change was
+  not a refactor — stop and re-read. v0.34 added two of the 37
+  (`AccountsView.spec.ts`, `launcher.test.ts`); `AccountsView.spec.ts` is the
+  one this phase is most likely to disturb, because `Chip` and `Button` replace
+  the markup it exercises. It queries only by role and accessible name, so a
+  faithful swap does not touch it.
 - `detail.test.ts:484-485` pins `pointer-events: none` in
   `DetailParts.svelte`'s `<style>` and forbids `pointer-events: auto`. Both
   survive.
 - `npm run check` (`svelte-check --fail-on-warnings`) must stay clean. Run it
   after `Tabs` specifically: the new `role="tab"` / roving-tabindex wiring is
   the one place in this phase that can introduce an a11y warning.
-- The 40 Rust test modules are untouched — no Rust file changes in this phase.
+- The Rust test modules are untouched — no Rust file changes in this phase.
 
 ---
 
@@ -1519,7 +1668,7 @@ independently revertable in reverse order.
 | Risk | Likelihood | Mitigation |
 | --- | --- | --- |
 | A deleted CSS rule leaves its class on an element, silently losing styling. Svelte warns about *unused selectors*, never about *unstyled classes*. | High — this is the main failure mode | Delete the rule and the class in the same edit (§4 rule 2). Screenshot each of the 25 files before and after; the app is one window and the skill at `.claude/skills/starting-the-app/` exists for exactly this. |
-| An existing spec queries a class the swap renamed | High if rule 1 is ignored | §4 rule 1, and §7.4's "all 35 pass untouched" gate. The 14 at-risk queries are listed in §4. |
+| An existing spec queries a class the swap renamed | High if rule 1 is ignored | §4 rule 1, and §7.4's "all 37 pass untouched" gate. The 14 at-risk queries are listed in §4. |
 | `--text-muted` at Lc 71 makes the UI look "flatter" — everything is bright now | Certain, and intended | The hierarchy is rebuilt from size/weight/position, not dimming (§3.1). If a screen reads flat after the swap, the fix is a `--t-*` or weight change, never a return to `opacity`. |
 | `svelte-check` a11y warnings from the new ARIA wiring | Medium | Run `npm run check` after step 2, before any view is migrated. |
 | The layout canvas stops reading as a screen once it shares the app's palette | Medium | §3.7 measured every composited label. The canvas keeps its own local `<style>` and its own 9–11px type (§4.3); only the hues are shared. |
@@ -1568,15 +1717,20 @@ Net effect: **`--warn` means exactly one thing again.**
       returns only the `:root` block and the two allowlisted data sites
       (`OverviewAppearanceTab.svelte:26`, `ProbeViewer.svelte:150`).
 - [ ] No `rgba(` or `rgb(` in any `<style>` block.
-- [ ] `--line` and `--panel` are gone from `AccountsView.svelte`; every
-      `var(--x)` in `app/src` resolves to a declaration in `:root`.
+- [ ] `--line` and `--panel` are gone from `AccountsView.svelte` (`:319, 323,
+      335, 336`); every `var(--x)` in `app/src` resolves to a declaration in
+      `:root`.
+- [ ] `.chip.ghost` is gone. A launcher-proposed pairing is
+      `Chip state="proposed"`, carries **no `opacity`**, and reads at least as
+      loud as the settled chip beside it (§5.4).
 - [ ] Exactly 3 `border-radius` tokens (plus the 3 allowlisted `50%` circles)
       and 5 `font-size` tokens (plus the 7 allowlisted canvas-scale lines).
       No `em` font sizes anywhere.
 - [ ] Every `padding`/`gap`/`margin` is a `--s*` token, `0`, `auto`, or
       relative.
 - [ ] Exactly one `opacity` value in HTML chrome — `var(--o-disabled)` — plus
-      the 10 allowlisted graphics uses.
+      the 10 allowlisted graphics uses. All 35 current declarations are
+      accounted for by §4.7.
 - [ ] `.mini` is gone: no rule, no class, no `opacity: 0`. The four buttons at
       `AutofillView:110`, `AutofillView:129`, `KeybindsView:136` and
       `routes/+page.svelte:621` are visible.
@@ -1584,13 +1738,15 @@ Net effect: **`--warn` means exactly one thing again.**
       place that styles an `input`, `select` or `option`.
 - [ ] The four `.shared-banner` copies, the four `border-color: #a33` copies,
       the three `.subtabs`/`.viewtabs`/`.tree-file` strips, the four `.badge`
-      definitions and the three `.flash` timer pairs are each one component.
-- [ ] `app/src/lib/ui/` holds the twelve primitives, `apca.ts`, and the ten
+      definitions, the five `.chip` meanings and the three `.flash` timer pairs
+      are each one component.
+- [ ] `app/src/lib/ui/` holds the twelve primitives, `apca.ts`, and the eleven
       specs in §7.3.
 - [ ] `tokens.test.ts`'s eight guards pass — and each was demonstrated to
       **fail** against the pre-migration tree.
 - [ ] `apca.test.ts`'s 41 pairings meet their floors. No WCAG 2 check exists.
-- [ ] All 35 pre-existing frontend test files pass **without modification**.
+- [ ] All 37 pre-existing frontend test files (1064 tests) pass **without
+      modification**.
 - [ ] `npm test` and `npm run check` are clean.
 - [ ] The app has been launched and every one of the eight views screenshotted
       against its pre-migration shot. Nothing moved.
