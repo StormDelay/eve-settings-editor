@@ -658,4 +658,84 @@ mod tests {
             "an aborted batch leaves the store untouched"
         );
     }
+
+    #[test]
+    fn confirm_pairings_a_character_named_twice_ends_on_the_last_account_named() {
+        let root = temp_dir("many-dup-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_80000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_user_80000002.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        let appdir = temp_dir("many-dup-appdata");
+
+        let roster = confirm_pairings(
+            std::slice::from_ref(&root),
+            &appdir,
+            &[(90000001, 80000001), (90000001, 80000001), (90000001, 80000002)],
+        )
+        .unwrap();
+
+        let a = roster.accounts.iter().find(|a| a.user_id == 80000001).unwrap();
+        assert!(a.characters.is_empty(), "the exact-duplicate pair is a no-op, the later reassignment wins");
+        let b = roster.accounts.iter().find(|a| a.user_id == 80000002).unwrap();
+        assert_eq!(b.characters, vec![90000001]);
+        let store = load_store(&appdir);
+        assert!(store.accounts[&80000001].characters.is_empty());
+        assert_eq!(store.accounts[&80000002].characters, vec![90000001]);
+    }
+
+    #[test]
+    fn confirm_pairings_order_within_a_batch_decides_whether_the_cap_trips() {
+        // Each pair goes through the same `confirm` as the single-pairing path,
+        // applied in sequence — so a batch that frees a slot before filling
+        // another succeeds, while the reverse order hits the cap while the
+        // account is still full.
+        let root = temp_dir("many-order-tree");
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        fs::write(sdir.join("core_user_80000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+        fs::write(sdir.join("core_user_80000002.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
+
+        // Freeing first succeeds: 90000001 leaves 80000001 before 90000004 arrives.
+        let ok_dir = temp_dir("many-order-ok-appdata");
+        confirm_pairings(
+            std::slice::from_ref(&root),
+            &ok_dir,
+            &[(90000001, 80000001), (90000002, 80000001), (90000003, 80000001)],
+        )
+        .unwrap();
+        confirm_pairings(
+            std::slice::from_ref(&root),
+            &ok_dir,
+            &[(90000001, 80000002), (90000004, 80000001)],
+        )
+        .unwrap();
+        let store = load_store(&ok_dir);
+        assert_eq!(store.accounts[&80000001].characters, vec![90000002, 90000003, 90000004]);
+        assert_eq!(store.accounts[&80000002].characters, vec![90000001]);
+
+        // The reverse order trips the cap: 80000001 still holds all three when
+        // 90000004 is attempted, and the whole batch (including the later,
+        // otherwise-valid reassignment) is aborted.
+        let cap_dir = temp_dir("many-order-cap-appdata");
+        confirm_pairings(
+            std::slice::from_ref(&root),
+            &cap_dir,
+            &[(90000001, 80000001), (90000002, 80000001), (90000003, 80000001)],
+        )
+        .unwrap();
+        let err = confirm_pairings(
+            std::slice::from_ref(&root),
+            &cap_dir,
+            &[(90000004, 80000001), (90000001, 80000002)],
+        )
+        .unwrap_err();
+        assert!(err.contains('3'), "the cap message names the limit: {err}");
+        assert_eq!(
+            load_store(&cap_dir).accounts[&80000001].characters,
+            vec![90000001, 90000002, 90000003],
+            "the account still holds its original three, unchanged"
+        );
+    }
 }
