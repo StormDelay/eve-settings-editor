@@ -122,9 +122,16 @@ wasteful. The Accounts view calls `launcher_proposals()` once on mount.
 disagreement is detectable regardless of how a pairing was originally made;
 storing *how* buys nothing the conflict check does not already give.
 
-Accepting a proposal goes through the existing `confirm_pairing`, so
+Accepting a single proposal goes through the existing `confirm_pairing`, so
 single-membership and the hard 3-character cap are enforced by the code that
 already enforces them.
+
+**Accept all** needs one more command, `confirm_pairings(pairs) -> Result<AccountRoster,
+ErrDto>`, applying each pair through the same `confirm` and saving once.
+`confirm_pairing` re-runs discovery and rebuilds the roster per call (the
+`ponytail:` note at `accounts.rs:238`); thirty of those in a row is seconds of
+stall on the headline action. All-or-nothing — the first cap rejection aborts and
+nothing is written.
 
 ### 3.3 Frontend — `AccountsView.svelte`
 
