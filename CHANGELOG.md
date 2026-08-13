@@ -6,8 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-13
+
+Your accounts, named by the EVE launcher instead of guessed at.
+
 ### Added
 - The Accounts view now offers your characters' accounts straight from the EVE launcher, and tells you when a pairing you already made disagrees with it.
+- Accept every offered pairing at once, or one at a time.
 
 ### Fixed
 - **Deleting an overview tab no longer changes the other tabs' columns.** The open character's column widths and sort order now follow each tab, instead of staying on the slot the deleted tab freed up.
