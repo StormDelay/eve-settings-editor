@@ -10,6 +10,13 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
+  import Button from "$lib/ui/Button.svelte";
+  import Chip from "$lib/ui/Chip.svelte";
+  import EmptyState from "$lib/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/ui/InlineMessage.svelte";
+  import SearchField from "$lib/ui/SearchField.svelte";
+  import Sheet from "$lib/ui/Sheet.svelte";
+  import Tabs from "$lib/ui/Tabs.svelte";
   import Toast from "$lib/ui/Toast.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile, PresetInfo } from "$lib/api";
@@ -177,7 +184,7 @@
   }
 
   let query = $state("");
-  let searchBox: HTMLInputElement | undefined = $state();
+  let searchBox: HTMLInputElement | HTMLSelectElement | undefined = $state();
   const searching = $derived(query.trim() !== "");
   // Re-runs after every mutation, since the tree is replaced wholesale.
   const searchIn = (doc: OpenOutcome | null, q: string) =>
@@ -186,7 +193,8 @@
 
   function openSearch() {
     searchBox?.focus();
-    searchBox?.select();
+    // Field's `element` is typed for either control; only an input can select.
+    if (searchBox instanceof HTMLInputElement) searchBox.select();
   }
 
   function closeSearch() {
@@ -492,7 +500,7 @@
       openPresetName={openPreset} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
-      title="Show file list" aria-label="Show file list">»</button>
+      title="Show file list" aria-label="Show file list">&raquo;</button>
   {/if}
   {#if mainView === "accounts"}
     <AccountsView openPath={current?.status === "opened" ? current.path : null} />
@@ -501,45 +509,67 @@
   {:else}
   <section class="editor">
     {#if current === null}
-      <p class="hint">Open a settings file to begin.</p>
+      <EmptyState title="Open a settings file to begin." />
     {:else if current.status === "opened"}
       <header class="filebar">
         <span class="filename">
           {#if openCharName}{openCharName} — {/if}{#if openUserAlias}{openUserAlias} — {/if}{current.file_name}
         </span>
+        <!-- A light role tone on its own dim ground. These three badges used to
+             be dark text on a saturated fill, measuring Lc 51 / 55 / 43 at 12px
+             where APCA wants 75; they measure ~69 now. -->
         {#if current.fidelity.state === "read_only"}
-          <span class="badge read-only" title={current.fidelity.reason}>read-only</span>
+          <Chip tone="danger" size="sm" class="badge read-only" title={current.fidelity.reason}>read-only</Chip>
         {:else}
-          <span class="badge editable">editable</span>
+          <Chip tone="ok" size="sm" class="badge editable">editable</Chip>
         {/if}
         {#if openPreset !== null}
-          {#if dirtySlots.char || dirtySlots.user}<span class="badge dirty">preset: unsaved</span>{/if}
+          {#if dirtySlots.char || dirtySlots.user}
+            <Chip tone="warn" size="sm" class="badge dirty">preset: unsaved</Chip>
+          {/if}
         {:else}
-          {#if dirtySlots.char}<span class="badge dirty">character: unsaved</span>{/if}
-          {#if dirtySlots.user}<span class="badge dirty">account: unsaved</span>{/if}
+          {#if dirtySlots.char}<Chip tone="warn" size="sm" class="badge dirty">character: unsaved</Chip>{/if}
+          {#if dirtySlots.user}<Chip tone="warn" size="sm" class="badge dirty">account: unsaved</Chip>{/if}
         {/if}
         {#if dirtySlots.char || dirtySlots.user}
-          <button
-            class="discard"
+          <Button
+            variant="danger"
+            size="sm"
             onclick={discardChanges}
             title="Throw the unsaved changes away and reload both files from disk. Backups are untouched."
-            >Discard</button>
+            >Discard</Button>
         {/if}
+        <!-- The strip keeps its {#if} guards, so it still shows exactly the tabs
+             it shows today. Phase 2 drops the guards and passes `disabled`
+             instead, which is what stops it rearranging under the cursor —
+             Tabs already carries the capability. What it gains here is the ARIA
+             it never had: this was a bare <span> of buttons with no roles. -->
         {#if layoutAvailable || openCharId !== null || slots.user?.status === "opened"}
-          <span class="viewtabs">
-            <button class:active={view === "tree"} onclick={() => (view = "tree")}>Tree</button>
-            {#if layoutAvailable}<button class:active={view === "layout"} onclick={() => (view = "layout")}>Layout</button>{/if}
-            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "overview"} onclick={() => (view = "overview")}>Overview</button>{/if}
-            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "autofill"} onclick={() => (view = "autofill")}>Autofill</button>{/if}
-            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "keybinds"} onclick={() => (view = "keybinds")}>Keybinds</button>{/if}
-            {#if openCharId !== null || slots.user?.status === "opened"}<button class:active={view === "probes"} onclick={() => (view = "probes")}>Probes</button>{/if}
-          </span>
+          <Tabs
+            class="viewtabs"
+            ariaLabel="Editor view"
+            tabs={[
+              { id: "tree", label: "Tree" },
+              ...(layoutAvailable ? [{ id: "layout", label: "Layout" }] : []),
+              ...(openCharId !== null || slots.user?.status === "opened"
+                ? [
+                    { id: "overview", label: "Overview" },
+                    { id: "autofill", label: "Autofill" },
+                    { id: "keybinds", label: "Keybinds" },
+                    { id: "probes", label: "Probes" },
+                  ]
+                : []),
+            ]}
+            bind:value={view} />
         {/if}
         <span class="spacer"></span>
-        <button
-          class="save"
+        <Button
+          variant="primary"
           disabled={!canSave}
-          onclick={() => saveFile()}>Save</button>
+          disabledReason={current.fidelity.state !== "editable"
+            ? "This file is read-only"
+            : "There is nothing to save"}
+          onclick={() => saveFile()}>Save</Button>
       </header>
       {#if view === "layout"}
         <div class="tree-area">
@@ -604,23 +634,28 @@
         </div>
       {:else}
         {#if slots.user?.status === "opened"}
-          <span class="viewtabs tree-file">
-            <button class:active={treeFile === "char"} onclick={() => (treeFile = "char")}>Character file</button>
-            <button class:active={treeFile === "user"} onclick={() => (treeFile = "user")}>Account file</button>
-          </span>
+          <Tabs
+            class="tree-file"
+            ariaLabel="Tree file"
+            tabs={[
+              { id: "char", label: "Character file" },
+              { id: "user", label: "Account file" },
+            ]}
+            bind:value={treeFile} />
         {/if}
+        <!-- The last of the four permanently-invisible buttons: the clear "×"
+             was `.mini`, hidden at opacity 0 and revealed only inside a `.row`,
+             which the search bar is not. SearchField's clear button is a ghost
+             Button and is actually visible when the box has text. -->
         <div class="searchbar">
-          <input
-            class="search"
-            bind:this={searchBox}
+          <SearchField
+            verb="search"
+            nouns="labels and values"
+            shortcut="Ctrl+F"
+            bind:element={searchBox}
             bind:value={query}
-            placeholder="Search labels and values (Ctrl+F)" />
-          {#if searching}
-            <span class="meta">
-              {found?.count ?? 0} match{found?.count === 1 ? "" : "es"}
-            </span>
-            <button class="mini" title="Clear search (Esc)" onclick={closeSearch}>×</button>
-          {/if}
+            count={searching ? (found?.count ?? 0) : undefined}
+            onclear={closeSearch} />
         </div>
         <div class="tree-area">
           {#if found?.tree}
@@ -635,12 +670,12 @@
               onRemove={handleRemove}
               onInsertRequest={(n) => (insertTarget = n)} />
           {:else}
-            <p class="hint">Nothing in this file matches “{query}”.</p>
+            <EmptyState title="Nothing in this file matches &ldquo;{query}&rdquo;." />
           {/if}
         </div>
       {/if}
     {:else}
-      <p class="error">Cannot edit: {current.message} (offset {current.offset})</p>
+      <InlineMessage variant="error">Cannot edit: {current.message} (offset {current.offset})</InlineMessage>
       <pre class="hex">{current.hex_preview}</pre>
     {/if}
   </section>
@@ -663,18 +698,17 @@
     {/if}
   {/if}
   {#if insertTarget !== null}
-    <div class="overlay" role="none" onclick={() => (insertTarget = null)}>
-      <div class="modal" role="none" onclick={(e) => e.stopPropagation()}>
-        <InsertForm
-          target={insertTarget}
-          onSubmit={async (m) => {
-            await runMutation(m, true); // throws => the form keeps itself open
-            insertTarget = null;
-          }}
-          onCancel={() => (insertTarget = null)}
-        />
-      </div>
-    </div>
+    <!-- A Sheet, so it traps focus, restores it to the opener and closes on
+         Escape. The `.modal` it replaces did none of the three. -->
+    <Sheet title="Add entry" width="min(420px, 92vw)" onclose={() => (insertTarget = null)}>
+      <InsertForm
+        target={insertTarget}
+        onSubmit={async (m) => {
+          await runMutation(m, true); // throws => the form keeps itself open
+          insertTarget = null;
+        }}
+        onCancel={() => (insertTarget = null)} />
+    </Sheet>
   {/if}
   {/if}
 </main>

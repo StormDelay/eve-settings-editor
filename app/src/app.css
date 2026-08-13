@@ -11,7 +11,7 @@
 :root {
   color-scheme: dark;
   font-family: system-ui, "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: var(--t-ui);
 
   /* --- surfaces: four evenly-stepped OKLCH elevations ------------------- */
   --bg:               #0f1216;   /* app ground */
@@ -71,28 +71,19 @@
      position; opacity is disabled state and nothing else. ---------------- */
   --o-disabled: 0.5;
 
-  /* TEMPORARY — deleted in step 5 of the Phase 1 migration. These keep every
-     not-yet-migrated file rendering while the swap proceeds file by file, and
-     their deletion is what proves the swap is complete. */
-  --bg-panel: var(--surface);
-  --fg: var(--text);
-  --fg-dim: var(--text-muted);
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); }
 
-/* ---------------------------------------------------------------------------
-   MIGRATION NOTE (Phase 1, step 3). The rules below are the ones that survive
-   the phase, tokenised in place. The ones a primitive replaces — the global
-   `button` rules, .mini, .badge, .hint, .error, .flash, .field-error,
-   .searchbar, .edit, .overlay, .modal, .save, .discard, .viewtabs, .tree-file —
-   are deliberately left untouched and are marked `PENDING` below. Each is
-   deleted at the moment its last call site is migrated, because §4's rule 2 is
-   that the rule and the class go in the SAME edit: Svelte warns about an unused
-   selector but says nothing about a class left on an element whose rule you
-   deleted, which silently loses styling. Deleting them all up front would leave
-   the app visibly broken for the whole of step 4.
-   --------------------------------------------------------------------------- */
+/* What is left below is the SHELL: the app grid, the two collapse rails, the
+   sidebar and backups columns, the file bar, the tree area and the tree's own
+   six syntax colours. Everything that used to live here and is not shell —
+   the global `button` rules, .mini, .badge, .hint, .error, .flash,
+   .field-error, .searchbar, .edit, .overlay, .modal, .save, .discard,
+   .viewtabs, .insert-form — is a component in `lib/ui/` now.
+
+   Nothing here declares a colour, a size, a radius or a space that is not a
+   token. `lib/ui/tokens.test.ts` fails the build if that stops being true. */
 
 .layout { display: grid; grid-template-columns: var(--col-left, 280px) 1fr auto; height: 100vh; }
 /* Collapsed sidebar: the 280px column shrinks to the reopen rail's width. The
@@ -114,8 +105,6 @@ body { margin: 0; background: var(--bg); color: var(--text); }
    it always semantically was. */
 .backups li { list-style: none; }
 .stamp { font-family: Consolas, monospace; }
-/* PENDING: deleted with BackupsPanel/ProbeFormationsView — Button ghost sm. */
-.mini-visible { padding: 0 6px; font-size: 0.85em; margin-left: auto; }
 .sidebar {
   background: var(--surface); border-right: 1px solid var(--border);
   overflow-y: auto; padding: var(--s2);
@@ -132,44 +121,17 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
 }
 
-/* PENDING: the global button rules, deleted with routes/+page.svelte — Button. */
-button {
-  background: var(--bg-panel); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 4px 10px; cursor: pointer;
-}
-button:hover { border-color: var(--accent); }
 /* Shrink + ellipsis so a long name doesn't hog the row; combined with the
    filebar's flex-wrap this keeps the Save button reachable on small windows. */
 .filename { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* PENDING: everything from here to .tree-file that is marked so is deleted as
-   its last call site migrates in step 4. .badge/.hint/.error/.flash/
-   .field-error/.searchbar/.edit/.overlay/.modal/.insert-form/.save/.discard/
-   button:disabled/.viewtabs/.tree-file all go to routes/+page.svelte's and the
-   views' migrations. */
-.badge { border-radius: 8px; padding: 1px 8px; font-size: 0.85em; }
-.badge.editable { background: var(--ok); color: #10240f; }
-.badge.read-only { background: var(--danger); color: #2b100d; }
-.badge.dirty { background: var(--warn); color: #33260a; }
 .tree-area { overflow: auto; flex: 1; padding: var(--s2) var(--s3); }
-.hint { color: var(--fg-dim); padding: 12px; }
-.error { color: var(--danger); padding: 12px; }
-.flash {
-  color: var(--ok); font-size: 0.85em; margin: 0 0 6px;
-  animation: fade-out 2s ease-in forwards;
-}
-.field-error { color: var(--danger); font-size: 0.85em; margin: -4px 0 8px; }
+/* The tree's search bar. The box itself is a SearchField; this is only the
+   row it sits in. */
 .searchbar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: var(--s2);
+  padding: var(--s1) var(--s3); border-bottom: 1px solid var(--border);
 }
-.searchbar .search {
-  flex: 1; background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
-}
-.searchbar .search:focus { outline: 1px solid var(--accent); }
-.searchbar .meta { color: var(--fg-dim); font-size: 0.85em; white-space: nowrap; }
-@keyframes fade-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+.searchbar > :first-child { flex: 1; }
 .hex { font-family: Consolas, monospace; padding: var(--s3); white-space: pre; }
 /* The tree's vertical padding goes to 0 rather than to --s1: 1px was already
    below the 4px scale, and rounding a dense tree row UP by 6px would be a
@@ -177,8 +139,8 @@ button:hover { border-color: var(--accent); }
 .node .row { display: flex; align-items: center; gap: var(--s2); padding: 0; transition: background 0.3s; }
 .node .row.reveal-hit { background: var(--accent-dim); border-radius: var(--r-sm); }
 .node .children { margin-left: var(--s5); border-left: 1px solid var(--border); padding-left: var(--s1); }
-/* PENDING: deleted with TreeNode — Button variant="ghost" iconOnly. */
-.twisty { width: 20px; border: none; background: none; padding: 0; display: inline-block; }
+/* Only the empty spacer survives: the interactive one is a Button. */
+span.twisty { width: 20px; display: inline-block; }
 .label { color: var(--accent); white-space: pre; }
 .display { white-space: pre-wrap; word-break: break-all; }
 .display.editable:hover { outline: 1px dashed var(--border-strong); cursor: text; }
@@ -194,30 +156,6 @@ button:hover { border-color: var(--accent); }
 .kind-none, .kind-bool { color: var(--info); }
 .kind-ref, .kind-shared { color: var(--warn); }
 .shared-mark { color: var(--warn); font-weight: bold; }
-.mini { padding: 0 6px; font-size: 0.85em; opacity: 0; }
-.row:hover .mini { opacity: 1; }
-.mini.danger:hover { border-color: var(--danger); color: var(--danger); }
-.edit { background: var(--bg); color: var(--fg); border: 1px solid var(--accent);
-        border-radius: 3px; padding: 1px 4px; min-width: 200px; font: inherit; }
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-           display: grid; place-items: center; }
-.modal { background: var(--bg-panel); border: 1px solid var(--border);
-         border-radius: 6px; padding: 16px; min-width: 380px; }
-.insert-form label { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-.insert-form input, .insert-form select {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-  border-radius: 3px; padding: 3px 6px; font: inherit; flex: 1;
-}
 .form-actions { display: flex; gap: var(--s2); justify-content: flex-end; margin-top: var(--s3); }
 .spacer { flex: 1; }
-.save { border-color: var(--accent); }
-/* Sits beside the "unsaved" badges, and is the destructive half of that pair —
-   bordered like the danger buttons elsewhere rather than shouting in red. */
-.discard { border-color: var(--danger); font-size: 0.85em; padding: 1px 8px; }
-/* Disabled buttons read as greyed everywhere (e.g. Rename/Delete on a read-only
-   built-in preset), not just the Save button. */
-button:disabled { opacity: 0.4; cursor: default; }
-.viewtabs { display: flex; gap: 4px; }
-.viewtabs button { padding: 1px 10px; }
-.viewtabs button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-.tree-file { display: inline-flex; margin: 0 0 0.5rem; }
+.tree-file { margin: 0 0 var(--s2); }

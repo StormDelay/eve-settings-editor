@@ -711,8 +711,8 @@
     color: var(--text-muted); font-size: var(--t-caption);
     pointer-events: none; user-select: none;
   }
-  td.u :global(input) { padding-right: 2.1rem; }
-  td.u[data-unit="°"] :global(input) { padding-right: 1.3rem; }
+  td.u :global(input) { padding-right: var(--s6); }
+  td.u[data-unit="°"] :global(input) { padding-right: var(--s5); }
   .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
   .hint { color: var(--text-muted); padding: var(--s3); }
 </style>

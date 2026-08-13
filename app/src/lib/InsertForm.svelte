@@ -1,6 +1,9 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ErrDto, Mutation, NewValue, TreeNodeData } from "./api";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
 
   let {
     target,
@@ -49,12 +52,12 @@
   // The model rejects unparseable input (e.g. "df" as an int). Anchor its
   // complaint to the field that caused it and keep the form open, so the entry
   // being typed survives the mistake.
-  type Field = "key" | "value" | "index" | null;
+  type ErrorField = "key" | "value" | "index" | null;
 
   let error: string | null = $state(null);
-  let errorField: Field = $state(null);
+  let errorField: ErrorField = $state(null);
 
-  const FIELD_OF: Record<string, Field> = {
+  const FIELD_OF: Record<string, ErrorField> = {
     parse_key: "key",
     parse: "value",
     bad_index: "index",
@@ -92,55 +95,82 @@
 <div class="insert-form">
   <h3>Add to {target.label ?? target.kind} ({target.kind})</h3>
   {#if isDict}
-    <label>
-      key
-      <select bind:value={keyKind} onchange={clearError}>
-        <option value="bytes">bytes (text)</option>
-        <option value="str">str</option>
-        <option value="int">int</option>
-      </select>
-      <input bind:value={keyText} placeholder="key" oninput={clearError} />
-    </label>
-    {#if errorField === "key"}<p class="field-error">{error}</p>{/if}
+    <div class="pair">
+      <Field
+        kind="select"
+        label="key"
+        bind:value={keyKind}
+        onchange={clearError}
+        options={[
+          { value: "bytes", label: "bytes (text)" },
+          { value: "str", label: "str" },
+          { value: "int", label: "int" },
+        ]} />
+      <Field
+        ariaLabel="key"
+        placeholder="key"
+        bind:value={keyText}
+        oninput={clearError}
+        error={errorField === "key" ? (error ?? undefined) : undefined} />
+    </div>
   {:else}
-    <label>
-      index
-      <input
-        type="number"
-        bind:value={index}
-        min="0"
-        max={target.children.length}
-        oninput={clearError} />
-    </label>
-    {#if errorField === "index"}<p class="field-error">{error}</p>{/if}
+    <Field
+      kind="number"
+      label="index"
+      bind:value={index}
+      min={0}
+      max={target.children.length}
+      oninput={clearError}
+      error={errorField === "index" ? (error ?? undefined) : undefined} />
   {/if}
-  <label>
-    value
-    <select bind:value={valueKind} onchange={clearError}>
-      <option value="str">str</option>
-      <option value="str_ucs2">str (UCS-2)</option>
-      <option value="int">int</option>
-      <option value="float">float</option>
-      <option value="bool">bool</option>
-      <option value="none">None</option>
-      <option value="bytes">bytes (text)</option>
-      <option value="empty_dict">empty dict</option>
-      <option value="empty_list">empty list</option>
-      <option value="empty_tuple">empty tuple</option>
-    </select>
+  <div class="pair">
+    <Field
+      kind="select"
+      label="value"
+      bind:value={valueKind}
+      onchange={clearError}
+      options={[
+        { value: "str", label: "str" },
+        { value: "str_ucs2", label: "str (UCS-2)" },
+        { value: "int", label: "int" },
+        { value: "float", label: "float" },
+        { value: "bool", label: "bool" },
+        { value: "none", label: "None" },
+        { value: "bytes", label: "bytes (text)" },
+        { value: "empty_dict", label: "empty dict" },
+        { value: "empty_list", label: "empty list" },
+        { value: "empty_tuple", label: "empty tuple" },
+      ]} />
     {#if needsText(valueKind)}
-      <input bind:value={valueText} placeholder="value" oninput={clearError} />
+      <Field
+        ariaLabel="value"
+        placeholder="value"
+        bind:value={valueText}
+        oninput={clearError}
+        error={errorField === "value" ? (error ?? undefined) : undefined} />
     {/if}
-  </label>
-  {#if errorField === "value"}<p class="field-error">{error}</p>{/if}
+  </div>
   {#if valueKind === "empty_tuple" || valueKind === "empty_list" || valueKind === "empty_dict"}
-    <p class="hint">Added empty — expand it in the tree and use + to fill it.</p>
+    <InlineMessage>Added empty — expand it in the tree and use + to fill it.</InlineMessage>
   {/if}
   {#if error !== null && errorField === null}
-    <p class="field-error">{error}</p>
+    <InlineMessage variant="error">{error}</InlineMessage>
   {/if}
   <div class="form-actions">
-    <button onclick={submit}>Add</button>
-    <button onclick={onCancel}>Cancel</button>
+    <Button variant="primary" onclick={submit}>Add</Button>
+    <Button onclick={onCancel}>Cancel</Button>
   </div>
 </div>
+
+<style>
+  /* The four `.field-error` paragraphs are gone: an error now belongs to the
+     Field it is about, which wires aria-invalid and aria-describedby with it.
+     Before, they were bare <p>s with no live region and no association. */
+  .pair {
+    display: flex;
+    gap: var(--s2);
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin: var(--s2) 0;
+  }
+</style>

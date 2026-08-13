@@ -2,6 +2,8 @@
   import { untrack } from "svelte";
   import TreeNodeSelf from "./TreeNode.svelte";
   import type { TreeNodeData, NodePath } from "./api";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
 
   let {
     node,
@@ -84,24 +86,29 @@
 <div class="node">
   <div class="row" class:reveal-hit={highlighted} bind:this={rowEl}>
     {#if hasChildren}
-      <button class="twisty" onclick={() => (expanded = !expanded)}
-        >{expanded ? "▾" : "▸"}</button>
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly
+        class="twisty"
+        title={expanded ? "Collapse" : "Expand"}
+        onclick={() => (expanded = !expanded)}>{expanded ? "▾" : "▸"}</Button>
     {:else}
       <span class="twisty"></span>
     {/if}
     {#if node.label !== null}<span class="label">{node.label}:</span>{/if}
     {#if editing}
       <!-- svelte-ignore a11y_autofocus -->
-      <input
+      <Field
         class="edit"
+        ariaLabel="Edit value"
         autofocus
         bind:value={draft}
-        onkeydown={(e) => {
+        onkeydown={(e: KeyboardEvent) => {
           if (e.key === "Enter") commitEdit();
           if (e.key === "Escape") editing = false;
         }}
-        onblur={commitEdit}
-      />
+        onblur={commitEdit} />
     {:else}
       <span
         class="display kind-{node.kind}"
@@ -113,14 +120,22 @@
     {#if node.in_shared}
       <span class="shared-mark" title="inside a shared object: edits apply everywhere it is referenced">&</span>
     {/if}
+    <!-- These three used to be `.mini`, hidden at opacity 0 and revealed only by
+         `.row:hover`. They are ghost Buttons now and always visible — the row
+         recedes them by COLOUR on hover instead, which is the treatment that
+         cannot silently swallow a control the way the old one did to four
+         buttons elsewhere. -->
     {#if container}
-      <button class="mini" title="add entry" onclick={() => onInsertRequest(node)}>+</button>
+      <Button variant="ghost" size="sm" iconOnly class="row-act" title="add entry"
+              onclick={() => onInsertRequest(node)}>+</Button>
     {/if}
     {#if node.removable}
-      <button class="mini danger" title="remove entry" onclick={() => onRemove(node.path)}>×</button>
+      <Button variant="ghost" size="sm" iconOnly class="row-act danger-act" title="remove entry"
+              onclick={() => onRemove(node.path)}>×</Button>
     {/if}
     {#if searching}
-      <button class="mini" title="show here in the full tree" onclick={() => onReveal(node.path)}>⌖</button>
+      <Button variant="ghost" size="sm" iconOnly class="row-act" title="show here in the full tree"
+              onclick={() => onReveal(node.path)}>⌖</Button>
     {/if}
   </div>
   {#if expanded && hasChildren}
@@ -141,3 +156,21 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Recede by colour, never by hiding. `.mini`'s opacity-0 trick is what left
+     four buttons elsewhere invisible and still clickable. */
+  .row :global(.row-act) {
+    color: var(--text-muted);
+  }
+  .row:hover :global(.row-act) {
+    color: var(--text);
+  }
+  .row :global(.danger-act:hover) {
+    color: var(--danger);
+  }
+  .row :global(.edit) {
+    flex: 1;
+    min-width: 200px;
+  }
+</style>

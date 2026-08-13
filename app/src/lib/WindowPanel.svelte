@@ -714,6 +714,6 @@
     border-bottom: none;
   }
   .fam-member .row-head {
-    padding-left: 1.1rem;
+    padding-left: var(--s4);
   }
 </style>
