@@ -1,8 +1,17 @@
 <script lang="ts">
-  import { api, errMessage, type Profile } from "./api";
-  import { names } from "./names.svelte";
+  import { api, errMessage, type Profile, type Proposal } from "./api";
+  import { names, resolveNames } from "./names.svelte";
   import { resolvedName } from "./filesort.svelte";
-  import { accountsStore, loadRoster, setAlias, confirmPairing, unpair } from "./accounts.svelte";
+  import {
+    accountsStore,
+    loadRoster,
+    setAlias,
+    confirmPairing,
+    confirmMany,
+    unpair,
+    aliasFor,
+  } from "./accounts.svelte";
+  import { proposalsByCard, acceptAllPairs } from "./launcher";
 
   let { openPath }: { openPath: string | null } = $props();
 
@@ -51,10 +60,39 @@
 
   const nameOf = (id: number) => names[id]?.name ?? `char ${id}`;
 
+  // Launcher-log proposals. Loaded once on mount: unlike the roster, this does
+  // not change when the user edits an alias, and re-reading the logs on every
+  // roster refresh would be waste.
+  let proposals = $state<Proposal[]>([]);
+  let proposalsLoaded = $state(false);
+  // Session-only, like the M3b suggestion dismissals: a "keep mine" is a
+  // judgement about this sitting, not something to persist.
+  let dismissed = $state<number[]>([]);
+  const dismissedSet = $derived(new Set(dismissed));
+  const byCard = $derived(proposalsByCard(proposals, dismissedSet));
+  const allPairs = $derived(acceptAllPairs(proposals, dismissedSet));
+
+  const accountLabel = (userId: number) => aliasFor(userId) ?? `core_user_${userId}`;
+
+  async function acceptAll() {
+    error = null;
+    try {
+      await confirmMany(allPairs);
+      // Drop what was just accepted. `proposalsByCard` cannot see the roster, so
+      // a proposal left in the list re-renders as a ghost in the next empty slot
+      // — the same character twice on one card.
+      const accepted = new Set(allPairs.map(([charId]) => charId));
+      proposals = proposals.filter((p) => !accepted.has(p.char_id));
+    } catch (e) {
+      error = errMessage(e);
+    }
+  }
+
   async function onConfirm(charId: number, userId: number) {
     error = null;
     try {
       await confirmPairing(charId, userId);
+      proposals = proposals.filter((p) => p.char_id !== charId);
     } catch (e) {
       error = errMessage(e);
     }
@@ -98,12 +136,23 @@
   }
 
   loadRoster();
+  api
+    .launcherProposals()
+    .then(async (p) => {
+      proposals = p;
+      await resolveNames(p.map((x) => x.char_id));
+    })
+    .catch(() => {})
+    .finally(() => (proposalsLoaded = true));
 </script>
 
 <section class="accounts">
   <header class="accounts-head">
     <h2>Accounts</h2>
     <div class="head-actions">
+      {#if allPairs.length > 0}
+        <button onclick={acceptAll}>Accept all — {allPairs.length} characters</button>
+      {/if}
       <button onclick={() => loadRoster()}>Refresh</button>
       <button onclick={startCapture}>Calibrate an account…</button>
     </div>
@@ -124,12 +173,21 @@
   {#if error}<p class="error">{error}</p>{/if}
   {#if captureNote}<p class="flash" aria-live="polite">{captureNote}</p>{/if}
 
+  {#if proposalsLoaded && proposals.length === 0}
+    <p class="hint">
+      Your EVE launcher logs say nothing about these accounts — use “Calibrate an account…”
+      to pair a character by hand.
+    </p>
+  {/if}
+
   {#if accounts.length === 0}
     <p class="hint">No accounts in this profile yet. Open a profile file, or run a calibration.</p>
   {/if}
 
   <ul class="cards">
     {#each accounts as acct (acct.user_id)}
+      {@const card = byCard.get(acct.user_id)}
+      {@const ghosts = card?.ghosts ?? []}
       <li class="card">
         <input
           class="alias"
@@ -146,22 +204,54 @@
                 <button class="x" title="Unpair" onclick={() => unpair(charId)}>✕</button>
               </span>
             {:else}
-              <span class="chip empty">
-                <select
-                  onchange={(e) => {
-                    const v = Number(e.currentTarget.value);
-                    if (v) onConfirm(v, acct.user_id);
-                    e.currentTarget.selectedIndex = 0;
-                  }}>
-                  <option value="">＋ add character</option>
-                  {#each sortedUnassigned as uid (uid)}
-                    <option value={uid}>{nameOf(uid)}</option>
-                  {/each}
-                </select>
-              </span>
+              {@const slot = i - acct.characters.length}
+              {#if ghosts[slot] != null}
+                {@const gid = ghosts[slot]}
+                <span class="chip ghost">
+                  {nameOf(gid)}
+                  <button class="ok" title="Accept {nameOf(gid)}"
+                          aria-label="Accept {nameOf(gid)}"
+                          onclick={() => onConfirm(gid, acct.user_id)}>✓</button>
+                  <button class="x" title="Dismiss {nameOf(gid)}"
+                          aria-label="Dismiss {nameOf(gid)}"
+                          onclick={() => (dismissed = [...dismissed, gid])}>✕</button>
+                </span>
+              {:else}
+                <span class="chip empty">
+                  <select
+                    onchange={(e) => {
+                      const v = Number(e.currentTarget.value);
+                      if (v) onConfirm(v, acct.user_id);
+                      e.currentTarget.selectedIndex = 0;
+                    }}>
+                    <option value="">＋ add character</option>
+                    {#each sortedUnassigned as uid (uid)}
+                      <option value={uid}>{nameOf(uid)}</option>
+                    {/each}
+                  </select>
+                </span>
+              {/if}
             {/if}
           {/each}
         </div>
+        {#if ghosts.length > 0}
+          <p class="from-launcher">From your launcher log.</p>
+        {/if}
+        {#each ghosts.slice(Math.max(0, MAX - acct.characters.length)) as gid (gid)}
+          <p class="from-launcher">
+            Your launcher log also puts {nameOf(gid)} here, but all three slots are full.
+            <button onclick={() => onConfirm(gid, acct.user_id)}>Accept anyway</button>
+          </p>
+        {/each}
+        {#each card?.conflicts ?? [] as c (c.charId)}
+          <p class="conflict">
+            Your launcher log puts {nameOf(c.charId)} on {accountLabel(c.target)}.
+            <button aria-label="Move {nameOf(c.charId)}"
+                    onclick={() => onConfirm(c.charId, c.target)}>Move it</button>
+            <button aria-label="Keep {nameOf(c.charId)}"
+                    onclick={() => (dismissed = [...dismissed, c.charId])}>Keep mine</button>
+          </p>
+        {/each}
       </li>
     {/each}
   </ul>
@@ -192,6 +282,10 @@
     background: var(--bg-panel); color: var(--fg);
   }
   .chip.empty option { background: var(--bg-panel); color: var(--fg); }
+  .chip.ghost { border-style: dashed; opacity: 0.85; }
+  .ok { border: none; background: transparent; cursor: pointer; color: inherit; }
+  .from-launcher { margin: 0.3rem 0 0; font-size: 0.85em; opacity: 0.7; }
+  .conflict { margin: 0.3rem 0 0; font-size: 0.9em; }
   .x { border: none; background: transparent; cursor: pointer; color: inherit; }
   .error { color: #c0392b; }
   .capture { border: 1px solid var(--line, #3333); border-radius: 8px; padding: 0.75rem;
