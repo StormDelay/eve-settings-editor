@@ -1,23 +1,26 @@
 // Component test (vitest + jsdom).
 //
-// The app shell. It owns three things nothing below it can see: which SLOT a
-// chosen file is opened into, whether Save is reachable, and which view tabs
-// exist for what is currently open. Each is a rule about the whole application
-// state rather than about any one panel, so this is the only place it can be
-// pinned.
+// The app shell. It owns four things nothing below it can see: which SLOT a
+// chosen file is opened into, whether Save is reachable, which view tabs exist
+// for what is currently open, and what the History popover is describing. Each
+// is a rule about the whole application state rather than about any one panel,
+// so this is the only place it can be pinned.
 //
 // Named `page.spec.ts`, not `+page.spec.ts`: SvelteKit claims the `+page.`
 // prefix for route files and would try to treat a `+page.spec.ts` as one.
 import { describe, expect, test, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import Page from "./+page.svelte";
 import { calls } from "$lib/test/setup";
-import type { OpenOutcome, Profile, TreeNodeData } from "$lib/api";
+import { subject } from "$lib/subject.svelte";
+import type { AccountRoster, OpenOutcome, Profile, TreeNodeData } from "$lib/api";
 
-// The shell sets the OS window title from the open document. Not part of what
-// is under test, and jsdom has no Tauri window to set it on.
+// The shell sets the OS window title from the SUBJECT. `vi.hoisted` so the spy
+// exists before the hoisted `vi.mock` factory closes over it — one test asserts
+// the title stops following the view tab, which is half of fault (b).
+const { setTitle } = vi.hoisted(() => ({ setTitle: vi.fn(() => Promise.resolve()) }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setTitle: () => Promise.resolve() }),
+  getCurrentWindow: () => ({ setTitle }),
 }));
 
 // The native file picker. `picked` is what the next "Open file…" returns — the
@@ -55,20 +58,23 @@ const profile = (...files: ReturnType<typeof file>[]): Profile => ({
 /**
  * Mount the shell and wait for every call it fires on mount to have LANDED.
  *
- * Waiting for all of them matters, not just the one a test cares about: the
- * preferences and roster stores are module-level rune state shared by every
- * test in this file, and a load still in flight when `afterEach` clears the
- * stubs resolves to `undefined` and poisons that state for the next test.
+ * Waiting for all of them still matters, and the store resets in `afterEach`
+ * now cover the leak this used to guard against on its own: the preferences,
+ * roster, names and subject stores are all module-level rune state shared by
+ * every test in this file.
  */
-async function mount(...profiles: Profile[]) {
+async function mount(profiles: Profile[], roster: AccountRoster = { accounts: [], unassigned: [] }) {
   calls.stub("discover_profiles", profiles);
-  calls.stub("account_roster", { accounts: [], unassigned: [] });
+  calls.stub("account_roster", roster);
   calls.stub("preferences", { layout: { clutter: [], visible: [], detail: false, targets: 4, effects: 2 } });
   calls.stub("settings_preset_list", []);
-  // The backups panel is always mounted. An unstubbed command resolves to
-  // `undefined`, which is not a shape the real backend can return — stub it
-  // rather than teaching the panel to defend against an impossible reply.
+  // An unstubbed command resolves to `undefined`, which is not a shape the real
+  // backend can return — stub the ones the shell and its views fire on mount
+  // rather than teaching them to defend against an impossible reply.
   calls.stub("list_file_backups", []);
+  calls.stub("overview_columns", { tabs: [], columns: [] });
+  // Both the app menu's proposal count and the Accounts view read this.
+  calls.stub("launcher_proposals", []);
   render(Page);
   await waitFor(() => {
     expect(calls.of("discover_profiles").length).toBeGreaterThan(0);
@@ -79,18 +85,27 @@ async function mount(...profiles: Profile[]) {
   await Promise.resolve();
 }
 
-/** Click the sidebar row for a settings file. */
+const sidebar = () => document.querySelector("aside.sidebar") as HTMLElement;
+
+/** Click the sidebar row for a settings file. Scoped to the sidebar: with
+ *  nothing open, the launch empty state lists the same characters. */
 async function openFile(name: string) {
-  const row = await screen.findByText(name);
+  const row = await within(sidebar()).findByText(name);
   await fireEvent.click(row);
+}
+
+/** Open the ☰ menu and click one of its items. */
+async function menu(name: RegExp) {
+  await fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name }));
 }
 
 const save = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
 
 describe("routing a file to its slot", () => {
   // `core_user_<id>.dat` is the account file; everything else is the char slot,
-  // which is the generic editing one. The sidebar only lists a profile that has
-  // a character file, so both fixtures carry one.
+  // which is the generic editing one. The sidebar only lists character files,
+  // so both fixtures carry one.
   const both = profile(
     file("core_char_950.dat", "char", 950),
     file("core_user_140.dat", "user", 140),
@@ -98,7 +113,7 @@ describe("routing a file to its slot", () => {
 
   test("a character file opens into the char slot", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
-    await mount(both);
+    await mount([both]);
     await openFile("core_char_950.dat");
     await waitFor(() => {
       expect(calls.of("open_file")[0].args).toMatchObject({
@@ -110,8 +125,8 @@ describe("routing a file to its slot", () => {
   test("an account file picked from the dialog opens into the user slot", async () => {
     calls.stub("open_file", opened("core_user_140.dat"));
     picked = "/eve/core_user_140.dat";
-    await mount(both);
-    await fireEvent.click(screen.getByRole("button", { name: /open file/i }));
+    await mount([both]);
+    await fireEvent.click(within(sidebar()).getByRole("button", { name: /open file/i }));
     await waitFor(() => {
       expect(calls.of("open_file")[0].args).toMatchObject({
         slot: "user", path: "/eve/core_user_140.dat",
@@ -125,8 +140,8 @@ describe("routing a file to its slot", () => {
   test("a non-standard file opens into the char slot", async () => {
     calls.stub("open_file", opened("prefs.ini"));
     picked = "/eve/prefs.ini";
-    await mount(both);
-    await fireEvent.click(screen.getByRole("button", { name: /open file/i }));
+    await mount([both]);
+    await fireEvent.click(within(sidebar()).getByRole("button", { name: /open file/i }));
     await waitFor(() => {
       expect(calls.of("open_file")[0].args).toMatchObject({
         slot: "char", path: "/eve/prefs.ini",
@@ -137,19 +152,21 @@ describe("routing a file to its slot", () => {
 });
 
 describe("saving", () => {
-  // With nothing open there is no toolbar at all, so there is no Save to reach
-  // — the shell shows the hint instead.
-  test("nothing open means no toolbar to save from", async () => {
-    await mount(profile(file("core_char_950.dat", "char", 950)));
-    expect(screen.getByText(/open a settings file to begin/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  // REWRITTEN (§8.7). This asserted that Save is ABSENT with nothing open.
+  // A control that appears and disappears is the class of problem this phase
+  // exists to remove, and a permanently-placed disabled Save teaches where Save
+  // is before the user has anything to save.
+  test("nothing open still shows Save, disabled", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    expect(screen.getByText(/open a character to begin/i)).toBeTruthy();
+    expect(save().disabled).toBe(true);
   });
 
   // Opening a file is not an edit. Save must stay unreachable until something
   // has actually changed, or every open offers to rewrite an untouched file.
   test("Save stays unreachable on a freshly opened, unedited file", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
-    await mount(profile(file("core_char_950.dat", "char", 950)));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
     await openFile("core_char_950.dat");
     await waitFor(() => expect(calls.of("open_file").length).toBe(1));
     expect(save().disabled).toBe(true);
@@ -159,51 +176,207 @@ describe("saving", () => {
   // become dirty in no way, and Save must never light up for it.
   test("Save is unreachable for a read-only document", async () => {
     calls.stub("open_file", opened("core_char_950.dat", true));
-    await mount(profile(file("core_char_950.dat", "char", 950)));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
     await openFile("core_char_950.dat");
     await screen.findByText("read-only");
     expect(save().disabled).toBe(true);
   });
+
+  /**
+   * FAULT (a), pinned. This fails on master.
+   *
+   * `mainView` is only reset to "file" inside openFile()/openPresetPair(), and
+   * neither takeover had a close control — but the worse half was that the whole
+   * file bar lived in the `{:else}` branch, so entering either view with unsaved
+   * edits took Save AND both unsaved badges off the screen. Ctrl+S still worked;
+   * nothing on screen said there was anything to save.
+   */
+  test("Save survives entering Accounts with pending edits", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    // Set through the store rather than by driving a tree edit: what is under
+    // test is that the context bar survives the `mainView` branch, not that
+    // mutation marks a slot dirty (runMutation's own tests cover that).
+    subject.dirty.char = true;
+    await waitFor(() => expect(save().disabled).toBe(false));
+
+    await menu(/accounts/i);
+    await waitFor(() => expect(screen.getByRole("heading", { name: /accounts/i })).toBeTruthy());
+
+    expect(save().disabled).toBe(false);
+    expect(screen.getByText(/1 unsaved/)).toBeTruthy();
+  });
+
+  // §5.10's one free line: a tab click leaves the takeover, so Accounts and
+  // Copy settings have a way out before Phase 3 turns them into sheets.
+  test("clicking a view tab leaves the Accounts takeover", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await menu(/accounts/i);
+    await waitFor(() => expect(screen.getByRole("heading", { name: /accounts/i })).toBeTruthy());
+    await fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: /accounts/i })).toBeNull());
+  });
 });
 
 describe("the view tabs", () => {
-  // A non-standard file opens into the char slot but yields no character id and
-  // no windows, so every view but the tree stays hidden — including Tree's own
-  // strip, which only appears once there is a second view to switch to.
-  test("a file with no character id offers no view tabs", async () => {
+  // REWRITTEN (§8.7). This asserted all six tabs were ABSENT for a file with no
+  // character id — including Raw's own button, so the user was given no
+  // indication the other five views existed. Fault (c): the strip changed
+  // membership and width as files loaded and pairings landed.
+  test("a file with no character id still offers all six tabs, disabled with a reason", async () => {
     calls.stub("open_file", opened("prefs.ini"));
-    await mount(profile(file("core_char_950.dat", "char", 950)));
-    await openFile("core_char_950.dat");
-    await screen.findByText("editable");
-    // role="tab", not "button": the view strip was a bare <span> of role-less
-    // buttons and is a real tablist as of the Phase 1 token/primitive work.
-    // These three queries had to move with it — left as "button" the two
-    // absence assertions here and below would pass vacuously, and could no
-    // longer fail whatever the strip rendered.
-    for (const v of ["Tree", "Layout", "Overview", "Autofill", "Keybinds", "Probes"]) {
-      expect(screen.queryByRole("tab", { name: v })).toBeNull();
+    picked = "/eve/prefs.ini";
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await fireEvent.click(within(sidebar()).getByRole("button", { name: /open file/i }));
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+    picked = null;
+
+    for (const v of ["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Raw"]) {
+      expect(screen.getByRole("tab", { name: v })).toBeTruthy();
     }
+    // Raw is always reachable; the other five say why they are not.
+    for (const v of ["Layout", "Overview", "Autofill", "Keybinds", "Probes"]) {
+      const tab = screen.getByRole("tab", { name: v });
+      expect(tab.getAttribute("aria-disabled")).toBe("true");
+      expect(tab.getAttribute("title")).toBeTruthy();
+    }
+    expect(screen.getByRole("tab", { name: "Raw" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   // The account-scoped editors need an id to work from — a character id or an
   // open account file. A `core_char_<id>.dat` supplies one.
   test("a character file unlocks the account-scoped editors", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
-    await mount(profile(file("core_char_950.dat", "char", 950)));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
     await openFile("core_char_950.dat");
     for (const v of ["Overview", "Autofill", "Keybinds", "Probes"]) {
-      expect(await screen.findByRole("tab", { name: v })).toBeTruthy();
+      const tab = await screen.findByRole("tab", { name: v });
+      await waitFor(() => expect(tab.getAttribute("aria-disabled")).toBeNull());
     }
   });
 
-  // Layout is gated on the document actually having windows, not merely on a
-  // file being open — an account file has none.
-  test("Layout stays hidden for a document with no windows", async () => {
+  // REWRITTEN (§8.7). Layout used to VANISH for a document with no windows.
+  // It is gated on the same condition and now says so instead.
+  test("Layout is disabled, not hidden, for a document with no windows", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
     calls.stub("window_layout", { reference_w: 0, reference_h: 0, windows: [], stacks: [] });
-    await mount(profile(file("core_char_950.dat", "char", 950)));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
     await openFile("core_char_950.dat");
     await waitFor(() => expect(calls.of("window_layout").length).toBeGreaterThan(0));
-    expect(screen.queryByRole("tab", { name: "Layout" })).toBeNull();
+    const tab = screen.getByRole("tab", { name: "Layout" });
+    await waitFor(() => expect(tab.getAttribute("aria-disabled")).toBe("true"));
+    expect(tab.getAttribute("title")).toMatch(/no saved window layout/i);
+  });
+
+  /**
+   * The property, not an instance of it. Tab membership and order are what
+   * fault (c) was about, and a snapshot before and after an open is the only
+   * assertion that keeps failing if anyone reintroduces a conditional tab.
+   */
+  test("tab membership and order are identical before and after a file opens", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    const names = () => screen.getAllByRole("tab").map((t) => t.textContent?.trim());
+    const before = names();
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+    expect(names()).toEqual(before);
+    expect(before).toEqual(["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Raw"]);
+  });
+});
+
+describe("fault (b) — a panel that changed subject with the tab", () => {
+  const paired = profile(
+    file("core_char_950.dat", "char", 950),
+    file("core_user_140.dat", "user", 140),
+  );
+  const roster: AccountRoster = {
+    accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950] }],
+    unassigned: [],
+  };
+
+  const openPaired = async () => {
+    calls.stub("open_file", (args: Record<string, unknown> | undefined) =>
+      opened(String(args?.path).split("/").pop()!),
+    );
+    await mount([paired], roster);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(subject.slots.user?.status).toBe("opened"));
+  };
+
+  const historyHeadings = async () => {
+    await fireEvent.click(screen.getByRole("button", { name: /history/i }));
+    const popover = await screen.findByRole("dialog", { name: "History" });
+    return within(popover)
+      .getAllByRole("heading")
+      .map((h) => h.textContent?.trim());
+  };
+
+  /**
+   * The active slot used to be derived from the VIEW, and `BackupsPanel` was
+   * handed it — so switching from Overview to Autofill silently replaced the
+   * character file's backup list with the account file's. The only marker was a
+   * 0.85em, 0.7-opacity subtitle. Restore is destructive.
+   *
+   * History has no single subject any more: it asks for every open slot and
+   * renders one titled group each, so the content is identical on every tab.
+   */
+  test("History lists the same files on every tab", async () => {
+    await openPaired();
+    const onOverview = await historyHeadings();
+    expect(onOverview).toHaveLength(2);
+    expect(onOverview.join(" ")).toMatch(/core_char_950\.dat/);
+    expect(onOverview.join(" ")).toMatch(/core_user_140\.dat/);
+    await fireEvent.click(screen.getByRole("button", { name: /history/i }));
+
+    calls.log.length = 0;
+    await fireEvent.click(screen.getByRole("tab", { name: "Autofill" }));
+    const onAutofill = await historyHeadings();
+    expect(onAutofill).toEqual(onOverview);
+    await waitFor(() => {
+      const slots = calls.of("list_file_backups").map((c) => c.args?.slot);
+      expect(slots).toContain("char");
+      expect(slots).toContain("user");
+    });
+  });
+
+  /** The second head of the same bug: `setTitle` read `slots[active]`, so
+   *  changing tab retitled the window from the character to the account. */
+  test("the OS window title does not change with the view tab", async () => {
+    await openPaired();
+    await waitFor(() => expect(setTitle).toHaveBeenCalled());
+    const before = setTitle.mock.calls.at(-1);
+    for (const v of ["Autofill", "Keybinds", "Probes"]) {
+      await fireEvent.click(screen.getByRole("tab", { name: v }));
+      await Promise.resolve();
+    }
+    expect(setTitle.mock.calls.at(-1)).toEqual(before);
+  });
+});
+
+describe("the launch empty state", () => {
+  test("offers the profile's characters, and clicking one opens it", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950), file("core_char_951.dat", "char", 951))]);
+    const work = document.querySelector(".work") as HTMLElement;
+    const rows = await within(work).findAllByText(/core_char_95[01]\.dat/);
+    expect(rows).toHaveLength(2);
+    await fireEvent.click(rows[0]);
+    await waitFor(() => {
+      expect(calls.of("open_file")[0].args).toMatchObject({ path: "/eve/core_char_950.dat" });
+    });
+  });
+
+  test("with no characters it reuses the sidebar's own hint, word for word", async () => {
+    await mount([profile(file("core_user_140.dat", "user", 140))]);
+    const work = document.querySelector(".work") as HTMLElement;
+    const inWork = await within(work).findByText(/no character files/i);
+    const inSidebar = within(sidebar()).getByText(/no character files/i);
+    expect(inWork.textContent).toBe(inSidebar.textContent);
   });
 });

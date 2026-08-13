@@ -9,11 +9,24 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - The whole app has been repainted on one colour palette, chosen so every piece of text is actually readable — the small grey text everywhere was well below what is legible, and the status badges were the worst of it.
 - Buttons, fields, tabs and messages now look and behave the same in every view.
+- **The app is now about a character, not about two files.** The character's name sits at the top left, and the account it belongs to is shown beside it.
+- **One Save button, always in the same place**, with a list of exactly which files it is about to write and whose settings they share.
+- **All six view tabs are always there**, greyed out with a reason when they don't apply, instead of appearing and disappearing as files load.
+- Backups moved from a permanent column into a History button, which lists both open files at once.
+- The file list is now one alphabetical list of the characters in the profile you pick, with each character's account shown on its row.
+- Accounts, Copy settings, About, Refresh names and Rescan moved into the menu button at the top left.
+- Opening a character now lands you on Layout or Overview rather than on the raw data tree, which is renamed "Raw" and sits last.
+- Press Ctrl+K to jump to any character by typing part of its name or its account's.
 
 ### Fixed
 - **Four buttons that were invisible but still clickable are now visible.** Clearing an autofill list, removing an autofill entry, resetting a keybinding to EVE's default, and clearing the tree search.
 - **A pairing offered by your launcher log now stands out instead of fading into the card.** It was drawn fainter than the pairings you had already accepted.
 - The Accounts view's cards, chips and panels were falling back to a stray colour no other view used.
+- **Save no longer disappears when you open Accounts or Copy settings** with unsaved changes.
+- **The backups list no longer silently switches to a different file** when you change tab, and the window title no longer changes with it either.
+- **"Accept all" in the Accounts view no longer depends on which tab you were on** when you opened it.
+- Ctrl+F now works on the Keybinds and Autofill tabs, where it used to do nothing at all.
+- The character list no longer repeats a character once per profile folder.
 
 ## [0.34.0] - 2026-08-13
 
