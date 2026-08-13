@@ -12,13 +12,12 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import Popover from "./ui/Popover.svelte";
-  import ScopeBanner from "./ui/ScopeBanner.svelte";
   import Tabs from "./ui/Tabs.svelte";
 
-  let { userOpen, userId, charId, charOpen, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
+  let { userOpen, userId, charId, charOpen, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -379,7 +378,9 @@
 {:else if error}
   <InlineMessage variant="error">{error}</InlineMessage>
 {:else if data}
-  <ScopeBanner label={sharedLabel ?? ""} />
+  <!-- The scope banner moved to the shell, which renders ONE under the tab row
+       for all four account-scoped views. This was four components each taking a
+       `sharedLabel` prop built for them in `+page.svelte`. -->
   {#if data.tabs.length === 0}
     <EmptyState title="This account file has no overview tabs." />
   {:else}

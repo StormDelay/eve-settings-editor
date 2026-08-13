@@ -6,6 +6,8 @@
 import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/svelte";
 import { resetSubject } from "../subject.svelte";
+import { resetNames } from "../names.svelte";
+import { resetRoster } from "../accounts.svelte";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => calls.dispatch(cmd, args),
@@ -65,6 +67,12 @@ afterEach(() => {
   cleanup();
   calls.reset();
   resetSubject();
+  // The other two module-level rune stores, for the same reason. `page.spec.ts`
+  // documented this failure mode against exactly these two and worked around it
+  // by waiting for every mount call to land; clearing them is the fix it was
+  // working around.
+  resetNames();
+  resetRoster();
 });
 
 export interface InvokeCall {

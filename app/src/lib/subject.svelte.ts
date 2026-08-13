@@ -21,8 +21,11 @@
 
 import { api, errMessage, type ErrDto, type OpenOutcome, type Profile, type Slot } from "./api";
 import { names, resolveNames } from "./names.svelte";
-import { accountsStore } from "./accounts.svelte";
+import { accountsStore, aliasFor, loadRoster } from "./accounts.svelte";
+import { byResolvedName } from "./filesort.svelte";
+import { primaryProfileDir } from "./profiles";
 import {
+  accountOf,
   associatedCharacters,
   charSlotFor,
   pairedFilePath,
@@ -38,6 +41,23 @@ function idIn(o: OpenOutcome | null, kind: "char" | "user"): number | null {
   if (o?.status !== "opened") return null;
   const m = o.file_name.match(kind === "char" ? /^core_char_(\d+)\.dat$/ : /^core_user_(\d+)\.dat$/);
   return m ? Number(m[1]) : null;
+}
+
+/**
+ * The account chip on a character row, or null for no chip. THE only source, on
+ * every surface — `02-shell.md` §5.7.2 rule 6, which is the clause that keeps
+ * the other five honest.
+ *
+ * It reads `accountOf()` and nothing else, so a chip means a CONFIRMED pairing
+ * and absence means no account. A launcher proposal is not an account: it leaves
+ * `accountOf()` at null, draws no chip, and so renders exactly as an unpaired
+ * character does — which is truthful, because a proposed character can do
+ * exactly what an unpaired one can (nothing account-scoped) until someone
+ * accepts it. No list may derive a chip from `Proposal.user_id`.
+ */
+export function accountAliasOf(f: { id: number | null }): string | null {
+  const userId = f.id === null ? null : accountOf(f.id, accountsStore.roster);
+  return userId === null ? null : aliasFor(userId);
 }
 
 /** The ONE predicate for "saving would write this slot". Save's disabled state,
@@ -56,6 +76,10 @@ class Subject {
   /** Discovered profiles, for resolving an id to its file path within the same
    *  profile folder as an already-open file (see `pairedFilePath`). */
   profiles = $state<Profile[]>([]);
+  /** Why the scan failed, if it did. Here rather than in the sidebar because the
+   *  scan now has two callers — mount and the app menu's Rescan — and a sidebar
+   *  that is empty for an unstated reason is the thing this replaces. */
+  profilesError = $state<string | null>(null);
   /** Whether the open document has any saved window layout. A property of the
    *  document, which is why it lives here and not beside `view`. */
   layoutAvailable = $state(false);
@@ -63,8 +87,120 @@ class Subject {
    *  it, and it is every view's `refreshToken`. */
   savedAt = $state(0);
 
+  /** The profile folder in scope, when the user has picked one. Single-select,
+   *  and the reason is a hazard rather than a preference: one account id can
+   *  exist in several profile folders at once (`docs/small-tasks.md:32-45`
+   *  records an install with ten holding the same `core_user_13036531.dat`), so
+   *  a list spanning folders puts indistinguishable duplicates next to each
+   *  other in alphabetical order with nothing to tell them apart. */
+  selectedProfileDir = $state<string | null>(null);
+  /** Hide user-made backups and anomalous names, keeping only EVE's own working
+   *  file names. Shared rather than sidebar-local, because the switcher and the
+   *  launch empty state have to list exactly what the sidebar lists. */
+  hideNonStandard = $state(true);
+
   charId = $derived(idIn(this.slots.char, "char"));
   userId = $derived(idIn(this.slots.user, "user"));
+
+  /**
+   * Falls back to the profile EVE itself wrote last, which is the one the
+   * sidebar already pinned open — and then to the first discovered profile.
+   *
+   * That last fallback is load-bearing now in a way it was not before.
+   * `primaryProfileDir` returns null when NO profile carries a usable
+   * timestamp, and says so: "callers then have nothing better to guess with".
+   * A list of `<details>` did not care, because it drew every folder. A
+   * single-select list with a null selection draws nothing at all — an empty
+   * sidebar for a user whose files simply have no mtime. The first profile is
+   * discovery's alphabetical order, which is a guess, but a visible one.
+   */
+  profileDir = $derived(
+    this.selectedProfileDir ?? primaryProfileDir(this.profiles) ?? this.profiles[0]?.dir ?? null,
+  );
+  profile = $derived(this.profiles.find((p) => p.dir === this.profileDir) ?? null);
+
+  /**
+   * THE character list. One derived, read by the sidebar, the subject switcher
+   * and the launch empty state, so "same characters, same order, same chips" is
+   * true by construction rather than by three copies of a filter agreeing.
+   *
+   * Order is `byResolvedName` and does not change: named characters
+   * alphabetically, files still showing a bare id after them, ordered among
+   * themselves by file name. Alphabetical is how a name is found, and finding a
+   * character is what these lists are for — which is why account grouping was
+   * proposed and rejected (`02-shell.md` §5.7).
+   */
+  characters = $derived.by(() =>
+    (this.profile?.files ?? [])
+      .filter(
+        (f) =>
+          f.kind === "char" &&
+          (!this.hideNonStandard || /^core_(char|user)_\d+\.dat$/.test(f.file_name)),
+      )
+      .sort(byResolvedName),
+  );
+
+  charName = $derived(this.charId === null ? null : names[this.charId]?.name ?? null);
+  userAlias = $derived(this.userId === null ? null : aliasFor(this.userId));
+
+  /**
+   * The subject, named once. Same precedence `openDisplay` implemented, but
+   * resolved against the SUBJECT rather than against `slots[active]` — which is
+   * the whole of the fix for the OS window title flipping when you change tab.
+   *
+   * The raw file name is the LAST resort here, not the headline. It keeps three
+   * homes that each have a reason to carry it: the save disclosure, the History
+   * popover, and the switcher row's tooltip.
+   */
+  subjectName = $derived.by(() => {
+    if (this.preset !== null) return this.preset;
+    if (this.charName) return this.charName;
+    if (this.slots.char?.status === "opened") return this.slots.char.file_name;
+    if (this.userAlias) return this.userAlias;
+    if (this.slots.user?.status === "opened") return this.slots.user.file_name;
+    return null;
+  });
+
+  /** The same name for the OS window title, where "(preset)" earns its place
+   *  because there is no Chip beside it to say so. */
+  subjectLabel = $derived(
+    this.subjectName === null
+      ? null
+      : this.preset !== null
+        ? `${this.preset} (preset)`
+        : this.subjectName,
+  );
+
+  /**
+   * What a Save would touch, for the disclosure. Dirty slots only, each carrying
+   * why it cannot be written if it cannot — a read-only slot is LISTED (so the
+   * user learns their edit is stuck) but is not "will write".
+   *
+   * `blocked` is derived from the same `saveable` the button and the save loop
+   * ask, so the three cannot disagree.
+   */
+  saveTargets = $derived.by(() => {
+    const rows: {
+      slot: Slot;
+      subjectName: string;
+      role: "character" | "account";
+      fileName: string;
+      blocked: string | null;
+    }[] = [];
+    for (const slot of ["char", "user"] as const) {
+      const o = this.slots[slot];
+      if (!this.dirty[slot] || o?.status !== "opened") continue;
+      rows.push({
+        slot,
+        subjectName:
+          (slot === "char" ? this.charName : this.userAlias) ?? o.file_name,
+        role: slot === "char" ? "character" : "account",
+        fileName: o.file_name,
+        blocked: o.fidelity.state === "editable" ? null : o.fidelity.reason,
+      });
+    }
+    return rows;
+  });
 
   /** The roster's characters for the open account — the width selector's list. */
   accountCharacters = $derived(
@@ -102,8 +238,63 @@ export function resetSubject(): void {
   subject.dirty.user = false;
   subject.preset = null;
   subject.profiles = [];
+  subject.profilesError = null;
+  subject.selectedProfileDir = null;
+  subject.hideNonStandard = true;
   subject.layoutAvailable = false;
   subject.savedAt = 0;
+}
+
+/**
+ * Why the selected profile lists no characters. One function, because the
+ * sidebar and the launch empty state must say it in the same words — and one of
+ * the two wordings names the "Hide non-standard files" filter as the cause,
+ * which is the only actionable thing about it.
+ */
+export function noCharactersHint(): string {
+  return subject.hideNonStandard
+    ? "No character files with EVE's own names in these profiles. Untick “Hide non-standard files”, or use “Open file…”."
+    : "These profiles hold no character files. Use “Open file…” to open an account file directly.";
+}
+
+/** Every character id across ALL discovered profiles — the set whose names are
+ *  resolved. Deliberately not scoped to the selected profile: a resolved name is
+ *  cached app-wide, and re-fetching per folder would be the same call twice. */
+export function allCharIds(): number[] {
+  return subject.profiles
+    .flatMap((p) => p.files)
+    .filter((f) => f.kind === "char" && f.id != null)
+    .map((f) => f.id as number);
+}
+
+/**
+ * Rescan the standard EVE locations. Returns the profile count, or null if the
+ * scan failed (the reason lands on `profilesError`).
+ *
+ * One caller on mount and one in the app menu, where the sidebar's `⟳` went.
+ * It used to be two independent scans — `+page.svelte` fetched profiles for pair
+ * resolution and `Sidebar` fetched them again for its list — so the app sent
+ * `discover_profiles` twice on every start.
+ */
+export async function rescanProfiles(): Promise<number | null> {
+  try {
+    subject.profiles = await api.discover();
+    subject.profilesError = null;
+    // Land the selection on a folder that exists. The default is the profile
+    // EVE itself wrote last, which is the one the sidebar already pinned open;
+    // holding a stale dir across a rescan would show an empty list with no
+    // explanation.
+    if (!subject.profiles.some((p) => p.dir === subject.selectedProfileDir)) {
+      subject.selectedProfileDir =
+        primaryProfileDir(subject.profiles) ?? subject.profiles[0]?.dir ?? null;
+    }
+    void resolveNames(allCharIds());
+    void loadRoster();
+    return subject.profiles.length;
+  } catch (e) {
+    subject.profilesError = errMessage(e);
+    return null;
+  }
 }
 
 /** Empty a slot: close its backend document and clear the frontend state. */

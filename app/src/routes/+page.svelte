@@ -2,7 +2,9 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import TreeNode from "$lib/TreeNode.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
-  import BackupsPanel from "$lib/BackupsPanel.svelte";
+  import ContextBar from "$lib/ContextBar.svelte";
+  import ViewTabs from "$lib/ViewTabs.svelte";
+  import AboutPanel from "$lib/AboutPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
   import OverviewView from "$lib/OverviewView.svelte";
@@ -14,6 +16,8 @@
   import Chip from "$lib/ui/Chip.svelte";
   import EmptyState from "$lib/ui/EmptyState.svelte";
   import InlineMessage from "$lib/ui/InlineMessage.svelte";
+  import ListRow from "$lib/ui/ListRow.svelte";
+  import ScopeBanner from "$lib/ui/ScopeBanner.svelte";
   import SearchField from "$lib/ui/SearchField.svelte";
   import Sheet from "$lib/ui/Sheet.svelte";
   import Tabs from "$lib/ui/Tabs.svelte";
@@ -21,45 +25,76 @@
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
-  import { names, resolveNames } from "$lib/names.svelte";
-  import { aliasFor, accountsStore } from "$lib/accounts.svelte";
+  import { resolveNames } from "$lib/names.svelte";
+  import { accountsStore } from "$lib/accounts.svelte";
   import { loadPrefs } from "$lib/prefs.svelte";
-  // Everything about WHO is open and what is unsaved. See subject.svelte.ts's
-  // header for why it is a module rather than more state in this file.
+  import { resolvedName } from "$lib/filesort.svelte";
+  import { accel } from "$lib/keys";
+  import { resolveView, type View } from "$lib/views";
   import {
     subject,
+    accountAliasOf,
     confirmDiscardIfDirty,
-    discardChanges,
     loadCharacter,
+    noCharactersHint,
     reconcileCharSlot,
     reconcileUserSlot,
+    rescanProfiles,
     saveFile,
   } from "$lib/subject.svelte";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
+  // Until Phase 3 turns these two into sheets over the work area. The context
+  // bar is rendered OUTSIDE this branch now, which is the whole point: Save and
+  // the unsaved count survive either takeover.
   let mainView: "file" | "accounts" | "batch" = $state("file");
-  // Side panels collapse to a thin reopen rail so the center pane (esp. the
-  // layout canvas) can use the full width. In-memory only; resets on reload.
   let sidebarOpen = $state(true);
-  let backupsOpen = $state(true);
-  // Which file the raw Tree view shows; a Tree-local switch flips it to the
-  // account file when one is loaded. Reset on every open.
+  // Renamed from `backupsOpen`. The right column is no longer "backups" — it is
+  // properties of the current selection in the current view, on every tab.
+  let inspectorOpen = $state(true);
+  let aboutOpen = $state(false);
+  let switcherOpen = $state(false);
+  // Which file the Raw view shows; a Raw-local switch flips it to the account
+  // file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
-  type View = "tree" | "layout" | "overview" | "autofill" | "keybinds" | "probes";
-  let view = $state<View>("tree");
-  // The active document is a consequence of the current view — NOT a manual
-  // toggle: Autofill edits the account file, the Tree view honors its file
-  // switch, everything else (Layout, Overview, search, backups) follows the
-  // character.
-  const active = $derived<Slot>(
-    (view === "autofill" || view === "keybinds" || view === "probes") && subject.slots.user?.status === "opened"
-      ? "user"
-      : view === "tree" && treeFile === "user" && subject.slots.user?.status === "opened"
-        ? "user"
-        : "char",
+  // Starts on Layout, not Raw, and is resolved through the same fallback on the
+  // first open. Raw is the escape hatch and sits last.
+  let view = $state<View>("layout");
+
+  // What the editing commands write to. The clause that made this a function of
+  // the VIEW is gone: it existed to serve a display — the file bar's name, the
+  // badges, the backups panel — and none of those read it any more. Autofill,
+  // Keybinds and Probes never mutated through `runMutation` at all; they are
+  // handed `userId` and call their own commands.
+  //
+  // The `view === "raw"` guard has to stay: without it, a user who left the Raw
+  // view on the account file would hand `slot="user"` to LayoutView.
+  const editSlot = $derived<Slot>(
+    view === "raw" && treeFile === "user" && subject.slots.user?.status === "opened" ? "user" : "char",
   );
-  const current = $derived(subject.slots[active]);
+  const current = $derived(subject.slots[editSlot]);
+
+  // The folder AccountsView and BatchView resolve their scope from. It is the
+  // SUBJECT's path rather than `slots[editSlot]`'s, so which tab you happened to
+  // be on no longer decides which pairings "Accept all" commits — v0.34 made
+  // that scope gate a WRITE, not just which cards are listed.
+  const subjectPath = $derived(
+    subject.slots.char?.status === "opened"
+      ? subject.slots.char.path
+      : subject.slots.user?.status === "opened"
+        ? subject.slots.user.path
+        : null,
+  );
+
+  // The four views that edit account-scoped data — the same set the four
+  // copy-pasted banners covered.
+  const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
+  const scopeLabel = $derived(
+    mainView === "file" && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
+      ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
+      : "",
+  );
 
   // Route a settings file to its slot by filename kind. Non-standard/other files
   // use the char slot (the generic editing slot).
@@ -67,64 +102,23 @@
     return /^core_user_\d+\.dat$/.test(name) ? "user" : "char";
   }
 
-  api.discover().then((p) => (subject.profiles = p)).catch(() => {});
+  void rescanProfiles();
   void loadPrefs();
 
   let insertTarget: TreeNodeData | null = $state(null);
-  // Whether a view has anything to show for the currently open file(s) — the same
-  // conditions that gate each view's tab button below. Used to keep the user on
-  // their current tab across a file switch when the new file still supports it.
-  const viewAvailable = (v: View) =>
-    v === "tree" ||
-    (v === "layout" && subject.layoutAvailable) ||
-    (v === "overview" && (subject.charId !== null || subject.slots.user?.status === "opened")) ||
-    (v === "autofill" && (subject.charId !== null || subject.slots.user?.status === "opened")) ||
-    (v === "keybinds" && (subject.charId !== null || subject.slots.user?.status === "opened")) ||
-    (v === "probes" && (subject.charId !== null || subject.slots.user?.status === "opened"));
-  // Selected canvas window, lifted here so it survives Tree/Layout switches.
+  // Selected canvas window, lifted here so it survives Raw/Layout switches.
   let selectedWindowId = $state<string | null>(null);
-  // Bound down through LayoutView -> WindowPanel, where the filter input
-  // actually lives; lets the global Ctrl+F handler focus it (see below).
-  let layoutFocusFilter = $state<(() => void) | undefined>(undefined);
+  // One bindable the ACTIVE view sets, generalised from `layoutFocusFilter`.
+  let viewFocusSearch = $state<(() => void) | undefined>(undefined);
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
   let reveal = $state<{ path: NodePath; n: number } | null>(null);
 
-  // Name for the loaded char file, if resolved. `core_char_<id>.dat` -> name.
-  const openCharName = $derived.by(() => {
-    if (current?.status !== "opened") return null;
-    const m = current.file_name.match(/^core_char_(\d+)\.dat$/);
-    if (!m) return null;
-    const hit = names[m[1]];
-    return hit ? hit.name : null;
-  });
-
-  // Alias for the loaded user file, if named. `core_user_<id>.dat` -> alias.
-  const openUserAlias = $derived.by(() => {
-    if (current?.status !== "opened") return null;
-    const m = current.file_name.match(/^core_user_(\d+)\.dat$/);
-    return m ? aliasFor(Number(m[1])) : null;
-  });
-
-  // Best single label for the open file — character name, else user alias, else
-  // the bare filename. Feeds the OS window title and the backups panel.
-  const openDisplay = $derived.by(() => {
-    if (subject.preset !== null) return `${subject.preset} (preset)`;
-    if (current?.status !== "opened") return null;
-    return openCharName ?? openUserAlias ?? current.file_name;
-  });
-
-  // The banner text the four account-scoped views each render for themselves.
-  // Deleted in the shell commit, where one shell-owned `ScopeBanner` consumes
-  // `subject.sharedNames` directly (`02-shell.md` §2.6, §5.4).
-  const sharedLabel = $derived(
-    "Shared account settings" +
-      (subject.sharedNames.length ? ` — also applies to ${subject.sharedNames.join(", ")}` : ""),
-  );
-
   const APP_TITLE = "EVE Settings Editor";
   $effect(() => {
+    // Reads the SUBJECT, not `slots[editSlot]`, so switching from Overview to
+    // Autofill no longer retitles the window from the character to the account.
     void getCurrentWindow().setTitle(
-      openDisplay ? `${openDisplay} — ${APP_TITLE}` : APP_TITLE,
+      subject.subjectLabel ? `${subject.subjectLabel} — ${APP_TITLE}` : APP_TITLE,
     );
   });
 
@@ -135,8 +129,8 @@
 
   // If the open character becomes paired while its account slot is empty — e.g.
   // the user just paired it in the Accounts view — load the account file so the
-  // account-scoped editors light up without a manual re-open (spec §5). Guarded
-  // on an empty user slot, so it never re-loads an already-open account.
+  // account-scoped editors light up without a manual re-open. Guarded on an
+  // empty user slot, so it never re-loads an already-open account.
   $effect(() => {
     const o = subject.slots.char;
     void accountsStore.roster; // track roster changes
@@ -145,7 +139,8 @@
 
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
-    view = "tree";
+    view = "raw";
+    mainView = "file";
     query = "";
     reveal = { path, n: (reveal?.n ?? 0) + 1 };
   }
@@ -169,17 +164,22 @@
     searchBox?.blur();
   }
 
-  // `openFile` and `openPresetPair` stay HERE rather than moving to
-  // subject.svelte.ts with the rest of the transitions (`02-shell.md` §6.1
-  // nominates them). They interleave subject state with `treeFile`, `view`,
-  // `mainView`, `selectedWindowId` and `reveal`, which §6.2 keeps in the shell,
-  // and the interleaving is load-bearing: `treeFile = slot` must land BEFORE the
-  // `savedAt` bump, or the bump fires while `active` still names the outgoing
-  // slot and the backups panel refetches the wrong file. Splitting them would
-  // mean either a callback into the shell or a reordering that changes
-  // behaviour, and every consumer that needs to open a file (the switcher, the
-  // launch empty state, the sidebar) is a descendant of this component and can
-  // take it as a prop.
+  // The one implementation of "pick a file from the OS dialog", shared by the
+  // sidebar's button and the launch empty state's.
+  async function pickFile() {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "EVE settings", extensions: ["dat"] }],
+    });
+    if (typeof picked === "string") await openFile(picked);
+  }
+
+  // `openFile` and `openPresetPair` stay HERE rather than in subject.svelte.ts
+  // with the rest of the transitions. They interleave subject state with
+  // `treeFile`, `view` and the selection, which the shell owns, and the
+  // interleaving is load-bearing: `treeFile = slot` has to land before the
+  // `savedAt` bump, or the bump fires while `editSlot` still names the outgoing
+  // slot. Every consumer that opens a file is a descendant of this component.
   async function openFile(path: string) {
     const name = path.split(/[\\/]/).pop() ?? "";
     const slot = slotForName(name);
@@ -198,10 +198,6 @@
       subject.dirty[slot] = false;
       treeFile = slot;
       subject.savedAt += 1;
-      // Hold the tab the user was on across the load (switching between two chars
-      // shouldn't bounce you out of Layout), falling back to Tree only if the new
-      // file can't support it. Each view reads the already-swapped active slot and
-      // is null-safe against its own mid-load fetch, so there's no flash to Tree.
       const priorView = view;
       mainView = "file";
       selectedWindowId = null;
@@ -217,7 +213,7 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
-      if (!viewAvailable(priorView)) view = "tree";
+      view = resolveView(priorView);
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
@@ -249,7 +245,7 @@
       } catch {
         subject.layoutAvailable = false;
       }
-      if (!viewAvailable(priorView)) view = "tree";
+      view = resolveView(priorView);
     } catch (e) {
       await message(errMessage(e), { title: "Open failed", kind: "error" });
     }
@@ -258,13 +254,13 @@
   // `rethrow` is for callers with somewhere better to put the error than a
   // dialog — the insert form shows it inline and stays open on failure.
   async function runMutation(m: Mutation, rethrow = false) {
-    const doc = subject.slots[active];
+    const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
     try {
-      const tree = await api.mutate(active, m);
+      const tree = await api.mutate(editSlot, m);
       // Reassign (not mutate-in-place) so the derived `current` refires.
-      subject.slots[active] = { ...doc, tree };
-      subject.dirty[active] = true;
+      subject.slots[editSlot] = { ...doc, tree };
+      subject.dirty[editSlot] = true;
     } catch (e) {
       if (rethrow) throw e;
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
@@ -274,13 +270,13 @@
   // Batched sibling of runMutation: one backend round-trip for many mutations
   // (e.g. a layout-canvas drag fanning out to several windows' geometry).
   async function runMutations(ms: Mutation[], rethrow = false) {
-    const doc = subject.slots[active];
+    const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
     if (ms.length === 0) return;
     try {
-      const tree = await api.mutateMany(active, ms);
-      subject.slots[active] = { ...doc, tree };
-      subject.dirty[active] = true;
+      const tree = await api.mutateMany(editSlot, ms);
+      subject.slots[editSlot] = { ...doc, tree };
+      subject.dirty[editSlot] = true;
     } catch (e) {
       if (rethrow) throw e;
       await message(errMessage(e), { title: "Edit failed", kind: "error" });
@@ -291,6 +287,12 @@
     runMutation({ op: "set_scalar", path, text });
   const handleRemove = (path: NodePath) =>
     runMutation({ op: "remove_entry", path });
+
+  // Up to eight on the launch screen, then "… N more" which opens the subject
+  // list. No recents store: it would need new persisted state for a list the app
+  // can already derive, in a window where the full list fits.
+  const launchRows = $derived(subject.characters.slice(0, 8));
+  const launchMore = $derived(subject.characters.length - launchRows.length);
 </script>
 
 <!-- The webview's stock context menu (Back/Reload/…) means nothing here. Tree
@@ -302,122 +304,132 @@
       e.preventDefault();
       saveFile();
     }
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      switcherOpen = true;
+    }
     // Take Ctrl+F off the webview: its find-on-page cannot see collapsed nodes.
-    // On the Layout view the tree search box isn't even rendered, so focus its
-    // own window filter instead — otherwise Ctrl+F silently does nothing there.
+    // The active view focuses its OWN search box if it has one; otherwise this
+    // falls through to the Raw tree's.
+    //
+    // NOT `viewFocusSearch?.() ?? openSearch()` as §5.12 writes it — those
+    // callbacks return void, so the `??` would fire openSearch() every time,
+    // including right after the view had focused its own box.
     if ((e.ctrlKey || e.metaKey) && e.key === "f") {
       e.preventDefault();
-      if (view === "layout") {
-        layoutFocusFilter?.();
-      } else {
-        openSearch();
-      }
+      if (viewFocusSearch) viewFocusSearch();
+      else openSearch();
     }
     if (e.key === "Escape" && searching) closeSearch();
   }}
 />
 
-<main class="layout" class:sidebar-collapsed={!sidebarOpen} class:backups-collapsed={!backupsOpen}>
+<main class="shell" class:subjects-railed={!sidebarOpen} class:inspector-railed={!inspectorOpen}>
+  <ContextBar
+    bind:switcherOpen
+    onOpen={openFile}
+    onOpenPreset={openPresetPair}
+    onGoto={(v) => {
+      view = v;
+      mainView = "file";
+    }}
+    onShowAccounts={() => (mainView = "accounts")}
+    onShowBatch={() => (mainView = "batch")}
+    onShowAbout={() => (aboutOpen = true)}
+    onRestored={(slot, outcome) => {
+      subject.slots[slot] = outcome;
+      subject.dirty[slot] = false;
+      subject.savedAt += 1;
+    }} />
+
   {#if sidebarOpen}
     <Sidebar
       onOpen={openFile}
-      onShowAccounts={() => (mainView = "accounts")}
-      onShowBatch={() => (mainView = "batch")}
+      onPickFile={pickFile}
       onCollapse={() => (sidebarOpen = false)}
       onOpenPreset={openPresetPair}
-      charOpen={subject.slots.char?.status === "opened"}
-      userOpen={subject.slots.user?.status === "opened"}
-      openPresetName={subject.preset} />
+      onShowAccounts={() => (mainView = "accounts")} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
       title="Show file list" aria-label="Show file list">&raquo;</button>
   {/if}
+
+  <ViewTabs bind:value={view} onpick={() => (mainView = "file")} />
+
   {#if mainView === "accounts"}
-    <AccountsView openPath={current?.status === "opened" ? current.path : null} />
+    <div class="work"><div class="scroll"><AccountsView openPath={subjectPath} /></div></div>
   {:else if mainView === "batch"}
-    <BatchView openPath={current?.status === "opened" ? current.path : null} />
-  {:else}
-  <section class="editor">
-    {#if current === null}
-      <EmptyState title="Open a settings file to begin." />
-    {:else if current.status === "opened"}
-      <header class="filebar">
-        <span class="filename">
-          {#if openCharName}{openCharName} — {/if}{#if openUserAlias}{openUserAlias} — {/if}{current.file_name}
-        </span>
-        <!-- A light role tone on its own dim ground. These three badges used to
-             be dark text on a saturated fill, measuring Lc 51 / 55 / 43 at 12px
-             where APCA wants 75; they measure ~69 now. -->
-        {#if current.fidelity.state === "read_only"}
-          <Chip tone="danger" size="sm" class="badge read-only" title={current.fidelity.reason}>read-only</Chip>
-        {:else}
-          <Chip tone="ok" size="sm" class="badge editable">editable</Chip>
-        {/if}
-        {#if subject.preset !== null}
-          {#if subject.dirty.char || subject.dirty.user}
-            <Chip tone="warn" size="sm" class="badge dirty">preset: unsaved</Chip>
+    <div class="work"><div class="scroll"><BatchView openPath={subjectPath} /></div></div>
+  {:else if current === null}
+    <div class="work">
+      <div class="scroll">
+        <EmptyState
+          title="Open a character to begin"
+          description="EVE Settings Editor edits the settings files EVE writes for each of your characters and accounts." />
+        <div class="launch">
+          {#if subject.profiles.length === 0}
+            <InlineMessage>No EVE profiles found in standard locations. Use “Open file…”.</InlineMessage>
+          {:else if launchRows.length === 0}
+            <!-- The same words the sidebar uses, from the same function, so the
+                 two cannot drift — including the one that names the filter as
+                 the cause. -->
+            <InlineMessage>{noCharactersHint()}</InlineMessage>
+          {:else}
+            <ul>
+              {#each launchRows as f (f.path)}
+                {@const alias = accountAliasOf(f)}
+                <li>
+                  <ListRow onclick={() => openFile(f.path)} title={f.file_name}>
+                    {resolvedName(f.kind, f.id) ?? f.file_name}
+                    {#if alias}<Chip size="sm">{alias}</Chip>{/if}
+                  </ListRow>
+                </li>
+              {/each}
+            </ul>
+            {#if launchMore > 0}
+              <Button variant="ghost" onclick={() => (sidebarOpen = true)}>… {launchMore} more</Button>
+            {/if}
           {/if}
-        {:else}
-          {#if subject.dirty.char}<Chip tone="warn" size="sm" class="badge dirty">character: unsaved</Chip>{/if}
-          {#if subject.dirty.user}<Chip tone="warn" size="sm" class="badge dirty">account: unsaved</Chip>{/if}
-        {/if}
-        {#if subject.dirty.char || subject.dirty.user}
-          <Button
-            variant="danger"
-            size="sm"
-            onclick={discardChanges}
-            title="Throw the unsaved changes away and reload both files from disk. Backups are untouched."
-            >Discard</Button>
-        {/if}
-        <!-- The strip keeps its {#if} guards, so it still shows exactly the tabs
-             it shows today. Phase 2 drops the guards and passes `disabled`
-             instead, which is what stops it rearranging under the cursor —
-             Tabs already carries the capability. What it gains here is the ARIA
-             it never had: this was a bare <span> of buttons with no roles. -->
-        {#if subject.layoutAvailable || subject.charId !== null || subject.slots.user?.status === "opened"}
-          <Tabs
-            class="viewtabs"
-            ariaLabel="Editor view"
-            tabs={[
-              { id: "tree", label: "Tree" },
-              ...(subject.layoutAvailable ? [{ id: "layout", label: "Layout" }] : []),
-              ...(subject.charId !== null || subject.slots.user?.status === "opened"
-                ? [
-                    { id: "overview", label: "Overview" },
-                    { id: "autofill", label: "Autofill" },
-                    { id: "keybinds", label: "Keybinds" },
-                    { id: "probes", label: "Probes" },
-                  ]
-                : []),
-            ]}
-            bind:value={view} />
-        {/if}
-        <span class="spacer"></span>
-        <Button
-          variant="primary"
-          disabled={!subject.canSave}
-          disabledReason={current.fidelity.state !== "editable"
-            ? "This file is read-only"
-            : "There is nothing to save"}
-          onclick={() => saveFile()}>Save</Button>
-      </header>
-      {#if view === "layout"}
-        <div class="tree-area">
-          <LayoutView
-            slot={active}
-            {runMutations}
-            readOnly={current.fidelity.state !== "editable"}
-            accountReadOnly={subject.slots.user?.status === "opened" && subject.slots.user.fidelity.state !== "editable"}
-            refreshToken={subject.savedAt}
-            userOpen={subject.slots.user?.status === "opened"}
-            bind:selectedId={selectedWindowId}
-            onReveal={revealInTree}
-            onDirty={(slot) => (subject.dirty[slot] = true)}
-            sharedNames={subject.sharedNames}
-            bind:focusFilter={layoutFocusFilter} />
+          <p class="launch-foot">
+            <Button onclick={pickFile}>Open file…</Button>
+            <span>or press {accel("K")} to search</span>
+          </p>
         </div>
-      {:else if view === "overview"}
-        <div class="tree-area">
+      </div>
+    </div>
+  {:else if current.status !== "opened"}
+    <div class="work">
+      <div class="scroll">
+        <InlineMessage variant="error">Cannot edit: {current.message} (offset {current.offset})</InlineMessage>
+        <pre class="hex">{current.hex_preview}</pre>
+      </div>
+    </div>
+  {:else if view === "layout"}
+    <!-- The ONE view that fills both columns. Its root is `display: contents`,
+         so its two children become grid items of the shell and land in columns 2
+         and 3 — no portal, no prop hoisting, no dependency. -->
+    <LayoutView
+      slot={editSlot}
+      {runMutations}
+      readOnly={current.fidelity.state !== "editable"}
+      accountReadOnly={subject.slots.user?.status === "opened" && subject.slots.user.fidelity.state !== "editable"}
+      refreshToken={subject.savedAt}
+      userOpen={subject.slots.user?.status === "opened"}
+      bind:selectedId={selectedWindowId}
+      onReveal={revealInTree}
+      onDirty={(slot) => (subject.dirty[slot] = true)}
+      sharedNames={subject.sharedNames}
+      bind:focusSearch={viewFocusSearch} />
+  {:else}
+    <div class="work">
+      <!-- One of ScopeBanner's two shell-owned call sites. Scope has to be
+           legible BEFORE the edit, not only at save time; the other is inside
+           the save disclosure. What went away is the duplication — four
+           components taking a `sharedLabel` prop and each rendering its own
+           byte-identical paragraph and CSS block. -->
+      <ScopeBanner label={scopeLabel} compact />
+      {#if view === "overview"}
+        <div class="scroll">
           <OverviewView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
@@ -425,7 +437,6 @@
             charOpen={subject.slots.char?.status === "opened"}
             characters={subject.accountCharacters}
             refreshToken={subject.savedAt}
-            sharedLabel={sharedLabel}
             onLoadCharacter={loadCharacter}
             onUserDirty={() => (subject.dirty.user = true)}
             onCharDirty={() => (subject.dirty.char = true)}
@@ -433,32 +444,31 @@
             onShowAccounts={() => (mainView = "accounts")} />
         </div>
       {:else if view === "autofill"}
-        <div class="tree-area">
+        <div class="scroll">
           <AutofillView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
             charOpen={subject.slots.char?.status === "opened"}
-            charName={openCharName}
-            sharedLabel={sharedLabel}
+            charName={subject.charName}
             onShowAccounts={() => (mainView = "accounts")}
-            onUserDirty={() => (subject.dirty.user = true)} />
+            onUserDirty={() => (subject.dirty.user = true)}
+            bind:focusSearch={viewFocusSearch} />
         </div>
       {:else if view === "keybinds"}
-        <div class="tree-area">
+        <div class="scroll">
           <KeybindsView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
-            sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
             onShowBatch={() => (mainView = "batch")}
-            onUserDirty={() => (subject.dirty.user = true)} />
+            onUserDirty={() => (subject.dirty.user = true)}
+            bind:focusSearch={viewFocusSearch} />
         </div>
       {:else if view === "probes"}
-        <div class="tree-area">
+        <div class="scroll">
           <ProbeFormationsView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
-            sharedLabel={sharedLabel}
             onShowAccounts={() => (mainView = "accounts")}
             onUserDirty={() => (subject.dirty.user = true)} />
         </div>
@@ -466,28 +476,24 @@
         {#if subject.slots.user?.status === "opened"}
           <Tabs
             class="tree-file"
-            ariaLabel="Tree file"
+            ariaLabel="Raw file"
             tabs={[
               { id: "char", label: "Character file" },
               { id: "user", label: "Account file" },
             ]}
             bind:value={treeFile} />
         {/if}
-        <!-- The last of the four permanently-invisible buttons: the clear "×"
-             was `.mini`, hidden at opacity 0 and revealed only inside a `.row`,
-             which the search bar is not. SearchField's clear button is a ghost
-             Button and is actually visible when the box has text. -->
-        <div class="searchbar">
+        <div class="raw-search">
           <SearchField
             verb="search"
             nouns="labels and values"
-            shortcut="Ctrl+F"
+            shortcut={accel("F")}
             bind:element={searchBox}
             bind:value={query}
             count={searching ? (found?.count ?? 0) : undefined}
             onclear={closeSearch} />
         </div>
-        <div class="tree-area">
+        <div class="scroll">
           {#if found?.tree}
             <TreeNode
               node={found.tree}
@@ -504,29 +510,27 @@
           {/if}
         </div>
       {/if}
-    {:else}
-      <InlineMessage variant="error">Cannot edit: {current.message} (offset {current.offset})</InlineMessage>
-      <pre class="hex">{current.hex_preview}</pre>
-    {/if}
-  </section>
-  {#if current?.status === "opened"}
-    {#if backupsOpen}
-      <BackupsPanel
-        slot={active}
-        savedAt={subject.savedAt}
-        subtitle={openDisplay}
-        onCollapse={() => (backupsOpen = false)}
-        onRestored={(outcome) => {
-          subject.slots[active] = outcome;
-          subject.dirty[active] = false;
-          subject.savedAt += 1;
-        }}
-      />
-    {:else}
-      <button class="rail rail-right" onclick={() => (backupsOpen = true)}
-        title="Show backups" aria-label="Show backups">«</button>
-    {/if}
+    </div>
   {/if}
+
+  <!-- The inspector column exists on EVERY tab. A column that is there on one
+       tab and gone on the others is the same class of fault as a tab strip that
+       changes membership, so this is a visible promise rather than a collapsed
+       column — and anyone who wants the width back rails it. Layout supplies its
+       own through `display: contents`, so the shell does not draw one over it. -->
+  {#if !inspectorOpen}
+    <button class="rail rail-right" onclick={() => (inspectorOpen = true)}
+      title="Show properties" aria-label="Show properties">&laquo;</button>
+  {:else if !(mainView === "file" && view === "layout" && current?.status === "opened")}
+    <aside class="inspector">
+      <div class="inspector-head">
+        <Button variant="ghost" size="sm" iconOnly title="Hide properties"
+          onclick={() => (inspectorOpen = false)}>&raquo;</Button>
+      </div>
+      <EmptyState title="Select something to see its properties." />
+    </aside>
+  {/if}
+
   {#if insertTarget !== null}
     <!-- A Sheet, so it traps focus, restores it to the opener and closes on
          Escape. The `.modal` it replaces did none of the three. -->
@@ -540,9 +544,43 @@
         onCancel={() => (insertTarget = null)} />
     </Sheet>
   {/if}
-  {/if}
 </main>
+
+{#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
 
 <!-- Mounted once, here. Every transient confirmation in the app renders through
      it, so it has to outlive whichever view raised it. -->
 <Toast />
+
+<style>
+  .launch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s2);
+    max-width: 44ch;
+    margin: 0 auto;
+  }
+  .launch ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+  }
+  .launch li {
+    list-style: none;
+  }
+  .launch-foot {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: var(--s3) 0 0;
+    color: var(--text-muted);
+    font-size: var(--t-body);
+  }
+  .inspector-head {
+    display: flex;
+    justify-content: flex-start;
+    padding: var(--s1);
+  }
+</style>
