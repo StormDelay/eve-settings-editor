@@ -791,6 +791,15 @@ Relationships that matter for editing:
    Already handled; recorded here because it is the reason the overview editor is
    two-file.
 
+   **The tab index is also the display order.** EVE draws a window's tabs in
+   ascending tab index; `tabsByWindowInstanceID[i]` says *which* tabs, not in
+   what order. Measured 2026-08-13 over the whole corpus: of **1,314** account
+   files carrying a mapping, **0** list a window's tabs non-ascending, and the
+   tab table is dense in all 2,572 files that have one — the client renumbers
+   rather than permuting the strip. So reordering a tab means renumbering the
+   table (`overview_tabs::renumber_to_strip_order`); rewriting the strip alone
+   changes nothing in game, which is the bug fixed on 2026-08-13.
+
 2. **Preset names are referenced from four places** and are the file's only
    string-keyed foreign key: each tab's `overview` and `bracket` fields, the
    container's `activeOverviewPreset`, and `ui → scanner_presetInUse`. Measured:

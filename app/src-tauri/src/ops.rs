@@ -20,7 +20,7 @@ use settings_model::{
     Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
     unstack, add_to_stack, reorder_stack, create_stack, delete_orphan_frames, StackError,
-    create_tab, create_window_mapping, rename_tab, delete_tab, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
+    create_tab, create_window_mapping, rename_tab, delete_tab, remap_tab_scoped_settings, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
@@ -501,8 +501,29 @@ pub fn tab_rename(state: &AppState, tab_idx: i64, name: String) -> Result<Overvi
     edit_user_tabs(state, |v| rename_tab(v, tab_idx, &name))
 }
 
+/// Delete a tab from the account file, then carry the surviving tabs' char-side
+/// per-tab settings (column widths, sort column and direction) onto their new
+/// indices. Deleting a tab renumbers the account's tab table, and those settings
+/// are keyed by tab index — without the second half, deleting one tab silently
+/// changed every tab above it.
+///
+/// The char write is best-effort, as with the overview-window commands: a
+/// character that is not open is not a reason to refuse the delete.
+///
+// ponytail: only the OPEN character is fixed up. Other characters paired to this
+// account keep their settings on the old numbering until someone opens them —
+// remapping those means writing files the user never opened, which is a
+// cross-file op with its own backup chain (deliberately deferred; see the
+// 0.33 decision).
 pub fn tab_delete(state: &AppState, tab_idx: i64) -> Result<OverviewColumns, ErrDto> {
-    edit_user_tabs(state, |v| delete_tab(v, tab_idx))
+    let surviving = edit_slot(
+        state,
+        Slot::User,
+        |v| delete_tab(v, tab_idx),
+        |e| coded_err("tab", e),
+    )?;
+    try_edit_char(state, |v| remap_tab_scoped_settings(v, &surviving));
+    overview_columns(state)
 }
 
 pub fn tab_reorder(state: &AppState, window_idx: usize, order: Vec<i64>) -> Result<OverviewColumns, ErrDto> {
@@ -1305,6 +1326,58 @@ mod tests {
 
         let cols = tab_rename(&state, 0, "Combat".into()).unwrap();
         assert_eq!(cols.tabs[0].name, "Combat");
+    }
+
+    /// Deleting a tab renumbers the account's tab table, and the character file
+    /// keys column widths and sort order by tab index — so the delete has to carry
+    /// them across, or deleting one tab changes every tab above it. This is the
+    /// two-file wiring; the remap itself is unit-tested in `overview_tabs`.
+    #[test]
+    fn deleting_a_tab_carries_the_open_characters_per_tab_settings_across() {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let tab = |n: &str| Value::Dict(vec![
+            (bb("bracket"), bb("_BracketFilterShowAll")),
+            (bb("color"), Value::None),
+            (Value::Str("name".into()), Value::Str(n.into())),
+            (bb("overview"), bb("P")),
+        ]);
+        let user = Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("tabsettings_new"), Value::Dict(vec![
+                (Value::Int(0), tab("A")), (Value::Int(1), tab("B")), (Value::Int(2), tab("C")),
+            ])),
+            (bb("tabsByWindowInstanceID"), Value::List(vec![Value::List(vec![
+                Value::Int(0), Value::Int(1), Value::Int(2),
+            ])])),
+            // Account-default columns, so the tabs project a NAME column for the
+            // char-side width to join onto.
+            (bb("overviewColumnOrder"), Value::List(vec![bb("NAME")])),
+            (bb("overviewColumns"), Value::List(vec![bb("NAME")])),
+        ]))]);
+        // Each tab has a distinguishable NAME width, so a shift shows up as a value.
+        let scroll = |n: i64| Value::Tuple(vec![bb("overviewScroll2"), Value::Int(n)]);
+        let widths = |w: i64| Value::Dict(vec![(bb("NAME"), Value::Int(w))]);
+        let char_tree = Value::Dict(vec![(bb("ui"), Value::Dict(vec![
+            (bb("SortHeadersSizes"), Value::Dict(vec![
+                (scroll(0), widths(100)), (scroll(1), widths(110)), (scroll(2), widths(120)),
+            ])),
+        ]))]);
+
+        let state = AppState::new();
+        let upath = temp_file("tabdel_user", &encode(&user).unwrap());
+        let cpath = temp_file("tabdel_char", &encode(&char_tree).unwrap());
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+
+        let cols = tab_delete(&state, 1).unwrap();
+        assert_eq!(cols.tabs.len(), 2);
+        assert_eq!(cols.tabs[1].name, "C", "tab C now sits at index 1");
+        // Its width came with it. Before this wiring, index 1 kept tab B's 110 and
+        // tab C silently inherited it.
+        let width = |t: &settings_model::OverviewTab| {
+            t.columns.iter().find(|c| c.name == "NAME").and_then(|c| c.width)
+        };
+        assert_eq!(width(&cols.tabs[0]), Some(100), "tab A untouched");
+        assert_eq!(width(&cols.tabs[1]), Some(120), "tab C kept its own width, not tab B's");
     }
 
     #[test]
