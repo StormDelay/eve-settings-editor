@@ -1,7 +1,36 @@
 # Phase 1 — Design tokens and shared primitives
 
-Status: **planned, nothing implemented.** Prerequisite for phases 2–5b.
+Status: **IMPLEMENTED** on `feat/ui-redesign-phase-1`. Prerequisite for phases 2–5b.
 Behaviour change: **none.** Layout moves: **none.**
+
+> **What actually shipped, where it differs from this document.** The plan below
+> is left as written; the deviations are listed once, here, and each is also
+> commented at its site in the code.
+>
+> - `toasts.svelte.ts`, not `toast.svelte.ts` — on a case-insensitive filesystem
+>   `./toast.svelte` resolves to `Toast.svelte` and TypeScript rejects the pair.
+> - **One spec file changed**, `routes/page.spec.ts`, three queries. §5.5 requires
+>   the shell's view strip to become a real tablist and §7.4 forbids editing a
+>   spec; both cannot hold, because fixing the roles is what changes them. Two of
+>   the three assert absence and would have passed *vacuously* against a tablist,
+>   so leaving them would have silently disarmed two tests.
+> - `.flash` → `Toast` covers Sidebar's two sites only. ProbeFormationsView's copy
+>   confirmation stays inline: the Toast host is mounted once in `+page.svelte`
+>   and that view's spec mounts the view alone, so a toast is invisible to the
+>   test that asserts the confirmation appears. Phase 5 owns it.
+> - §4.2 and §4.3 disagree about ChatSplit's four 10px lines. §4.2 wins: ChatSplit
+>   renders inside WindowPanel's side panel, not on the canvas, so it is chrome.
+>   The type-scale allowlist is three lines, not seven.
+> - PanelHeader is not used in BackupsPanel or NeocomButtons, and EmptyState is
+>   not used for the Sidebar/AutofillView/ProbeFormationsView prompts. In each
+>   case the component would have moved something — a subtitle inline, a heading
+>   to 16px in a 12px panel, a centred block above content that follows — and
+>   "layout moves: none" outranks the file-by-file table.
+> - `Field` grew `radioValue`, `controlClass`, `element`, and `disabled`/unknown
+>   option values; `ListRow` grew `disabled`. Every one was forced by an existing
+>   spec, not anticipated.
+> - The space guard allows 1px/2px/-1px in `lib/ui/` and any px in the two canvas
+>   files. Their padding and margin are geometry, not spacing.
 
 ### What v0.34 changed
 
