@@ -113,8 +113,8 @@
   // probe cubes stay on the pre-Phase-1 palette while everything around them
   // moves. No guard can see these (they are number arrays, not hex literals),
   // so if the tokens are ever re-solved, these move by hand.
-  const CUBE_RGB = [141, 206, 255]; // --accent #8dceff
-  const CUBE_SEL_RGB = [243, 189, 110]; // --warn #f3bd6e
+  const CUBE_RGB = [141, 206, 255]; // --accent
+  const CUBE_SEL_RGB = [243, 189, 110]; // --warn
 
   /** One probe's cube as its visible faces, back-face culled — only three of
    * the six can ever face the camera — each with its own shade.
@@ -711,7 +711,7 @@
   /* Fills whatever height the parent column leaves it — the buttons and the
      hint line below stay in view, which a fixed box did not manage. */
   .viewer {
-    display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start;
+    display: flex; flex-direction: column; gap: var(--s1); align-items: flex-start;
     width: 100%; flex: 1; min-height: 0;
   }
   .viewer svg {
@@ -723,7 +723,7 @@
     aspect-ratio: 1;
     width: auto;
     max-width: 100%;
-    border: 1px solid var(--border); border-radius: 3px;
+    border: 1px solid var(--border); border-radius: var(--r-sm);
     touch-action: none; /* or a drag scrolls the page instead of orbiting */
     /* An orbit that crosses the axis labels would otherwise start selecting
        their text, and the browser cancels the pointer sequence when it does —
