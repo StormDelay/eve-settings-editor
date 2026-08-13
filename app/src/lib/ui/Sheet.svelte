@@ -20,6 +20,7 @@
     footer,
     class: klass = "",
     children,
+    ...rest
   }: {
     open?: boolean;
     title: string;
@@ -29,6 +30,9 @@
     footer?: Snippet;
     class?: string;
     children: Snippet;
+    /** Spread onto the backdrop, which is this component's root. Two existing
+        specs identify the modal they are dismissing by a data-testid on it. */
+    [key: string]: unknown;
   } = $props();
 
   let el: HTMLDivElement | undefined = $state();
@@ -71,7 +75,7 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="overlay" class:end={placement === "end"} onclick={onclose}>
+  <div class="overlay" class:end={placement === "end"} onclick={onclose} {...rest}>
     <div
       class="sheet {klass}"
       class:end={placement === "end"}

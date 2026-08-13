@@ -4,6 +4,8 @@
   // release, and the one that gets forgotten.
   import { getVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import Button from "./ui/Button.svelte";
+  import Sheet from "./ui/Sheet.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -17,35 +19,44 @@
     .catch(() => (version = "unknown"));
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="overlay" role="none" data-testid="about-backdrop" onclick={onClose}>
-  <!-- `tabindex="-1"` because a dialog must be focusable to be reachable by
-       anything but the mouse; -1 keeps it out of the tab order itself. -->
-  <div class="modal" role="dialog" aria-label="About" tabindex="-1"
-       onclick={(e) => e.stopPropagation()}>
-    <h2>EVE Settings Editor</h2>
-    <p class="version">Version {version}</p>
-    <p>
-      <button class="linkbtn" onclick={() => void openUrl(REPO).catch(() => {})}>
-        Source and issues on GitHub
-      </button>
-    </p>
-    <p class="meta">
-      MIT licensed. An unofficial tool — EVE Online is a trademark of CCP hf.
-    </p>
-    <div class="form-actions">
-      <span class="spacer"></span>
-      <button onclick={onClose}>Close</button>
-    </div>
-  </div>
-</div>
+<Sheet title="About" width="min(420px, 92vw)" onclose={onClose} data-testid="about-backdrop">
+  <h2>EVE Settings Editor</h2>
+  <p class="version">Version {version}</p>
+  <p>
+    <Button variant="ghost" class="linkbtn" onclick={() => void openUrl(REPO).catch(() => {})}>
+      Source and issues on GitHub
+    </Button>
+  </p>
+  <p class="meta">MIT licensed. An unofficial tool — EVE Online is a trademark of CCP hf.</p>
+
+  {#snippet footer()}
+    <Button onclick={onClose}>Close</Button>
+  {/snippet}
+</Sheet>
 
 <style>
-  /* `.overlay`, `.modal`, `.form-actions` and `.spacer` are global (app.css). */
-  h2 { margin: 0 0 0.2rem; font-size: 1em; font-weight: 600; }
-  .version { margin: 0 0 0.8rem; color: var(--fg-dim); }
-  .meta { color: var(--fg-dim); font-size: 0.85em; margin: 0.8rem 0 0; }
-  /* Matches BatchView's own link-shaped button. */
-  .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
-  .linkbtn:hover { text-decoration: underline; }
+  h2 {
+    margin: 0 0 var(--s1);
+    font-size: var(--t-title);
+    font-weight: 600;
+  }
+  .version {
+    margin: 0 0 var(--s3);
+    color: var(--text-muted);
+  }
+  .meta {
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+    margin: var(--s3) 0 0;
+  }
+  /* The link shape is the only thing left of the old .linkbtn; the button
+     behaviour underneath it is Button's. */
+  :global(.linkbtn) {
+    color: var(--accent);
+    padding: 0;
+  }
+  :global(.linkbtn:hover) {
+    text-decoration: underline;
+    background: none;
+  }
 </style>
