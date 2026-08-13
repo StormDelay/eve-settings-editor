@@ -9,11 +9,13 @@ Behaviour change: **none.** Layout moves: **none.**
 >
 > - `toasts.svelte.ts`, not `toast.svelte.ts` — on a case-insensitive filesystem
 >   `./toast.svelte` resolves to `Toast.svelte` and TypeScript rejects the pair.
-> - **One spec file changed**, `routes/page.spec.ts`, three queries. §5.5 requires
->   the shell's view strip to become a real tablist and §7.4 forbids editing a
->   spec; both cannot hold, because fixing the roles is what changes them. Two of
->   the three assert absence and would have passed *vacuously* against a tablist,
->   so leaving them would have silently disarmed two tests.
+> - **One spec file changed**, `routes/page.spec.ts`, three queries — now
+>   sanctioned by §7.4 and itemised in §7.5. As originally written, §5.5 (the
+>   view strip becomes a real tablist) and §7.4 (no spec may be edited) could not
+>   both hold, because fixing the roles is what changes them. §7.4 was the one at
+>   fault: it is a detector for unintended behaviour change, and it fired on a
+>   change this document ordered. It now carves out exactly that case and
+>   requires the edits be listed.
 > - `.flash` → `Toast` covers Sidebar's two sites only. ProbeFormationsView's copy
 >   confirmation stays inline: the Toast host is mounted once in `+page.svelte`
 >   and that view's spec mounts the view alone, so a toast is invisible to the
@@ -1670,14 +1672,35 @@ assertions.
 
 ### 7.4 Regression
 
-- **All 37 existing frontend test files (1064 tests) must pass untouched.**
-  That is the acceptance criterion for "no behaviour change", and it is why
-  §4's rule 1 forbids renaming a class. If a spec needs editing, the change was
-  not a refactor — stop and re-read. v0.34 added two of the 37
-  (`AccountsView.spec.ts`, `launcher.test.ts`); `AccountsView.spec.ts` is the
-  one this phase is most likely to disturb, because `Chip` and `Button` replace
-  the markup it exercises. It queries only by role and accessible name, so a
-  faithful swap does not touch it.
+- **All 37 existing frontend test files (1064 tests) must pass unmodified, with
+  one class of exception: a query that names an ARIA role or accessible name
+  this phase deliberately changes moves with it.** Every such edit is listed in
+  §7.5. Nothing else may change — if a spec needs editing for a renamed class, a
+  moved control, or different copy, the change was not a refactor; stop and
+  re-read. §4's rule 1 forbids renaming a class for exactly that reason.
+
+  The carve-out exists because this gate is a **detector, not a goal**. It is a
+  proxy for "no behaviour changed", and §5.5 orders one deliberate semantic
+  change in this phase: the view strip becomes a real tablist. Changing a role
+  is observable, so the proxy fires — correctly, on work this document
+  commanded. When the detector fires on the thing the spec asked for, the
+  detector is what is wrong. The last bullet below already anticipated
+  `role="tab"` arriving; it simply did not notice that the first bullet forbade
+  the consequence.
+
+  Note that this gate is Phase 1's alone. Phases 3 and 5 change behaviour by
+  design — the Accounts sheet, the dialog diet, the reworded copy — so they
+  cannot carry an untouched-specs gate at all, and must not inherit this one.
+
+  **A moved query must not become weaker.** This is the part worth checking by
+  hand: an assertion that something is *absent* keeps passing when the role it
+  names no longer exists, so it silently stops being able to fail. Re-read every
+  moved assertion and confirm it can still fail.
+
+  v0.34 added two of the 37 (`AccountsView.spec.ts`, `launcher.test.ts`);
+  `AccountsView.spec.ts` is the one this phase is most likely to disturb,
+  because `Chip` and `Button` replace the markup it exercises. It queries only
+  by role and accessible name, so a faithful swap does not touch it.
 - `detail.test.ts:484-485` pins `pointer-events: none` in
   `DetailParts.svelte`'s `<style>` and forbids `pointer-events: auto`. Both
   survive.
@@ -1685,6 +1708,28 @@ assertions.
   after `Tabs` specifically: the new `role="tab"` / roving-tabindex wiring is
   the one place in this phase that can introduce an a11y warning.
 - The Rust test modules are untouched — no Rust file changes in this phase.
+
+### 7.5 The spec edits this phase makes, in full
+
+One file, three queries. If this list ever grows past ARIA roles, something has
+gone wrong.
+
+| File | Was | Is | Why |
+| --- | --- | --- | --- |
+| `routes/page.spec.ts:179` | `queryByRole("button", …)` ×6, absent | `queryByRole("tab", …)` | §5.5: the view strip is a tablist |
+| `routes/page.spec.ts:190` | `findByRole("button", …)` ×4, present | `findByRole("tab", …)` | as above |
+| `routes/page.spec.ts:202` | `queryByRole("button", "Layout")`, absent | `queryByRole("tab", …)` | as above |
+
+Two of the three assert **absence**, and those are the dangerous ones: against a
+tablist they would have kept passing as `role="button"` — no button by that name
+exists any more — and could no longer have failed whatever the strip rendered.
+Leaving them alone would have looked like honouring §7.4 while quietly disarming
+two tests. That is the failure mode the "must not become weaker" rule above
+exists to catch.
+
+Nothing else in any of the 37 files changed. In particular `AccountsView.spec.ts`
+(219 lines, the one most exposed to this phase) passes untouched, because it
+queries by accessible name rather than by markup.
 
 ---
 
@@ -1775,7 +1820,8 @@ Net effect: **`--warn` means exactly one thing again.**
       **fail** against the pre-migration tree.
 - [ ] `apca.test.ts`'s 41 pairings meet their floors. No WCAG 2 check exists.
 - [ ] All 37 pre-existing frontend test files (1064 tests) pass **without
-      modification**.
+      modification**, except the ARIA-role queries itemised in §7.5 — and every
+      moved assertion was re-read and can still fail.
 - [ ] `npm test` and `npm run check` are clean.
 - [ ] The app has been launched and every one of the eight views screenshotted
       against its pre-migration shot. Nothing moved.
