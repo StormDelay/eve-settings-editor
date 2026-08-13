@@ -1533,13 +1533,29 @@ one prop each on a component that has real users today, and adding them later
 means reshaping an API with 20+ call sites.
 
 **Needs a decision:** whether `ChatSplit`'s scope legend (`ChatSplit.svelte:45`,
-currently `--warn`) should move to `--info` as §5.9 proposes. The argument for:
-it is a statement of scope, not a warning, and `--warn` already means
-"account-scoped row" one panel over (`HudPanel.svelte:57`), so two different
-meanings currently share one colour. The argument against: the whole point of
-the line is that editing a chat split changes every character on the account,
-and amber makes people look. It is a one-line change either way; ship `--info`
-unless the repo owner says otherwise.
+styled at `:88`, currently `--warn`) should move to `--info` as §5.9 proposes.
+
+The argument for is stronger than "two panels disagree", and worth stating
+precisely. **`--warn` carries both meanings inside this one 135-line file.**
+`:88` colours the legend — *"Chat layout — account-wide"*, a statement of scope
+— and `:119` colours `.area.bad`, a genuine warning that the computed split
+leaves a negative area. Same token, one file, two meanings, and the reader has
+no way to tell which is which.
+
+The two panels also already disagree about how to mark account scope:
+`HudPanel` badges its account-scoped rows **neutrally** (`.badge` is
+`--fg-dim` on `--bg-panel`, `HudPanel.svelte:335-341`), not in amber. So amber
+is not the established convention for scope — it is one file's local choice.
+(An earlier draft of this section cited `HudPanel.svelte:57` as if it were a
+style rule; it is a comment. The conclusion holds, but for this reason instead.)
+
+The argument against: the whole point of the legend is that editing a chat split
+changes every character on the account, and amber makes people look.
+
+Recommendation: **`--info` for the legend, `--warn` stays on `.area.bad`.** That
+leaves `--warn` meaning exactly one thing, and lets the account-scope signal be
+unified with `ScopeBanner` (§5.9), which is the component that should own it.
+One-line change either way.
 
 ---
 

@@ -183,7 +183,7 @@ phase it belongs to.
 | # | Decision | Recommendation | Spec |
 | --- | --- | --- | --- |
 | 1 | Single-select profile in the sidebar, or keep every profile listed at once as today? | Single-select — it is the only way account grouping stays unambiguous when one id appears in ten folders, and it makes the live/not-live warning one unmissable chip | `02-shell.md` §5 |
-| 2 | Should `ChatSplit`'s scope legend move from `--warn` to `--info`? | `--info` — it states a scope, it does not warn, and `--warn` already means "account-scoped row" one panel over | `01-tokens-and-primitives.md` §8 |
+| 2 | Should `ChatSplit`'s scope legend move from `--warn` to `--info`? | `--info` — `--warn` currently carries *both* meanings inside that one file: the account-wide legend (`:88`) and a real negative-area warning (`:119`) | `01-tokens-and-primitives.md` §8 |
 | 3 | Calibrate-capture `Cancel` leaves `AppState.capture` set; there is no `clear_capture` command | Pre-existing, not caused by the sheet conversion — log it in `small-tasks.md` rather than widen Phase 3 | `03-sheets.md` §4 |
 | 4 | Should `overview_copy_columns` undo in one press or two? | Two, as specced — one press per document write. A group flag with an RAII guard is ~15 lines if you disagree | `05b-undo.md` §3 |
 | 5 | Take the free atomicity? Once `edit_reshared` holds a before-state, restoring it on `Err` costs one line and makes `apply_mutations` atomic — contradicting its own doc comment | Take it; it is strictly better and free, but it changes documented behaviour so it is called out rather than assumed | `05b-undo.md` §13 |
