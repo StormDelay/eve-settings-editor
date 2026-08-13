@@ -80,14 +80,26 @@ pub fn read_launcher_roster() -> LauncherRoster;                          // orc
 
 The complete parse rule:
 
-1. `[esi] Fetching character details for <ids>` → hold `<ids>` as pending. A new
-   *Fetching* arriving while one is still unanswered discards it **and marks the
-   next *Fetched* as contested**: with two requests in flight, a *Fetched* may be
-   answering either, and pairing it with whichever happens to be pending hands
-   one account the other account's entire character list. Both drop.
-2. `[esi] Fetched <n> character details for <user>` → if an uncontested pending
-   list exists and holds exactly `n` ids, tally `sorted(ids) → user`. Clear
-   pending either way.
+1. `[esi] Fetching character details for <ids>` → count one request **in flight**
+   and hold `<ids>` as pending.
+2. `[esi] Fetched <n> character details for <user>` → tally `sorted(ids) → user`
+   **only when exactly one request is in flight** and the pending list holds
+   exactly `n` ids. Then clear pending and decrement the counter.
+
+   A boolean "was the previous request displaced" is not enough, and this was
+   measured: on one real install **10 of 186 tallied observations were recorded
+   while another request was still in flight**. A flag forgets the outstanding
+   request as soon as one answer is dropped, so the *next* pair looks clean while
+   a late reply is still coming — and that pair can hand one account another
+   account's entire character list, as a proposal carrying no conflict and no
+   opposing vote.
+
+   The counter is **reset at each log file boundary**, which is why
+   `read_roster_from` feeds `parse_logs` file by file rather than as one line
+   stream. Without the reset, an request that never got its answer leaves the
+   counter permanently above one and every later pairing is silently lost —
+   measured at 170 of 182 tallies dropped. With it, the real corpus yields the
+   same 10 accounts × 3 disjoint characters that an independent method found.
 3. **Majority vote** per id-set: the user id observed most often wins. A tie
    drops the set.
 4. **Disjointness**: a character id claimed by two surviving accounts drops both
@@ -133,12 +145,26 @@ Accepting a single proposal goes through the existing `confirm_pairing`, so
 single-membership and the hard 3-character cap are enforced by the code that
 already enforces them.
 
-**Accept all** needs one more command, `confirm_pairings(pairs) -> Result<AccountRoster,
-ErrDto>`, applying each pair through the same `confirm` and saving once.
-`confirm_pairing` re-runs discovery and rebuilds the roster per call (the
-`ponytail:` note at `accounts.rs:238`); thirty of those in a row is seconds of
-stall on the headline action. All-or-nothing — the first cap rejection aborts and
-nothing is written.
+**Accept all** needs one more command, `confirm_pairings(pairs) -> BatchConfirm`,
+applying each pair through the same `confirm` and saving once. `confirm_pairing`
+re-runs discovery and rebuilds the roster per call (the `ponytail:` note at
+`accounts.rs:238`); thirty of those in a row is seconds of stall on the headline
+action.
+
+```
+BatchConfirm { roster: AccountRoster, rejected: Vec<Rejected> }
+Rejected { char_id: u64, user_id: u64, reason: String }
+```
+
+**It applies what fits and reports what did not.** A rejection is data, not an
+error — hence no `Result`. The hard 3-character cap counts a target account's
+*existing* characters, so a user carrying one stale wrong pairing on an otherwise
+full account is exactly who trips it — and that user is the one this whole
+feature exists to repair. Aborting their entire roster over one collision, as an
+earlier draft of this spec did, would be the worst possible response to the case
+it was built for. So the batch accepts everything it can and names each pair it
+could not, by character and by account, so the user knows precisely what to
+unpair.
 
 ### 3.3 Frontend — `AccountsView.svelte`
 
@@ -147,6 +173,12 @@ nothing is written.
   launcher log").
 - A single **Accept all** action, labelled with what it will do (e.g. "Accept all
   — 10 accounts, 30 characters"), shown when no proposal conflicts.
+
+  **It must cover exactly the cards on screen and nothing else.** The view scopes
+  its cards to the profile folder the open file lives in; if the accept action
+  reads the unscoped proposal list, it writes pairings for accounts the user has
+  no card for, never saw a ghost for, and had no way to dismiss. That is a write
+  the user did not ask for, which is the one thing this feature may never do.
 - A proposal that contradicts a confirmed pairing marks the filled chip and
   states the disagreement plainly — *"Your launcher log puts ‹name› on
   ‹alias or core_user_<id>›"* — offering **Move it** / **Keep mine**. This is the
