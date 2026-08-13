@@ -1,5 +1,6 @@
 mod accounts;
 mod groups;
+mod launcher;
 mod names;
 mod ops;
 mod prefs;
