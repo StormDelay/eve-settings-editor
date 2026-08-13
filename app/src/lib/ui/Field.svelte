@@ -20,6 +20,7 @@
     ariaLabel,
     id,
     options = [],
+    radioValue,
     placeholder,
     disabled = false,
     disabledReason,
@@ -44,7 +45,15 @@
     label?: string;
     ariaLabel?: string;
     id?: string;
-    options?: { value: string; label: string; group?: string }[];
+    /** `value` is deliberately not narrowed to string: Svelte's select binding
+        stores an option's value on the element rather than stringifying it, so
+        a null placeholder ("Choose a character…") round-trips as null. `disabled`
+        is what makes such a placeholder unselectable once you have moved off it. */
+    options?: { value: unknown; label: string; group?: string; disabled?: boolean }[];
+    /** This radio's own value. `value` then holds the GROUP's selection, so
+        `bind:value` across a set of radios behaves like Svelte's `bind:group`
+        without the caller hand-rolling a native radio and its accent-color. */
+    radioValue?: string;
     placeholder?: string;
     disabled?: boolean;
     disabledReason?: string;
@@ -68,6 +77,11 @@
   const eid = $derived(`${fid}-error`);
   const tip = $derived(disabled && disabledReason ? disabledReason : undefined);
   const box = $derived(kind === "checkbox" || kind === "radio");
+  const grouped = $derived(kind === "radio" && radioValue !== undefined);
+  const ticked = $derived(grouped ? value === radioValue : !!value);
+  const tick = (on: boolean): void => {
+    value = grouped ? (on ? radioValue : value) : on;
+  };
 
   // Runs of the same `group` become an <optgroup>. Two views style `optgroup`
   // today, so this is a required capability rather than a speculative one.
@@ -93,41 +107,38 @@
 
 <div class="field {klass}" class:column={layout === "column"} class:inline={box}>
   {#if label && box}
-    <!-- The control leads for a checkbox or radio, because the label reads as
-         its caption rather than its heading. -->
-    {#if kind === "checkbox"}
+    <!-- The label WRAPS the control for a checkbox or radio. That is how every
+         checkbox in this codebase was already written, it makes the whole row
+         the hit target, and three existing specs reach the caption through
+         `checkbox.closest("label")` — a `for`-paired sibling would return null
+         there and break them. -->
+    <label class="box">
       <input
-        type="checkbox"
-        checked={!!value}
+        type={kind === "checkbox" ? "checkbox" : "radio"}
+        checked={ticked}
         onchange={(e) => {
-          value = e.currentTarget.checked;
+          tick(e.currentTarget.checked);
           onchange?.(e);
         }}
         {...shared}
         {...rest} />
-    {:else}
-      <input
-        type="radio"
-        checked={!!value}
-        onchange={(e) => {
-          value = e.currentTarget.checked;
-          onchange?.(e);
-        }}
-        {...shared}
-        {...rest} />
-    {/if}
-    <label for={fid}>{label}</label>
+      {label}
+    </label>
   {:else}
     {#if label}<label for={fid}>{label}</label>{/if}
     {#if kind === "select"}
       <select bind:value style={width ? `width: ${width}` : undefined} {onchange} {...shared} {...rest}>
-        {#each groups as g (g.name ?? g.items[0].value)}
+        {#each groups as g (g.name ?? g.items[0].label)}
           {#if g.name}
             <optgroup label={g.name}>
-              {#each g.items as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+              {#each g.items as o (o.label)}
+              <option value={o.value} disabled={o.disabled}>{o.label}</option>
+            {/each}
             </optgroup>
           {:else}
-            {#each g.items as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+            {#each g.items as o (o.label)}
+              <option value={o.value} disabled={o.disabled}>{o.label}</option>
+            {/each}
           {/if}
         {/each}
       </select>
@@ -156,11 +167,13 @@
         {...shared}
         {...rest} />
     {:else if box}
+      <!-- No `label` prop: the caller has wrapped this in its own label, or is
+           naming it some other way. HudPanel's rows are exactly that shape. -->
       <input
         type={kind}
-        checked={!!value}
+        checked={ticked}
         onchange={(e) => {
-          value = e.currentTarget.checked;
+          tick(e.currentTarget.checked);
           onchange?.(e);
         }}
         {...shared}
@@ -199,6 +212,13 @@
   label {
     color: var(--text-secondary);
     font-size: var(--t-body);
+  }
+  label.box {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+    cursor: pointer;
   }
 
   /* The one place in the app that styles a native control. */

@@ -10,6 +10,8 @@
     selected,
     indent = 0,
     onclick,
+    disabled = false,
+    disabledReason,
     oncontextmenu,
     actions,
     draggable = false,
@@ -26,6 +28,10 @@
     selected?: boolean;
     indent?: 0 | 1 | 2;
     onclick?: () => void;
+    /** A row that exists but cannot be opened — a preset whose folder failed to
+        read still has to be visible, and has to say why. */
+    disabled?: boolean;
+    disabledReason?: string;
     oncontextmenu?: (e: MouseEvent) => void;
     /** Renders a visible "⋯" opening the same menu as right-click. Phase 1
         passes this ONLY where a visible control already exists — using it on the
@@ -63,10 +69,15 @@
   {oncontextmenu}>
   <!-- aria-hidden: the grip is a texture, and the drag it affords is not
        keyboard-operable anyway. Announcing it would only add noise. -->
-  {#if draggable}<span class="grip" aria-hidden="true">⠿</span>{/if}
+  {#if draggable}<span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>{/if}
   {#if leading}{@render leading()}{/if}
   {#if onclick}
-    <button type="button" class="label" {onclick}>{@render children()}</button>
+    <button
+      type="button"
+      class="label"
+      {disabled}
+      title={disabled ? disabledReason : undefined}
+      {onclick}>{@render children()}</button>
   {:else}
     <span class="label">{@render children()}</span>
   {/if}
@@ -126,6 +137,10 @@
     font: inherit;
     padding: 0;
     cursor: pointer;
+  }
+  button.label:disabled {
+    opacity: var(--o-disabled);
+    cursor: default;
   }
   button.label:focus-visible {
     outline: 2px solid var(--accent);

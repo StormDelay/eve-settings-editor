@@ -5,6 +5,10 @@
   import { primaryProfileDir, profileLabels } from "./profiles";
   import { accountsStore, loadRoster } from "./accounts.svelte";
   import { allPresets, loadPresets, summarise } from "./presetLibrary.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
 
   let { openPath }: { openPath: string | null } = $props();
 
@@ -267,51 +271,68 @@
   <h2>{fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}</h2>
 
   <section>
-    <label for="folder">Profile</label>
-    <select id="folder" value={folder} onchange={(e) => pickFolder(e.currentTarget.value)}>
-      {#each folders as f}<option value={f.dir}>{f.label}</option>{/each}
-    </select>
+    <Field
+      kind="select"
+      id="folder"
+      label="Profile"
+      layout="column"
+      value={folder}
+      onchange={(e) => pickFolder((e.currentTarget as HTMLSelectElement).value)}
+      options={folders.map((f) => ({ value: f.dir, label: f.label }))} />
 
     <div class="head">Source</div>
-    <label class="inline">
-      <input type="radio" name="sourceKind" bind:group={sourceKind} value="character" /> A character
-    </label>
-    <label class="inline">
-      <input type="radio" name="sourceKind" bind:group={sourceKind} value="preset" /> A preset
-    </label>
-    <label class="inline">
-      <input type="radio" name="sourceKind" bind:group={sourceKind} value="file" /> A file, copied as-is
-    </label>
+    <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="character" label="A character" />
+    <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="preset" label="A preset" />
+    <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="file" label="A file, copied as-is" />
 
     {#if sourceKind === "character"}
-      <label for="src">Source character</label>
-      <select id="src" bind:value={sourcePath}>
-        <option value={null} disabled>Choose a character…</option>
-        {#each charsInScope as c}
-          <option value={c.path}>{nameOfChar(c.id, c.file_name)} — {c.file_name}</option>
-        {/each}
-      </select>
+      <Field
+        kind="select"
+        id="src"
+        label="Source character"
+        layout="column"
+        bind:value={sourcePath}
+        options={[
+          { value: null, label: "Choose a character…", disabled: true },
+          ...charsInScope.map((c) => ({
+            value: c.path,
+            label: `${nameOfChar(c.id, c.file_name)} — ${c.file_name}`,
+          })),
+        ]} />
     {:else if sourceKind === "preset"}
-      <label for="srcpreset">Source preset</label>
-      <select id="srcpreset" bind:value={presetDir}>
-        <option value={null} disabled>Choose a preset…</option>
-        {#each allPresets().filter((p) => p.error === null) as p}
-          <option value={p.dir}>{p.name} — {summarise(p)}</option>
-        {/each}
-      </select>
+      <Field
+        kind="select"
+        id="srcpreset"
+        label="Source preset"
+        layout="column"
+        bind:value={presetDir}
+        options={[
+          { value: null, label: "Choose a preset…", disabled: true },
+          ...allPresets()
+            .filter((p) => p.error === null)
+            .map((p) => ({ value: p.dir, label: `${p.name} — ${summarise(p)}` })),
+        ]} />
       {#if allPresets().length === 0}
-        <p class="muted">No presets yet — save one from the sidebar first.</p>
+        <EmptyState title="No presets yet — save one from the sidebar first." />
       {/if}
     {:else}
-      <label for="srcfile">Source file</label>
-      <select id="srcfile" bind:value={sourceFile}>
-        <option value={null} disabled>Choose a file…</option>
-        {#each filesInScope as f}
-          <option value={f.path}>{nameOf(f.kind, f.id, f.file_name)} — {f.file_name}</option>
-        {/each}
-      </select>
-      <p class="muted">The whole file is copied onto every file you tick — character
-        files onto character files, account files onto account files. No pairing needed.</p>
+      <Field
+        kind="select"
+        id="srcfile"
+        label="Source file"
+        layout="column"
+        bind:value={sourceFile}
+        options={[
+          { value: null, label: "Choose a file…", disabled: true },
+          ...filesInScope.map((f) => ({
+            value: f.path,
+            label: `${nameOf(f.kind, f.id, f.file_name)} — ${f.file_name}`,
+          })),
+        ]} />
+      <InlineMessage>
+        The whole file is copied onto every file you tick — character files onto character files,
+        account files onto account files. No pairing needed.
+      </InlineMessage>
     {/if}
   </section>
 
@@ -320,12 +341,13 @@
       <section>
         <div class="head">What to copy</div>
         {#each ASPECTS.filter((a) => offered.includes(a.key)) as a}
-          <label class:disabled={everything && a.key !== "everything"}>
-            <input type="checkbox" checked={selected.has(a.key)}
-              disabled={everything && a.key !== "everything"}
-              onchange={() => toggleAspect(a.key)} />
-            {a.label}
-          </label>
+          <Field
+            kind="checkbox"
+            label={a.label}
+            value={selected.has(a.key)}
+            disabled={everything && a.key !== "everything"}
+            disabledReason="Everything already covers this"
+            onchange={() => toggleAspect(a.key)} />
         {/each}
       </section>
     {/if}
@@ -333,17 +355,25 @@
     <section>
       <div class="head">
         {fileMode ? "Copy onto" : "Target characters"}
-        <button type="button" class="linkbtn" onclick={selectAllTargets}>Select all</button>
-        <button type="button" class="linkbtn" onclick={clearTargets}>Clear</button>
-        <label class="inline"><input type="checkbox" bind:checked={allowOtherFolders} /> Show other folders</label>
+        <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={selectAllTargets}>
+          Select all
+        </Button>
+        <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={clearTargets}>Clear</Button>
+        <Field kind="checkbox" label="Show other folders" bind:value={allowOtherFolders} />
       </div>
       {#if candidates.length === 0}
-        <p class="muted">{fileMode ? "No other file of this kind in reach." : "No other character files found."}</p>
+        <EmptyState
+          title={fileMode ? "No other file of this kind in reach." : "No other character files found."} />
       {:else}
+        <!-- The row stays a hand-written wrapping label rather than a Field: its
+             caption is three spans, not a string, and BatchView.spec reads the
+             whole label's text to check what a disabled target says. -->
         {#each candidates as c}
           <label class:disabled={targetDisabled(c.id)}>
             <input type="checkbox" checked={selectedTargets.has(c.path) && !targetDisabled(c.id)}
-              disabled={targetDisabled(c.id)} onchange={() => toggleTarget(c.path)} />
+              disabled={targetDisabled(c.id)}
+              title={targetDisabled(c.id) ? "Pair this character in the Accounts view first" : undefined}
+              onchange={() => toggleTarget(c.path)} />
             {nameOf(c.kind, c.id, c.file_name)}
             <span class="muted">{c.file_name}{c.dir === folder ? "" : ` · ${folderLabelOf(c.dir)}`}</span>
             {#if targetDisabled(c.id)}<span class="muted"> — pair in the Accounts view to include</span>{/if}
@@ -356,9 +386,9 @@
          no plan, and in the character flow this warns before the plan lands. -->
     {#if targetsOpenFile}
       <section class="preview">
-        <p class="warn">⚠ One target is the file open in the editor. Its on-screen
+        <InlineMessage variant="warn">⚠ One target is the file open in the editor. Its on-screen
           copy will be out of date after this runs — reload it before editing
-          further, or your next save will collide with what this wrote.</p>
+          further, or your next save will collide with what this wrote.</InlineMessage>
       </section>
     {/if}
 
@@ -366,22 +396,22 @@
       {#if effectiveTargets.length > 0}
         <section class="preview">
           <p>Will write {effectiveTargets.length} file(s) — each is backed up first.</p>
-          <p class="warn">⚠ Each target is replaced whole — every setting it holds,
+          <InlineMessage variant="warn">⚠ Each target is replaced whole — every setting it holds,
             including ones this editor does not show.{#if sourceFileKind === "user"} An
-            account file carries the settings of every character on that account.{/if}</p>
+            account file carries the settings of every character on that account.{/if}</InlineMessage>
         </section>
       {/if}
     {:else if plan}
       <section class="preview">
         {#if plan.source_error}
-          <p class="err">{plan.source_error}</p>
+          <InlineMessage variant="error">{plan.source_error}</InlineMessage>
         {:else}
           <p>Will write {plan.char_writes.length + plan.account_writes.length} file(s) — each is backed up first.</p>
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
-            <p class="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</p>
+            <InlineMessage variant="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</InlineMessage>
           {/each}
           {#each plan.account_writes as w}
-            <p class="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</p>
+            <InlineMessage variant="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</InlineMessage>
           {/each}
           {#each plan.excluded as ex}
             <p class="muted">Excluded {nameOfChar(ex.char_id, `char ${ex.char_id}`)} — {ex.reason}</p>
@@ -391,8 +421,12 @@
     {/if}
 
     <section>
-      <button disabled={!canApply} onclick={apply}>{busy ? "Copying…" : "Copy"}</button>
-      {#if error}<p class="err">{error}</p>{/if}
+      <Button
+        variant="primary"
+        disabled={!canApply}
+        disabledReason={busy ? "A copy is already running" : "Pick a source and at least one target"}
+        onclick={apply}>{busy ? "Copying…" : "Copy"}</Button>
+      {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
     </section>
 
     {#if results}
@@ -410,20 +444,20 @@
 </div>
 
 <style>
-  .batch { padding: 1rem; max-width: 46rem; }
-  section { margin: 0.75rem 0; }
-  .head { font-weight: 600; margin-bottom: 0.25rem; display: flex; gap: 1rem; align-items: baseline; }
-  label { display: block; padding: 0.15rem 0; }
-  label.disabled { opacity: 0.5; }
-  label.inline { display: inline; font-weight: 400; }
-  .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
-  .linkbtn:hover { text-decoration: underline; }
-  select, option { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit; }
-  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
-  .muted { color: var(--fg-dim); }
-  .preview p { margin: 0.15rem 0; }
-  .warn { color: #d0a000; }
-  .err, .fail { color: #e06c6c; }
-  .ok { color: #6cc06c; }
-  button { padding: 0.35rem 0.9rem; }
+  /* The select/option and accent-color rules are gone — Field owns them. The
+     .warn/.err/.ok colour trio is gone too: those were three more spellings of
+     --warn/--danger/--ok, and the paragraphs they coloured are InlineMessages
+     now, which carry the meaning in a rail rather than in the body text. */
+  .batch { padding: var(--s4); max-width: 46rem; }
+  section { margin: var(--s3) 0; }
+  /* BatchView.spec finds each section through this class. */
+  .head { font-weight: 600; margin-bottom: var(--s1); display: flex; gap: var(--s4); align-items: baseline; }
+  label { display: block; padding: 0; }
+  label.disabled { opacity: var(--o-disabled); }
+  .batch :global(.linkbtn) { color: var(--accent); padding: 0; }
+  .batch :global(.linkbtn:hover) { text-decoration: underline; background: none; }
+  .muted { color: var(--text-muted); }
+  .preview p { margin: var(--s1) 0; }
+  .fail { color: var(--danger); }
+  .ok { color: var(--ok); }
 </style>

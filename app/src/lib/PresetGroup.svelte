@@ -3,6 +3,11 @@
   import { api, errMessage, type Aspect, type PresetInfo } from "./api";
   import { allPresets, loadPresets, setPresets, summarise } from "./presetLibrary.svelte";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import ListRow from "./ui/ListRow.svelte";
 
   let { onOpenPreset, charOpen, userOpen, openPresetName }: {
     onOpenPreset: (p: PresetInfo) => void;
@@ -159,50 +164,78 @@
 <details open>
   <summary>Presets</summary>
   <div class="actions">
-    <button onclick={() => (creating = !creating)} disabled={!charOpen && !userOpen}
+    <Button onclick={() => (creating = !creating)} disabled={!charOpen && !userOpen}
+      disabledReason="Open a character first"
       title={charOpen || userOpen ? "Save the open character's settings as a preset" : "Open a character first"}
-      >New from open character…</button>
-    <button onclick={importPreset} disabled={busy}>Import…</button>
+      >New from open character…</Button>
+    <Button onclick={importPreset} disabled={busy} disabledReason="A preset command is in flight">
+      Import…
+    </Button>
   </div>
 
   {#if creating}
     <form class="new" onsubmit={(e) => { e.preventDefault(); void create(); }}>
-      <input placeholder="Preset name" bind:value={newName} />
+      <Field placeholder="Preset name" ariaLabel="Preset name" bind:value={newName} />
       {#each ASPECTS as a}
-        <label
-          class:disabled={(everything && a.key !== "everything") || (a.needsUser && !userOpen)}>
-          <input type="checkbox" checked={picked.has(a.key)}
-            disabled={(everything && a.key !== "everything") || (a.needsUser && !userOpen)}
-            onchange={() => toggle(a.key)} />
-          {a.label}
-        </label>
+        {@const off = (everything && a.key !== "everything") || (a.needsUser && !userOpen)}
+        <Field
+          kind="checkbox"
+          class="aspect"
+          label={a.label}
+          value={picked.has(a.key)}
+          disabled={off}
+          disabledReason={everything && a.key !== "everything"
+            ? "Everything already covers this"
+            : "Open an account file first"}
+          onchange={() => toggle(a.key)} />
       {/each}
       <!-- Sits under the Everything checkbox, which is last in ASPECTS. The
            export confirm guards SHARING a full preset; this guards choosing to
            capture one, which is the moment the history gets snapshotted. -->
-      <p class="hint">Everything copies both settings files whole, including your autofill history — station names, searches and typed text.</p>
+      <InlineMessage class="everything-note">
+        Everything copies both settings files whole, including your autofill history — station names,
+        searches and typed text.
+      </InlineMessage>
       <div class="actions">
-        <button type="submit" disabled={busy || !newName.trim() || picked.size === 0}>Save</button>
-        <button type="button" onclick={() => (creating = false)}>Cancel</button>
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={busy || !newName.trim() || picked.size === 0}
+          disabledReason={!newName.trim() ? "Name the preset first" : "Pick at least one thing to copy"}
+          >Save</Button>
+        <Button type="button" onclick={() => (creating = false)}>Cancel</Button>
       </div>
     </form>
   {/if}
 
   {#if allPresets().length === 0}
-    <p class="hint">No presets yet. Open a character and save one.</p>
+    <EmptyState title="No presets yet." description="Open a character and save one." />
   {:else}
     <ul>
       {#each allPresets() as p (p.dir)}
         <li>
           {#if renaming === p.name}
-            <input bind:value={renameTo} onblur={commitRename}
-              onkeydown={(e) => { if (e.key === "Enter") void commitRename(); if (e.key === "Escape") renaming = null; }} />
+            <Field
+              class="rename"
+              ariaLabel="Rename preset"
+              bind:value={renameTo}
+              onblur={commitRename}
+              onkeydown={(e: KeyboardEvent) => {
+                if (e.key === "Enter") void commitRename();
+                if (e.key === "Escape") renaming = null; }} />
           {:else}
-            <button class="file" onclick={() => onOpenPreset(p)} oncontextmenu={(e) => openMenu(e, p)}
-              disabled={p.error !== null} title={p.error ?? p.dir}>
+            <!-- Right-click only, deliberately. ListRow's `actions` would put a
+                 visible "⋯" here, and adding a control is a behaviour change —
+                 that is Phase 4's job, and it is a one-argument change then. -->
+            <ListRow
+              onclick={() => onOpenPreset(p)}
+              oncontextmenu={(e) => openMenu(e, p)}
+              disabled={p.error !== null}
+              disabledReason={p.error ?? undefined}
+              title={p.error ?? p.dir}>
               {p.name}
               <span class="meta">{summarise(p)}</span>
-            </button>
+            </ListRow>
           {/if}
         </li>
       {/each}
@@ -215,21 +248,13 @@
 {/if}
 
 <style>
-  /* Native controls render light in the dark WebView2 app unless told otherwise.
-     Covers both the create-form name field and the inline rename field. */
-  input:not([type]) {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 3px 6px;
-    font: inherit;
-  }
-  input[type="checkbox"] { accent-color: var(--accent); }
-  .new { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.35rem 0.1rem; }
-  .new label { display: flex; align-items: center; gap: 0.4em; font-size: 0.9em; }
-  .new label.disabled { opacity: 0.5; }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0.25rem 0; }
-  .hint { opacity: 0.7; font-size: 0.85em; padding: 0.25rem 0.1rem; }
-  .meta { color: var(--fg-dim); font-size: 0.85em; margin-left: 0.4em; }
+  /* The two "give the native control explicit dark colours" rules are gone —
+     Field owns that now, in one place. */
+  .new { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s1) 0; }
+  .new :global(.aspect label) { font-size: var(--t-body); }
+  .actions { display: flex; gap: var(--s2); flex-wrap: wrap; padding: var(--s1) 0; }
+  .new :global(.everything-note) { margin: var(--s1) 0; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { list-style: none; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s1); }
 </style>
