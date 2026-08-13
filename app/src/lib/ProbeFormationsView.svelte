@@ -7,6 +7,12 @@
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
   import FormationPicker from "./FormationPicker.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import ListRow from "./ui/ListRow.svelte";
+  import ScopeBanner from "./ui/ScopeBanner.svelte";
 
   let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
@@ -292,8 +298,15 @@
   }
 
   /** A copy leaves no trace on screen — the clipboard is invisible and nothing
-   * in the file changed — so say so. Same flash the sidebar uses for its own
-   * silent action. */
+   * in the file changed — so say so.
+   *
+   * Deliberately NOT a toast, though §5.12 nominates this as one of the three
+   * `.flash` sites Toast replaces. The Toast host is mounted once in
+   * +page.svelte, and this view's spec mounts the view alone — so routing this
+   * through it makes the confirmation invisible to the test that checks it
+   * exists. Phase 1's acceptance gate is that all 37 spec files pass untouched,
+   * and that gate outranks the component-mapping table. It becomes a toast in
+   * Phase 5, which owns the dialog diet and can move the assertion with it. */
   let flash = $state<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -462,73 +475,78 @@
 <svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 {#if !userOpen}
+  <!-- Kept as a paragraph rather than an EmptyState: the sentence wraps a
+       button mid-clause, which EmptyState's plain-string title cannot hold. -->
   <p class="hint">
     Probe formations live in the account file.
-    <button class="link" onclick={onShowAccounts}>Pair this character with its account</button>
+    <Button variant="ghost" onclick={onShowAccounts}>Pair this character with its account</Button>
     to edit them.
   </p>
 {:else if error}
-  <p class="error">{error}</p>
+  <InlineMessage variant="error">{error}</InlineMessage>
 {:else if loaded}
   <!-- One column filling the tab, so the banner takes its own height off the
        top instead of the editor below assuming it has the whole tab and
        running that much past the bottom. -->
   <div class="probes-tab">
-  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
+  <ScopeBanner label={sharedLabel ?? ""} />
   <div class="probes">
     <aside class="formation-list">
       <ul>
         {#each loaded.formations as f (f.id)}
           <li>
-            <button class:active={f.id === selectedId} onclick={() => select(f)}>{f.name}</button>
+            <ListRow selected={f.id === selectedId} onclick={() => select(f)}>{f.name}</ListRow>
           </li>
         {/each}
       </ul>
       <div class="list-actions">
-        <button onclick={createNew}>New</button>
-        <button onclick={duplicate} disabled={!current}>Duplicate</button>
-        <button class="danger" onclick={remove} disabled={!current}>Delete</button>
+        <Button onclick={createNew}>New</Button>
+        <Button onclick={duplicate} disabled={!current} disabledReason="Pick a formation first">
+          Duplicate
+        </Button>
+        <Button variant="danger" onclick={remove} disabled={!current} disabledReason="Pick a formation first">
+          Delete
+        </Button>
       </div>
       <!-- The sharing group, kept together in its own row. Copy and Paste are a
            pair, and a user hunting for one looks where the other is — Copy sat
            beside the AU/km toggle at first and was simply not found. -->
       <div class="list-actions">
-        <button onclick={copyFormation} disabled={!current}
-                title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
-        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
-        <button onclick={exportFormations} disabled={!visible.length}
-                title="Write formations out as a shareable file">Export…</button>
-        <button onclick={importFormations} title="Add formations from a shared file">Import…</button>
+        <Button onclick={copyFormation} disabled={!current} disabledReason="Pick a formation first"
+                title="Copy this formation to the clipboard (Ctrl+C)">Copy</Button>
+        <Button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</Button>
+        <Button onclick={exportFormations} disabled={!visible.length}
+                disabledReason="There are no formations to export"
+                title="Write formations out as a shareable file">Export…</Button>
+        <Button onclick={importFormations} title="Add formations from a shared file">Import…</Button>
       </div>
-      {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
+      {#if flash}<InlineMessage variant="success">{flash}</InlineMessage>{/if}
     </aside>
 
     {#if current}
       <section class="formation">
         <div class="row">
-          <label>
-            Name
-            <input value={draftName}
-                   oninput={(e) => (draftName = e.currentTarget.value)}
-                   onblur={blurField} />
-          </label>
-          <label>
-            Range (all probes)
-            <!-- Always AU, and always one of EVE's slider stops: the in-game
-                 control has no free value, so neither does this. A picker also
-                 makes a non-positive range unwritable by construction. -->
-            <select aria-label="range for every probe"
-                    value={uniformRange}
-                    onchange={(e) => setAllRanges(Number(e.currentTarget.value))}>
-              {#each RANGE_STEPS_M as m, i}
-                <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
-              {/each}
-            </select>
-          </label>
+          <Field
+            label="Name"
+            layout="column"
+            value={draftName}
+            oninput={(e) => (draftName = (e.currentTarget as HTMLInputElement).value)}
+            onblur={blurField} />
+          <!-- Always AU, and always one of EVE's slider stops: the in-game
+               control has no free value, so neither does this. A picker also
+               makes a non-positive range unwritable by construction. -->
+          <Field
+            kind="select"
+            label="Range (all probes)"
+            layout="column"
+            aria-label="range for every probe"
+            value={uniformRange}
+            onchange={(e) => setAllRanges(Number((e.currentTarget as HTMLSelectElement).value))}
+            options={RANGE_STEPS_M.map((m, i) => ({ value: m, label: `${RANGE_STEPS_AU[i]} AU` }))} />
           <span class="units">
             <span class="meta">probe positions in</span>
-            <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
-            <button class:active={unit === "km"} onclick={() => (unit = "km")}>km</button>
+            <Button size="sm" pressed={unit === "au"} onclick={() => (unit = "au")}>AU</Button>
+            <Button size="sm" pressed={unit === "km"} onclick={() => (unit = "km")}>km</Button>
           </span>
         </div>
 
@@ -549,59 +567,63 @@
                 <td>{n + 1}</td>
                 {#each [0, 1, 2] as axis}
                   <td class="u" data-unit={unitLabel}>
-                    <input aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
+                    <Field aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
                            value={shown(`${n}:${axis}`, formatUnit(p[axis], unit))}
-                           oninput={(e) => { typeField(`${n}:${axis}`, e.currentTarget.value);
-                             setAxis(n, axis as 0 | 1 | 2, e.currentTarget.value); }}
+                           oninput={(e) => { typeField(`${n}:${axis}`, (e.currentTarget as HTMLInputElement).value);
+                             setAxis(n, axis as 0 | 1 | 2, (e.currentTarget as HTMLInputElement).value); }}
                            onfocus={() => focusField(`${n}:${axis}`, formatUnit(p[axis], unit))}
                            onblur={blurField} />
                   </td>
                 {/each}
                 <td class="u" data-unit={unitLabel}>
-                  <input aria-label={`probe ${n + 1} distance`}
+                  <Field aria-label={`probe ${n + 1} distance`}
                          value={shown(`${n}:dist`, formatUnit(s.r, unit))}
-                         oninput={(e) => { typeField(`${n}:dist`, e.currentTarget.value);
-                           setDistance(n, e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:dist`, (e.currentTarget as HTMLInputElement).value);
+                           setDistance(n, (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:dist`, formatUnit(s.r, unit))}
                          onblur={blurField} />
                 </td>
                 <td class="u" data-unit="°">
-                  <input aria-label={`probe ${n + 1} azimuth`}
+                  <Field aria-label={`probe ${n + 1} azimuth`}
                          value={shown(`${n}:az`, s.az.toFixed(1))}
-                         oninput={(e) => { typeField(`${n}:az`, e.currentTarget.value);
-                           setAngle(n, "az", e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:az`, (e.currentTarget as HTMLInputElement).value);
+                           setAngle(n, "az", (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:az`, s.az.toFixed(1))}
                          onblur={blurField} />
                 </td>
                 <td class="u" data-unit="°">
-                  <input aria-label={`probe ${n + 1} elevation`}
+                  <Field aria-label={`probe ${n + 1} elevation`}
                          value={shown(`${n}:el`, s.el.toFixed(1))}
-                         oninput={(e) => { typeField(`${n}:el`, e.currentTarget.value);
-                           setAngle(n, "el", e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:el`, (e.currentTarget as HTMLInputElement).value);
+                           setAngle(n, "el", (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:el`, s.el.toFixed(1))}
                          onblur={blurField} />
                 </td>
                 <td>
-                  <select aria-label={`probe ${n + 1} range`}
-                          value={draftRanges[n]}
-                          onchange={(e) => setRange(n, Number(e.currentTarget.value))}>
-                    {#each RANGE_STEPS_M as m, i}
-                      <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
-                    {/each}
-                    {#if !RANGE_STEPS_M.includes(draftRanges[n])}
-                      <!-- A range this file holds that EVE's slider cannot
-                           produce. Offered so the value is shown rather than
-                           silently snapped to a neighbour. -->
-                      <option value={draftRanges[n]}>
-                        {formatUnit(draftRanges[n], "au")} AU (not a slider stop)
-                      </option>
-                    {/if}
-                  </select>
+                  <!-- A range this file holds that EVE's slider cannot produce
+                       is offered as an extra option, so the value is shown
+                       rather than silently snapped to a neighbour. -->
+                  <Field
+                    kind="select"
+                    aria-label={`probe ${n + 1} range`}
+                    value={draftRanges[n]}
+                    onchange={(e) => setRange(n, Number((e.currentTarget as HTMLSelectElement).value))}
+                    options={[
+                      ...RANGE_STEPS_M.map((m, i) => ({ value: m, label: `${RANGE_STEPS_AU[i]} AU` })),
+                      ...(RANGE_STEPS_M.includes(draftRanges[n])
+                        ? []
+                        : [{ value: draftRanges[n],
+                             label: `${formatUnit(draftRanges[n], "au")} AU (not a slider stop)` }]),
+                    ]} />
                 </td>
                 <td>
-                  <button class="mini-visible" title="Remove this probe"
+                  <!-- Was `.mini-visible`, the workaround written twice because
+                       `.mini` was invisible outside a `.row`. The trap is gone,
+                       so the workaround goes with it. -->
+                  <Button variant="ghost" size="sm" iconOnly title="Remove this probe"
                           disabled={draftProbes.length <= 1}
-                          onclick={() => { removeProbe(n); commit(); }}>×</button>
+                          disabledReason="A formation needs at least one probe"
+                          onclick={() => { removeProbe(n); commit(); }}>×</Button>
                 </td>
               </tr>
             {/each}
@@ -609,10 +631,11 @@
         </table>
         <!-- Wrapped, so the column layout below keeps these two on one line. -->
         <div class="probe-actions">
-          <button onclick={() => { addProbe(); commit(); }}
-                  disabled={draftProbes.length >= MAX_PROBES}>
+          <Button onclick={() => { addProbe(); commit(); }}
+                  disabled={draftProbes.length >= MAX_PROBES}
+                  disabledReason="A formation holds at most {MAX_PROBES} probes">
             + probe
-          </button>
+          </Button>
           <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
         </div>
 
@@ -623,11 +646,11 @@
                      onmove={moveProbe}
                      oncommit={() => { if (draftChanged()) commit(); }} />
         {#each sceneProblems as p (p)}
-          <p class="hint">Scene not loaded — {p}</p>
+          <InlineMessage variant="warn">Scene not loaded — {p}</InlineMessage>
         {/each}
       </section>
     {:else}
-      <p class="hint">This account has no custom probe formations yet.</p>
+      <EmptyState title="This account has no custom probe formations yet." />
     {/if}
   </div>
   </div>
@@ -639,23 +662,19 @@
 {/if}
 
 <style>
-  /* Native controls render light in the dark WebView2 shell unless told
-     otherwise — see the dark-native-controls note in the repo memory. */
-  input, select {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit;
-  }
+  /* The dark-native-control rule is gone: Field is the only place in the app
+     that styles an input or a select now. */
   .probes-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-  .probes { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
+  .probes { display: flex; gap: var(--s4); align-items: flex-start; flex: 1; min-height: 0; }
   .formation-list {
-    flex: 0 0 14rem; display: flex; flex-direction: column; gap: 0.5rem;
-    border-right: 1px solid var(--border); padding-right: 1rem;
+    flex: 0 0 14rem; display: flex; flex-direction: column; gap: var(--s2);
+    border-right: 1px solid var(--border); padding-right: var(--s4);
   }
-  .formation-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .formation-list li button { width: 100%; text-align: left; border: none; background: none; padding: 3px 6px; }
-  .formation-list li button.active { background: var(--accent); color: var(--bg); border-radius: 3px; }
-  .list-actions { display: flex; flex-wrap: wrap; gap: 4px; }
-  .list-actions .danger { border-color: #a33; }
+  .formation-list ul {
+    list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0;
+  }
+  .formation-list li { list-style: none; }
+  .list-actions { display: flex; flex-wrap: wrap; gap: var(--s1); }
   /* A column, so the viewer can take exactly the height the table leaves it
      rather than a fixed box that runs off the bottom of the window. Everything
      above it keeps its natural height; only the viewer flexes. */
@@ -669,21 +688,19 @@
   }
   .formation > :not(:last-child) { flex: none; }
   .probe-actions { display: flex; align-items: center; }
-  .formation .row { display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 0.5rem; }
-  .formation label { display: flex; flex-direction: column; gap: 2px; font-size: 0.85em; color: var(--fg-dim); }
-  .units { display: flex; gap: 2px; }
-  .units button { padding: 1px 8px; font-size: 0.85em; }
-  .units button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .formation .row { display: flex; align-items: flex-end; gap: var(--s4); margin-bottom: var(--s2); }
+  .formation :global(.field label) { font-size: var(--t-caption); color: var(--text-muted); }
+  .units { display: flex; align-items: center; gap: var(--s1); }
   /* `width: auto` and not 100%: a full-width table spreads the leftover space
      between the columns, which put the X/Y/Z fields an inch apart. Let the
      columns hug their inputs instead. */
-  table { border-collapse: collapse; width: auto; margin: 0.5rem 0; }
-  th, td { padding: 2px 4px; text-align: left; }
-  th { color: var(--fg-dim); font-weight: 400; font-size: 0.85em; white-space: nowrap; }
-  tr.selected td { background: rgba(79, 156, 240, 0.12); }
-  td input { width: 7rem; }
+  table { border-collapse: collapse; width: auto; margin: var(--s2) 0; }
+  th, td { padding: 0 var(--s1); text-align: left; }
+  th { color: var(--text-muted); font-weight: 400; font-size: var(--t-caption); white-space: nowrap; }
+  tr.selected td { background: var(--accent-dim); }
+  td :global(input) { width: 7rem; }
   /* The angle columns hold at most "-180.0". */
-  td:nth-child(6) input, td:nth-child(7) input { width: 5.5rem; }
+  td:nth-child(6) :global(input), td:nth-child(7) :global(input) { width: 5.5rem; }
   /* The unit rides inside the field, dimmed, as a pseudo-element: it cannot be
      selected or clicked, so it never lands in a copied value or steals focus
      from the input it labels. `padding-right` keeps the digits clear of it. */
@@ -691,18 +708,11 @@
   td.u::after {
     content: attr(data-unit);
     position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-    color: var(--fg-dim); font-size: 0.85em;
+    color: var(--text-muted); font-size: var(--t-caption);
     pointer-events: none; user-select: none;
   }
-  td.u input { padding-right: 2.1rem; }
-  td.u[data-unit="°"] input { padding-right: 1.3rem; }
-  /* `.mini` is opacity 0 unless it sits inside a `.node .row`, which only the
-     tree view has — so the remove button was invisible here. `.mini-visible`
-     is the codebase's own always-shown variant; it just lacks the danger tint. */
-  td .mini-visible:hover { border-color: var(--danger); color: var(--danger); }
-  .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
-  }
+  td.u :global(input) { padding-right: 2.1rem; }
+  td.u[data-unit="°"] :global(input) { padding-right: 1.3rem; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
+  .hint { color: var(--text-muted); padding: var(--s3); }
 </style>

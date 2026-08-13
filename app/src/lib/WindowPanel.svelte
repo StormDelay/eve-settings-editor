@@ -4,6 +4,11 @@
   import { windowMatches, isOrphanFrame, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ChatSplit from "$lib/ChatSplit.svelte";
+  import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import SearchField from "./ui/SearchField.svelte";
 
   let {
     windows,
@@ -74,10 +79,15 @@
     focusFilter?: () => void;
   } = $props();
 
-  let filterInput: HTMLInputElement | undefined = $state();
+  let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  // Per-row selection for the two "stack with…" pickers, cleared as soon as the
+  // pick is acted on so each control returns to its prompt.
+  let addPick: Record<string, string> = $state({});
+  let withPick: Record<string, string> = $state({});
   focusFilter = () => {
     filterInput?.focus();
-    filterInput?.select();
+    // Field's `element` is typed for either control; only an input can select.
+    if (filterInput instanceof HTMLInputElement) filterInput.select();
   };
 
   // Counted from the same predicate the filter uses, so the offer can never
@@ -220,10 +230,11 @@
 {#snippet rowHead(w: WindowRect)}
   {@const n = nameOf(w)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
-  <input
-    type="checkbox"
-    checked={w.open}
+  <Field
+    kind="checkbox"
+    value={w.open}
     disabled={readOnly || openFlag?.set.how === "unavailable"}
+    disabledReason="Not present in this file"
     title="Open (shown on the canvas)"
     aria-label="Open (shown on the canvas)"
     onchange={() => onToggleOpen(w)} />
@@ -235,13 +246,13 @@
     {n.label}{#if n.detail}<span class="detail">{n.detail}</span>{/if}
   </button>
   {#if !w.renderable}
-    <span class="badge warn" title="Geometry is not a 6-tuple — edit in the raw tree">
+    <Chip tone="warn" size="sm" title="Geometry is not a 6-tuple — edit in the raw tree">
       unrenderable
-    </span>
+    </Chip>
   {:else if !w.resolution_matches}
-    <span class="badge warn" title="Saved at a different resolution than the canvas">
+    <Chip tone="warn" size="sm" title="Saved at a different resolution than the canvas">
       {w.geom?.screen_w}×{w.geom?.screen_h}
-    </span>
+    </Chip>
   {/if}
 {/snippet}
 
@@ -252,10 +263,11 @@
       {#each COORDS as field}
         <label title="right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
           {field}
-          <input
-            type="number"
+          <Field
+            kind="number"
             value={g[field]}
             disabled={readOnly}
+            disabledReason="This file is read-only"
             onchange={numberEdit(w, field)} />
         </label>
       {/each}
@@ -266,10 +278,11 @@
           class="flag"
           title={f.set.how === "unavailable" ? "Not present in this file" : "right-click for actions"}
           oncontextmenu={(e) => openMenu(e, flagMenu(w, f))}>
-          <input
-            type="checkbox"
-            checked={f.value}
+          <Field
+            kind="checkbox"
+            value={f.value}
             disabled={readOnly || f.set.how === "unavailable"}
+            disabledReason={f.set.how === "unavailable" ? "Not present in this file" : "This file is read-only"}
             onchange={(e) => onFlag(w, f, (e.target as HTMLInputElement).checked)} />
           {f.name}
         </label>
@@ -309,43 +322,46 @@
     {#if w.renderable && (stacks.length > 0 || stackTargets.length > 0)}
       <div class="free-controls">
         {#if stacks.length > 0}
-          <select
+          <Field
+            kind="select"
             aria-label="Add to stack"
             disabled={readOnly}
-            value=""
-            onchange={(e) => {
-              const el = e.currentTarget as HTMLSelectElement;
-              const v = el.value;
-              el.value = "";
+            disabledReason="This file is read-only"
+            bind:value={addPick[w.id]}
+            onchange={() => {
+              const v = addPick[w.id];
+              addPick[w.id] = "";
               if (v) onAddToStack(w.id, v);
-            }}>
-            <option value="" disabled>Add to stack…</option>
-            {#each stacks as s (s.container_id)}
-              <option value={s.container_id}>{stackLabel(s) ?? displayName(s.container_id)}</option>
-            {/each}
-          </select>
+            }}
+            options={[
+              { value: "", label: "Add to stack…", disabled: true },
+              ...stacks.map((s) => ({
+                value: s.container_id,
+                label: stackLabel(s) ?? displayName(s.container_id),
+              })),
+            ]} />
         {/if}
         {#if stackTargets.length > 0}
-          <select
+          <!-- An <option> has no hover title, so unlike rowHead's two separate
+               spans this keeps the detail inline — dropping it would make two
+               same-family unnamed windows (e.g. two chat channels)
+               indistinguishable in the dropdown again (the bug 854b0d7
+               "Disambiguate stack dropdowns" fixed). -->
+          <Field
+            kind="select"
             aria-label="Stack with another window"
             disabled={readOnly}
-            value=""
-            onchange={(e) => {
-              const el = e.currentTarget as HTMLSelectElement;
-              const v = el.value;
-              el.value = "";
+            disabledReason="This file is read-only"
+            bind:value={withPick[w.id]}
+            onchange={() => {
+              const v = withPick[w.id];
+              withPick[w.id] = "";
               if (v) onCreateStack(w.id, v);
-            }}>
-            <option value="" disabled>Stack with…</option>
-            {#each stackTargets as other (other.id)}
-              <!-- An <option> has no hover title, so unlike rowHead's two
-                   separate spans this keeps the detail inline — dropping it
-                   would make two same-family unnamed windows (e.g. two chat
-                   channels) indistinguishable in the dropdown again (the bug
-                   854b0d7 "Disambiguate stack dropdowns" fixed). -->
-              <option value={other.id}>{displayNameOf(other)}</option>
-            {/each}
-          </select>
+            }}
+            options={[
+              { value: "", label: "Stack with…", disabled: true },
+              ...stackTargets.map((other) => ({ value: other.id, label: displayNameOf(other) })),
+            ]} />
         {/if}
       </div>
     {/if}
@@ -357,49 +373,47 @@
 
 <div class="window-panel">
   <div class="filters">
-    <input
-      type="search"
-      placeholder="Filter windows…"
+    <!-- aria-label passed as a raw attribute so it stays "Filter windows"
+         exactly: SearchField names the box from its built placeholder, which
+         carries a trailing ellipsis, and WindowPanel.spec looks it up by the
+         bare phrase. -->
+    <SearchField
+      nouns="windows"
       aria-label="Filter windows"
-      bind:this={filterInput}
+      bind:element={filterInput}
       bind:value={filter.text} />
     <!-- The one filter whose name overclaims, so it is the one that most needs
          a tooltip: EVE's flag is sticky, and a window it still calls open may
          well not be on screen. See docs/format-notes.md, "openWindows is
          sticky". -->
-    <label
+    <Field
+      kind="checkbox"
       class="toggle"
-      title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas.">
-      <input type="checkbox" bind:checked={filter.openOnly} />
-      Open only
-    </label>
-    <label
+      label="Open only"
+      bind:value={filter.openOnly}
+      title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas." />
+    <Field
+      kind="checkbox"
       class="toggle"
-      title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay.">
-      <input type="checkbox" bind:checked={filter.hideClutter} />
-      Hide clutter
-    </label>
+      label="Hide clutter"
+      bind:value={filter.hideClutter}
+      title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay." />
     <div
       class="envs"
       role="radiogroup"
       aria-label="Environment"
       title="Shows only the windows that exist in one environment. Station and player structure are one “Docked” view — EVE stores a single position per window, so this filters the picture, it does not switch layouts. A window the editor does not recognise shows in both.">
       {#each [["all", "All"], ["docked", "Docked"], ["space", "In space"]] as const as [value, label]}
-        <label class="toggle">
-          <input type="radio" name="env" {value} bind:group={filter.env} />
-          {label}
-        </label>
+        <Field kind="radio" class="toggle" name="env" radioValue={value} {label} bind:value={filter.env} />
       {/each}
     </div>
   </div>
   {#if orphanCount > 0 && !readOnly}
-    <div class="orphans">
-      <span>
-        {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
-        rectangle with nothing in it.
-      </span>
-      <button type="button" onclick={onDeleteOrphans}>Delete them</button>
-    </div>
+    <InlineMessage variant="warn" class="orphans">
+      {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
+      rectangle with nothing in it.
+      <Button size="sm" type="button" onclick={onDeleteOrphans}>Delete them</Button>
+    </InlineMessage>
   {/if}
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
@@ -414,12 +428,14 @@
           class:selected={stack.container_id === selectedId}
           use:scrollOnSelect={stack.container_id === selectedId}>
           <div class="row-head">
-            <button
-              class="caret"
-              aria-label="Collapse stack"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              title="Collapse stack"
               onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
               {collapsed[stack.container_id] ? "▸" : "▾"}
-            </button>
+            </Button>
             <span class="frame-label" title="Stack frame">frame</span>
             <!-- "frame" is the type marker (always present, even for an
                  unpaired character with no tabgroups entry); the real label,
@@ -427,7 +443,7 @@
                  both what it is and which stack it is. -->
             {#if label}<span class="detail">{label}</span>{/if}
             {@render rowHead(containerWindow)}
-            <span class="stack-count">{matched.length}</span>
+            <Chip tone="neutral" size="sm">{matched.length}</Chip>
           </div>
           {#if stack.container_id === selectedId && containerWindow.geom}
             {@render detail(containerWindow)}
@@ -435,14 +451,16 @@
         </div>
       {:else}
         <div class="stack-head">
-          <button
-            class="caret"
-            aria-label="Collapse stack"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Collapse stack"
             onclick={(e) => { e.stopPropagation(); collapsed[stack.container_id] = !collapsed[stack.container_id]; }}>
             {collapsed[stack.container_id] ? "▸" : "▾"}
-          </button>
+          </Button>
           <span class="stack-title" title={stack.container_id}>{label ?? describe(stack.container_id).label}</span>
-          <span class="stack-count">{matched.length}</span>
+          <Chip tone="neutral" size="sm">{matched.length}</Chip>
         </div>
       {/if}
       {#if !collapsed[stack.container_id]}
@@ -452,30 +470,38 @@
             <div class="row member" class:selected={w.id === selectedId} use:scrollOnSelect={w.id === selectedId}>
               <div class="row-head">
                 {@render rowHead(w)}
-                <button
+                <Button
+                  size="sm"
                   class="stack-btn"
                   disabled={readOnly || i === 0 || !memberVisible(stack.members[i - 1])}
+                  disabledReason={i === 0 ? "Already first in the stack" : "The window above is filtered out"}
                   title="Move up in stack order"
                   aria-label="Move up in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i - 1))}>
                   ↑
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="sm"
                   class="stack-btn"
                   disabled={readOnly || i === stack.members.length - 1 || !memberVisible(stack.members[i + 1])}
+                  disabledReason={i === stack.members.length - 1
+                    ? "Already last in the stack"
+                    : "The window below is filtered out"}
                   title="Move down in stack order"
                   aria-label="Move down in stack order"
                   onclick={() => onReorder(stack.container_id, swapped(stack.members, i, i + 1))}>
                   ↓
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="sm"
                   class="stack-btn"
                   disabled={readOnly}
+                  disabledReason="This file is read-only"
                   title="Remove from stack"
                   aria-label="Remove from stack"
                   onclick={() => onUnstack(w.id)}>
                   unstack
-                </button>
+                </Button>
               </div>
               {#if w.id === selectedId && w.geom}
                 {@render detail(w)}
@@ -494,15 +520,17 @@
     {:else}
       <div class="fam-group">
         <div class="fam-head">
-          <button
-            class="caret"
-            aria-label="Expand family"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Expand family"
             aria-expanded={!!famOpen[group.family]}
             onclick={() => (famOpen[group.family] = !famOpen[group.family])}>
             {famOpen[group.family] ? "▾" : "▸"}
-          </button>
+          </Button>
           <span class="fam-title">{group.label}</span>
-          <span class="stack-count">{group.items.length}</span>
+          <Chip tone="neutral" size="sm">{group.items.length}</Chip>
         </div>
         {#if famOpen[group.family]}
           {#each group.items as w (w.id)}
@@ -519,73 +547,54 @@
 </div>
 
 <style>
+  /* Every "give the native control explicit dark colours" rule in this file is
+     gone — the search box, the two selects and the number inputs are Fields
+     now, and Field is the only place in the app that styles one. */
   .window-panel {
     overflow-y: auto;
-    font-size: 13px;
+    font-size: var(--t-body);
     border-left: 1px solid var(--border);
-    background: var(--bg-panel);
-    color: var(--fg);
+    background: var(--surface);
+    color: var(--text);
   }
-  .orphans {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    padding: 0.35rem 0.4rem;
-    margin-bottom: 0.4rem;
-    font-size: 0.85em;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    color: var(--fg-dim);
+  .window-panel :global(.orphans) {
+    margin-bottom: var(--s1);
   }
-  .orphans button { flex: none; }
   .filters {
     display: grid;
-    gap: 0.25rem;
-    padding: 0.4rem 0.5rem;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
-    background: var(--bg-panel);
+    background: var(--surface);
     z-index: 1;
   }
-  .filters input[type="search"] {
+  .filters :global(.search) {
     width: 100%;
-    box-sizing: border-box;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 2px 4px;
-    font: inherit;
   }
-  .filters input[type="search"]:focus {
-    outline: 1px solid var(--accent);
+  .filters :global(.search input) {
+    width: 100%;
   }
-  .toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 12px;
-    color: var(--fg-dim);
-  }
-  .toggle input {
-    margin: 0;
+  .window-panel :global(.toggle) {
+    font-size: var(--t-caption);
+    color: var(--text-muted);
   }
   .envs {
     display: flex;
-    gap: 0.6rem;
+    gap: var(--s2);
   }
   .row {
     border-bottom: 1px solid var(--border);
   }
   .row.selected {
-    background: rgba(79, 156, 240, 0.18);
+    background: var(--accent-dim);
   }
   .row-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.5rem;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
   }
   .name {
     flex: 1;
@@ -593,7 +602,7 @@
     text-align: left;
     background: none;
     border: none;
-    color: var(--fg);
+    color: var(--text);
     cursor: pointer;
     font: inherit;
     padding: 0;
@@ -602,17 +611,9 @@
     white-space: nowrap;
   }
   span.detail {
-    color: var(--fg-dim);
-    margin-left: 0.35rem;
-    font-size: 0.9em;
-  }
-  .badge.warn {
-    background: var(--warn);
-    color: #33260a;
-    border-radius: 3px;
-    padding: 0 0.3rem;
-    font-size: 11px;
-    white-space: nowrap;
+    color: var(--text-muted);
+    margin-left: var(--s1);
+    font-size: var(--t-caption);
   }
   .stack-group {
     border-bottom: 1px solid var(--border);
@@ -620,121 +621,74 @@
   .stack-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.5rem;
-    background: rgba(255, 255, 255, 0.04);
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    background: var(--surface-raised);
     font-weight: 600;
-    font-size: 12px;
-    color: var(--fg-dim);
-  }
-  .stack-count {
-    font-weight: 400;
+    font-size: var(--t-caption);
+    color: var(--text-secondary);
   }
   .row.frame .row-head {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--surface-raised);
     font-weight: 600;
   }
   .frame-label {
     flex: 0 0 auto;
-    font-size: 10px;
+    font-size: var(--t-caption);
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: var(--fg-dim);
-  }
-  .caret {
-    flex: 0 0 auto;
-    background: none;
-    border: none;
-    color: var(--fg-dim);
-    cursor: pointer;
-    padding: 0 2px;
-    font: inherit;
+    color: var(--text-muted);
   }
   .row.member {
     border-bottom: none;
   }
   .row.member .row-head {
-    padding-left: 1.1rem;
+    padding-left: var(--s5);
   }
   .row.member:last-child {
     border-bottom: 1px solid var(--border);
   }
-  .stack-btn {
+  .window-panel :global(.stack-btn) {
     flex: 0 0 auto;
-    padding: 0 5px;
-    font-size: 0.85em;
-  }
-  .stack-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
   }
   .free-controls {
     display: flex;
-    gap: 0.3rem;
-    padding: 0 0.5rem 0.4rem 0.5rem;
+    gap: var(--s1);
+    padding: 0 var(--s2) var(--s1);
     flex-wrap: wrap;
   }
-  /* Native <select>/<option> render light-on-white by default even in this
-     dark WebView2 shell unless given explicit colors — same reasoning as the
-     .detail input styling below. */
-  select {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 1px 4px;
-    font: inherit;
+  .free-controls :global(select) {
     max-width: 9rem;
   }
-  select option {
-    background: var(--bg);
-    color: var(--fg);
-  }
   div.detail {
-    padding: 0.4rem 0.6rem 0.6rem;
+    padding: var(--s1) var(--s2) var(--s2);
     display: grid;
-    gap: 0.5rem;
+    gap: var(--s2);
   }
   .coords {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 0.3rem;
+    gap: var(--s1);
   }
   .coords label {
     display: grid;
-    gap: 0.1rem;
-    font-size: 11px;
-    color: var(--fg-dim);
+    gap: 0;
+    font-size: var(--t-caption);
+    color: var(--text-muted);
   }
-  /* Only the number fields get the boxed styling; a blanket `.detail input`
-     rule also stretched the flag checkboxes to full width and misaligned them. */
-  .detail input[type="number"] {
+  .coords :global(input) {
     width: 100%;
-    box-sizing: border-box;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 2px 4px;
-    font: inherit;
-  }
-  .detail input[type="number"]:focus {
-    outline: 1px solid var(--accent);
   }
   .flags {
     display: grid;
-    gap: 0.15rem;
+    gap: 0;
   }
   .flag {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 0.3rem;
-    color: var(--fg);
-  }
-  .flag input {
-    margin: 0;
-    flex: 0 0 auto;
+    gap: var(--s1);
+    color: var(--text);
   }
   .fam-group {
     border-bottom: 1px solid var(--border);
@@ -742,12 +696,12 @@
   .fam-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.5rem;
-    background: rgba(255, 255, 255, 0.04);
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    background: var(--surface-raised);
     font-weight: 600;
-    font-size: 12px;
-    color: var(--fg-dim);
+    font-size: var(--t-caption);
+    color: var(--text-secondary);
   }
   .fam-title {
     flex: 1;
