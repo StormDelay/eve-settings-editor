@@ -6,9 +6,9 @@ reasoning, the mockups — lives at
 <https://claude.ai/code/artifact/5ea152b7-bdb0-4c65-b087-386b4bd9ab4c>. This
 directory is the *how*.
 
-**Phases 1 and 2 are implemented** (`feat/ui-redesign-phase-1`,
-`feat/ui-redesign-phase-2`); each spec carries a note listing where the shipped
-result differs from the plan. Phases 3–5b are still plans.
+**Phases 1, 2 and 3 are implemented** (`feat/ui-redesign-phase-1`,
+`-phase-2`, `-phase-3`); each spec carries a note listing where the shipped
+result differs from the plan. Phases 4–5b are still plans.
 
 **Current as of v0.34.0.** Every spec was re-reviewed against that release on
 2026-08-13: counts re-measured, `file:line` citations re-anchored, and the
@@ -172,7 +172,7 @@ Ordered so the highest visible improvement comes first at the lowest risk.
 | --- | --- | --- | --- |
 | 1 | [Tokens and primitives](01-tokens-and-primitives.md) — **done** | No — pure refactor | — |
 | 2 | [Shell and architecture](02-shell.md) — **done** | Layout only | 1 |
-| 3 | [Sheets for Accounts and Copy settings](03-sheets.md) | Yes — fixes the critical fault | 1, 2 |
+| 3 | [Sheets for Accounts and Copy settings](03-sheets.md) — **done** | Yes — fixes the critical fault | 1, 2 |
 | 4 | [Overview consolidation and the inspector rule](04-overview-and-inspector.md) | Layout only | 1, 2 |
 | 5 | [Dialogs, copy and the command palette](05-dialogs-copy-palette.md) | Yes | 1, 2 |
 | 5b | [Undo](05b-undo.md) | Yes — **optional and separable** | 5 (for the toast) |
