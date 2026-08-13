@@ -176,13 +176,11 @@ fn unpair_character(app: tauri::AppHandle, char_id: u64) -> accounts::AccountRos
     accounts::unpair_character(&settings_model::default_roots(), &app_dir(&app), char_id)
 }
 
+/// Applies what fits and reports what did not — a rejected pair is data, not an
+/// error, so this returns no `Result`.
 #[tauri::command]
-fn confirm_pairings(
-    app: tauri::AppHandle,
-    pairs: Vec<(u64, u64)>,
-) -> Result<accounts::AccountRoster, ErrDto> {
+fn confirm_pairings(app: tauri::AppHandle, pairs: Vec<(u64, u64)>) -> accounts::BatchConfirm {
     accounts::confirm_pairings(&settings_model::default_roots(), &app_dir(&app), &pairs)
-        .map_err(|m| ErrDto { code: "cap".into(), message: m })
 }
 
 /// What the EVE launcher's own logs say about char↔account membership, minus
