@@ -65,9 +65,10 @@
   // roster refresh would be waste.
   let proposals = $state<Proposal[]>([]);
   let proposalsLoaded = $state(false);
-  // Whether the logs ever said anything. `proposals` empties as they are
-  // accepted, and "your logs say nothing" is a lie once they have been acted on.
-  let everFound = $state(false);
+  // The cards the logs ever said anything about. Recorded at load and never
+  // pruned, because `proposals` empties as they are accepted and "your logs say
+  // nothing" is a lie once they have been acted on.
+  let foundCards = $state<number[]>([]);
   // Session-only, like the M3b suggestion dismissals: a "keep mine" is a
   // judgement about this sitting, not something to persist.
   let dismissed = $state<number[]>([]);
@@ -81,6 +82,10 @@
   const allPairs = $derived(
     acceptAllPairs(proposals, dismissedSet).filter(([, userId]) => onScreen.has(userId)),
   );
+  // Scoped for the same reason: proposals for accounts outside this profile
+  // folder render no card and no Accept all, so counting them would suppress the
+  // hint and leave a blank state that explains nothing.
+  const everFound = $derived(foundCards.some((u) => onScreen.has(u)));
 
   const accountLabel = (userId: number) => aliasFor(userId) ?? `core_user_${userId}`;
 
@@ -171,7 +176,9 @@
     .launcherProposals()
     .then(async (p) => {
       proposals = p;
-      everFound = p.length > 0;
+      // A disputed proposal shows on the card that holds the chip today, not on
+      // the one the launcher names — same routing as `proposalsByCard`.
+      foundCards = p.map((x) => x.conflict ?? x.user_id);
       await resolveNames(p.map((x) => x.char_id));
     })
     .catch(() => {})
@@ -183,7 +190,9 @@
     <h2>Accounts</h2>
     <div class="head-actions">
       {#if allPairs.length > 0}
-        <button onclick={acceptAll}>Accept all — {allPairs.length} characters</button>
+        <button onclick={acceptAll}>
+          Accept all — {allPairs.length} character{allPairs.length === 1 ? "" : "s"}
+        </button>
       {/if}
       <button onclick={() => loadRoster()}>Refresh</button>
       <button onclick={startCapture}>Calibrate an account…</button>
