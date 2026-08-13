@@ -232,6 +232,99 @@ pub(crate) fn compact_tabs(ov: &mut Entries) -> Vec<i64> {
     old
 }
 
+/// Make a window's strip order REAL, by renumbering the tab table so the strip
+/// reads ascending.
+///
+/// **EVE draws a window's tabs in ascending tab index.** The strip in
+/// `tabsByWindowInstanceID` says WHICH tabs a window shows, not in what order —
+/// which is why an editor that only permuted the strip (what reorder/move did
+/// until 2026-08-13) changed the picture in the app and nothing in game.
+///
+/// The evidence is the corpus: of 1,314 real account files carrying a mapping,
+/// ZERO list a window's tabs in anything but ascending order — a client that
+/// stored drag order there would have written one. And the client keys
+/// `tabsettings_new` densely (0 gaps in 2,700+ files, see `compact_tabs`), so it
+/// renumbers the table rather than leaving holes. Renumbering is what EVE does.
+///
+/// The window's tabs keep the same index SLOTS and are redistributed over them
+/// in strip order, so no other window's tabs move, the table stays as dense as
+/// it was, and the mapped strip comes out ascending by construction.
+///
+/// That last part is also why this is safe on an inference drawn from file
+/// shape: afterwards the strip order and the index order are the SAME order, so
+/// the user gets what the editor showed whichever of the two the client reads.
+///
+/// Refuses — silently, leaving the file as found — when the map would be
+/// partial: a non-`Int` tab key, a strip naming a tab the table does not have,
+/// or the same tab twice in one window. Half a renumbering is a tab wearing
+/// another tab's settings, which is worse than a reorder that did nothing.
+///
+/// ponytail: user-file only. A character's per-tab COLUMN WIDTHS are keyed
+/// `(overviewScroll2, tabIndex)` in its own char file, so renumbering leaves
+/// them on the slot rather than on the tab and two reordered tabs swap widths.
+/// Deliberate: an account's other characters each have their own char file that
+/// the editor does not have open, so remapping the one that is open would be
+/// half a fix, and the client renumbers on its own deletes anyway. Not left for
+/// someone to rediscover — the width remap is its own branch.
+fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) {
+    let want: Vec<i64> = ov
+        .iter()
+        .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
+        .and_then(|(_, wv)| list_inner(wv))
+        .and_then(|g| g.get(window_idx))
+        .and_then(list_inner)
+        .map(|l| l.iter().filter_map(as_int).collect())
+        .unwrap_or_default();
+    let mut slots = want.clone();
+    slots.sort_unstable();
+    if want == slots {
+        return; // already ascending — the game already shows this order
+    }
+    if slots.windows(2).any(|w| w[0] == w[1]) {
+        return; // a tab listed twice would map to two different new indices
+    }
+    // The window's own tabs, old index -> new index. Short lists (a window's
+    // tabs), so a linear scan beats a map.
+    let map: Vec<(i64, i64)> = want.iter().copied().zip(slots.iter().copied()).collect();
+    let at = |n: i64| map.iter().find(|(old, _)| *old == n).map(|(_, new)| *new);
+
+    {
+        let Some((_, tv)) = ov
+            .iter_mut()
+            .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
+        else {
+            return;
+        };
+        let Some(tabs) = dict_inner_mut(tv) else { return };
+        if tabs.iter().any(|(k, _)| as_int(k).is_none()) {
+            return;
+        }
+        if want.iter().any(|n| !tabs.iter().any(|(k, _)| as_int(k) == Some(*n))) {
+            return;
+        }
+        for (k, _) in tabs.iter_mut() {
+            if let Some(n) = as_int(k).and_then(at) {
+                *k = Value::Int(n);
+            }
+        }
+        tabs.sort_by_key(|(k, _)| as_int(k).unwrap_or(i64::MAX));
+    }
+    // Every strip, not just this window's: a tab listed in two windows (rare,
+    // and not damage we invent) must not keep the old number in the other one.
+    if let Some((_, wv)) = ov.iter_mut().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")) {
+        if let Some(groups) = list_inner_mut(wv) {
+            for g in groups.iter_mut() {
+                let Some(inner) = list_inner_mut(g) else { continue };
+                for e in inner.iter_mut() {
+                    if let Some(n) = as_int(e).and_then(at) {
+                        *e = Value::Int(n);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Set a tab's name, preserving an existing name entry's value variant (real
 /// files store names as Str / StrUcs2 / Bytes), inserting a plain `name` key
 /// (unicode-safe `StrUcs2`) if the tab has none. The name KEY may itself be a
@@ -410,11 +503,20 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
     if window_count(ov) == 0 {
         return Err(OverviewTabError::NoWindowMapping);
     }
+    // An index no tab answers to would be written into the strip as a phantom
+    // and would make the renumbering below refuse — a reorder that silently did
+    // nothing. Same guard, for the same reason, as `move_tab`'s.
+    if let Some(&missing) = order.iter().find(|&&i| !has_tab(ov, i)) {
+        return Err(OverviewTabError::UnknownTab { index: missing });
+    }
     {
         let inner = groups_mut(ov).get_mut(window_idx).and_then(list_inner_mut)
             .ok_or(OverviewTabError::UnknownWindow { index: window_idx })?;
         *inner = order.iter().map(|&i| Value::Int(i)).collect();
     }
+    // The strip alone is invisible in game — the order has to become the tabs'
+    // index order, so this is the edit, not a tidy-up after it.
+    renumber_to_strip_order(ov, window_idx);
     compact_tabs(ov);
     Ok(())
 }
@@ -449,6 +551,9 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
         let at = pos.min(dst.len());
         dst.insert(at, Value::Int(tab_idx));
     }
+    // `pos` is a position in the destination window's tab strip, and a position
+    // is only real once the indices carry it — same as `reorder_tabs_in_window`.
+    renumber_to_strip_order(ov, to_window);
     compact_tabs(ov);
     Ok(())
 }
@@ -895,12 +1000,42 @@ mod tests {
         assert!(matches!(delete_tab(&mut v, 0), Err(OverviewTabError::LastTab)));
     }
 
+    /// THE regression this fix exists for: EVE draws a window's tabs in ascending
+    /// tab index, so a reorder that only permuted the strip showed the new order
+    /// in the editor and the OLD one in game (reported 2026-08-13).
     #[test]
-    fn reorder_replaces_the_window_strip() {
+    fn reorder_renumbers_the_tabs_so_the_game_shows_the_new_order() {
         let mut v = user_with_tabs();
-        create_tab(&mut v, 0, "Mining", Some(0)).unwrap(); // window 0 = [0,1]
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap(); // window 0 = [0 Main, 1 Mining]
         reorder_tabs_in_window(&mut v, 0, &[1, 0]).unwrap();
-        assert_eq!(window_indices(&v, 0), vec![1, 0]);
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "the strip stays ascending, as EVE writes it");
+        assert_eq!(tab_name(&v, 0), "Mining", "the tab dragged to the front IS index 0 now");
+        assert_eq!(tab_name(&v, 1), "Main");
+    }
+
+    /// Renumbering is confined to the reordered window's own index slots, so the
+    /// tabs of every other window keep both their indices and their order.
+    #[test]
+    fn reorder_leaves_the_other_windows_tabs_where_they_were() {
+        let mut v = user_four_tabs_two_windows(); // w0 = [0 A, 2 C], w1 = [1 B, 3 D]
+        reorder_tabs_in_window(&mut v, 0, &[2, 0]).unwrap();
+        assert_eq!(window_indices(&v, 0), vec![0, 2], "window 0 reuses its own slots");
+        assert_eq!(tab_name(&v, 0), "C");
+        assert_eq!(tab_name(&v, 2), "A");
+        assert_eq!(window_indices(&v, 1), vec![1, 3], "window 1's strip is untouched");
+        assert_eq!(tab_name(&v, 1), "B", "and so are its tabs");
+        assert_eq!(tab_name(&v, 3), "D");
+    }
+
+    #[test]
+    fn reorder_naming_a_tab_that_does_not_exist_errors() {
+        let mut v = user_with_tabs();
+        create_tab(&mut v, 0, "Mining", Some(0)).unwrap();
+        assert!(matches!(
+            reorder_tabs_in_window(&mut v, 0, &[1, 9]),
+            Err(OverviewTabError::UnknownTab { index: 9 })
+        ));
+        assert_eq!(window_indices(&v, 0), vec![0, 1], "no phantom index in the strip");
     }
 
     #[test]
@@ -926,12 +1061,49 @@ mod tests {
         Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
     }
 
+    /// Four tabs over two windows, interleaved — the shape that shows whether a
+    /// renumbering stayed inside the window it was asked about.
+    fn user_four_tabs_two_windows() -> Value {
+        let tab = |n: &str| Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str(n.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![
+                 (Value::Int(0), tab("A")), (Value::Int(1), tab("B")),
+                 (Value::Int(2), tab("C")), (Value::Int(3), tab("D")),
+             ])])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::Tuple(vec![ts(), Value::List(vec![
+                 Value::List(vec![Value::Int(0), Value::Int(2)]), // window 0 = A, C
+                 Value::List(vec![Value::Int(1), Value::Int(3)]), // window 1 = B, D
+             ])])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
+    }
+
     #[test]
     fn move_relocates_tab_between_windows() {
         let mut v = user_two_windows();
         move_tab(&mut v, 0, 0, 1, 0).unwrap();
         assert_eq!(window_indices(&v, 0), Vec::<i64>::new(), "removed from source");
         assert_eq!(window_indices(&v, 1), vec![0, 1], "inserted at pos 0 of target");
+    }
+
+    /// `pos` is a position in the destination window's tab strip, and only the
+    /// index order carries it in game — so a move that lands behind a tab
+    /// already there has to take the later slot.
+    #[test]
+    fn move_puts_the_tab_at_the_requested_position_in_index_order() {
+        let mut v = user_four_tabs_two_windows(); // w0 = [0 A, 2 C], w1 = [1 B, 3 D]
+        move_tab(&mut v, 0, 0, 1, 1).unwrap(); // A into window 1, second
+        assert_eq!(window_indices(&v, 1), vec![0, 1, 3]);
+        assert_eq!(tab_name(&v, 0), "B", "the tab window 1 already showed first keeps the lowest slot");
+        assert_eq!(tab_name(&v, 1), "A", "the moved tab sits second");
+        assert_eq!(tab_name(&v, 3), "D");
+        assert_eq!(window_indices(&v, 0), vec![2], "the source window keeps its remaining tab");
+        assert_eq!(tab_name(&v, 2), "C");
     }
 
     #[test]
@@ -1441,8 +1613,12 @@ mod tests {
         assert_eq!(window_indices(&v, 0), vec![0, 1], "the strip follows the renumbering");
     }
 
-    /// Renumbering must rewrite the window strips through the SAME map, and must
-    /// not reshuffle them: the strip is the order the tabs appear in game.
+    /// Gap-closing must rewrite the window strips through the SAME map, and must
+    /// not reshuffle them. Not because the strip carries the in-game order — it
+    /// does not, `renumber_to_strip_order` is where that is settled — but because
+    /// closing a gap is not licence to invent a reorder nobody asked for. A strip
+    /// that is out of order (only this editor's pre-2026-08-13 builds ever wrote
+    /// one) heals on the next drag, not on an unrelated rename.
     #[test]
     fn renumbering_keeps_the_order_each_window_shows_its_tabs_in() {
         let mut v = user_two_windows(); // tabs 0,1 — window 0 = [0], window 1 = [1]
