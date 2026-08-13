@@ -55,9 +55,35 @@ concurrent launches can interleave them: 3 of 189 *Fetching* lines had no
 matching *Fetched*, and one account briefly claimed another's character set.
 Both are handled in §3.
 
+**A third line names the account at *request* time.** Found by the user reading
+their own logs, 2026-08-13, and it is the strongest signal of the three:
+
+```
+[virtual-goods] Fetched Plex status for '<user_id>' on 'tranquility' (eve-online) with balance: <n>
+[esi] Fetching character details for <char_id>, <char_id>, <char_id>
+```
+
+Measured over the same 98 files: **191 *Fetching* lines; 141 carry a Plex line
+before them with no intervening request** (gap 1 line ×109, 2 ×22, 3 ×9, 6 ×1);
+50 carry none. Of the 139 cases where both a Plex line and a following *Fetched*
+exist, **139 agree and 0 disagree** — not one contradiction in three years.
+Resolving from Plex adjacency *alone*, ignoring *Fetched* entirely, yields the
+same 10 accounts and the same character sets.
+
+Why it matters more than its redundancy suggests: it names the account **beside
+the ids, at request time**, whereas *Fetched* names it at reply time — and reply
+time is exactly where concurrent launches scramble the correspondence. Two
+adjacent lines cannot be interleaved. Concretely, the in-flight rule in §3.1
+drops 12 of 188 observations on the real corpus for having another request in
+flight, and **10 of those 12 carry a preceding Plex line** — so this signal
+recovers almost exactly what strictness throws away, and recovers it soundly
+rather than by guessing.
+
 Also present and not used by this design: `[client-queue] Queued client startup
 { userId, characterId: <slot>, profile: '<name>' }`, which additionally names the
-profile folder. Noted for later; the ESI pair is sufficient here.
+profile folder. `characterId` there is a **slot index, not a character id** —
+reading it as one would map three different accounts' characters onto 1, 2 and 3.
+Noted for later; the lines above are sufficient.
 
 ## 3. Approach
 
@@ -102,9 +128,22 @@ The complete parse rule:
    counter permanently above one and every later pairing is silently lost —
    measured at 170 of 182 tallies dropped. With it, the real corpus yields the
    same 10 accounts × 3 disjoint characters that an independent method found.
-3. **Majority vote** per id-set: the user id observed most often wins. A tie
+3. `[virtual-goods] Fetched Plex status for '<user>'` → remember it as the
+   **claimed account** for the next *Fetching*, provided no other *Fetching*
+   intervenes.
+
+   When a *Fetching* carries a claimed account, the pairing is complete at
+   request time from two adjacent lines, so **tally it immediately and ignore the
+   in-flight count for that observation** — interleaving cannot corrupt a fact
+   that never spans a gap. If a later *Fetched* then names a *different* account,
+   **drop the observation entirely**: a contradiction is positive evidence of
+   interleaving, which is the one thing steps 1-2 can only avoid, never detect.
+
+   A *Fetching* with no claimed account falls through to the in-flight rule
+   unchanged — still 50 of 191 observations on the measured corpus.
+4. **Majority vote** per id-set: the user id observed most often wins. A tie
    drops the set.
-4. **Disjointness**: a character id claimed by two surviving accounts drops both
+5. **Disjointness**: a character id claimed by two surviving accounts drops both
    claims.
 
 Every mis-parse path yields *fewer* proposals. This is what makes an undocumented
@@ -198,11 +237,15 @@ Account cards, the manual picker and the capture dialog are otherwise untouched.
 - Interleaved *Fetching*/*Fetched* lines → the orphaned pending is discarded
   (§3.1 step 1) and, where it still produced a tally, majority vote and the
   disjointness check remove it.
-- A proposal naming a `user_id` with no discovered file and no store entry is
-  still shown: `build_roster` already unions discovered ∪ persisted accounts, and
-  accepting the proposal creates the entry.
-- A proposal that would exceed the 3-character cap is rejected by
-  `confirm_pairing` and surfaces as the existing inline card error.
+- A proposal naming a `user_id` with no discovered file and no store entry has no
+  card to appear on — `build_roster` unions discovered ∪ persisted accounts, and
+  such an account is in neither. It is silently absent, and **Accept all does not
+  send it either**, which is the same rule as §3.3's scoping: the accept action
+  covers exactly what the user can see and dismiss, never more. An earlier draft
+  of this section claimed the card would still be shown; it never was.
+- A proposal that would exceed the 3-character cap is rejected by `confirm`, and
+  the rejection is reported per §3.2 — named by character and account, alongside
+  whatever the batch did manage to apply.
 - Log files are read-only; nothing in this feature writes outside
   `accounts.json`.
 
