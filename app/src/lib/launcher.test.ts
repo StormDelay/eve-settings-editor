@@ -68,3 +68,20 @@ check(
   "acceptAllPairs skips dismissed characters",
   acceptAllPairs([plain(90000001, 80000001)], new Set([90000001])).length === 0,
 );
+
+check(
+  "a dismissed conflicting proposal clears from both cards",
+  proposalsByCard([disputed(90000001, 80000001, 80000002)], new Set([90000001])).size === 0,
+);
+
+check(
+  "conflicts land on a card in input order",
+  eq(
+    proposalsByCard([disputed(90000001, 80000001, 80000002), disputed(90000003, 80000004, 80000002)], none).get(80000002)
+      ?.conflicts,
+    [
+      { charId: 90000001, target: 80000001 },
+      { charId: 90000003, target: 80000004 },
+    ],
+  ),
+);
