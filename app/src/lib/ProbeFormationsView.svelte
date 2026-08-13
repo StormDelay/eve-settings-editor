@@ -12,11 +12,10 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
-  import ScopeBanner from "./ui/ScopeBanner.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
+  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {} }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
-      onShowAccounts?: () => void; sharedLabel?: string } = $props();
+      onShowAccounts?: () => void } = $props();
 
   /** The projection as loaded. `null` before the first load. */
   let loaded = $state<Formations | null>(null);
@@ -485,11 +484,9 @@
 {:else if error}
   <InlineMessage variant="error">{error}</InlineMessage>
 {:else if loaded}
-  <!-- One column filling the tab, so the banner takes its own height off the
-       top instead of the editor below assuming it has the whole tab and
-       running that much past the bottom. -->
+  <!-- One column filling the tab. The scope banner it used to carry is the
+       shell's now, rendered once for all four account-scoped views. -->
   <div class="probes-tab">
-  <ScopeBanner label={sharedLabel ?? ""} />
   <div class="probes">
     <aside class="formation-list">
       <ul>

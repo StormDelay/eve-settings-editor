@@ -1,4 +1,14 @@
 <script lang="ts">
+  // ONE slot's backups, headed by the subject AND the file. It used to be the
+  // whole 280px right-hand column, taking a single `slot` derived from the
+  // current VIEW — so switching from Overview to Autofill silently replaced the
+  // character file's backup list with the account file's, and the only marker
+  // was a 0.85em, 0.7-opacity subtitle measured at Lc 42. Restore is
+  // destructive, and its confirm named only the backup.
+  //
+  // `HistoryPopover` now renders one of these per OPEN slot, so the list has no
+  // single subject to get wrong. The heading is at --text because it is the
+  // thing that says which file you are about to overwrite.
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { api, errMessage, type BackupInfo, type OpenOutcome, type Slot } from "./api";
   import Button from "./ui/Button.svelte";
@@ -8,22 +18,25 @@
 
   let {
     slot,
+    subjectName,
+    fileName,
     savedAt,
-    subtitle,
     onRestored,
-    onCollapse,
   }: {
     slot: Slot;
+    subjectName: string;
+    fileName: string;
     savedAt: number;
-    subtitle: string | null;
-    onRestored: (outcome: OpenOutcome) => void;
-    onCollapse: () => void;
+    /** Takes the slot from the group the entry belongs to, which is the value it
+     *  should always have had — it used to write back into `slots[active]`. */
+    onRestored: (slot: Slot, outcome: OpenOutcome) => void;
   } = $props();
 
   let backups: BackupInfo[] = $state([]);
   let error: string | null = $state(null);
 
-  // Refetch on save (savedAt bumps), on active-slot switch, and on mount.
+  // Refetch on save (savedAt bumps) and on mount. Closing the popover unmounts
+  // this, so a stale list cannot survive a save.
   $effect(() => {
     void savedAt;
     void slot;
@@ -37,37 +50,27 @@
   });
 
   async function restore(b: BackupInfo) {
+    // Names the file being REPLACED as well as the backup. The backup is the
+    // half the user already picked; the file it lands on is the half they can
+    // get wrong.
     const yes = await ask(
-      `Replace the current file with this backup?\n\n${b.file_name}\n\n` +
+      `Replace ${fileName} (${subjectName}) with this backup?\n\n${b.file_name}\n\n` +
         "The current file is backed up first, so this is reversible.",
       { title: "Restore backup", kind: "warning" },
     );
     if (!yes) return;
     try {
-      onRestored(await api.restoreBackup(slot, b.path));
+      onRestored(slot, await api.restoreBackup(slot, b.path));
     } catch (e) {
       await message(errMessage(e), { title: "Restore failed", kind: "error" });
     }
   }
 </script>
 
-<aside class="backups">
-  <!-- Deliberately NOT PanelHeader, though §5.6 nominates this file as the
-       reason its `subtitle` slot exists. PanelHeader lays the subtitle out
-       beside the title; here it is a full file path on its own line below, and
-       moving it inline would both squeeze it and break Phase 1's rule that
-       nothing moves. What this file actually needed from PanelHeader was the
-       legibility — opacity .7 at Lc 40.6 becoming --text-muted at Lc 71.1 — and
-       that is a token, not a component. -->
-  <div class="backups-head">
-    <Button variant="ghost" size="sm" iconOnly title="Hide backups" onclick={onCollapse}>
-      »
-    </Button>
-    <h3>Backups</h3>
-  </div>
-  {#if subtitle}<p class="subtitle" title={subtitle}>{subtitle}</p>{/if}
+<section class="group">
+  <h4>{subjectName} — {fileName}</h4>
   {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
-  {#if backups.length === 0}
+  {#if backups.length === 0 && error === null}
     <EmptyState title="No backups yet." description="Every save creates one." />
   {/if}
   <ul>
@@ -83,28 +86,33 @@
       </li>
     {/each}
   </ul>
-</aside>
+</section>
 
 <style>
-  .backups-head {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    margin-bottom: var(--s2);
+  .group {
+    margin-bottom: var(--s3);
   }
-  /* The default h3 top margin pushes the whole head (and its chevron) down;
-     zero it so the chevron pins to the top-left, symmetric with the sidebar's. */
-  .backups-head h3 {
-    margin: 0;
-    font-size: var(--t-title);
-  }
-  .subtitle {
-    margin: 0 0 var(--s2);
-    font-size: var(--t-caption);
-    color: var(--text-muted);
+  h4 {
+    margin: 0 0 var(--s1);
+    font-size: var(--t-body);
+    font-weight: 600;
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  li {
+    list-style: none;
+  }
+  /* Was a global rule in the shell's stylesheet, beside `.backups`. It is one
+     class with one user, so it comes with it. */
+  .stamp {
+    font-family: Consolas, monospace;
   }
   .meta {
     color: var(--text-muted);

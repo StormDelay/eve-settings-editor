@@ -180,3 +180,36 @@ describe("arrow-key nudge", () => {
     expect(runMutations).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The DOM contract the shell's grid depends on.
+ *
+ * This is the one view that fills BOTH shell columns, and it reaches the
+ * inspector column without a portal: its root is `display: contents`, so its two
+ * children stop participating in its layout and become grid items of `.shell` —
+ * landing in columns 2 and 3 through the `.work` / `.inspector` rules in
+ * `app.css`.
+ *
+ * That holds only while the root has EXACTLY those two element children. Wrap
+ * them in a scroller, or add a third sibling, and the canvas silently moves into
+ * the inspector's column with nothing failing. jsdom computes no layout, so the
+ * pixels are checked in the running app — but this is the half that gets broken
+ * later by an edit that has nothing to do with the grid.
+ */
+describe("the shell grid contract", () => {
+  test("the root renders exactly the work area and the inspector, as siblings", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    mount({ selectedId: null });
+    await waitFor(() => expect(calls.of("window_layout").length).toBe(1));
+
+    const root = await waitFor(() => {
+      const el = document.querySelector(".layout-view");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    const kids = Array.from(root.children);
+    expect(kids).toHaveLength(2);
+    expect(kids[0].classList.contains("work")).toBe(true);
+    expect(kids[1].classList.contains("inspector")).toBe(true);
+  });
+});

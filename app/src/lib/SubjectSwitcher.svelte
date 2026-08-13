@@ -1,0 +1,155 @@
+<script lang="ts">
+  // Jump to a character. Opened by the subject block's ▾ and by Ctrl+K, which
+  // are deliberately the SAME control — a palette that competes with a switcher
+  // is two answers to "where is my other character".
+  //
+  // This is the seed of Phase 5's command palette: same list, same type-ahead,
+  // one extra section of commands. Building it twice would be the mistake, which
+  // is why the "Go to…" section is here already.
+  import { subject, accountAliasOf } from "./subject.svelte";
+  import { resolvedName } from "./filesort.svelte";
+  import { allPresets, summarise } from "./presetLibrary.svelte";
+  import { VIEWS, viewAvailable, type View } from "./views";
+  import type { PresetInfo, SettingsFile } from "./api";
+  import Chip from "./ui/Chip.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import ListRow from "./ui/ListRow.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import SearchField from "./ui/SearchField.svelte";
+
+  let {
+    anchor,
+    onclose,
+    onOpen,
+    onOpenPreset,
+    onGoto,
+  }: {
+    anchor: HTMLElement;
+    onclose: () => void;
+    onOpen: (path: string) => void;
+    onOpenPreset: (p: PresetInfo) => void;
+    onGoto: (v: View) => void;
+  } = $props();
+
+  let query = $state("");
+  const q = $derived(query.trim().toLowerCase());
+
+  const label = (f: SettingsFile) => resolvedName(f.kind, f.id) ?? f.file_name;
+
+  // The type-ahead matches the account alias as well as the name, and that is
+  // the flat list's whole answer to "switch to my other character on this
+  // account" — typing `stormdelay2` filters to exactly that account's
+  // characters, still alphabetical. A filter beats a grouping at this because it
+  // is temporary: it costs nothing to every other opening, which is looking for
+  // one name.
+  const rows = $derived(
+    subject.characters.filter(
+      (f) =>
+        q === "" ||
+        label(f).toLowerCase().includes(q) ||
+        (accountAliasOf(f)?.toLowerCase().includes(q) ?? false),
+    ),
+  );
+
+  const presets = $derived(
+    allPresets().filter((p) => q === "" || p.name.toLowerCase().includes(q)),
+  );
+
+  const views = $derived(VIEWS.filter((v) => q === "" || v.label.toLowerCase().includes(q)));
+
+  function choose(fn: () => void) {
+    onclose();
+    fn();
+  }
+</script>
+
+<Popover {anchor} placement="bottom-start" {onclose} ariaLabel="Find a character" class="switcher">
+  <!-- eslint-disable-next-line -- autofocus is the point of a type-ahead -->
+  <SearchField verb="search" nouns="characters and views" bind:value={query} />
+
+  {#if rows.length === 0 && presets.length === 0 && views.length === 0}
+    <EmptyState title="Nothing matches “{query}”." />
+  {/if}
+
+  {#if rows.length}
+    <ul>
+      {#each rows as f (f.path)}
+        {@const alias = accountAliasOf(f)}
+        <li>
+          <!-- The raw file name lives here, on the row and in its tooltip: one
+               of the three places §5.2 keeps it after taking it out of the
+               context bar. -->
+          <ListRow onclick={() => choose(() => onOpen(f.path))} title={f.file_name}>
+            {label(f)}
+            {#if alias}<Chip size="sm">{alias}</Chip>{/if}
+            {#snippet trailing()}<span class="file">{f.file_name}</span>{/snippet}
+          </ListRow>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if presets.length}
+    <p class="section">Presets</p>
+    <ul>
+      {#each presets as p (p.dir)}
+        <li>
+          <ListRow
+            onclick={() => choose(() => onOpenPreset(p))}
+            disabled={p.error !== null}
+            disabledReason={p.error ?? undefined}
+            title={p.error ?? p.dir}>
+            {p.name}
+            {#snippet trailing()}<span class="file">{summarise(p)}</span>{/snippet}
+          </ListRow>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if views.length}
+    <p class="section">Go to…</p>
+    <ul>
+      {#each views as v (v.id)}
+        {@const reason = viewAvailable(v.id)}
+        <li>
+          <ListRow
+            onclick={() => choose(() => onGoto(v.id))}
+            disabled={reason !== null}
+            disabledReason={reason ?? undefined}
+            title={reason ?? undefined}>
+            {v.label}
+          </ListRow>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</Popover>
+
+<style>
+  :global(.popover.switcher) {
+    width: min(32rem, 90vw);
+    max-height: min(30rem, 80vh);
+    overflow-y: auto;
+    padding: var(--s2);
+  }
+  ul {
+    list-style: none;
+    margin: var(--s1) 0;
+    padding: 0;
+  }
+  li {
+    list-style: none;
+  }
+  .section {
+    margin: var(--s3) 0 0;
+    font-size: var(--t-caption);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .file {
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+  }
+</style>

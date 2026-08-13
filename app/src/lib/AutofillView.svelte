@@ -7,15 +7,24 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
-  import ScopeBanner from "./ui/ScopeBanner.svelte";
+  import { accel } from "./keys";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, charOpen = false, charName = null, sharedLabel = "", onShowAccounts = () => {} }:
+  let { userOpen, userId = null, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
       /** A character file is open. Separate from `charName`, which stays null
        * until the ESI name lookup resolves — offline, it never does. */
       charOpen?: boolean;
-      charName?: string | null; sharedLabel?: string; onShowAccounts?: () => void } = $props();
+      charName?: string | null; onShowAccounts?: () => void;
+      /** Set so the shell's Ctrl+F focuses THIS view's box while it is active,
+       *  instead of being suppressed and then doing nothing. */
+      focusSearch?: () => void } = $props();
+
+  let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  focusSearch = () => {
+    filterInput?.focus();
+    if (filterInput instanceof HTMLInputElement) filterInput.select();
+  };
 
   let lists = $state<RememberedList[] | null>(null);
   let error = $state<string | null>(null);
@@ -107,9 +116,10 @@
 {:else if lists && lists.length === 0}
   <EmptyState title="No remembered text in this account file yet." />
 {:else if lists}
-  <ScopeBanner label={sharedLabel ?? ""} />
+  <!-- The scope banner is the shell's now, rendered once for all four
+       account-scoped views. -->
   <div class="af-top">
-    <SearchField class="af-filter" nouns="lists" bind:value={query} />
+    <SearchField class="af-filter" nouns="lists" shortcut={accel("F")} bind:element={filterInput} bind:value={query} />
     <Button variant="danger" onclick={clearAll}>Clear all remembered text</Button>
   </div>
   {#if filtered.length === 0}

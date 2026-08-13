@@ -6,6 +6,13 @@ import { api, type AccountRoster, type Rejected } from "./api";
 const empty: AccountRoster = { accounts: [], unassigned: [] };
 export const accountsStore = $state<{ roster: AccountRoster }>({ roster: empty });
 
+/** Test-only, called from the shared `afterEach`. `loadRoster` deliberately
+ *  leaves the last roster in place on failure, which across tests means one
+ *  suite's pairings decide another's account chips. */
+export function resetRoster(): void {
+  accountsStore.roster = empty;
+}
+
 /// Alias for an account id, or null if unnamed/unknown.
 export function aliasFor(userId: number): string | null {
   return accountsStore.roster.accounts.find((a) => a.user_id === userId)?.alias ?? null;
