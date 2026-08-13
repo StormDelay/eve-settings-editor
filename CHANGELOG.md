@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The whole app has been repainted on one colour palette, chosen so every piece of text is actually readable — the small grey text everywhere was well below what is legible, and the status badges were the worst of it.
+- Buttons, fields, tabs and messages now look and behave the same in every view.
+
+### Fixed
+- **Four buttons that were invisible but still clickable are now visible.** Clearing an autofill list, removing an autofill entry, resetting a keybinding to EVE's default, and clearing the tree search.
+- **A pairing offered by your launcher log now stands out instead of fading into the card.** It was drawn fainter than the pairings you had already accepted.
+- The Accounts view's cards, chips and panels were falling back to a stray colour no other view used.
+
 ## [0.34.0] - 2026-08-13
 
 Your accounts, named by the EVE launcher instead of guessed at.
