@@ -297,24 +297,25 @@ tabs in a row about a file.
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ☰   Baguette Commander · stormdelay2 ▾   ⟨read-only⟩    ⌕ Search or run a command   Ctrl+K   │
 │                                                          2 unsaved ▾   [ Save ]   History ▾  │
-├────────────────────────┬─────────────────────────────────────────────────────────────────────┤
-│ Profile  tranquility ▾ │  Layout │ Overview │ Autofill │ Keybinds │ Probes │ Raw          ⋯  │
-│ ● in use by EVE        ├──────────────────────────────────────────┬──────────────────────────┤
-├────────────────────────┤                                          │ SELECTION                │
-│ ▾ stormdelay2          │                                          │                          │
-│   ● Baguette Commander │                                          │ Market                   │
-│     Clea Otsada        │            WORK AREA                     │   x 640    y 220         │
-│ ▾ stormdelayghost      │            (the active view)             │   w 480    h 300         │
-│     De l'Opera         │                                          │                          │
-│ ▾ Not linked           │                                          │ SCOPE                    │
-│     Fourth Pilot       │                                          │ account — also changes   │
-│ ▾ Presets              │                                          │ Clea Otsada              │
-│     A1_layout_preset   │                                          │                          │
-│                        │                                          │                          │
-│ Open file…             │                                          │                          │
-└────────────────────────┴──────────────────────────────────────────┴──────────────────────────┘
-  --col-left 17.5rem       minmax(0, 1fr)                             --col-right 20rem
+├──────────────────────────────────┬───────────────────────────────────────────────────────────┤
+│ Profile  tranquility ▾           │  Layout │ Overview │ Autofill │ Keybinds │ Probes │ Raw ⋯ │
+│ ● in use by EVE                  ├────────────────────────────────┬──────────────────────────┤
+├──────────────────────────────────┤                                │ SELECTION                │
+│ ● Baguette Commander  stormdelay2│                                │                          │
+│   Clea Otsada         stormdelay2│           WORK AREA            │ Market                   │
+│   De l'Opera      stormdelayghost│        (the active view)       │   x 640    y 220         │
+│   Fourth Pilot                   │                                │   w 480    h 300         │
+│ ▾ Presets                        │                                │                          │
+│     A1_layout_preset             │                                │ SCOPE                    │
+│                                  │                                │ account — also changes   │
+│ Open file…                       │                                │ Clea Otsada              │
+└──────────────────────────────────┴────────────────────────────────┴──────────────────────────┘
+  --col-left 17.5rem                 minmax(0, 1fr)                   --col-right 20rem
 ```
+
+One flat list, alphabetical, with the account as a chip on the row rather than
+as a heading above it — §5.7 says why. Fourth Pilot has no chip because it has
+no account, which is a fact worth seeing while scanning.
 
 The context bar wraps to two lines only in the diagram; in the app it is one
 row, `flex-wrap: nowrap`, with the subject block and the palette control each
@@ -331,8 +332,8 @@ fixed.
 │ Profile tranquility ▾  │ Layout│Overview│Autofill│Keybinds│…│Raw ⋯│«│
 │ ● in use by EVE        ├─────────────────────────────────────────┤ │
 ├────────────────────────┤                                         │ │
-│ ▾ stormdelay2          │           WORK AREA                     │ │
-│   ● Baguette Commander │                                         │ │
+│ ● Baguette Commander   │           WORK AREA                     │ │
+│   Clea Otsada          │                                         │ │
 └────────────────────────┴─────────────────────────────────────────┴─┘
 
 < 900px:
@@ -344,6 +345,10 @@ fixed.
 │ │                      WORK AREA                                 │ │
 └─┴────────────────────────────────────────────────────────────────┴─┘
 ```
+
+The subject list's width does not change with the window until it rails, so the
+account chips (§5.7) survive both these sizes; they are elided above only for
+diagram space.
 
 Rules for narrowing, in the order they apply:
 
@@ -476,26 +481,54 @@ each have a reason to carry it: the save disclosure (§5.4), the History
 popover (§5.6), and the subject switcher's row tooltip. Nothing is lost; the
 name simply stops being the headline for a subject that has a real name.
 
-**The switcher** (`SubjectSwitcher.svelte`) is a Popover listing, filtered by a
-type-ahead field:
+**The switcher** (`SubjectSwitcher.svelte`) is a Popover over a type-ahead field
+and **the same flat list the sidebar renders** — same source, same
+`byResolvedName` order, same account `Chip`, same "no chip means no account"
+rule (§5.7):
 
 ```
-▾ stormdelay2
-    Baguette Commander        core_char_950.dat
-    Clea Otsada               core_char_951.dat
-▾ stormdelayghost
-    De l'Opera                core_char_970.dat
-▾ Not linked to an account
-    Fourth Pilot              core_char_980.dat
-▾ Presets
-    A1_layout_preset          layout, overview
+  ⌕ Type a character or account name
+
+    Baguette Commander   ⟨stormdelay2⟩       core_char_950.dat
+    Clea Otsada          ⟨stormdelay2⟩       core_char_951.dat
+    De l'Opera           ⟨stormdelayghost⟩   core_char_970.dat
+    Fourth Pilot                             core_char_980.dat
+  ▾ Presets
+    A1_layout_preset                         layout, overview
 ```
+
+Two lists of the same characters in two different orders, inside one app, is
+exactly the class of inconsistency this redesign exists to remove — so the
+switcher takes §5.7's treatment whole rather than earning an exception. The
+grouping it was first drafted with is rejected for the same reason and by the
+same note (§5.7); "it is entered by typing" does not earn the exception,
+because a user who opens it *without* typing gets precisely the broken ordering
+the flat rule exists to prevent.
+
+Like the sidebar it lists **the selected profile** (§5.7): flattening a list
+that spans folders would put a duplicated id next to its own copy with nothing
+to tell them apart. Phase 5's palette widens the scope instead of the ordering —
+its Characters source carries a profile label as a third column, which is what
+makes cross-folder rows distinguishable (`05-dialogs-copy-palette.md` §6.2).
+
+**The type-ahead is what makes a flat list fast, and it matches the account
+alias as well as the character name.** That is the flat list's answer to
+"switch to my other character on this account", which is a real multiboxing
+workflow and the one thing grouping genuinely did here: typing `stormdelay2`
+filters to exactly that account's characters, still alphabetical. A filter beats
+a grouping at this because it is temporary — it costs nothing to every other
+opening, which is looking for one name. The account chip on every row shows the
+relationship at rest, and §5.4's save disclosure and `ScopeBanner` name the
+siblings at edit and save time. If that trio ever proves insufficient, a
+dedicated affordance is a follow-up; it is not a reason to keep two orderings
+now.
 
 Choosing a character calls the same `openFile(path)` the sidebar calls
 (`+page.svelte:239`), so the unsaved-changes prompt
 (`+page.svelte:198-208`) and the slot reconciliation
 (`:274-275`) are unchanged. Choosing a preset calls `openPresetPair`
-(`:285`).
+(`:285`). The raw file name sits on each row and in its tooltip, which is the
+third of the three places this section keeps it.
 
 This component is deliberately the seed of the Phase-5 command palette: same
 list, same type-ahead, one extra section of commands. Building it twice would
@@ -513,6 +546,20 @@ section listing the six views.** That is the honest minimum: a control that
 opens nothing is worse than no control, and jump-to-character plus jump-to-view
 is already the majority of what a palette is for here. Phase 5 adds commands
 and the full ranking.
+
+**The two never compete, because in Phase 2 they are one component and in
+Phase 5 one becomes the other.** `Ctrl+K` and the subject block's `▾` open the
+same switcher; when Phase 5 lands, the switcher's character list *is* the
+palette's Characters source (`05-dialogs-copy-palette.md` §6.2) rather than a
+second implementation of it. **"Jump to a character" is the switcher's job in
+both phases** — nothing else acquires one.
+
+One thing the flat rule does **not** forbid: once a query is typed, Phase 5
+ranks rows by match quality rather than alphabetically. That is not a second
+ordering of the same list — an unfiltered list is scanned by eye and must be
+alphabetical, a filtered one is read top-down and must be ranked. The rule is
+about what the user sees before typing, which is where finding a name actually
+happens.
 
 **Platform-aware accelerator, with no new dependency:**
 
@@ -716,50 +763,94 @@ deliberately lists characters, not account files).
 Profile   tranquility / Default  ▾        ← selector, not a group header
 ● in use by EVE                           ← Chip, status, not a wrapped fragment
 ──────────────────────────────────────
-▾ stormdelay2                             ← ACCOUNT group
-    ● Baguette Commander                  ← ListRow, ● = currently open
-      Clea Otsada
-▾ stormdelayghost
-      De l'Opera
-▾ Not linked to an account
-      Fourth Pilot                 [Link…]
+  ● Baguette Commander  ⟨stormdelay2⟩     ← ListRow; ● = open, Chip = its account
+    Clea Otsada         ⟨stormdelay2⟩
+    De l'Opera          ⟨stormdelayghost⟩
+    Fourth Pilot                 [Link…]  ← no chip = no account
 ▾ Presets                                 ← PresetGroup.svelte, unchanged
-      A1_layout_preset
+    A1_layout_preset
 ──────────────────────────────────────
   Hide non-standard files  ☐
   Open file…
 ```
 
-**Grouping by account, and why the profile selector must be single-select.**
-Grouping by `accountOf(charId, roster)` (`overview.ts:25-27`) puts the
-characters that share settings next to each other, which is the relationship
-that makes an edit reach three characters instead of one.
+**One flat list, ordered exactly as it is today.** The rows are every character
+in the selected profile, sorted by `byResolvedName` (`filesort.svelte.ts:22-32`,
+imported as `byName` at `Sidebar.svelte:34` and applied at `:155`): named
+characters alphabetically, files still showing a bare id after them, ordered
+among themselves by file name. **Nothing about the ordering changes**, which is
+the point — the sidebar's one job is finding a character, that happens
+constantly, and alphabetical is how a name is found.
 
-But an account id can exist in several profile folders at once — `docs/small-tasks.md:32-45`
-records an install with **ten** folders each holding `core_user_13036531.dat` —
-so grouping by account across all profiles at once would render the same
-character several times under one heading, with no way to tell the copies
-apart. Making the profile a **single-select filter** removes that hazard
-entirely: exactly one folder is in scope, so an account group holds each
-character once. It also makes "in use by EVE" a property of the current
-selection (one chip) rather than a fragment repeated per group, and it matches
-what the app already does internally — `pairedFilePath()` resolves a pair
-strictly within the anchor file's own folder (`overview.ts:34-47`).
+**The account becomes a chip on the row, not a level above it.** The data is
+already on every row: `accountOf(charId, roster)` (`overview.ts:25-27`) resolved
+through `aliasFor()` and rendered as a dim `· alias` suffix
+(`Sidebar.svelte:169`), styled at `:195` as `0.85em` in `--fg-dim` — one of the
+treatments the audit measured as failing. It becomes a Phase-1 `Chip`: same
+information, same position, legible, and not one row moves.
+
+> **Decided: account grouping was proposed and rejected.** An earlier draft of
+> this section grouped rows by `accountOf()` so that characters sharing settings
+> sat together. It is not built, and the reason should not be relitigated:
+> grouping breaks alphabetical order and makes a character *harder to find*.
+> Browsing is the sidebar's whole job and it happens on every session; knowing
+> which characters share settings matters at **edit** time, not at **browse**
+> time, and it is already stated at both of the moments it bites (below). The
+> chip carries the same fact at zero cost to the ordering.
+>
+> **This applies to every list of characters in the app, not just this one.**
+> §5.2's subject switcher was drafted grouped and is flattened by this same
+> decision: alphabetical order is what makes a character findable, and that is a
+> property of character lists, not of the sidebar. A per-surface exception would
+> have to earn itself and "it is entered by typing" does not — the list is still
+> scanned by eye whenever it is opened without a query. Phase 4's "Character
+> (for widths)" selector inherits the rule when it folds into the switcher.
+
+**A character with no chip is unpaired, and that is worth seeing.** Absence is
+the whole rule — `accountOf()` returning `null` means no chip, so no
+intersection with `roster.unassigned` is needed at all. What the absence tells
+the user is not cosmetic:
+
+- an unpaired character **cannot receive account-scoped aspects in a batch
+  copy**: `targetDisabled` (`BatchView.svelte:151-152`) disables its checkbox
+  outright and labels it "pair in the Accounts view to include" (`:349`);
+- four of the six views refuse account-scoped editing until it is paired and
+  nag to do so — `OverviewView.svelte:304-307`, `AutofillView.svelte:85-87`,
+  `KeybindsView.svelte:85`, `ProbeFormationsView.svelte:467`.
+
+Under grouping this was a single heading the eye passes once; as a per-row
+property it is visible while scanning, which is when the user can still act on
+it. The rows keep a `Link…` action opening the Accounts sheet — the same
+affordance those four views already offer from inside themselves.
+
+**The sharing relationship is not lost — it moves to where it bites.** Two
+places, both already specified in this document: the save disclosure names the
+other characters at the moment of writing (§5.4, "this also changes Clea
+Otsada"), and `ScopeBanner` under the tab row states it on every account-scoped
+view *before* the edit (§5.4, call site 2). The sidebar does not need to be a
+third statement of the same fact, and for anyone who asks "whose account is
+this character on?" while browsing, the chip on the row answers it.
+
+**Profile: single-select, decided.** An account id can exist in several profile
+folders at once — `docs/small-tasks.md:32-45` records an install with **ten**
+folders each holding `core_user_13036531.dat` — so listing every folder at once
+means the same character appears several times, and in a flat alphabetical list
+the copies sit adjacent and indistinguishable with no folder heading to tell
+them apart. Single-select removes the hazard rather than papering over it:
+exactly one folder is in scope, so each character appears exactly once and one
+list can be sorted by name alone. It also makes "in use by EVE" a property of
+the current selection (one chip) rather than a fragment repeated per folder,
+and it matches what the app already does internally — `pairedFilePath()`
+resolves a pair strictly within the anchor file's own folder
+(`overview.ts:34-47`).
 
 Default selection is `primaryProfileDir(profiles)` (`profiles.ts:35-57`), which
 is already the profile pinned open today (`Sidebar.svelte:52-58`).
 
-> **Needs a decision:** single-select profile, or keep every profile listed at
-> once as today? Single-select is my recommendation and is what this spec is
-> written against — it is the only way account grouping stays unambiguous with
-> duplicated ids across folders, and it makes the live/not-live warning a
-> single unmissable chip. The cost is that a user comparing two folders now
-> clicks a selector instead of scrolling, and that a character in a
-> non-selected folder is one click further away rather than visible. If you
-> would rather keep all folders on screen, the fallback is: profile stays a
-> group level *above* account (folder → account → character), the "in use by
-> EVE" chip repeats per folder, and §5.7's flat account grouping applies within
-> each. Everything else in this document is unaffected.
+The cost is accepted, not denied: a user comparing two folders clicks the
+selector instead of scrolling, and a character in a non-selected folder is one
+click further away rather than visible. The selector carries the folder count,
+so it is never a secret that other folders exist.
 
 **The "in use by EVE" chip.** Today it is a `<span class="meta">` inside the
 `<summary>` (`Sidebar.svelte:160`) using `var(--warn, #d08770)` — an inline
@@ -790,11 +881,11 @@ the save result (`api.ts:63-66`) and per-backup size in History
 (`:142-150`) — all three of which have tests (`Sidebar.spec.ts:50-81`), and the
 resolved-name sorting via `byResolvedName` (`filesort.svelte.ts:22-32`).
 
-**Unpaired characters** get a "Not linked to an account" group, from
-`roster.unassigned` intersected with the selected profile's char ids — the same
-intersection `AccountsView` already does (`AccountsView.svelte:29-33`). Its
-rows carry a `Link…` action opening the Accounts sheet, which is the same
-affordance `OverviewView.svelte:304-307` offers today from inside a view.
+The intersection with `roster.unassigned` that `AccountsView` has to do
+(`AccountsView.svelte:29-33`) has **no counterpart here**, and that is a
+consequence of the flat list rather than a coincidence: a grouped sidebar needs
+to know the membership of an extra bucket, a per-row chip only needs
+`accountOf()` to return `null`.
 
 ### 5.8 Work area and the launch empty state
 
@@ -812,19 +903,20 @@ that offers the thing the sentence describes:
 
            tranquility / Default          ● in use by EVE
 
-             Baguette Commander      stormdelay2
-             Clea Otsada             stormdelay2
-             De l'Opera              stormdelayghost
-             Fourth Pilot            not linked
+             Baguette Commander      ⟨stormdelay2⟩
+             Clea Otsada             ⟨stormdelay2⟩
+             De l'Opera              ⟨stormdelayghost⟩
+             Fourth Pilot
                                               … 3 more
 
            [ Open file… ]     or press Ctrl+K to search
 ```
 
-- The list is **the same data the subject list already has** — the selected
-  profile's characters, resolved-named and sorted by `byResolvedName`. No
-  recents store, no new backend command, no new state. Show up to eight, then
-  "… N more" which focuses the subject list.
+- The list is **the same data the subject list already has, rendered the same
+  way** — the selected profile's characters, resolved-named, sorted by
+  `byResolvedName`, account as a chip, no chip when unpaired (§5.7). No recents
+  store, no new backend command, no new state. Show up to eight, then "… N
+  more" which focuses the subject list.
 - Clicking a row is `openFile(path)`, identical to a sidebar click.
 - Naming `Ctrl+K` here is the proposal's fourth discoverability rule and costs
   one line.
@@ -1032,7 +1124,7 @@ no context API. Each has one owner and one reader.
 | `app/src/lib/ContextBar.svelte` | §5.1. Composition only; every child is a Phase-1 primitive or one of the below. |
 | `app/src/lib/SaveCluster.svelte` | §5.4. Trigger + Popover disclosure + Discard. |
 | `app/src/lib/ViewTabs.svelte` | §5.5. Wraps Phase-1 `Tabs`; owns the disabled-reason table and the `⋯` slot. |
-| `app/src/lib/SubjectSwitcher.svelte` | §5.2/§5.3. Grouped list + type-ahead. Phase 5 extends it into the palette. |
+| `app/src/lib/SubjectSwitcher.svelte` | §5.2/§5.3. Type-ahead over the same flat `byResolvedName` list the sidebar renders, chips and all — matching on the account alias as well as the name. Phase 5 extends it into the palette. |
 | `app/src/lib/AppMenu.svelte` | §5.10. Popover with the five migrated actions. |
 | `app/src/lib/HistoryPopover.svelte` | §5.6. Popover wrapping the adapted backups list. |
 | `app/src/lib/keys.ts` | §5.3. `MOD`, `accel()`. Two exports. |
@@ -1045,7 +1137,7 @@ list, with one call site, in `+page.svelte`. A file for it is scaffolding.
 | File | Change |
 |---|---|
 | `app/src/routes/+page.svelte` | The bulk. Delete the file bar (`:505-542`) and the conditional tab strip (`:527-536`); hoist `ContextBar` + `ViewTabs` above the `mainView` branch (`:496`); delete the first clause of `active` (`:53-59`) and rename to `editSlot`; delete `openDisplay` (`:118-122`) and `sharedLabel` (`:156-159`); repoint `setTitle` at `subjectLabel` (`:125-129`); replace the `.hint` launch state (`:502-503`) with `EmptyState`; drop `BackupsPanel` and its rail (`:646-663`); rename `backupsOpen`→`inspectorOpen`, `layoutFocusFilter`→`viewFocusSearch`; drop the `.tree-area` wrappers around each view (`:543-604`); move most state to `subject.svelte.ts` and re-import. Rename view `"tree"`→`"raw"`. Target: under 300 lines. |
-| `app/src/lib/Sidebar.svelte` | §5.7. Delete the action toolbar (`:120-132`) and its `onShowAccounts`/`onShowBatch` props; add the profile selector + chip; regroup rows by account; fold KB into the row `title` (`:167-171`); keep the filter toggle, hints and `PresetGroup` untouched. |
+| `app/src/lib/Sidebar.svelte` | §5.7. Delete the action toolbar (`:120-132`) and its `onShowAccounts`/`onShowBatch` props; add the profile selector + chip; collapse the per-profile `<details>` loop (`:152-177`) into one flat list of the selected folder's characters, sorted by the same `byName`/`byResolvedName` (`:34, :155`); the `· alias` suffix (`:169`) becomes a `Chip` and `.acct` (`:195`) is deleted; fold KB into the row `title` (`:167-171`); keep the filter toggle, hints and `PresetGroup` untouched. |
 | `app/src/lib/BackupsPanel.svelte` | Becomes the History popover's body: takes a list of `{slot, subjectName, fileName}` groups instead of one `slot`+`subtitle`; the collapse chevron (`:52-53`) goes with the column; the fetch effect (`:23-33`) runs per group; restore's confirm names the file it replaces (`:36-40`). |
 | `app/src/lib/LayoutView.svelte` | `.layout-view` → `display: contents` (`:1010-1013`); `.side` → `.inspector` (`:829-831, 1019`); `focusFilter` prop renamed `focusSearch` (`:32, 51-53, 997`). No logic touched. |
 | `app/src/lib/OverviewView.svelte` | Drop the `sharedLabel` prop (`:11, 14`), its `<p>` (`:314`) and its CSS (`:478-481`). |
@@ -1116,26 +1208,41 @@ These are the tests the phase exists for. Each fails on `master`.
 
 ### 8.4 Sidebar
 
-13. Characters group under their account's alias; a character in
-    `roster.unassigned` lands under "Not linked to an account".
-14. Changing the profile selector replaces the rows with the other folder's.
-15. The five migrated actions are **not** in the sidebar
+13. **The list is flat and in `byResolvedName` order.** Fixture: two named
+    characters and one still showing a bare id; assert the accessible names in
+    sequence, alphabetical with the bare id last. This is the assertion that
+    fails if anyone reintroduces a grouping level (§5.7).
+14. A paired character's row carries its account alias as a chip; a character
+    in `roster.unassigned` carries **no** account chip and does carry `Link…`.
+15. Changing the profile selector replaces the rows with the other folder's.
+16. The five migrated actions are **not** in the sidebar
     (`queryByRole("button", {name: /accounts|copy settings|about|refresh names/i})`
     is null) **and are** in the app menu. Both halves, in one test file each —
     this pair is what stops the migration silently dropping one.
-16. "Open file…" is still in the sidebar and still routes an account file to
+17. "Open file…" is still in the sidebar and still routes an account file to
     the user slot (`page.spec.ts:110-121` survives with a new query).
-17. The existing empty-hint tests (`Sidebar.spec.ts:50-81`) pass unchanged
-    except for the mount props. If any needs rewording, the grouping is wrong.
+18. The existing empty-hint tests (`Sidebar.spec.ts:50-81`) pass unchanged
+    except for the mount props. If any needs rewording, the list is wrong.
 
-### 8.5 Empty state
+### 8.5 Subject switcher
 
-18. Nothing open → the character rows are listed; clicking one calls
-    `open_file` with that path.
-19. Nothing open, profile has no characters → the existing hint text appears
+19. **`SubjectSwitcher.spec.ts` — the switcher's order is the sidebar's order.**
+    Mount both against the same fixture and assert the character rows come out
+    in the same sequence. One assertion, and it is the one that fails if either
+    surface reintroduces a grouping level (§5.2, §5.7).
+20. Typing an account alias filters to that account's characters, still in
+    `byResolvedName` order — the flat list's answer to "my other character on
+    this account" (§5.2).
+
+### 8.6 Empty state
+
+21. Nothing open → the character rows are listed, in the same order and with
+    the same chips as the sidebar; clicking one calls `open_file` with that
+    path.
+22. Nothing open, profile has no characters → the existing hint text appears
     (same string as the sidebar's).
 
-### 8.6 Existing tests that change, and why
+### 8.7 Existing tests that change, and why
 
 Three current assertions pin behaviour this phase deliberately reverses. Each
 is rewritten in place with a comment naming the reason, never deleted:
@@ -1151,7 +1258,7 @@ Also mechanical: `page.spec.ts:164,177` wait on the strings `"read-only"` and
 subject name instead. Every `mount()` gains `resetSubject()` in `afterEach`
 (§6.3).
 
-### 8.7 Not tested here
+### 8.8 Not tested here
 
 Layout/positioning (grid columns, rail thresholds, `display: contents`) is not
 asserted in jsdom, which computes no layout. It is verified in the running app
@@ -1165,7 +1272,9 @@ per §10 — on all three platforms for the `display: contents` question (§4.5)
 |---|---|---|
 | `display: contents` misbehaves on WebKitGTK (§4.5) | Medium | Verify in the app before merge. Fallback is one line (`--col-right: 0` while Layout is active) and defers the mechanism to Phase 4; the *rule* is unaffected. |
 | Module-level rune state poisons the vitest suite (§6.3) | **High if unguarded** | `resetSubject()` in `afterEach`, mandatory. The suite already documents this failure mode for two smaller stores. |
-| Single-select profile hides a character a user expected | Medium | Flagged as the phase's one open decision (§5.7). Selector shows the folder count; the empty-profile hint names the alternative. |
+| Single-select profile hides a character a user expected | Medium | Accepted with the decision (§5.7) — it is the only way one flat list can be unambiguous with ids duplicated across folders. Selector shows the folder count; the empty-profile hint names the alternative. |
+| A user wants to see at a glance which characters share an account | Low | The chip on every row is the same fact without reordering; the consequence is stated where it bites, in the save disclosure and `ScopeBanner` (§5.4). Grouping was considered and rejected (§5.7). |
+| Multiboxing: "switch to my other character on this account" is slower without grouping | Low | The switcher's type-ahead matches the account alias, which filters to that account's characters without permanently reordering anything (§5.2). If that proves insufficient it earns its own affordance as a follow-up — not a second ordering. |
 | History being a popover makes restore less discoverable than a docked column | Medium | Persistent labelled control in the context bar, present on every tab (today the column vanishes entirely with nothing open, `+page.svelte:646`). Phase 5's save toast will name the backup it wrote. |
 | The 679-line shell is rewritten in one commit and something silently drops | Medium | Land it as **two commits** (below). |
 | Six tabs at minimum window width overflow | Low | Short labels below 900px (§4.3); check at the app's minimum size, which is where the current bar already wraps. |
@@ -1178,7 +1287,7 @@ per §10 — on all three platforms for the `display: contents` question (§4.5)
 the existing markup byte-for-byte. The full suite must pass **unmodified**. If
 it does not, the extraction is wrong and nothing else is at risk yet.
 
-**Commit 2 — the shell.** Everything else, with the test changes of §8.6.
+**Commit 2 — the shell.** Everything else, with the test changes of §8.7.
 
 Rollback is `git revert` of commit 2 alone: the old three-column grid and file
 bar come back on top of the extracted store, which is a state the app is
@@ -1206,8 +1315,14 @@ backend, so there is no data-shape or file-format exposure at any point.
 
 - [ ] The subject is named once, in the context bar, and the OS window title
       matches it and does not change with the tab.
-- [ ] The sidebar groups by account, with a single-select profile at the top
-      and "in use by EVE" as a chip.
+- [ ] The sidebar is **one flat list** in `byResolvedName` order — byte-for-byte
+      the ordering it has today — with a single-select profile at the top and
+      "in use by EVE" as a chip.
+- [ ] Every paired character's row carries its account as a chip; an unpaired
+      character carries none, and no "Not linked" grouping level exists.
+- [ ] The subject switcher lists the **same characters in the same order with
+      the same chips** as the sidebar — one rule for every character list in the
+      app — and its type-ahead matches the account alias as well as the name.
 - [ ] Per-row KB is gone from the sidebar rows and present in their tooltips.
 - [ ] Accounts, Copy settings, About, Refresh names and Rescan are in the app
       menu and nowhere else; each is still reachable in one click.
@@ -1234,7 +1349,7 @@ backend, so there is no data-shape or file-format exposure at any point.
 
 **Hygiene**
 
-- [ ] `npm run test` green, including the three rewritten assertions of §8.6
+- [ ] `npm run test` green, including the three rewritten assertions of §8.7
       and `resetSubject()` in every mounting suite.
 - [ ] `npm run check` clean (`--fail-on-warnings`).
 - [ ] No new dependency in `app/package.json`; no change under `app/src-tauri/`.

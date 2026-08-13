@@ -15,9 +15,10 @@ edit at once. That is an all-or-nothing escape. This phase adds a per-step one.
 
 The goal is exactly this and nothing more:
 
-> `Ctrl+Z` reverts the last in-memory document edit — including one that spanned
-> both the character and the account file — and every open view shows the
-> reverted state without the user doing anything.
+> One `Ctrl+Z` reverts the last user action — including one that spanned both
+> the character and the account file, and one that the backend performed as two
+> writes — and every open view shows the reverted state without the user doing
+> anything.
 
 It is separable because Phase 5's argument does not rest on it. Phase 5 removes
 58 `message()` modals and corrects the false *"This can't be undone."* copy on
@@ -99,17 +100,25 @@ The invariant survives — all three run their `try_edit_char` **after** an
 `edit_slot` on the user document, inside one Tauri command, so all three are
 already inside a step that has been snapshotted. But the hazard the brief asked
 me to guard against as hypothetical is **not hypothetical**: a third caller was
-added without anyone noticing that a rule existed. §3.4 specs the tripwire, and
-it is a hard requirement rather than a nicety.
+added without anyone noticing that a rule existed. §3.4 specs the two tripwires,
+and they are a hard requirement rather than a nicety.
 
 ### 2.3 A second two-slot shape the proposal does not mention
 
 `overview_copy_columns` (`ops.rs:463-489`) writes both documents through **two
 separate `edit_slot` calls** — user at `ops.rs:473-478` for order and
 visibility, char at `ops.rs:481-486` for widths. Unlike the `try_edit_char`
-pattern, both halves go through `edit_reshared`, so both push. One user action
-therefore becomes **two** undo steps. §3.5 argues this is acceptable and says
-what the fix would be if it is not.
+pattern, both halves go through `edit_reshared`, so both would push. One user
+action would become **two** undo steps, and the first `Ctrl+Z` would leave the
+copy half-reverted. §3.5 rules that out and specs the grouping that prevents it.
+
+It is also the only command in the file that can fail *after* it has already
+written: order and visibility land, then the width half meets a read-only or
+absent character file and returns `Err`. The frontend's catch
+(`OverviewColumnsTab.svelte:79-85`) skips both `onUserDirty()` and
+`onCharDirty()`, so today the half that landed is not even marked unsaved — it
+is silently dropped at the next save. §3.7 deletes the half-write rather than
+patching the flag.
 
 ### 2.4 Cost is not the risk, but the numbers are worse than the proposal's
 
@@ -180,6 +189,11 @@ pub struct History {
     /// Counter values as of the last load or save of each slot. Dirty is
     /// `counters[i] != saved[i]`.
     saved: [u64; 2],
+    /// `None` outside a group. `Some(false)` inside one that has not pushed its
+    /// entry yet, `Some(true)` inside one that has — after which further writes
+    /// in the same command bump counters but push nothing (§3.5). Set by
+    /// `Group::new`, cleared by its `Drop`.
+    group: Option<bool>,
 }
 ```
 
@@ -201,38 +215,95 @@ fn edit_reshared<T, E>(state, slot, edit, err) -> Result<T, ErrDto> {
     let mut h = state.history.lock().unwrap();
 
     // Guards first: a no_document or read_only refusal must not pay for a clone.
+    // Both roll the open group back before returning, so a command that fails on
+    // its SECOND write leaves nothing behind (§3.7).
     {
-        let doc = match slot { Slot::User => u.as_ref(), Slot::Char => c.as_ref() }
-            .ok_or_else(|| no_document(slot))?;
+        let doc = match slot { Slot::User => u.as_ref(), Slot::Char => c.as_ref() };
+        let Some(doc) = doc else {
+            h.rollback_group(&mut u, &mut c);
+            return Err(no_document(slot));
+        };
         if let Fidelity::ReadOnly { reason } = &doc.fidelity {
-            return Err(ErrDto::new("read_only", reason.clone()));
+            // Built BEFORE the rollback call so `doc`'s borrow has ended by the
+            // time the `&mut`s go in. NLL, not luck — keep the two statements.
+            let e = ErrDto::new("read_only", reason.clone());
+            h.rollback_group(&mut u, &mut c);
+            return Err(e);
         }
     }
 
-    let before = h.capture(&u, &c);          // clones both open trees
+    // `Some` = clone both open trees. `None` = this command already pushed its
+    // one entry (§3.5), so the clone is skipped as well as the push. Deciding
+    // here and pushing below is not a TOCTOU: the history lock is held across
+    // the closure, so no other command can open or fill a group in between.
+    let before = h.capture_unless_grouped(&u, &c);
 
     let doc = match slot { Slot::User => u.as_mut(), Slot::Char => c.as_mut() }
         .expect("checked above");
-    let (out, changed_shape) = edit(&mut doc.value).map_err(err)?;   // no push on Err
-    if changed_shape {
-        doc.value = blue_marshal::reshare(&doc.value);
+    match edit(&mut doc.value) {
+        Ok((out, changed_shape)) => {
+            if changed_shape {
+                doc.value = blue_marshal::reshare(&doc.value);
+            }
+            h.push(before, slot);    // bumps counters[slot]; pushes only if Some
+            Ok(out)
+        }
+        Err(e) => {
+            // §3.7. Ungrouped: put back the tree cloned a moment ago, because
+            // `apply_mutations` can fail with half a batch applied. Grouped:
+            // `before` is None and there is nothing to put back HERE — the
+            // group's entry holds the state from before the whole command, and
+            // rolling that back subsumes this call's half-applied edit.
+            if let Some(b) = before { b.restore_slot(doc, slot); }
+            h.rollback_group(&mut u, &mut c);
+            Err(err(e))
+        }
     }
-
-    h.push(before, slot);                    // bumps counters[slot], clears redo
-    Ok(out)
 }
 ```
 
-Three properties of that ordering are load-bearing:
+Four properties of that ordering are load-bearing:
 
-- **A failed edit pushes nothing.** `edit(...).map_err(err)?` returns before
-  `h.push`, so a refused mutation leaves the stack exactly as it was. Pinned by
-  a test (§12).
+- **A failed edit pushes nothing.** The `Err` arm never reaches `h.push`, so a
+  refused mutation leaves the stack exactly as it was. Pinned by a test (§12).
+- **A failed edit also leaves no half-write.** That is §3.7, and it is what
+  makes `apply_mutations` atomic.
 - **A refused document costs nothing.** The `no_document` and read-only guards
-  run before `capture`.
+  run before `capture_unless_grouped`.
 - **The clone is of the *pre*-edit tree**, which is either straight from
   `Document::load` or left by a previous successful `edit_reshared` — in both
   cases a tree that encodes. That is what the §4 fallback relies on.
+
+The three `History` methods this needs, all of them short enough to state here:
+
+```rust
+/// `None` once the open group has pushed: no entry AND no clone.
+fn capture_unless_grouped(&self, u: &..., c: &...) -> Option<Entry> {
+    (self.group != Some(true)).then(|| self.capture(u, c))
+}
+
+/// Bumps `counters[slot]` unconditionally — the dirty flag counts writes, not
+/// undo steps (§7.2). Pushes only when `before` is `Some`.
+fn push(&mut self, before: Option<Entry>, slot: Slot) {
+    self.counters[slot as usize] += 1;
+    let Some(entry) = before else { return };
+    self.redo.clear();
+    if self.undo.len() == CAP { self.undo.pop_front(); }
+    self.undo.push_back(entry);
+    if self.group.is_some() { self.group = Some(true); }
+}
+
+/// Put both documents and both counters back to where the open group found
+/// them, and leave the group open but empty. No-op outside a group, and no-op
+/// inside one that has not written yet. `back()` IS this group's entry: a group
+/// pushes exactly once, so nothing can have been stacked on top of it.
+fn rollback_group(&mut self, u: &mut Option<Document>, c: &mut Option<Document>) {
+    if self.group != Some(true) { return; }
+    let entry = self.undo.pop_back().expect("a filled group has its entry");
+    entry.restore_into(u, c, &mut self.counters);
+    self.group = Some(false);
+}
+```
 
 `edit_slot` needs no change at all: it delegates (`ops.rs:133`), so it inherits
 the push.
@@ -248,6 +319,11 @@ If it also pushed, a single "Add overview window" would need two `Ctrl+Z`
 presses, the second of which would restore the account file to a state the
 character file was never paired with.
 
+The group flag from §3.5 would suppress that second push anyway, since all three
+call sites are inside a group. It is still not made a pusher, and §3.5's
+"rejected alternatives" says why: it would have to take the `user` lock and run
+a capture path that no shipped command ever reaches.
+
 Its doc comment gains the invariant, stated as a rule and not a description:
 
 ```rust
@@ -258,8 +334,9 @@ Its doc comment gains the invariant, stated as a rule and not a description:
 ///
 /// This function does NOT push an undo entry. Every call site MUST already have
 /// run an `edit_slot`/`edit_reshared` earlier in the SAME Tauri command, whose
-/// entry captured both slots (see `undo::Entry`). Today that is `tab_delete`
-/// (line ~525), `overview_window_add` (~615) and `overview_window_remove` (~628).
+/// entry captured both slots (see `undo::Entry`), and that command MUST hold an
+/// `undo::group` guard. Today that is `tab_delete` (line ~525),
+/// `overview_window_add` (~615) and `overview_window_remove` (~628).
 ///
 /// A caller that breaks this rule produces a char-side change no `Ctrl+Z` can
 /// reach. `undo::tests::try_edit_char_callers_are_snapshotted` fails if the set
@@ -267,29 +344,34 @@ Its doc comment gains the invariant, stated as a rule and not a description:
 /// your command to its list only after confirming it snapshots first.
 ```
 
-### 3.4 The tripwire that keeps 3.3 from rotting
+### 3.4 The two tripwires
 
-A comment did not stop a third caller appearing (§2.2), so the invariant gets a
-test that fails on a fourth. It reads this module's own source and asserts the
-set of enclosing functions:
+There are two ways a future command can break undo, they fail differently, and
+neither test catches the other's bug:
+
+| | Guards | Fails when |
+| --- | --- | --- |
+| **A** `try_edit_char_callers_are_snapshotted` | the *snapshot exists* precondition | a new command calls `try_edit_char`, which pushes nothing, without an `edit_reshared` earlier in the same command — so the char edit is unreachable by any `Ctrl+Z` |
+| **B** `multi_write_commands_open_a_group` | the *one command, one entry* count | a new command writes twice without an `undo::group` guard — so one action costs two presses |
+
+A pushes zero entries where one is needed; B pushes two where one is needed.
+§3.5's guard fixes B and does nothing for A: `open_group` suppresses pushes
+*after the first*, and A's bug is that there is no first. That is why the
+tripwire survives Decision A rather than being retired by it.
+
+Both read this module's own source — deliberately, and not as runtime asserts:
+the bug is a NEW command forgetting a rule, which no existing test exercises.
+Both share one ten-line splitter, `fns_of(src) -> Vec<(name, body)>`, which
+walks lines, starts a body at each `fn ` / `pub fn ` and ends it at the next.
 
 ```rust
 #[test]
 fn try_edit_char_callers_are_snapshotted() {
-    // Deliberately a source scan and not a runtime assert: the bug is a NEW
-    // command forgetting the rule, which no existing test would exercise.
     const KNOWN: &[&str] = &["tab_delete", "overview_window_add", "overview_window_remove"];
-    let src = include_str!("ops.rs");
-    let mut current = "";
-    let mut found = Vec::new();
-    for line in src.lines() {
-        if let Some(rest) = line.strip_prefix("pub fn ").or_else(|| line.strip_prefix("fn ")) {
-            current = rest.split('(').next().unwrap_or("");
-        }
-        if line.contains("try_edit_char(state,") {
-            found.push(current.to_string());
-        }
-    }
+    let found: Vec<&str> = fns_of(include_str!("ops.rs")).iter()
+        .filter(|(_, body)| body.contains("try_edit_char(state,"))
+        .map(|(name, _)| *name)
+        .collect();
     assert_eq!(
         found, KNOWN,
         "try_edit_char gained or lost a caller. It does NOT push an undo entry — \
@@ -297,40 +379,291 @@ fn try_edit_char_callers_are_snapshotted() {
          command, add an `undo reverts both files` test for it, then update KNOWN."
     );
 }
+
+#[test]
+fn multi_write_commands_open_a_group() {
+    let fns = fns_of(include_str!("ops.rs"));
+    // Seed with the three primitives, then close over their callers, so the six
+    // thin per-view helpers (`edit_user_tabs`, `edit_char_neocom`, …) count as
+    // writes and a seventh added tomorrow is picked up without editing a list.
+    let mut writers: Vec<&str> = vec!["edit_reshared", "edit_slot", "try_edit_char"];
+    loop {
+        let grown: Vec<&str> = fns.iter()
+            .filter(|(n, b)| !writers.contains(n) && writes(b, &writers) > 0)
+            .map(|(n, _)| *n).collect();
+        if grown.is_empty() { break }
+        writers.extend(grown);
+    }
+    for (name, body) in &fns {
+        assert!(
+            writes(body, &writers) < 2 || body.contains("undo::group(state)"),
+            "{name} writes to a document more than once without \
+             `let _group = undo::group(state);` on its first line. One Tauri \
+             command is one undo step (spec 05b §3.5): add the guard, then add a \
+             test that ONE Ctrl+Z reverts all of it."
+        );
+    }
+}
+
+/// Non-comment lines in `body` that call any of `names`.
+fn writes(body: &str, names: &[&str]) -> usize {
+    body.lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .filter(|l| names.iter().any(|n| l.contains(&format!("{n}("))))
+        .count()
+}
 ```
 
-Twelve lines, zero runtime cost, and it fails with the reason rather than with
-a number. It is a tripwire, not a proof: it cannot check that the preceding
-call really snapshots. The behavioural tests in §12 do that, one per caller.
+Zero runtime cost, and both fail with the reason rather than with a number.
+They are tripwires, not proofs: A cannot check that the preceding call really
+snapshots, and B cannot check that the guard is on the *first* line rather than
+after a slot lock. The behavioural tests in §12 do that, one per command.
 
 **Rejected alternatives.** A `debug_assert!` inside `try_edit_char` that the
 newest entry exists is weak — it passes for any command that is not the first
 of a session. A proof token returned by `edit_reshared` would be exact but
 changes twenty-odd call sites for one rule.
 
-### 3.5 `overview_copy_columns` costs two undo steps, and that is fine
+### 3.5 One Tauri command is one undo step
 
-Per §2.3, a copy with widths pushes twice. The intermediate state is coherent:
-the first `Ctrl+Z` reverts the widths (the character-file half), the second
-reverts order and visibility (the account-file half). Those are the two
-checkboxes the user ticked, so the steps map onto controls that exist.
+An earlier draft accepted that `overview_copy_columns` costs two `Ctrl+Z`
+presses, on the grounds that the two steps map onto the two checkboxes the user
+ticked. That is rejected. The rule, and the reasoning behind it, is the repo
+owner's:
 
-**Needs a decision:** if two presses is judged wrong, the fix is a group flag on
-`History` — `open_group()` makes `push` a no-op once one entry exists, because
-that entry already holds the before-state of both slots. It needs an RAII guard
-so an early `?` cannot leave the flag set, which is about fifteen lines for one
-command. Not taken here.
+> "It should be one press: you are undoing one action, it would feel wrong to
+> have to `Ctrl+Z` multiple times to go back on a single action."
+
+So the invariant is not stated per call site. It is stated once, over the unit
+the user actually acted in:
+
+> **One Tauri command produces at most one undo entry.**
+
+That is stronger than "`try_edit_char` doesn't push" and simpler to check,
+because "did the user press one button?" has an answer and "is this call site
+inside somebody else's snapshot?" needs an audit every time the file changes.
+
+#### The guard
+
+```rust
+/// Makes the rest of this Tauri command ONE undo step: the first write inside
+/// the group pushes its entry — which already holds the before-state of BOTH
+/// slots (§3.1) — and every later write in the same command rides it.
+///
+/// Hold it for the whole command, as the FIRST statement, before any slot lock:
+///
+///     let _group = undo::group(state);   // `let _group`, never `let _`
+///
+/// `let _ = undo::group(state);` drops the guard at the end of that statement
+/// and the group closes before the first edit. It compiles and it is silently
+/// wrong, which is the one mistake worth naming in the doc comment.
+pub struct Group<'a>(&'a Mutex<History>);
+
+pub fn group(state: &AppState) -> Group<'_> {
+    // Takes and RELEASES the history lock. It must not hold it: the next thing
+    // the command does is call `edit_reshared`, which takes user -> char ->
+    // history, and a held history lock would deadlock on the third.
+    state.history.lock().unwrap().group = Some(false);
+    Group(&state.history)
+}
+
+impl Drop for Group<'_> {
+    fn drop(&mut self) {
+        // `unwrap_or_else(into_inner)` rather than `unwrap()`: a panic inside a
+        // Drop during an unwind aborts the process, and a poisoned History
+        // means the app is already dead — closing the group is the last thing
+        // that should turn that into an abort.
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).group = None;
+    }
+}
+```
+
+`Drop` is the whole point. Every one of the four commands has a `?` between
+opening the group and finishing — `tab_delete` at `ops.rs:524`,
+`overview_copy_columns` at `:478` and `:486` — and a matching
+`open_group()` / `close_group()` pair would leak the flag down that path. The
+symptom is not a crash: the flag stays set, and every *later* command in the
+session pushes nothing and becomes silently un-undoable. Pinned by a test (§12).
+
+#### The lock story
+
+The guard holds **no lock between construction and drop** — it holds a
+`&Mutex<History>` and takes the lock twice, briefly, at each end. So:
+
+- It cannot deadlock against `edit_reshared`, which takes `user → char →
+  history` and needs the history lock free when it gets there.
+- Taking `history` alone is consistent with §10's order: skipping levels is
+  safe, reordering is not, and there is no level below `history` to invert
+  against.
+- `Drop` runs at the end of the command body, after the tail re-projection
+  (`overview_columns(state)`, `window_layout(state, …)`) has already released
+  its own slot locks inside itself. No slot lock is ever held while the group
+  closes.
+
+The rule that keeps this true is the one in the doc comment: **acquire the guard
+before any slot lock, as the first statement of the command.**
+
+#### Which commands need it — the definitive list
+
+Every `edit_slot` / `edit_reshared` / `try_edit_char` call site in
+`app/src-tauri/src` was re-read for this list. Four commands write more than
+once; **no others do, directly or transitively.**
+
+| Command | Writes | Grouping does |
+| --- | --- | --- |
+| `overview_copy_columns` (`ops.rs:463-489`) | `edit_slot(User)` `:473`, `edit_slot(Char)` `:481` | **the work.** Two entries become one, and the second write skips its clone |
+| `tab_delete` (`ops.rs:518-527`) | `edit_slot(User)` `:519`, `try_edit_char` `:525` | nothing today; see below |
+| `overview_window_add` (`ops.rs:608-617`) | `edit_slot(User)` `:609`, `try_edit_char` `:615` | nothing today; see below |
+| `overview_window_remove` (`ops.rs:621-630`) | `edit_slot(User)` `:622`, `try_edit_char` `:628` | nothing today; see below |
+
+How that was established, since it is the claim everything else rests on:
+
+- The nine functions that can write are `edit_reshared`, its delegate
+  `edit_slot` (`ops.rs:133`), `try_edit_char`, and the six thin per-view
+  wrappers around `edit_slot` — `edit_user_overview` (`:425-431`),
+  `edit_user_tabs` (`:492-498`), `edit_user_autofill` (`:730-736`),
+  `edit_char_stacks` (`:775-781`), `edit_char_neocom` (`:814-820`),
+  `edit_user_probes` (`:847-853`). Each wrapper contains exactly one
+  `edit_slot`, and no command calls the same wrapper twice.
+- The two batch-shaped commands write once each and are already one step:
+  `apply_mutations` (`ops.rs:209-221`) runs its whole `for` loop *inside* one
+  closure, and `add_probe_formations` (`ops.rs:923-960`) does the same.
+- The near misses all turn out to be reads: `set_hud_field` (`:312-338`) and
+  `set_probe_formation` (`:857-882`) call a projection before their single
+  write; `set_keybind_cmd` (`:758-772`), `pack_import` (`:694-704`) and every
+  `edit_user_tabs` caller call one after it.
+- Outside `ops.rs`: `setup.rs` reads both documents and writes neither
+  (`setup.rs:660-668`), `presets.rs` never imports `AppState`, and the only
+  `lib.rs` command that composes two backend calls is
+  `settings_preset_create` (`lib.rs:515-516`) — `setup::preset_save` plus a
+  directory listing, neither of which touches an open document.
+
+`tab_delete` and the two window commands carry the guard even though it
+currently suppresses nothing, and that is deliberate for two reasons. It makes
+the guard the *declaration* "this command writes more than once", which is what
+lets §3.4's tripwire B be a general rule with no hand-maintained list — and a
+list is exactly what failed in §2.2. And it is the only thing standing between
+these three and a two-press regression if `try_edit_char` is ever changed. Three
+lines for both.
+
+#### Rejected alternative — make `try_edit_char` push
+
+With a group flag in hand, the tidier-looking option is to delete §3.3's special
+case: let `try_edit_char` push like everything else and let the group deduplicate
+it. That also retires tripwire A, since a standalone caller would then produce a
+real entry.
+
+It is not taken. `try_edit_char` would have to take the `user` lock it does not
+need and run a capture it discards, because **all three** of its call sites are
+inside a group — the push path would be dead at every shipped call site, exercised
+by no test, and correct only for a caller that does not exist. An untested branch
+that nothing reaches is worse than a twelve-line test that fires when someone
+needs it. §3.3's rule stands; tripwire A stands.
 
 ### 3.6 Invariants, listed
 
-1. `edit_reshared` is the only pusher. `try_edit_char` never pushes (§3.3, §3.4).
-2. Every entry holds both slots. Never one.
-3. A push happens only after the edit succeeded.
-4. A push clears `redo` (§5.2).
-5. Slot occupancy is constant for a stack's lifetime: anything that opens or
+1. **One Tauri command produces at most one undo entry** (§3.5). This is the
+   headline one; 2 and 3 are how it is held.
+2. `edit_reshared` is the only pusher. `try_edit_char` never pushes (§3.3, §3.4).
+3. A command that writes more than once holds an `undo::group` guard for its
+   whole body, acquired before any slot lock (§3.5).
+4. Every entry holds both slots. Never one.
+5. A push happens only after the edit succeeded, and **a command that returns
+   `Err` from a write leaves both documents and both stacks as it found them**
+   (§3.7).
+6. A push clears `redo` (§5.2).
+7. Slot occupancy is constant for a stack's lifetime: anything that opens or
    closes a slot clears the stack (§5.3). This is what lets `Entry.char == None`
    mean "still empty" rather than "unknown".
-6. Locks are taken user → char → history, without exception (§10).
+8. Locks are taken user → char → history, without exception (§10). The group
+   guard holds none of them between acquire and drop.
+
+### 3.7 Atomicity: a failed write leaves nothing behind
+
+Once `edit_reshared` holds a before-state for the undo stack, restoring it on the
+`Err` path costs one line and buys atomicity. **Take it.** It was flagged as a
+decision rather than assumed because it changes documented behaviour;
+the change is strictly better and the decision is made.
+
+Two paths need it, both already shown in §3.2's body:
+
+1. **Ungrouped** — `if let Some(b) = before { b.restore_slot(doc, slot); }` in
+   the `Err` arm. This is what makes `apply_mutations` (`ops.rs:209-221`) atomic:
+   its closure runs `apply` over the whole batch against one locked doc, so a
+   failure at mutation `k` leaves `k-1` applied today.
+2. **Grouped** — `h.rollback_group(&mut u, &mut c)` on *every* error path,
+   including the `no_document` and read-only guards, which return before the
+   closure ever runs. Those two are not hypothetical: they are exactly how
+   `overview_copy_columns` fails today, on its second write, with its first
+   already applied (§2.3).
+
+**`ops.rs:205-208`'s doc comment must be rewritten in the same commit.** It
+currently states the opposite of what the code will do:
+
+> Non-atomic on a mid-batch failure, matching the caller's prior per-mutation
+> loop — geometry set_scalars on valid paths don't fail.
+
+It becomes:
+
+```rust
+/// Batched sibling of `apply_mutation`: applies every mutation to the same
+/// locked doc, then projects the tree once instead of once per mutation.
+///
+/// Atomic: a mutation that fails part-way puts the document back as it was,
+/// from the snapshot `edit_reshared` took for the undo stack (spec 05b §3.7).
+/// Callers get all of the batch or none of it.
+```
+
+A doc comment left saying "non-atomic" beside code that rolls back is worse than
+either behaviour on its own, because the next reader writes a caller against the
+comment. Same commit, not a follow-up.
+
+#### Where the two decisions meet
+
+An error partway through a **grouped** command rolls back the **whole group**,
+not just the failing write. This is the one genuinely new question the two
+decisions create together, and the answer follows from §3.5's rule rather than
+from taste: if one user action is one undo step, then a user action that failed
+must leave nothing — a half-applied action the user cannot see, sitting under an
+error dialog that says the action failed, is precisely the state undo exists to
+prevent. Rolling back only the failing write would leave the first half applied
+with **no entry on the stack for it**, because the group's entry is popped or was
+never pushed. That is worse than today: unreachable by `Ctrl+Z` and invisible.
+
+Concretely, for `overview_copy_columns` onto a read-only character file — the
+realistic failure, since `OverviewColumnsTab.svelte:67` already gates the widths
+box on a character being *open* but not on it being writable:
+
+| | today | after |
+| --- | --- | --- |
+| account file | order + visibility copied | untouched |
+| character file | untouched (the write errored) | untouched |
+| unsaved badge | **not set** — the catch at `OverviewColumnsTab.svelte:79-85` skips `onUserDirty()`, so the copied order is silently dropped at the next save | not set, and correctly so |
+| what the user sees | "Copy failed", and a document that half-copied | "Copy failed", and nothing changed |
+
+That is a behaviour change beyond undo, and an intended one: it makes the error
+message true. It also closes the dirty-flag hole above without touching the
+frontend.
+
+Two limits, stated rather than papered over:
+
+- **Rollback covers writes, not tail projections.** A command that fails *after*
+  its write — `set_overview_width` (`ops.rs:445-453`) edits the char slot and
+  then calls `overview_columns`, which errors if no account file is open — keeps
+  the write, and the entry stays on the stack so `Ctrl+Z` reaches it. That is the
+  right outcome (the edit did happen; only its re-projection failed) and it is
+  the pre-existing behaviour. Invariant 5 is scoped to writes for this reason.
+- **A rolled-back group still costs the redo stack**, because the push that
+  opened the group cleared `redo` and nothing kept a copy. Accepted: a failed
+  command losing a redo stack is not worth a saved copy of it, and §5.2's
+  argument for redo is about not fearing `Ctrl+Z`, not about surviving errors.
+
+One coupling to carry into §4: if the measurement sends `Snap` to encoded bytes,
+`restore_slot` and `restore_into` gain a `decode` and therefore a `Result` on the
+error path. A rollback that cannot decode must leave the document as it stands
+and never panic — the outcome is today's non-atomic behaviour, which is a
+degradation and not a corruption. `Fidelity::Editable` (§2.5) makes it
+near-impossible, since the bytes were encoded from a tree that round-trips.
 
 ---
 
@@ -501,6 +834,11 @@ The cost is small because the entry type already exists:
 exceed `CAP` entries, because it only ever grows by one per undo and undo is
 bounded by the undo stack's depth.
 
+Grouping (§3.5) does not complicate this: a group pushes once, so it clears
+`redo` once, exactly like the single-write command it is meant to feel like. The
+one seam is that a group rolled back by §3.7 leaves `redo` cleared even though it
+changed nothing — noted there and accepted.
+
 ### 5.3 Lifecycle: what clears the stack
 
 **Both stacks are cleared, and both counters reset, whenever a slot's document
@@ -518,7 +856,7 @@ required. An entry holds trees for both slots (§3.1). After `open_file` swaps a
 different character into the char slot, an older entry's char tree belongs to a
 *different character's settings file*. Restoring it would silently write one
 pilot's window geometry into another's document. That is data corruption, not a
-stale view, and it is the reason invariant 5 in §3.6 is phrased as absolutely as
+stale view, and it is the reason invariant 7 in §3.6 is phrased as absolutely as
 it is.
 
 The frontend never opens one slot in isolation — `reconcileUserSlot` and
@@ -532,7 +870,7 @@ memory now differs from disk. That falls out of §7.2 rather than needing a rule
 ### 5.4 When only one slot is open
 
 `Entry.char` / `Entry.user` are `Option<Snap>`; `None` means the slot was empty
-at capture. By invariant 5 a slot cannot become occupied while the stack lives,
+at capture. By invariant 7 a slot cannot become occupied while the stack lives,
 so `None` at capture implies `None` at restore, and restore skips it.
 
 ```rust
@@ -557,7 +895,8 @@ pub struct UndoState {
     pub can_undo: bool,
     pub can_redo: bool,
     /// Frontend shows nothing with this; it is for the tests and for a future
-    /// history list. Keep it — it is one field and it makes the tests readable.
+    /// history list. Keep it — it is one field, and §3.5's "one command, one
+    /// step" tests are all `assert_eq!(depth, 1)`, which nothing else can see.
     pub depth: usize,
 }
 
@@ -891,6 +1230,7 @@ Concretely:
 | `undo` / `redo` | user, char, history |
 | `save_document` | slot, history |
 | `open_file` / `close_file` | slot, then history (the slot guard is a statement temporary at `ops.rs:173`, `:191`) |
+| `undo::group()` and `Group::drop` | history only, taken and released at each end. **Never held in between** (§3.5) |
 | everything else | unchanged |
 
 Skipping a level is safe; reordering is not. A function that takes `char` then
@@ -923,9 +1263,10 @@ consistent order is a comment.
 ### New
 
 - **`app/src-tauri/src/undo.rs`** — `History`, `Entry`, `Snap`, `CAP`, push /
-  undo / redo / clear / mark-saved / dirty, the `#[cfg(test)]` module, and the
-  `#[ignore]`d measurement (§4.3). All of the machinery, so `ops.rs` grows by
-  call sites only.
+  undo / redo / clear / mark-saved / dirty, plus `Group`, `group()`,
+  `capture_unless_grouped` and `rollback_group` (§3.5, §3.7); the `#[cfg(test)]`
+  module with both tripwires and `fns_of`; and the `#[ignore]`d measurement
+  (§4.3). All of the machinery, so `ops.rs` grows by call sites only.
 
 ### Backend
 
@@ -936,16 +1277,25 @@ consistent order is a comment.
   - `AppState` gains `history: Mutex<undo::History>` (`:35-39`) and
     `AppState::new` initialises it (`:42-44`).
   - `edit_reshared` (`:106-122`) — rewritten per §3.2: three locks in order,
-    guards before capture, push after success.
+    guards before capture, capture skipped inside a filled group, push after
+    success, rollback on every error path.
   - `try_edit_char` (`:637-645`) — bumps `counters[char]`; gains the §3.3 doc
     comment. Behaviour otherwise unchanged.
+  - **`let _group = undo::group(state);` as the first statement of the four
+    multi-write commands** (§3.5): `overview_copy_columns` (`:463-489`),
+    `tab_delete` (`:518-527`), `overview_window_add` (`:608-617`),
+    `overview_window_remove` (`:621-630`). One line each, nothing else in those
+    functions moves.
+  - `apply_mutations`'s doc comment (`:205-208`) — rewritten per §3.7, in the
+    same commit as the rollback. It currently promises the opposite.
   - `open_file` (`:173`), `close_file` (`:190-192`) — clear the stacks and reset
     that slot's counters.
   - `save_document` (`:223-236`) — on success, `saved[slot] = counters[slot]`.
   - New: `pub fn undo`, `pub fn redo`, `pub fn undo_state`, plus `UndoOutcome`,
     `UndoState`, `SlotFlags`.
-  - Module doc comment (`:1-6`) gains the lock-order rule from §10.
-  - Test module gains §12's Rust tests, including the §3.4 tripwire.
+  - Module doc comment (`:1-6`) gains the lock-order rule from §10 and the
+    one-command-one-entry rule from §3.5.
+  - Test module gains §12's Rust tests, including the §3.4 tripwires.
 
 ### Frontend
 
@@ -991,27 +1341,63 @@ Fixtures follow the existing pattern: `AppState::new()` (`ops.rs:42`),
 
 1. **`undo_reverts_a_single_slot_edit`** — open the user fixture,
    `set_overview_visible`, undo, re-project, assert the original projection.
+
+**One test per multi-write command (§3.5), each asserting `depth == 1` after the
+command and full restoration after exactly ONE `undo()`.** The `depth` assert is
+the load-bearing half: without it these pass with two entries and one press
+reverting half.
+
 2. **`undo_of_overview_window_add_reverts_both_files`** — open both slots, add a
-   window, assert the char document gained its `overview_N` geometry, undo,
-   assert **both** documents are back. The core two-slot claim.
+   window, assert the char document gained its `overview_N` geometry, assert
+   `depth == 1`, undo once, assert **both** documents are back. The core
+   two-slot claim.
 3. **`undo_of_tab_delete_reverts_the_char_side_remap`** — the third
    `try_edit_char` caller (§2.2), the one nobody knew was there.
 4. **`undo_of_overview_window_remove_reverts_both_files`** — the second.
-5. **`try_edit_char_callers_are_snapshotted`** — the §3.4 source tripwire.
-6. **`redo_replays_what_undo_reverted`** and
+5. **`undo_of_a_column_copy_with_widths_is_one_step`** — the command Decision A
+   was made for. Copy order + visibility + widths onto a second tab, assert both
+   documents changed, assert `depth == 1`, undo **once**, assert both are back.
+   Fails on the pre-decision design, which is the point.
+
+Then the machinery:
+
+6. **`try_edit_char_callers_are_snapshotted`** and
+   **`multi_write_commands_open_a_group`** — the two §3.4 source tripwires.
+7. **`a_group_closes_on_an_early_return`** — the RAII property, and the only
+   test of it. Call `tab_delete` with a nonexistent tab index so its first
+   `edit_slot` returns `Err` mid-group, then make a normal edit and assert
+   `depth == 1`. With a leaked flag the normal edit pushes nothing and `depth`
+   is 0.
+8. **`redo_replays_what_undo_reverted`** and
    **`a_new_edit_clears_the_redo_stack`**.
-7. **`the_stack_is_bounded_and_drops_the_oldest`** — `CAP + 5` edits; assert
+9. **`the_stack_is_bounded_and_drops_the_oldest`** — `CAP + 5` edits; assert
    `depth == CAP`, undo `CAP` times, assert `can_undo == false` and the document
    is *not* back at its original state.
-8. **`opening_a_file_clears_the_stack`** and
-   **`closing_a_slot_clears_the_stack`** — the §5.3 corruption guard.
-9. **`undo_back_to_the_save_point_reports_clean`** and
-   **`undo_past_a_save_reports_dirty`** — §7.2's table, both rows. These are the
-   two most likely to rot silently, because nothing else observes the counters.
-10. **`a_failed_edit_pushes_nothing`** — `set_overview_visible` on a nonexistent
+10. **`opening_a_file_clears_the_stack`** and
+    **`closing_a_slot_clears_the_stack`** — the §5.3 corruption guard.
+11. **`undo_back_to_the_save_point_reports_clean`** and
+    **`undo_past_a_save_reports_dirty`** — §7.2's table, both rows. These are the
+    two most likely to rot silently, because nothing else observes the counters.
+12. **`a_failed_edit_pushes_nothing`** — `set_overview_visible` on a nonexistent
     tab index; assert `can_undo == false`.
-11. **`undo_with_only_one_slot_open`** — open the user slot alone, edit, undo;
+13. **`undo_with_only_one_slot_open`** — open the user slot alone, edit, undo;
     assert no panic and the char slot stays empty (§5.4).
+
+Atomicity (§3.7), which is its own commit and so its own pair:
+
+14. **`a_failed_batch_leaves_the_document_untouched`** — `apply_mutations` with
+    a valid `set_scalar` followed by one on a nonexistent path. Assert the
+    projection equals the pre-call projection **and** `can_undo == false`: the
+    document is untouched and no entry was minted for a batch that did nothing.
+    This is the test that pins the rewritten `ops.rs:205-208` comment.
+15. **`a_failed_second_write_rolls_back_the_whole_group`** — open a user fixture
+    and a **read-only** character document (a file that does not round-trip, so
+    `Document::load` decides `Fidelity::ReadOnly`, `document.rs:45-71`), then
+    `overview_copy_columns` with `widths: true`. Assert `Err`, assert the
+    account file's order is **unchanged**, assert `depth == 0`. This is the
+    §3.7 table as a test, and it is the one that fails loudest if the rollback
+    is put only in the closure's `Err` arm — the read-only guard returns before
+    the closure runs.
 
 ### vitest
 
@@ -1042,7 +1428,11 @@ Following `OverviewView.spec.ts` and `routes/page.spec.ts`, using
 | --- | --- | --- |
 | Resident memory at depth | the real one | §4.3's measurement before merge; §4.4's threshold; `CAP = 20`; the encoded-bytes swap is one commit inside `undo.rs` |
 | Deadlock — `edit_reshared` goes from one lock to three | high if wrong, but bounded | one order everywhere (§10), justified by three existing comments in the same file; verified that no caller holds a slot lock across it |
-| A future command calls `try_edit_char` without snapshotting | medium — **has already happened once** (§2.2) | the §3.4 tripwire test, the doc comment, and one behavioural test per caller |
+| A future command calls `try_edit_char` without snapshotting | medium — **has already happened once** (§2.2) | §3.4's tripwire A, the doc comment, and one behavioural test per caller |
+| A future command writes twice without a group, costing two `Ctrl+Z` | medium — same failure mode, one rule over | §3.4's tripwire B, which needs no hand-maintained list |
+| A leaked group flag silently disables undo for every later command | high if wrong | the RAII `Drop` (§3.5), pinned by `a_group_closes_on_an_early_return` (§12) |
+| §3.7 changes `overview_copy_columns` behaviour beyond undo: a copy onto a read-only character now applies nothing instead of half | low, and intended | the §3.7 table; it makes "Copy failed" true and closes a dirty-flag hole (`OverviewColumnsTab.svelte:79-85`); called out in the release notes as a fix, not a silent change |
+| A failed command clears the redo stack it did not use | low | accepted, §5.2 |
 | The three unhooked views stay stale | medium | §7.1's three props; the three vitest tests fail without them; also fixes a pre-existing Discard/restore bug |
 | `savedAt` now means two things | low | comment updated; rename deferred to avoid colliding with the Phase 2 and 5 diffs |
 | Encoded fallback taken and `encode` fails mid-session | low | `Fidelity::Editable` (§2.5) makes it near-impossible; if it happens, drop the stack and report `can_undo = false` rather than failing the user's edit |
@@ -1054,28 +1444,39 @@ one rewritten function and three props. Reverting it leaves `discardChanges`
 doing exactly what it does today. There is no migration, no on-disk format, and
 nothing else in the redesign holds a reference to it.
 
-**Two changes are worth keeping even if undo is reverted**, and should be
-separate commits so they can be:
+**Commit order.** The first two are worth keeping even if undo is reverted, which
+is why they go first and go alone:
 
-1. `refreshToken` on the three views (§7.1) — fixes a live Discard/restore bug.
-2. `inAField` moving to `layout.ts` (§9.1) — a rule about the app living in one
-   component.
+1. `refreshToken` on the three views (§7.1) — standalone; fixes a live
+   Discard/restore bug.
+2. `inAField` moving to `layout.ts` (§9.1) — standalone; a rule about the app
+   living in one component.
+3. `undo.rs` plus the `edit_reshared` push points, the group guard on the four
+   commands of §3.5, and the two tripwires. The bulk.
+4. **Atomicity (§3.7)** — the rollback on every error path, the rewritten
+   `ops.rs:205-208` doc comment, and tests 14 and 15. Its own commit and its own
+   test, as decided, but it lands *after* 3: the rollback restores the snapshot
+   the undo stack takes, so it cannot exist before there is one.
+5. The frontend: commands, keybinds, toasts.
 
-**Needs a decision — free atomicity.** Once `edit_reshared` holds a before-state,
-restoring it on `Err` costs one line and makes `apply_mutations` atomic. That
-function is explicitly documented as non-atomic today (`ops.rs:206-208`: "Non-
-atomic on a mid-batch failure, matching the caller's prior per-mutation loop").
-Taking the rollback is strictly better and free; it is called out rather than
-assumed because it changes documented behaviour. **Recommendation: take it, in
-its own commit, with its own test.**
+Reverting 4 alone restores today's documented non-atomic behaviour and nothing
+else; reverting 3 takes 4 with it.
 
 ---
 
 ## 14 Definition of done
 
 - [ ] `Ctrl+Z` reverts the last document edit; `Ctrl+Shift+Z` and `Ctrl+Y` replay it.
-- [ ] Undoing "Add overview window", "Remove overview window" or "Delete tab"
-      reverts **both** files as one step.
+- [ ] **One user action is one `Ctrl+Z`.** "Add overview window", "Remove
+      overview window", "Delete tab" and "Copy columns (with widths)" each revert
+      **both** files on a single press, and each leaves `depth` at 1.
+- [ ] Every command that writes more than once holds an `undo::group` guard as
+      its first statement, and the guard closes on the `?` paths too.
+- [ ] A command that fails on a write leaves both documents and both stacks as
+      it found them — including `apply_mutations` mid-batch and
+      `overview_copy_columns` onto a read-only character.
+- [ ] `ops.rs:205-208` no longer says "non-atomic", and says so in the same
+      commit as the rollback.
 - [ ] `Ctrl+Z` inside any text input, and during keybind capture, reaches the
       field's own undo and never the document stack.
 - [ ] `Ctrl+Z` with an empty stack says "Nothing to undo." rather than nothing.
@@ -1089,8 +1490,9 @@ its own commit, with its own test.**
 - [ ] §4.3's measurement has been **run**, its median and max ratios recorded in
       §4.4, and the representation chosen against the threshold rather than
       against the argument.
-- [ ] `try_edit_char` carries the §3.3 comment and the §3.4 test passes.
-- [ ] Every lock acquisition in `ops.rs` follows user → char → history.
+- [ ] `try_edit_char` carries the §3.3 comment and both §3.4 tripwires pass.
+- [ ] Every lock acquisition in `ops.rs` follows user → char → history, and the
+      group guard holds none of them between acquire and drop.
 - [ ] No `settings_preset_*`, backup-restore or batch-copy toast offers Undo.
 - [ ] All Rust tests in §12 pass; all vitest tests in §12 pass;
       `npm run check` clean.
