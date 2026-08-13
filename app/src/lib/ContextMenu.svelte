@@ -6,13 +6,16 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from "svelte";
+  import Popover from "./ui/Popover.svelte";
 
   // A flat right-click menu. Deliberately minimal: no submenus, no icons, no
   // portal — both callers need one list, and nothing more. `WindowPanel` uses
   // it for a row's actions; `LayoutView` uses it to list the rectangles
   // stacked under a point on the canvas, where a click can only reach the top
   // one.
+  //
+  // The positioning and dismissal that used to live here now lives in Popover,
+  // because a second caller needed it. What is left is the list.
   let {
     x,
     y,
@@ -29,78 +32,48 @@
     item.run();
     onClose();
   }
-
-  // The list sits flush against the app's right edge and a row's clickable
-  // name area runs to the row's edge, so a right-click near the right or
-  // bottom of the window opens a menu that would otherwise render partly
-  // off-screen — potentially clipping "Copy window id", the escape hatch for
-  // reading a raw id. Clamp once the element exists and can be measured;
-  // starts at the raw click point and snaps onscreen a frame later.
-  //
-  // `pos` starts as a deliberate SNAPSHOT of the click point rather than a
-  // `$derived` of it: the effect below is what owns this value once the menu
-  // can be measured, and a derived would overwrite the clamp on every read.
-  // `untrack` says that to the compiler, which otherwise warns that this
-  // captures only the initial x/y — which is the point, since the effect
-  // tracks them itself and re-clamps if they ever change.
-  let menuEl: HTMLDivElement | undefined = $state();
-  let pos = $state(untrack(() => ({ x, y })));
-  $effect(() => {
-    if (!menuEl) return;
-    const r = menuEl.getBoundingClientRect();
-    pos = {
-      x: Math.max(0, Math.min(x, window.innerWidth - r.width)),
-      y: Math.max(0, Math.min(y, window.innerHeight - r.height)),
-    };
-  });
 </script>
 
-<svelte:window
-  onpointerdown={onClose}
-  onkeydown={(e) => {
-    if (e.key === "Escape") onClose();
-  }} />
-
-<!-- stopPropagation so a click INSIDE the menu doesn't trip the window handler
-     above and close it before the button's own onclick runs. -->
-<div
-  class="menu"
+<Popover
+  anchor={{ x, y }}
+  placement="point"
+  onclose={onClose}
   role="menu"
-  tabindex="-1"
-  bind:this={menuEl}
-  style="left: {pos.x}px; top: {pos.y}px;"
-  onpointerdown={(e) => e.stopPropagation()}>
+  ariaLabel="Actions"
+  class="context-menu">
   {#each items as item (item.label)}
     <button role="menuitem" onclick={() => pick(item)}>{item.label}</button>
   {/each}
-</div>
+</Popover>
 
 <style>
-  .menu {
-    position: fixed;
-    z-index: 50;
+  /* :global because the class lands on Popover's root, which is in Popover's
+     scope, not this file's. The name is deliberately unique for that reason —
+     the buttons below are authored here, so they scope normally. */
+  :global(.context-menu) {
     min-width: 11rem;
-    padding: 0.2rem;
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     display: flex;
     flex-direction: column;
   }
-  .menu button {
+  button {
     background: none;
     border: none;
-    border-radius: 3px;
-    color: var(--fg);
+    border-radius: var(--r-sm);
+    color: var(--text);
     cursor: pointer;
     font: inherit;
-    padding: 0.25rem 0.5rem;
+    font-size: var(--t-ui);
+    padding: var(--s1) var(--s2);
     text-align: left;
     white-space: nowrap;
   }
-  .menu button:hover {
-    background: var(--accent);
-    color: var(--bg);
+  /* Tone on its own dim ground, not dark text on a saturated fill (§3.4). */
+  button:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
   }
 </style>

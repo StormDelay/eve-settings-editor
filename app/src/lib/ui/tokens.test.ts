@@ -17,9 +17,22 @@ import { expect, test } from "vitest";
 
 const SRC = resolve(import.meta.dirname, "../..");
 
-/** Block comments blanked out, but newlines and columns preserved. */
+/**
+ * Comments blanked out, with newlines and columns preserved.
+ *
+ * Prose is not chrome: a comment explaining why `.mini` was retired, or naming
+ * the hex a token replaced, must not itself trip the guard that enforces the
+ * removal. Only whole-line `//` comments are blanked, never a trailing one — a
+ * URL in real code contains `//` and truncating from there could hide an
+ * offender.
+ */
 const stripComments = (t: string): string =>
-  t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  t
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, " "))
+    .split(/\r?\n/)
+    .map((l) => (/^\s*\/\//.test(l) ? "" : l))
+    .join("\n");
 
 type Line = { path: string; n: number; text: string; style: boolean };
 
@@ -151,12 +164,28 @@ test("radius-scale", () => {
 });
 
 // --- 6. one spacing scale --------------------------------------------------
+// 1px, 2px and -1px are allowed inside lib/ui/ and nowhere else. The scale is a
+// 4px base, but a dense tool needs sub-step padding on the small button and the
+// chip, and the underline tab needs -1px to lap its border over the strip's.
+// Inventing a --s0 to spell those would put a half-step in reach of all 25
+// views, which is how 55 distinct padding values happened the first time. The
+// primitives pay the cost; the guard still stops the sprawl where it lives.
 test("space-scale", () => {
-  const part = (p: string): boolean =>
-    /^var\(--s[1-6]\)$/.test(p) || p === "0" || p === "auto" || /^-?[\d.]+(%|fr)$/.test(p) || p === "inherit";
-  const ok = (v: string): boolean => v.split(/\s+/).every(part);
   const prop = "(?:padding|margin)(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|(?:row-|column-)?gap";
-  const offenders = Object.entries(offending(prop, ok)).map(([p, vs]) => `${p} — [${vs}]`);
+  const dense = /^lib\/ui\//;
+  const offenders = styleLines.flatMap((l) => {
+    const part = (p: string): boolean =>
+      /^var\(--s[1-6]\)$/.test(p) ||
+      p === "0" ||
+      p === "auto" ||
+      p === "inherit" ||
+      /^-?[\d.]+(%|fr)$/.test(p) ||
+      (dense.test(l.path) && (p === "1px" || p === "2px" || p === "-1px"));
+    return [...l.text.matchAll(new RegExp(`(?<![-\\w])(?:${prop})\\s*:\\s*([^;{}]*)`, "g"))]
+      .map((m) => m[1].trim())
+      .filter((v) => v && !v.split(/\s+/).every(part))
+      .map((v) => at(l, v));
+  });
   expect(offenders).toEqual([]);
 });
 
@@ -169,6 +198,9 @@ test("space-scale", () => {
 const GRAPHICS_OPACITY: Record<string, string[]> = {
   "lib/LayoutView.svelte": ["0.45", "0.6"],
   "lib/ProbeViewer.svelte": ["0.6", "0.75", "0.75", "0.75", "0.7", "0.3"],
+  // The fade-out keyframes, moved out of app.css. An animation from 1 to 0 is
+  // not a hierarchy claim, and this is the only animation in the app.
+  "lib/ui/Toast.svelte": ["1", "0"],
 };
 test("one-opacity", () => {
   const ok = (v: string): boolean => v === "var(--o-disabled)";
