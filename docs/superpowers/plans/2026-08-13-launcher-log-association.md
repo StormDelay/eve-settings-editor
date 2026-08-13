@@ -607,7 +607,9 @@ pub fn proposals(launcher: &LauncherRoster, store: &AccountsStore) -> Vec<Propos
 Run: `cd app/src-tauri && cargo test launcher`
 Expected: PASS — 17 tests.
 
-Then: `cargo clippy --all-targets -- -D warnings` → no warnings.
+`cargo clippy --all-targets -- -D warnings` still reports `dead_code` on everything
+in this module: `launcher_proposals` in Task 3 is the first non-test caller.
+Expected, not a defect. Task 3 is where clippy has to come back clean.
 
 - [ ] **Step 5: Commit**
 
@@ -782,6 +784,9 @@ And in the `api` object, after `unpairCharacter` (~line 429):
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd app/src-tauri && cargo test accounts` → PASS
+Run: `cd app/src-tauri && cargo clippy --all-targets -- -D warnings` → clean. This is
+where the `dead_code` warnings carried since Task 1 must disappear: `launcher_proposals`
+is the first non-test caller of the module. If any survive, something is unwired.
 Run: `cd app && npx vitest run ipc` → PASS. This is the gate that both sides of the new commands agree; if a name is wrong it fails here with the mismatched command or argument name.
 Run: `cd app && npm run check` → no new svelte-check errors.
 
