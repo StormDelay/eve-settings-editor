@@ -81,19 +81,26 @@ pub fn read_launcher_roster() -> LauncherRoster;                          // orc
 The complete parse rule:
 
 1. `[esi] Fetching character details for <ids>` → hold `<ids>` as pending. A new
-   *Fetching* discards any previous pending (that is the interleaving case).
-2. `[esi] Fetched <n> character details for <user>` → if a pending list exists
-   and holds exactly `n` ids, tally `sorted(ids) → user`. Clear pending either
-   way.
+   *Fetching* arriving while one is still unanswered discards it **and marks the
+   next *Fetched* as contested**: with two requests in flight, a *Fetched* may be
+   answering either, and pairing it with whichever happens to be pending hands
+   one account the other account's entire character list. Both drop.
+2. `[esi] Fetched <n> character details for <user>` → if an uncontested pending
+   list exists and holds exactly `n` ids, tally `sorted(ids) → user`. Clear
+   pending either way.
 3. **Majority vote** per id-set: the user id observed most often wins. A tie
    drops the set.
 4. **Disjointness**: a character id claimed by two surviving accounts drops both
    claims.
 
-Every mis-parse path yields *fewer* proposals, never a wrong one. This is what
-makes an undocumented log format safe to depend on: if CCP renames the lines, or
-changes the wording, the result is an empty roster and the existing paths, not a
-bad pairing.
+Every mis-parse path yields *fewer* proposals. This is what makes an undocumented
+log format safe to depend on: if CCP renames the lines, or changes the wording,
+the result is an empty roster and the existing paths, not a bad pairing.
+
+The three passes are defence in depth rather than one airtight rule. A long
+enough interleave can still leave exactly one plausible candidate for a *Fetched*
+line, which is why the vote exists and why a single reading is never trusted —
+and why, ultimately, the user confirms.
 
 `log_dir()` follows `discover.rs::default_roots()`'s shape — Windows
 `%APPDATA%\EVE Online\logs` (verified against a real install); the Electron
