@@ -70,6 +70,25 @@ exist, **139 agree and 0 disagree** — not one contradiction in three years.
 Resolving from Plex adjacency *alone*, ignoring *Fetched* entirely, yields the
 same 10 accounts and the same character sets.
 
+**Re-measured 2026-08-13 without a distance window** (implementing step 3 below).
+The figures above were taken with a short look-back; dropping it and letting the
+intervening-*Fetching* barrier be the only guard admits **155** claims, not 141 —
+the extra 14 sit at gaps of 11, 12, 38, 52 and more. Those far claims are not
+harmless: **7 of them are contradicted by their reply**, against 0 contradictions
+at every gap up to 38.
+
+What separates them is not distance but an intervening **`[esi] Fetched`**. All 7
+contradicted claims had a reply between the Plex line and the request; all 146
+confirmed ones had none — a clean split, with no threshold to tune. A reply ends
+the launch cycle its Plex line belonged to, so the account it named no longer
+describes what is being requested next. Hence step 3's second barrier. With both
+barriers: **148 claims, 0 contradictions**, and no claim beyond a 38-line gap
+survives on its own merits rather than by a rule about how far it may reach.
+
+Why this matters beyond tidiness: a stale claim is only *caught* by the
+retraction when a contradicting reply happens to arrive. One with no reply at all
+would stand as an unopposed wrong vote — the exact failure this module forbids.
+
 Why it matters more than its redundancy suggests: it names the account **beside
 the ids, at request time**, whereas *Fetched* names it at reply time — and reply
 time is exactly where concurrent launches scramble the correspondence. Two
@@ -129,8 +148,11 @@ The complete parse rule:
    measured at 170 of 182 tallies dropped. With it, the real corpus yields the
    same 10 accounts × 3 disjoint characters that an independent method found.
 3. `[virtual-goods] Fetched Plex status for '<user>'` → remember it as the
-   **claimed account** for the next *Fetching*, provided no other *Fetching*
-   intervenes.
+   **claimed account** for the next *Fetching*, provided neither another
+   *Fetching* nor a *Fetched* intervenes. Both mean the launch cycle that Plex
+   line belonged to has moved on. **Not a line-distance window** — the honest
+   gaps run from 1 line to 38, so any distance is a guess, while these two
+   structural barriers separate the measured corpus exactly (§2).
 
    When a *Fetching* carries a claimed account, the pairing is complete at
    request time from two adjacent lines, so **tally it immediately and ignore the
@@ -140,7 +162,9 @@ The complete parse rule:
    interleaving, which is the one thing steps 1-2 can only avoid, never detect.
 
    A *Fetching* with no claimed account falls through to the in-flight rule
-   unchanged — still 50 of 191 observations on the measured corpus.
+   unchanged — 43 of 191 requests on the measured corpus. Net effect: **188 of
+   191 requests yield an observation, up from 176** under the in-flight rule
+   alone, recovering all 12 it dropped, with the same roster behind it.
 4. **Majority vote** per id-set: the user id observed most often wins. A tie
    drops the set.
 5. **Disjointness**: a character id claimed by two surviving accounts drops both
@@ -260,6 +284,12 @@ synthetic lines — synthetic ids only, per the repo rule:
 - a tie dropping the set;
 - a character appearing in two winning sets dropping both;
 - `n` disagreeing with the pending list length dropping the pair;
+- a Plex claim pairing with two other requests in flight;
+- an intervening *Fetching*, and an intervening *Fetched*, each voiding the claim;
+- a *Fetched* naming a different account retracting the tally to nothing;
+- a *Fetched* agreeing leaving one vote, not two (pinned by holding it against a
+  single opposing observation: the correct count ties and drops the set);
+- a Plex line's balance digits never read as an account id;
 - no input lines → empty roster.
 
 `log_dir()` returning `None` on a machine without the directory is covered by

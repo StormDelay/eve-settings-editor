@@ -4,6 +4,13 @@
 //!   [esi] Fetching character details for <char_id>, <char_id>, <char_id>
 //!   [esi] Fetched 3 character details for <user_id>
 //!
+//! and, immediately BEFORE the request, on most launches:
+//!   [virtual-goods] Fetched Plex status for '<user_id>' on 'tranquility' …
+//!
+//! The last of those is the strongest signal, because it names the account
+//! beside the ids at REQUEST time rather than at reply time, and two adjacent
+//! lines cannot be interleaved by a concurrent launch.
+//!
 //! Nothing else states the pairing. Measured 2026-08-13: char and user settings
 //! files carry no id cross-reference at all, in either direction, and a
 //! character's name appears in nearly every account file (chat and contacts),
@@ -60,6 +67,32 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
     Some((n.trim().parse().ok()?, rest.trim().parse().ok()?))
 }
 
+/// The account id from `[virtual-goods] Fetched Plex status for '<user>' …`.
+///
+/// Only the first quoted field is read. The line also carries a PLEX balance,
+/// and a looser parse that scanned for "a number" could take that for an account
+/// id — an invented pairing, which is the one failure mode this module forbids.
+fn plex_user(line: &str) -> Option<u64> {
+    let rest = line.split_once("[virtual-goods] Fetched Plex status for '")?.1;
+    rest.split_once('\'')?.0.trim().parse().ok()
+}
+
+/// Undo a tally recorded from a claim. The vote must genuinely leave the map:
+/// leaving it to stand beside the contradicting one turns positive evidence of
+/// interleaving into a tie at best, and a surviving wrong pairing at worst.
+fn retract(votes: &mut HashMap<Vec<u64>, HashMap<u64, u32>>, ids: &[u64], user: u64) {
+    let Some(users) = votes.get_mut(ids) else { return };
+    if let Some(count) = users.get_mut(&user) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            users.remove(&user);
+        }
+    }
+    if users.is_empty() {
+        votes.remove(ids);
+    }
+}
+
 /// Mine the launcher's char↔account pairings from `files` — one `Vec` of lines
 /// per log file, **files oldest-first and lines in order**, which
 /// `read_roster_from` guarantees.
@@ -82,6 +115,27 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
 ///     This is not airtight — a longer interleave can still leave exactly one
 ///     plausible candidate — which is why the vote exists rather than a single
 ///     reading being trusted.
+///
+///     **Except when the request line carries a claimed account.** A
+///     `[virtual-goods] Fetched Plex status for '<user>'` line names the account
+///     for the *next* request, and the pairing is then complete from two
+///     adjacent lines, so it is tallied immediately and the in-flight count is
+///     irrelevant to it: interleaving cannot corrupt a fact that never spans a
+///     gap. Measured over 98 real log files, 148 of 191 requests carry such a
+///     claim, and every one of them that a reply could check agreed. It takes
+///     the corpus from 176 observations to 188 — every one the counter dropped —
+///     behind the same 10 accounts × 3 disjoint characters.
+///
+///     A claim is cleared by **another request or another reply** — either means
+///     the launch cycle that Plex line belonged to has moved on, and the account
+///     it named no longer describes what is being requested now. Not by a
+///     line-distance window: the honest gaps run from 1 line to 38, so any
+///     distance is a guess, while the two barriers separate the corpus exactly.
+///
+///     If a later `Fetched` for that same request still names a *different*
+///     account, the observation is **retracted**, not merely doubted — a
+///     contradiction is positive evidence of interleaving, the one thing the
+///     counter can only avoid, never detect.
 ///  2. **Recency.** Per account, keep only the most recently seen surviving set.
 ///     Logs span years and an account's characters do change.
 ///  3. **Disjointness.** A character claimed by two surviving accounts is
@@ -94,30 +148,60 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
     let mut seq = 0usize;
 
     for lines in files {
-        let mut pending: Option<Vec<u64>> = None;
+        // The pending request's ids, and the account a Plex line claimed for it.
+        let mut pending: Option<(Vec<u64>, Option<u64>)> = None;
+        let mut claimed: Option<u64> = None;
         let mut in_flight = 0usize;
         for line in lines {
             seq += 1;
+            if let Some(user) = plex_user(line) {
+                claimed = Some(user);
+                continue;
+            }
             if let Some(ids) = fetching_ids(line) {
                 in_flight += 1;
-                pending = ids;
+                // `take`: the claim belongs to ONE request. A second request
+                // finds nothing to claim. No line-distance window — the real
+                // gaps vary and a distance is arbitrary; what makes a claim
+                // stale is another request or another reply, not its age.
+                let claim = claimed.take();
+                if let (Some(ids), Some(user)) = (&ids, claim) {
+                    *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
+                    last_seen.insert(ids.clone(), seq);
+                }
+                pending = ids.map(|ids| (ids, claim));
                 continue;
             }
             if let Some((n, user)) = fetched_count_and_user(line) {
                 // `take` clears the pending set either way: an unmatched count is
                 // a mis-pairing, not something to hold on to.
-                let candidate = pending.take();
-                if in_flight == 1 {
-                    if let Some(ids) = candidate {
-                        if ids.len() == n {
-                            *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
-                            last_seen.insert(ids, seq);
+                match pending.take() {
+                    // Already tallied at request time. The reply adds nothing
+                    // when it agrees — a second tally would let one launch
+                    // outvote a genuinely disagreeing one — and when it
+                    // disagrees it retracts.
+                    Some((ids, Some(claim))) => {
+                        if claim != user {
+                            retract(&mut votes, &ids, claim);
                         }
                     }
+                    Some((ids, None)) if in_flight == 1 && ids.len() == n => {
+                        *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
+                        last_seen.insert(ids, seq);
+                    }
+                    _ => {}
                 }
                 // An answer with nothing outstanding means the log starts
                 // mid-request; saturating rather than panicking.
                 in_flight = in_flight.saturating_sub(1);
+                // A reply ends the launch cycle its Plex line belonged to, so an
+                // unconsumed claim is stale from here on. Measured over 98 real
+                // log files, this separates the signal exactly: of 153 claims
+                // that a reply could check, all 146 with no reply in between
+                // agreed, and all 7 with one disagreed. Without this the parser
+                // relies on the retraction to catch them — which only works when
+                // a contradicting reply happens to arrive at all.
+                claimed = None;
             }
         }
     }
@@ -272,6 +356,13 @@ mod tests {
             "2026-08-12 16:47:06.310    app     info:    [esi] Fetched {n} character details for {user}"
         )
     }
+    /// The request-time claim. `balance` is deliberately account-id-shaped: it
+    /// must never be mistaken for the id.
+    fn plex(user: u64, balance: u64) -> String {
+        format!(
+            "2026-08-12 16:47:05.700    app     info:    [virtual-goods] Fetched Plex status for '{user}' on 'tranquility' (eve-online) with balance: {balance}"
+        )
+    }
     fn chars(r: &LauncherRoster, user: u64) -> Vec<u64> {
         r.accounts.get(&user).cloned().unwrap_or_default()
     }
@@ -354,6 +445,91 @@ mod tests {
             fetched(3, 80000001),
         ]]);
         assert!(r.accounts.is_empty(), "an unreadable request is opaque, not absent");
+    }
+
+    #[test]
+    fn a_claimed_request_pairs_even_with_other_requests_in_flight() {
+        // The account is named on the line before the ids, so no gap exists for
+        // a concurrent launch to interleave — the in-flight count says nothing
+        // about this observation and must not veto it.
+        let r = parse_logs(&[vec![
+            fetching(&[90000001, 90000002, 90000003]),
+            fetching(&[90000004, 90000005, 90000006]),
+            plex(80000003, 80000009),
+            fetching(&[90000007, 90000008, 90000009]),
+        ]]);
+        assert_eq!(chars(&r, 80000003), vec![90000007, 90000008, 90000009]);
+        assert_eq!(r.accounts.len(), 1, "only the claimed request pairs");
+    }
+
+    #[test]
+    fn a_balance_is_never_read_as_an_account_id() {
+        let r = parse_logs(&[vec![
+            plex(80000001, 80000009),
+            fetching(&[90000001, 90000002, 90000003]),
+        ]]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
+        assert!(!r.accounts.contains_key(&80000009), "the balance is not the account");
+    }
+
+    #[test]
+    fn an_intervening_request_takes_the_claim_away_from_the_second() {
+        // The claim belongs to the next request only. B must fall through to the
+        // in-flight rule — which, with A still open, drops it.
+        let r = parse_logs(&[vec![
+            plex(80000001, 80000009),
+            fetching(&[90000001, 90000002, 90000003]), // A, claimed
+            fetching(&[90000004, 90000005, 90000006]), // B, unclaimed
+            fetched(3, 80000002),
+        ]]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
+        assert_eq!(r.accounts.len(), 1, "B's claim was A's, and B has none of its own");
+    }
+
+    #[test]
+    fn a_reply_between_the_claim_and_the_request_makes_the_claim_stale() {
+        // The Plex line belonged to a launch that has since finished, so it says
+        // nothing about the request that comes after. Measured over 98 real log
+        // files: of the 153 claims a reply could check, all 146 with no reply in
+        // between agreed and all 7 with one disagreed — a clean separation, and
+        // the only claims the previous rule got wrong.
+        let r = parse_logs(&[vec![
+            fetching(&[90000001, 90000002, 90000003]),
+            plex(80000002, 80000009),
+            fetched(3, 80000001), // that launch is answered; the claim is spent
+            fetching(&[90000004, 90000005, 90000006]),
+            fetched(3, 80000003),
+        ]]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
+        assert_eq!(chars(&r, 80000003), vec![90000004, 90000005, 90000006]);
+        assert!(!r.accounts.contains_key(&80000002), "a spent claim must not pair");
+    }
+
+    #[test]
+    fn a_reply_contradicting_the_claim_retracts_the_observation() {
+        // Two lines apart said one account, the reply says another: the request
+        // and the answer were interleaved. Neither reading survives.
+        let r = parse_logs(&[vec![
+            plex(80000001, 80000009),
+            fetching(&[90000001, 90000002, 90000003]),
+            fetched(3, 80000002),
+        ]]);
+        assert!(r.accounts.is_empty(), "a contradiction removes the vote, it does not add one");
+    }
+
+    #[test]
+    fn a_reply_agreeing_with_the_claim_does_not_vote_twice() {
+        // A double tally would let one launch outvote a genuine disagreement.
+        // Held against exactly one opposing observation, the correct count ties
+        // and drops the set; a doubled one would win it.
+        let r = parse_logs(&[vec![
+            plex(80000001, 80000009),
+            fetching(&[90000001, 90000002, 90000003]),
+            fetched(3, 80000001), // agrees
+            fetching(&[90000001, 90000002, 90000003]),
+            fetched(3, 80000002), // one opposing observation
+        ]]);
+        assert!(r.accounts.is_empty(), "1:1 is a tie — the claim counts once, not twice");
     }
 
     #[test]
