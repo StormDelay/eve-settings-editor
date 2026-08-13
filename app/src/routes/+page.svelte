@@ -10,6 +10,7 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
+  import Toast from "$lib/ui/Toast.svelte";
   import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, ErrDto, Profile, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
@@ -677,3 +678,7 @@
   {/if}
   {/if}
 </main>
+
+<!-- Mounted once, here. Every transient confirmation in the app renders through
+     it, so it has to outlive whichever view raised it. -->
+<Toast />
