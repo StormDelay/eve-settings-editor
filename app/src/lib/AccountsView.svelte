@@ -76,12 +76,19 @@
 
   async function acceptAll() {
     error = null;
+    // Capture before the await: `allPairs` is derived from `proposals` and
+    // `dismissed`, either of which the user can change while the request is in
+    // flight (dismiss a ghost, click "Keep mine" elsewhere). Re-reading the
+    // derived value afterwards would drop a different set than was actually
+    // sent, leaving the confirmed character in `proposals` to re-render as a
+    // duplicate ghost — the exact bug this filtering exists to prevent.
+    const pairs = allPairs;
     try {
-      await confirmMany(allPairs);
+      await confirmMany(pairs);
       // Drop what was just accepted. `proposalsByCard` cannot see the roster, so
       // a proposal left in the list re-renders as a ghost in the next empty slot
       // — the same character twice on one card.
-      const accepted = new Set(allPairs.map(([charId]) => charId));
+      const accepted = new Set(pairs.map(([charId]) => charId));
       proposals = proposals.filter((p) => !accepted.has(p.char_id));
     } catch (e) {
       error = errMessage(e);

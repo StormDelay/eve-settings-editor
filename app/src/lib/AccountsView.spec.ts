@@ -54,6 +54,18 @@ describe("launcher proposals", () => {
     );
   });
 
+  test("accept all drops exactly the characters it sent", async () => {
+    mount([
+      { char_id: 90000001, user_id: 80000001, conflict: null },
+      { char_id: 90000009, user_id: 80000001, conflict: 80000002 },
+    ]);
+    const all = await waitFor(() => screen.getByRole("button", { name: /accept all/i }));
+    await fireEvent.click(all);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /accept Alpha/i })).toBeNull(),
+    );
+  });
+
   test("a disputed character is flagged on the card that holds it, naming the target", async () => {
     mount([{ char_id: 90000009, user_id: 80000001, conflict: 80000002 }]);
     const warning = await waitFor(() => screen.getByText(/launcher log puts Zulu on Main/i));
@@ -68,6 +80,15 @@ describe("launcher proposals", () => {
       charId: 90000009,
       userId: 80000001,
     }));
+  });
+
+  test("move it drops its proposal from the list", async () => {
+    mount([{ char_id: 90000009, user_id: 80000001, conflict: 80000002 }]);
+    const move = await waitFor(() => screen.getByRole("button", { name: /move Zulu/i }));
+    await fireEvent.click(move);
+    await waitFor(() =>
+      expect(screen.queryByText(/launcher log puts Zulu/i)).toBeNull(),
+    );
   });
 
   test("keep mine drops the warning and writes nothing", async () => {
