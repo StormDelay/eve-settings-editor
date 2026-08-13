@@ -89,6 +89,16 @@ Why this matters beyond tidiness: a stale claim is only *caught* by the
 retraction when a contradicting reply happens to arrive. One with no reply at all
 would stand as an unopposed wrong vote — the exact failure this module forbids.
 
+**Competing claims do not occur here, which is why the barriers hold.** Measured
+across the same 98 files: consecutive Plex lines appear **0** times — 0 naming
+the same account, 0 naming different ones — and **0** requests consume more than
+one distinct claim. The launcher emits exactly one Plex line per launch cycle.
+That is the regularity the two barriers lean on, so it is worth stating: they are
+sufficient *because* of it, not independently of it. Step 3's void rule guards the
+case anyway, since it can only ever cost claims, and a launcher release that
+starts emitting two would otherwise turn a latent hole into a wrong pairing with
+nothing to catch it.
+
 Why it matters more than its redundancy suggests: it names the account **beside
 the ids, at request time**, whereas *Fetched* names it at reply time — and reply
 time is exactly where concurrent launches scramble the correspondence. Two
