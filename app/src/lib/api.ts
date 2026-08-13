@@ -452,6 +452,12 @@ export const api = {
   launcherProposals: () => invoke<Proposal[]>("launcher_proposals"),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
+  /// Discard the guided-capture baseline. Only an ENDING calls this — cancelled,
+  /// or resolved into a confirmed pairing. Dismissing the Accounts sheet is not
+  /// an ending: the baseline costs the user a launch of EVE, a settings change
+  /// and a logout to recreate, and they are usually on their way to do exactly
+  /// that. See `03-sheets.md` §4.4.4.
+  clearCapture: () => invoke<void>("clear_capture"),
   overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
   setOverviewVisible: (tabIndex: number, column: string, visible: boolean) =>
     invoke<OverviewColumns>("set_overview_visible", { tabIndex, column, visible }),
