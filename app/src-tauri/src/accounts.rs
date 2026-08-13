@@ -262,24 +262,40 @@ pub fn confirm_pairing(
     Ok(load_roster(roots, dir))
 }
 
-/// Apply many pairings, saving once. All-or-nothing: the first rejection (the
-/// hard cap) aborts and nothing is written, because a half-applied batch is
-/// harder to reason about than one the user re-runs.
+/// One pair the batch could not apply, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Rejected {
+    pub char_id: u64,
+    pub user_id: u64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BatchConfirm {
+    pub roster: AccountRoster,
+    pub rejected: Vec<Rejected>,
+}
+
+/// Apply many pairings, saving once. **It applies what fits and reports what did
+/// not** — a rejection is data, not an error. The hard cap counts the target
+/// account's existing characters, so the user carrying one stale wrong pairing
+/// is exactly who trips it, and that user is who this whole path exists to
+/// repair; aborting their entire roster over one collision would be the worst
+/// answer to the case it was built for.
 ///
 /// This exists because `confirm_pairing` reloads the whole roster per call (see
 /// the `ponytail:` note above) and "accept everything the launcher proposes" is
 /// thirty of them.
-pub fn confirm_pairings(
-    roots: &[PathBuf],
-    dir: &Path,
-    pairs: &[(u64, u64)],
-) -> Result<AccountRoster, String> {
+pub fn confirm_pairings(roots: &[PathBuf], dir: &Path, pairs: &[(u64, u64)]) -> BatchConfirm {
     let mut store = load_store(dir);
+    let mut rejected = Vec::new();
     for &(char_id, user_id) in pairs {
-        confirm(&mut store, char_id, user_id)?;
+        if let Err(reason) = confirm(&mut store, char_id, user_id) {
+            rejected.push(Rejected { char_id, user_id, reason });
+        }
     }
     let _ = save_store(dir, &store);
-    Ok(load_roster(roots, dir))
+    BatchConfirm { roster: load_roster(roots, dir), rejected }
 }
 
 pub fn unpair_character(roots: &[PathBuf], dir: &Path, char_id: u64) -> AccountRoster {
@@ -615,12 +631,13 @@ mod tests {
         fs::write(sdir.join("core_char_90000002.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
         let appdir = temp_dir("many-appdata");
 
-        let roster = confirm_pairings(
+        let batch = confirm_pairings(
             std::slice::from_ref(&root),
             &appdir,
             &[(90000001, 80000001), (90000002, 80000002)],
-        )
-        .unwrap();
+        );
+        assert!(batch.rejected.is_empty(), "nothing to reject");
+        let roster = batch.roster;
 
         let a = roster.accounts.iter().find(|a| a.user_id == 80000001).unwrap();
         assert_eq!(a.characters, vec![90000001]);
@@ -633,15 +650,16 @@ mod tests {
     }
 
     #[test]
-    fn confirm_pairings_writes_nothing_when_one_pair_is_rejected() {
-        let root = temp_dir("many-abort-tree");
+    fn confirm_pairings_keeps_what_fits_and_names_the_pair_it_rejected() {
+        let root = temp_dir("many-partial-tree");
         let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
         fs::create_dir_all(&sdir).unwrap();
         fs::write(sdir.join("core_user_80000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
-        let appdir = temp_dir("many-abort-appdata");
+        let appdir = temp_dir("many-partial-appdata");
 
-        // A fourth character on one account trips the hard cap.
-        let err = confirm_pairings(
+        // A fourth character on one account trips the hard cap — and only that
+        // pair. The three that fit are written.
+        let batch = confirm_pairings(
             std::slice::from_ref(&root),
             &appdir,
             &[
@@ -650,13 +668,18 @@ mod tests {
                 (90000003, 80000001),
                 (90000004, 80000001),
             ],
-        )
-        .unwrap_err();
-        assert!(err.contains('3'), "the cap message names the limit: {err}");
-        assert!(
-            load_store(&appdir).accounts.is_empty(),
-            "an aborted batch leaves the store untouched"
         );
+        assert_eq!(batch.rejected.len(), 1);
+        let r = &batch.rejected[0];
+        assert_eq!((r.char_id, r.user_id), (90000004, 80000001), "the rejection names the pair");
+        assert!(r.reason.contains('3'), "the cap message names the limit: {}", r.reason);
+        assert_eq!(
+            load_store(&appdir).accounts[&80000001].characters,
+            vec![90000001, 90000002, 90000003],
+            "everything that fit was written"
+        );
+        let acct = batch.roster.accounts.iter().find(|a| a.user_id == 80000001).unwrap();
+        assert_eq!(acct.characters, vec![90000001, 90000002, 90000003]);
     }
 
     #[test]
@@ -669,12 +692,13 @@ mod tests {
         fs::write(sdir.join("core_char_90000001.dat"), encode(&Value::Int(1)).unwrap()).unwrap();
         let appdir = temp_dir("many-dup-appdata");
 
-        let roster = confirm_pairings(
+        let batch = confirm_pairings(
             std::slice::from_ref(&root),
             &appdir,
             &[(90000001, 80000001), (90000001, 80000001), (90000001, 80000002)],
-        )
-        .unwrap();
+        );
+        assert!(batch.rejected.is_empty());
+        let roster = batch.roster;
 
         let a = roster.accounts.iter().find(|a| a.user_id == 80000001).unwrap();
         assert!(a.characters.is_empty(), "the exact-duplicate pair is a no-op, the later reassignment wins");
@@ -689,8 +713,8 @@ mod tests {
     fn confirm_pairings_order_within_a_batch_decides_whether_the_cap_trips() {
         // Each pair goes through the same `confirm` as the single-pairing path,
         // applied in sequence — so a batch that frees a slot before filling
-        // another succeeds, while the reverse order hits the cap while the
-        // account is still full.
+        // another takes everything, while the reverse order hits the cap while
+        // the account is still full and reports just that pair.
         let root = temp_dir("many-order-tree");
         let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
         fs::create_dir_all(&sdir).unwrap();
@@ -703,39 +727,44 @@ mod tests {
             std::slice::from_ref(&root),
             &ok_dir,
             &[(90000001, 80000001), (90000002, 80000001), (90000003, 80000001)],
-        )
-        .unwrap();
-        confirm_pairings(
+        );
+        let batch = confirm_pairings(
             std::slice::from_ref(&root),
             &ok_dir,
             &[(90000001, 80000002), (90000004, 80000001)],
-        )
-        .unwrap();
+        );
+        assert!(batch.rejected.is_empty(), "freeing the slot first takes both pairs");
         let store = load_store(&ok_dir);
         assert_eq!(store.accounts[&80000001].characters, vec![90000002, 90000003, 90000004]);
         assert_eq!(store.accounts[&80000002].characters, vec![90000001]);
 
         // The reverse order trips the cap: 80000001 still holds all three when
-        // 90000004 is attempted, and the whole batch (including the later,
-        // otherwise-valid reassignment) is aborted.
+        // 90000004 is attempted. That one pair is rejected and named; the later,
+        // otherwise-valid reassignment still lands.
         let cap_dir = temp_dir("many-order-cap-appdata");
         confirm_pairings(
             std::slice::from_ref(&root),
             &cap_dir,
             &[(90000001, 80000001), (90000002, 80000001), (90000003, 80000001)],
-        )
-        .unwrap();
-        let err = confirm_pairings(
+        );
+        let batch = confirm_pairings(
             std::slice::from_ref(&root),
             &cap_dir,
             &[(90000004, 80000001), (90000001, 80000002)],
-        )
-        .unwrap_err();
-        assert!(err.contains('3'), "the cap message names the limit: {err}");
-        assert_eq!(
-            load_store(&cap_dir).accounts[&80000001].characters,
-            vec![90000001, 90000002, 90000003],
-            "the account still holds its original three, unchanged"
         );
+        assert_eq!(batch.rejected.len(), 1);
+        assert_eq!((batch.rejected[0].char_id, batch.rejected[0].user_id), (90000004, 80000001));
+        assert!(
+            batch.rejected[0].reason.contains('3'),
+            "the cap message names the limit: {}",
+            batch.rejected[0].reason
+        );
+        let store = load_store(&cap_dir);
+        assert_eq!(
+            store.accounts[&80000001].characters,
+            vec![90000002, 90000003],
+            "the rejected pair changed nothing; the accepted move took 90000001 away"
+        );
+        assert_eq!(store.accounts[&80000002].characters, vec![90000001]);
     }
 }
