@@ -15,6 +15,7 @@
     count,
     total,
     onclear,
+    element = $bindable(),
     class: klass = "",
     ...rest
   }: {
@@ -25,6 +26,8 @@
     count?: number;
     total?: number;
     onclear?: () => void;
+    /** The input node, for callers that manage focus. */
+    element?: HTMLInputElement | HTMLSelectElement;
     class?: string;
     [key: string]: unknown;
   } = $props();
@@ -47,6 +50,7 @@
   <Field
     kind="search"
     bind:value
+    bind:element
     {placeholder}
     ariaLabel={placeholder}
     class="search"
