@@ -14,6 +14,12 @@
 //! degrade to "no proposals", not to a bad proposal.
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::Serialize;
+
+use crate::accounts::AccountsStore;
 
 /// `user_id → its character ids`, as the launcher reported them.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -140,6 +146,83 @@ pub fn parse_logs<I: IntoIterator<Item = String>>(lines: I) -> LauncherRoster {
         }
     }
     LauncherRoster { accounts }
+}
+
+/// The launcher's log directory — Electron's `userData`/logs, per OS. Windows is
+/// verified against a real install; the macOS and Linux paths follow Electron's
+/// standard `userData` mapping and are not measured. `None` when it is absent,
+/// which is an ordinary state (no launcher, or a fresh machine), not an error.
+pub fn log_dir() -> Option<PathBuf> {
+    let dir = if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var("APPDATA").ok()?).join("EVE Online").join("logs")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from(std::env::var("HOME").ok()?)
+            .join("Library/Application Support/EVE Online/logs")
+    } else {
+        PathBuf::from(std::env::var("HOME").ok()?).join(".config/EVE Online/logs")
+    };
+    dir.is_dir().then_some(dir)
+}
+
+/// Every `.log` in `dir`, oldest-first, fed through `parse_logs`. Split out from
+/// `read_launcher_roster` so a test can point it at a temp directory.
+pub fn read_roster_from(dir: &Path) -> LauncherRoster {
+    let Ok(entries) = fs::read_dir(dir) else { return LauncherRoster::default() };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "log"))
+        .collect();
+    // Names are date-stamped (eve-online-launcher-YYYY.MM.DD-HH.MM.SS.log), so
+    // lexical order is chronological — what parse_logs' recency rule needs.
+    files.sort();
+    let lines: Vec<String> = files
+        .iter()
+        .filter_map(|p| fs::read(p).ok())
+        // Lossy rather than strict: one mangled byte must not cost a whole file.
+        .flat_map(|b| String::from_utf8_lossy(&b).lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+    parse_logs(lines)
+}
+
+pub fn read_launcher_roster() -> LauncherRoster {
+    log_dir().map(|d| read_roster_from(&d)).unwrap_or_default()
+}
+
+/// One pairing the launcher asserts and the store does not already hold.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Proposal {
+    pub char_id: u64,
+    pub user_id: u64,
+    /// The account the store currently holds this character under, when that
+    /// disagrees with the launcher. The UI shows the warning on THAT card,
+    /// beside the chip it contradicts.
+    pub conflict: Option<u64>,
+}
+
+/// What the launcher says that the store does not. Agreement produces nothing;
+/// silence produces a plain proposal; disagreement produces one carrying the
+/// account the store currently uses.
+pub fn proposals(launcher: &LauncherRoster, store: &AccountsStore) -> Vec<Proposal> {
+    let mut held: HashMap<u64, u64> = HashMap::new();
+    for (&user, acct) in &store.accounts {
+        for &c in &acct.characters {
+            held.insert(c, user);
+        }
+    }
+    let mut out = Vec::new();
+    for (&user_id, chars) in &launcher.accounts {
+        for &char_id in chars {
+            match held.get(&char_id) {
+                Some(&u) if u == user_id => {}
+                Some(&u) => out.push(Proposal { char_id, user_id, conflict: Some(u) }),
+                None => out.push(Proposal { char_id, user_id, conflict: None }),
+            }
+        }
+    }
+    // HashMap iteration order is not stable; the UI and the tests both want it to be.
+    out.sort_by_key(|p| (p.user_id, p.char_id));
+    out
 }
 
 #[cfg(test)]
@@ -269,5 +352,101 @@ mod tests {
     #[test]
     fn unrelated_lines_alone_yield_an_empty_roster() {
         assert_eq!(parse_logs([noise(), noise()]), LauncherRoster::default());
+    }
+
+    use crate::accounts::{confirm, AccountsStore};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("launcher-test-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        d
+    }
+
+    #[test]
+    fn a_missing_log_directory_reads_as_an_empty_roster() {
+        assert_eq!(read_roster_from(&temp_dir("absent")), LauncherRoster::default());
+    }
+
+    #[test]
+    fn logs_are_read_oldest_first_by_their_date_stamped_names() {
+        // The launcher names logs eve-online-launcher-YYYY.MM.DD-HH.MM.SS.log,
+        // so lexical order is chronological — which is what the recency rule needs.
+        let d = temp_dir("order");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("eve-online-launcher-2025.01.01-10.00.00.log"),
+            format!("{}\n{}\n", fetching(&[90000001, 90000002, 90000003]), fetched(3, 80000001)),
+        )
+        .unwrap();
+        fs::write(
+            d.join("eve-online-launcher-2026.01.01-10.00.00.log"),
+            format!("{}\n{}\n", fetching(&[90000001, 90000002, 90000007]), fetched(3, 80000001)),
+        )
+        .unwrap();
+        // A non-log file in the same folder is ignored.
+        fs::write(d.join("notes.txt"), fetching(&[90000009])).unwrap();
+
+        let r = read_roster_from(&d);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000007]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unreadable_byte_does_not_lose_the_rest_of_the_file() {
+        let d = temp_dir("lossy");
+        fs::create_dir_all(&d).unwrap();
+        let mut bytes = vec![0xffu8, 0xfe, b'\n'];
+        bytes.extend_from_slice(
+            format!("{}\n{}\n", fetching(&[90000001, 90000002, 90000003]), fetched(3, 80000001))
+                .as_bytes(),
+        );
+        fs::write(d.join("eve-online-launcher-2026.01.01-10.00.00.log"), bytes).unwrap();
+
+        assert_eq!(chars(&read_roster_from(&d), 80000001), vec![90000001, 90000002, 90000003]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    fn roster(pairs: &[(u64, &[u64])]) -> LauncherRoster {
+        LauncherRoster {
+            accounts: pairs.iter().map(|(u, cs)| (*u, cs.to_vec())).collect(),
+        }
+    }
+
+    #[test]
+    fn a_pairing_the_store_already_holds_proposes_nothing() {
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 80000001).unwrap();
+        let p = proposals(&roster(&[(80000001, &[90000001])]), &store);
+        assert!(p.is_empty(), "agreement is not a proposal");
+    }
+
+    #[test]
+    fn a_character_the_store_does_not_place_is_proposed_without_conflict() {
+        let p = proposals(&roster(&[(80000001, &[90000001])]), &AccountsStore::default());
+        assert_eq!(p, vec![Proposal { char_id: 90000001, user_id: 80000001, conflict: None }]);
+    }
+
+    #[test]
+    fn a_character_the_store_places_elsewhere_is_proposed_with_the_conflict() {
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 80000002).unwrap();
+        let p = proposals(&roster(&[(80000001, &[90000001])]), &store);
+        assert_eq!(
+            p,
+            vec![Proposal { char_id: 90000001, user_id: 80000001, conflict: Some(80000002) }],
+            "the conflict names where the chip is now, so the UI can show it there"
+        );
+    }
+
+    #[test]
+    fn proposals_come_back_in_a_stable_order() {
+        let p = proposals(
+            &roster(&[(80000002, &[90000004]), (80000001, &[90000003, 90000001])]),
+            &AccountsStore::default(),
+        );
+        let seen: Vec<(u64, u64)> = p.iter().map(|p| (p.user_id, p.char_id)).collect();
+        assert_eq!(seen, vec![(80000001, 90000001), (80000001, 90000003), (80000002, 90000004)]);
     }
 }
