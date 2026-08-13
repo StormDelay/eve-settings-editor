@@ -5,6 +5,7 @@
 // argument name, a Mutation built from the wrong field).
 import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/svelte";
+import { resetSubject } from "../subject.svelte";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => calls.dispatch(cmd, args),
@@ -53,9 +54,17 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // @testing-library only auto-registers this when vitest runs with `globals`,
 // which this config deliberately does not. Without it every render stays in the
 // document and the next test's queries match two copies of everything.
+//
+// `resetSubject` is here rather than in each mounting suite's own `afterEach`,
+// which is what `02-shell.md` §6.3 asks for. Same guarantee, one line, and it
+// cannot be forgotten by the next suite that mounts the shell — which is the
+// actual failure mode §6.3 is worried about, since the symptom (a test that
+// passes alone and fails in sequence) gets blamed on the layout change rather
+// than on the missing reset.
 afterEach(() => {
   cleanup();
   calls.reset();
+  resetSubject();
 });
 
 export interface InvokeCall {
