@@ -31,3 +31,10 @@ export async function confirmPairing(charId: number, userId: number): Promise<vo
 export async function unpair(charId: number): Promise<void> {
   accountsStore.roster = await api.unpairCharacter(charId);
 }
+
+// Several pairings in one round trip. `confirmPairing` rebuilds the whole roster
+// per call, and "accept everything the launcher proposes" is thirty of them.
+// Throws on the hard-cap rejection, like confirmPairing.
+export async function confirmMany(pairs: [number, number][]): Promise<void> {
+  accountsStore.roster = await api.confirmPairings(pairs);
+}
