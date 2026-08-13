@@ -79,54 +79,76 @@
   --fg-dim: var(--text-muted);
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); }
-button {
-  background: var(--bg-panel); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 4px 10px; cursor: pointer;
-}
-button:hover { border-color: var(--accent); }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+/* ---------------------------------------------------------------------------
+   MIGRATION NOTE (Phase 1, step 3). The rules below are the ones that survive
+   the phase, tokenised in place. The ones a primitive replaces — the global
+   `button` rules, .mini, .badge, .hint, .error, .flash, .field-error,
+   .searchbar, .edit, .overlay, .modal, .save, .discard, .viewtabs, .tree-file —
+   are deliberately left untouched and are marked `PENDING` below. Each is
+   deleted at the moment its last call site is migrated, because §4's rule 2 is
+   that the rule and the class go in the SAME edit: Svelte warns about an unused
+   selector but says nothing about a class left on an element whose rule you
+   deleted, which silently loses styling. Deleting them all up front would leave
+   the app visibly broken for the whole of step 4.
+   --------------------------------------------------------------------------- */
+
 .layout { display: grid; grid-template-columns: var(--col-left, 280px) 1fr auto; height: 100vh; }
 /* Collapsed sidebar: the 280px column shrinks to the reopen rail's width. The
    backups column is already `auto`, so its rail sizes it with no override. */
 .layout.sidebar-collapsed { --col-left: auto; }
 .rail {
   width: 24px; padding: 0; border: none; border-radius: 0;
-  background: var(--bg-panel); color: var(--fg-dim); cursor: pointer;
+  background: var(--surface); color: var(--text-muted); cursor: pointer;
 }
 .rail:hover { color: var(--accent); }
 .rail-left { border-right: 1px solid var(--border); }
 .rail-right { border-left: 1px solid var(--border); }
 .backups {
-  width: 280px; background: var(--bg-panel);
-  border-left: 1px solid var(--border); overflow-y: auto; padding: 8px;
+  width: 280px; background: var(--surface);
+  border-left: 1px solid var(--border); overflow-y: auto; padding: var(--s2);
 }
 .backups ul { list-style: none; padding: 0; }
-.backups li { display: flex; gap: 6px; align-items: center; padding: 3px 0; }
+.backups li { display: flex; gap: var(--s2); align-items: center; padding: var(--s1) 0; }
 .stamp { font-family: Consolas, monospace; }
+/* PENDING: deleted with BackupsPanel/ProbeFormationsView — Button ghost sm. */
 .mini-visible { padding: 0 6px; font-size: 0.85em; margin-left: auto; }
 .sidebar {
-  background: var(--bg-panel); border-right: 1px solid var(--border);
-  overflow-y: auto; padding: 8px;
+  background: var(--surface); border-right: 1px solid var(--border);
+  overflow-y: auto; padding: var(--s2);
 }
-.sidebar-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.sidebar ul { list-style: none; margin: 2px 0; padding-left: 12px; }
+.sidebar-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s2); }
+.sidebar ul { list-style: none; margin: var(--s1) 0; padding-left: var(--s3); }
 .sidebar .file { width: 100%; text-align: left; border: none; background: none; }
 .sidebar .file:hover { color: var(--accent); }
-.sidebar .meta { color: var(--fg-dim); font-size: 0.85em; margin-left: 6px; }
+.sidebar .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
 .editor { overflow: hidden; display: flex; flex-direction: column; }
 .filebar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
 }
+
+/* PENDING: the global button rules, deleted with routes/+page.svelte — Button. */
+button {
+  background: var(--bg-panel); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 10px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
 /* Shrink + ellipsis so a long name doesn't hog the row; combined with the
    filebar's flex-wrap this keeps the Save button reachable on small windows. */
 .filename { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* PENDING: everything from here to .tree-file that is marked so is deleted as
+   its last call site migrates in step 4. .badge/.hint/.error/.flash/
+   .field-error/.searchbar/.edit/.overlay/.modal/.insert-form/.save/.discard/
+   button:disabled/.viewtabs/.tree-file all go to routes/+page.svelte's and the
+   views' migrations. */
 .badge { border-radius: 8px; padding: 1px 8px; font-size: 0.85em; }
 .badge.editable { background: var(--ok); color: #10240f; }
 .badge.read-only { background: var(--danger); color: #2b100d; }
 .badge.dirty { background: var(--warn); color: #33260a; }
-.tree-area { overflow: auto; flex: 1; padding: 8px 12px; }
+.tree-area { overflow: auto; flex: 1; padding: var(--s2) var(--s3); }
 .hint { color: var(--fg-dim); padding: 12px; }
 .error { color: var(--danger); padding: 12px; }
 .flash {
@@ -145,18 +167,28 @@ button:hover { border-color: var(--accent); }
 .searchbar .search:focus { outline: 1px solid var(--accent); }
 .searchbar .meta { color: var(--fg-dim); font-size: 0.85em; white-space: nowrap; }
 @keyframes fade-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
-.hex { font-family: Consolas, monospace; padding: 12px; white-space: pre; }
-.node .row { display: flex; align-items: center; gap: 6px; padding: 1px 0; transition: background 0.3s; }
-.node .row.reveal-hit { background: rgba(79, 156, 240, 0.28); border-radius: 3px; }
-.node .children { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 6px; }
+.hex { font-family: Consolas, monospace; padding: var(--s3); white-space: pre; }
+/* The tree's vertical padding goes to 0 rather than to --s1: 1px was already
+   below the 4px scale, and rounding a dense tree row UP by 6px would be a
+   visible move in a phase whose whole premise is that nothing moves. */
+.node .row { display: flex; align-items: center; gap: var(--s2); padding: 0; transition: background 0.3s; }
+.node .row.reveal-hit { background: var(--accent-dim); border-radius: var(--r-sm); }
+.node .children { margin-left: var(--s5); border-left: 1px solid var(--border); padding-left: var(--s1); }
+/* PENDING: deleted with TreeNode — Button variant="ghost" iconOnly. */
 .twisty { width: 20px; border: none; background: none; padding: 0; display: inline-block; }
 .label { color: var(--accent); white-space: pre; }
 .display { white-space: pre-wrap; word-break: break-all; }
-.display.editable:hover { outline: 1px dashed var(--fg-dim); cursor: text; }
-.kind-int, .kind-float, .kind-long { color: #c8a1e8; }
-.kind-str, .kind-str_ucs2, .kind-str_table { color: #a3c9a5; }
-.kind-bytes { color: #d0b47f; }
-.kind-none, .kind-bool { color: #7fb2d0; }
+.display.editable:hover { outline: 1px dashed var(--border-strong); cursor: text; }
+/* The tree paints six things in six colours. The role palette supplies five
+   hues, so numbers need a sixth: --syntax-number is the old #c8a1e8 re-solved
+   at the same OKLCH hue, which takes it from Lc 58.7 to 69.6. .kind-bytes goes
+   neutral rather than taking --warn, because --warn is already booked by
+   .kind-ref/.kind-shared and bytes carries the least meaning of the two — the
+   editor renders them as an opaque preview. */
+.kind-int, .kind-float, .kind-long { color: var(--syntax-number); }
+.kind-str, .kind-str_ucs2, .kind-str_table { color: var(--ok); }
+.kind-bytes { color: var(--text-secondary); }
+.kind-none, .kind-bool { color: var(--info); }
 .kind-ref, .kind-shared { color: var(--warn); }
 .shared-mark { color: var(--warn); font-weight: bold; }
 .mini { padding: 0 6px; font-size: 0.85em; opacity: 0; }
@@ -173,7 +205,7 @@ button:hover { border-color: var(--accent); }
   background: var(--bg); color: var(--fg); border: 1px solid var(--border);
   border-radius: 3px; padding: 3px 6px; font: inherit; flex: 1;
 }
-.form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.form-actions { display: flex; gap: var(--s2); justify-content: flex-end; margin-top: var(--s3); }
 .spacer { flex: 1; }
 .save { border-color: var(--accent); }
 /* Sits beside the "unsaved" badges, and is the destructive half of that pair —
