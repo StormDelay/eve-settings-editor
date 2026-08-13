@@ -169,22 +169,25 @@ test("radius-scale", () => {
 });
 
 // --- 6. one spacing scale --------------------------------------------------
-// 1px, 2px and -1px are allowed in two narrow places and nowhere else.
+// Raw pixel values are allowed in two narrow places and nowhere else.
 //
-// The primitives, because the scale is a 4px base but a dense tool needs
-// sub-step padding on the small button and the chip, and the underline tab
-// needs -1px to lap its border over the strip's.
+// The primitives may use 1px, 2px and -1px: the scale is a 4px base, but a
+// dense tool needs sub-step padding on the small button and the chip, and the
+// underline tab needs -1px to lap its border over the strip's.
 //
-// The two canvas files, for the same reason §4.3 exempts their font sizes: they
-// are drawings of EVE's screen at arbitrary scale, and a 4px inset inside a
-// 9px-labelled HUD part is not the same kind of measurement as a 4px gap
-// between two controls.
+// The two canvas files may use any px, for the same reason §4.3 exempts their
+// font sizes. They are drawings of EVE's screen at arbitrary scale, and their
+// padding and margin are GEOMETRY rather than spacing: `.anchor-dot`'s -5px is
+// half a 9px dot plus its border, straddling the corner it marks, and the rect
+// labels' 1px 3px inset sits inside an 11px-labelled rectangle. Rounding either
+// onto a 4px scale would move the drawing, not tidy it.
 //
-// Inventing a --s0 to spell either would put a half-step in reach of all 25
+// Inventing a --s0 to spell any of it would put a half-step in reach of all 25
 // views, which is how 55 distinct padding values happened the first time.
 test("space-scale", () => {
   const prop = "(?:padding|margin)(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|(?:row-|column-)?gap";
-  const dense = /^lib\/ui\/|^lib\/(DetailParts|LayoutView)\.svelte$/;
+  const primitive = /^lib\/ui\//;
+  const canvas = /^lib\/(DetailParts|LayoutView)\.svelte$/;
   const offenders = styleLines.flatMap((l) => {
     const part = (p: string): boolean =>
       /^var\(--s[1-6]\)$/.test(p) ||
@@ -192,7 +195,8 @@ test("space-scale", () => {
       p === "auto" ||
       p === "inherit" ||
       /^-?[\d.]+(%|fr)$/.test(p) ||
-      (dense.test(l.path) && (p === "1px" || p === "2px" || p === "-1px"));
+      (primitive.test(l.path) && (p === "1px" || p === "2px" || p === "-1px")) ||
+      (canvas.test(l.path) && /^-?\d+px$/.test(p));
     return [...l.text.matchAll(new RegExp(`(?<![-\\w])(?:${prop})\\s*:\\s*([^;{}]*)`, "g"))]
       .map((m) => m[1].trim())
       .filter((v) => v && !v.split(/\s+/).every(part))

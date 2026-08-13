@@ -574,7 +574,7 @@
   .tab-actions :global(.swatch) { width: 1.9rem; }
   .tab-actions :global(.bold-toggle) { font-weight: 700; }
   :global(.palette) { display: block; }
-  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: 2px; }
+  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: var(--s1); }
   /* --border-strong, not --border: this outline has to read against an
      arbitrary user colour on either side of it. */
   .palette-grid button {
