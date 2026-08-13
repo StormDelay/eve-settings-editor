@@ -232,14 +232,27 @@ fn tab_edits_survive_the_save_chain() {
 #[test]
 fn tab_move_and_reorder_survive_the_save_chain() {
     let mut v = fixture(MODERN_USER);
-    // Window 0 holds [0,1,2,3,4,7]; window 1 holds [5].
+    // Window 0 holds tabs [0,1,2,3,4,7] named ["*","2","3","4","5","8"];
+    // window 1 holds [5] ("6"); window 2 holds [6] ("7").
     move_tab(&mut v, 7, 0, 1, 0).expect("move tab 7 to the front of window 1");
     reorder_tabs_in_window(&mut v, 0, &[4, 3, 2, 1, 0]).expect("reorder window 0");
 
     let back = saved(&v);
     let ov = project_overview(&back, None);
-    assert_eq!(ov.windows[1].tab_indices, vec![7, 5], "moved tab lands at the requested position");
-    assert_eq!(ov.windows[0].tab_indices, vec![4, 3, 2, 1, 0]);
+    // Order is asserted through the NAMES, not the indices: EVE draws a window's
+    // tabs in ascending index, so a reorder renumbers the table and the strip
+    // stays ascending. Asserting the strip permutation would pass on exactly the
+    // file that shows the old order in game.
+    let shown = |w: usize| -> Vec<String> {
+        ov.windows[w].tab_indices.iter()
+            .map(|i| ov.tabs.iter().find(|t| t.index == *i).expect("mapped tab exists").name.trim().to_string())
+            .collect()
+    };
+    assert_eq!(shown(1), vec!["8", "6"], "moved tab lands at the requested position");
+    assert_eq!(shown(0), vec!["5", "4", "3", "2", "*"], "window 0 in the requested order");
+    assert_eq!(shown(2), vec!["7"], "an untouched window keeps its tab");
+    assert!(ov.windows.iter().all(|w| w.tab_indices.windows(2).all(|p| p[0] < p[1])),
+        "every strip stays ascending, as the client writes them");
 
     // Every tab must still be mapped into exactly one window.
     let mut seen: Vec<i64> = ov.windows.iter().flat_map(|w| w.tab_indices.clone()).collect();

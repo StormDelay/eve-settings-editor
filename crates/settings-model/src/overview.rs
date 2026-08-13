@@ -62,8 +62,13 @@ pub struct Appearance {
     pub defaulted: bool,
 }
 
-/// A physical overview window and the tab indices it shows, in order — grouped
-/// from `tabsByWindowInstanceID` (a list-of-lists of tab indices, one per window).
+/// A physical overview window and the tab indices it shows — grouped from
+/// `tabsByWindowInstanceID` (a list-of-lists of tab indices, one per window).
+///
+/// The list says WHICH tabs, not in what order: EVE draws a window's tabs in
+/// ascending tab index, and the client writes every strip ascending (0 of 1,314
+/// real files with a mapping says otherwise). `overview_tabs` keeps it that way,
+/// so reading it in the stored order still gives the in-game order.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewWindow {
     pub index: usize,
