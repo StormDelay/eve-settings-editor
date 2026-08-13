@@ -1,0 +1,348 @@
+# Launcher-log character↔account association (design)
+
+Date: 2026-08-13
+Status: approved, pre-plan
+Branch: `feat/launcher-log-association`
+Revises: M3b — char/user association (`2026-07-15-m3b-char-user-association-design.md`)
+
+## 1. Problem
+
+The association mechanic has two paths, and both fail in ways users report:
+
+- **Manual pick** (`AccountsView.svelte:150`) — a character is chosen into an
+  account card labelled `core_user_<id>`. Nothing on screen says *which account
+  that is*. On a multi-account install that is a guess, and a guess is how the
+  wrong file gets associated.
+- **Guided capture** (`accounts.rs:169`) — an mtime diff across a controlled
+  logout. It costs one full login/logout cycle *per account*, it needs the user
+  to remember an account-scoped setting change, and with a second client running
+  "exactly one char file and one user file advanced" can be a coincidence.
+
+The two reported symptoms — *the association fails*, and *it associates the
+wrong account* — map onto exactly these.
+
+## 2. Signals measured (2026-08-13)
+
+Recorded so nobody re-derives them.
+
+**No id cross-reference exists in the settings files.** Scanned the
+`2026-07-27T131810Z_baseline` corpus (every `core_char_*`/`core_user_*` in every
+profile folder) for each folder's opposite-kind ids encoded as LE32, LE64 and
+decimal ASCII, in both directions: **zero hits**. Consistent with the M0 finding
+that a char file does not even contain its own character id.
+
+**The in-file name heuristic is dead.** Tested against ground truth on the live
+Tranquility profile: a character's ESI name uniquely identified its account for
+**4 of 27** characters. Most names appear in *all 17* user files — chat channel
+labels and contact lists, not membership. M3b was right to drop it; do not
+revive it.
+
+**The EVE launcher logs the mapping in plaintext.** In
+`%APPDATA%\EVE Online\logs\eve-online-launcher-*.log`:
+
+```
+[esi] Fetching character details for <char_id>, <char_id>, <char_id>
+[esi] Fetched 3 character details for <user_id>
+```
+
+Measured on one real install: **186 paired observations → 10 accounts, exactly 3
+characters each, fully disjoint**, and every `user_id` matched a discovered
+`core_user_<id>.dat`. Logs retained back to 2023-11 (98 files, 8.1 MB), so
+coverage is not limited to recent sessions.
+
+The two lines are **not adjacent** — unrelated log lines sit between them. And
+concurrent launches can interleave them: 3 of 189 *Fetching* lines had no
+matching *Fetched*, and one account briefly claimed another's character set.
+Both are handled in §3.
+
+**A third line names the account at *request* time.** Found by the user reading
+their own logs, 2026-08-13, and it is the strongest signal of the three:
+
+```
+[virtual-goods] Fetched Plex status for '<user_id>' on 'tranquility' (eve-online) with balance: <n>
+[esi] Fetching character details for <char_id>, <char_id>, <char_id>
+```
+
+Measured over the same 98 files: **191 *Fetching* lines; 141 carry a Plex line
+before them with no intervening request** (gap 1 line ×109, 2 ×22, 3 ×9, 6 ×1);
+50 carry none. Of the 139 cases where both a Plex line and a following *Fetched*
+exist, **139 agree and 0 disagree** — not one contradiction in three years.
+Resolving from Plex adjacency *alone*, ignoring *Fetched* entirely, yields the
+same 10 accounts and the same character sets.
+
+**Re-measured 2026-08-13 without a distance window** (implementing step 3 below).
+The figures above were taken with a short look-back; dropping it and letting the
+intervening-*Fetching* barrier be the only guard admits **155** claims, not 141 —
+the extra 14 sit at gaps of 11, 12, 38, 52 and more. Those far claims are not
+harmless: **7 of them are contradicted by their reply**, against 0 contradictions
+at every gap up to 38.
+
+What separates them is not distance but an intervening **`[esi] Fetched`**. All 7
+contradicted claims had a reply between the Plex line and the request; all 146
+confirmed ones had none — a clean split, with no threshold to tune. A reply ends
+the launch cycle its Plex line belonged to, so the account it named no longer
+describes what is being requested next. Hence step 3's second barrier. With both
+barriers: **148 claims, 0 contradictions**, and no claim beyond a 38-line gap
+survives on its own merits rather than by a rule about how far it may reach.
+
+Why this matters beyond tidiness: a stale claim is only *caught* by the
+retraction when a contradicting reply happens to arrive. One with no reply at all
+would stand as an unopposed wrong vote — the exact failure this module forbids.
+
+**Competing claims do not occur here, which is why the barriers hold.** Measured
+across the same 98 files: consecutive Plex lines appear **0** times — 0 naming
+the same account, 0 naming different ones — and **0** requests consume more than
+one distinct claim. The launcher emits exactly one Plex line per launch cycle.
+That is the regularity the two barriers lean on, so it is worth stating: they are
+sufficient *because* of it, not independently of it. Step 3's void rule guards the
+case anyway, since it can only ever cost claims, and a launcher release that
+starts emitting two would otherwise turn a latent hole into a wrong pairing with
+nothing to catch it.
+
+Why it matters more than its redundancy suggests: it names the account **beside
+the ids, at request time**, whereas *Fetched* names it at reply time — and reply
+time is exactly where concurrent launches scramble the correspondence. Two
+adjacent lines cannot be interleaved. Concretely, the in-flight rule in §3.1
+drops 12 of 188 observations on the real corpus for having another request in
+flight, and **10 of those 12 carry a preceding Plex line** — so this signal
+recovers almost exactly what strictness throws away, and recovers it soundly
+rather than by guessing.
+
+Also present and not used by this design: `[client-queue] Queued client startup
+{ userId, characterId: <slot>, profile: '<name>' }`, which additionally names the
+profile folder. `characterId` there is a **slot index, not a character id** —
+reading it as one would map three different accounts' characters onto 1, 2 and 3.
+Noted for later; the lines above are sufficient.
+
+## 3. Approach
+
+The launcher log **proposes**; the user **confirms**. Manual pairing and guided
+capture stay exactly as they are — a user whose accounts are not all on this
+launcher (a second machine, a Steam install, an account not added) still has a
+working path, and that escape hatch is the reason nothing here replaces them.
+
+### 3.1 `app/src-tauri/src/launcher.rs` (new module)
+
+Pure parse + impure reader, mirroring the `names.rs` / `accounts.rs` split.
+
+```rust
+pub struct LauncherRoster { pub accounts: HashMap<u64 /*user_id*/, Vec<u64>> }
+
+// Pure, FS-free. One Vec per log file — files oldest-first, lines in order —
+// because the in-flight counter below resets at each file boundary.
+pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster;
+pub fn log_dir() -> Option<PathBuf>;                                      // per-OS
+pub fn read_launcher_roster() -> LauncherRoster;                          // orchestrator
+```
+
+The complete parse rule:
+
+1. `[esi] Fetching character details for <ids>` → count one request **in flight**
+   and hold `<ids>` as pending.
+2. `[esi] Fetched <n> character details for <user>` → tally `sorted(ids) → user`
+   **only when exactly one request is in flight** and the pending list holds
+   exactly `n` ids. Then clear pending and decrement the counter.
+
+   A boolean "was the previous request displaced" is not enough, and this was
+   measured: on one real install **10 of 186 tallied observations were recorded
+   while another request was still in flight**. A flag forgets the outstanding
+   request as soon as one answer is dropped, so the *next* pair looks clean while
+   a late reply is still coming — and that pair can hand one account another
+   account's entire character list, as a proposal carrying no conflict and no
+   opposing vote.
+
+   The counter is **reset at each log file boundary**, which is why
+   `read_roster_from` feeds `parse_logs` file by file rather than as one line
+   stream. Without the reset, an request that never got its answer leaves the
+   counter permanently above one and every later pairing is silently lost —
+   measured at 170 of 182 tallies dropped. With it, the real corpus yields the
+   same 10 accounts × 3 disjoint characters that an independent method found.
+3. `[virtual-goods] Fetched Plex status for '<user>'` → remember it as the
+   **claimed account** for the next *Fetching*, provided neither another
+   *Fetching* nor a *Fetched* intervenes. Both mean the launch cycle that Plex
+   line belonged to has moved on. **Not a line-distance window** — the honest
+   gaps run from 1 line to 38, so any distance is a guess, while these two
+   structural barriers separate the measured corpus exactly (§2).
+
+   A **second, differing Plex line before the request voids the claim
+   outright** — the state is absent / one claim / void, never last-write-wins.
+   Two concurrent launches emit two Plex lines back to back, and neither barrier
+   above fires on that: no request and no reply comes between them. Taking the
+   later one would pair one account with the other's entire character list, and
+   if the file ends before the replies arrive there is nothing left to retract
+   with — a confident wrong pairing, unopposed. A repeat of the *same* account id
+   is not a disagreement and stays a valid claim. A voided claim falls through to
+   the in-flight rule, which is where every ambiguity here is meant to land.
+   Cost on the measured corpus: **zero** — it contains no competing pair.
+
+   When a *Fetching* carries a claimed account, the pairing is complete at
+   request time from two adjacent lines, so **tally it immediately and ignore the
+   in-flight count for that observation** — interleaving cannot corrupt a fact
+   that never spans a gap. If a later *Fetched* then names a *different* account,
+   **drop the observation entirely**: a contradiction is positive evidence of
+   interleaving, which is the one thing steps 1-2 can only avoid, never detect.
+
+   The retraction must undo **both halves** of the tally — the vote *and* the
+   `last_seen` entry it displaced, restored to what it was. The vote alone is not
+   enough: whenever the retracted set holds any other surviving vote, a leftover
+   timestamp carries it past a genuinely newer set in step 4's recency pass,
+   which is a character transferred away years ago reappearing on the card.
+
+   A *Fetching* with no claimed account falls through to the in-flight rule
+   unchanged — 43 of 191 requests on the measured corpus. Net effect: **188 of
+   191 requests yield an observation, up from 176** under the in-flight rule
+   alone, recovering all 12 it dropped, with the same roster behind it.
+4. **Majority vote** per id-set: the user id observed most often wins. A tie
+   drops the set.
+5. **Disjointness**: a character id claimed by two surviving accounts drops both
+   claims.
+
+Every mis-parse path yields *fewer* proposals. This is what makes an undocumented
+log format safe to depend on: if CCP renames the lines, or changes the wording,
+the result is an empty roster and the existing paths, not a bad pairing.
+
+The three passes are defence in depth rather than one airtight rule. A long
+enough interleave can still leave exactly one plausible candidate for a *Fetched*
+line, which is why the vote exists and why a single reading is never trusted —
+and why, ultimately, the user confirms.
+
+`log_dir()` follows `discover.rs::default_roots()`'s shape — Windows
+`%APPDATA%\EVE Online\logs` (verified against a real install); the Electron
+`userData` equivalents on macOS (`~/Library/Application Support/EVE Online/logs`)
+and Linux (`~/.config/EVE Online/logs`) are **inferred from Electron's standard
+path mapping, not measured**. A missing directory yields an empty roster, never
+an error.
+
+### 3.2 Command surface
+
+One new command:
+
+```
+launcher_proposals() -> Vec<Proposal>
+Proposal { char_id: u64, user_id: u64, conflict: Option<u64> }
+```
+
+`conflict` carries the user id the persisted store currently holds the character
+under, when that disagrees with the log.
+
+Deliberately **not** folded into `account_roster()`: that reloads after every
+alias edit and every confirm, and re-reading ~8 MB of logs on each call would be
+wasteful. The Accounts view calls `launcher_proposals()` once on mount.
+
+`accounts.json` is unchanged — no provenance field. The log is re-read live, so a
+disagreement is detectable regardless of how a pairing was originally made;
+storing *how* buys nothing the conflict check does not already give.
+
+Accepting a single proposal goes through the existing `confirm_pairing`, so
+single-membership and the hard 3-character cap are enforced by the code that
+already enforces them.
+
+**Accept all** needs one more command, `confirm_pairings(pairs) -> BatchConfirm`,
+applying each pair through the same `confirm` and saving once. `confirm_pairing`
+re-runs discovery and rebuilds the roster per call (the `ponytail:` note at
+`accounts.rs:238`); thirty of those in a row is seconds of stall on the headline
+action.
+
+```
+BatchConfirm { roster: AccountRoster, rejected: Vec<Rejected> }
+Rejected { char_id: u64, user_id: u64, reason: String }
+```
+
+**It applies what fits and reports what did not.** A rejection is data, not an
+error — hence no `Result`. The hard 3-character cap counts a target account's
+*existing* characters, so a user carrying one stale wrong pairing on an otherwise
+full account is exactly who trips it — and that user is the one this whole
+feature exists to repair. Aborting their entire roster over one collision, as an
+earlier draft of this spec did, would be the worst possible response to the case
+it was built for. So the batch accepts everything it can and names each pair it
+could not, by character and by account, so the user knows precisely what to
+unpair.
+
+### 3.3 Frontend — `AccountsView.svelte`
+
+- Empty character slots render **ghost chips** from proposals: the resolved name
+  plus a confirm affordance, with a card footnote naming the source ("from your
+  launcher log").
+- A single **Accept all** action, labelled with what it will do (e.g. "Accept all
+  — 10 accounts, 30 characters"), shown when no proposal conflicts.
+
+  **It must cover exactly the cards on screen and nothing else.** The view scopes
+  its cards to the profile folder the open file lives in; if the accept action
+  reads the unscoped proposal list, it writes pairings for accounts the user has
+  no card for, never saw a ghost for, and had no way to dismiss. That is a write
+  the user did not ask for, which is the one thing this feature may never do.
+- A proposal that contradicts a confirmed pairing marks the filled chip and
+  states the disagreement plainly — *"Your launcher log puts ‹name› on
+  ‹alias or core_user_<id>›"* — offering **Move it** / **Keep mine**. This is the
+  only path that repairs a user who is already mis-associated, and it never
+  overwrites a deliberate choice.
+- No logs found, or no proposals survive: one line pointing at the existing
+  Calibrate flow. Not an error state.
+
+Account cards, the manual picker and the capture dialog are otherwise untouched.
+
+## 4. Error handling & edge cases
+
+- Missing log directory, unreadable log file, or zero matching lines → empty
+  proposals, UI says so, existing paths unaffected.
+- Interleaved *Fetching*/*Fetched* lines → the orphaned pending is discarded
+  (§3.1 step 1) and, where it still produced a tally, majority vote and the
+  disjointness check remove it.
+- A proposal naming a `user_id` with no discovered file and no store entry has no
+  card to appear on — `build_roster` unions discovered ∪ persisted accounts, and
+  such an account is in neither. It is silently absent, and **Accept all does not
+  send it either**, which is the same rule as §3.3's scoping: the accept action
+  covers exactly what the user can see and dismiss, never more. An earlier draft
+  of this section claimed the card would still be shown; it never was.
+- A proposal that would exceed the 3-character cap is rejected by `confirm`, and
+  the rejection is reported per §3.2 — named by character and account, alongside
+  whatever the batch did manage to apply.
+- Log files are read-only; nothing in this feature writes outside
+  `accounts.json`.
+
+## 5. Testing
+
+**Rust (`app` crate, `cargo test`, no FS, no network).** `parse_logs` over
+synthetic lines — synthetic ids only, per the repo rule:
+
+- a clean *Fetching* → *Fetched* pair with intervening unrelated lines;
+- interleaved `Fetching A, Fetching B, Fetched B` → A dropped, B kept;
+- majority vote resolving a 4:1 disagreement to the 4;
+- a tie dropping the set;
+- a character appearing in two winning sets dropping both;
+- `n` disagreeing with the pending list length dropping the pair;
+- a Plex claim pairing with two other requests in flight;
+- an intervening *Fetching*, and an intervening *Fetched*, each clearing the claim;
+- two differing Plex lines before one request pairing nothing, while a repeated
+  identical one still pairs;
+- a retraction giving recency back to the genuinely newer set;
+- a *Fetched* naming a different account retracting the tally to nothing;
+- a *Fetched* agreeing leaving one vote, not two (pinned by holding it against a
+  single opposing observation: the correct count ties and drops the set);
+- a Plex line's balance digits never read as an account id;
+- no input lines → empty roster.
+
+`log_dir()` returning `None` on a machine without the directory is covered by
+`read_launcher_roster` yielding an empty roster.
+
+**Frontend (`node --test`).** The proposals × roster merge — which slot gets a
+ghost chip, which chip is marked conflicting — as a pure helper.
+
+**Live check.** Needs **no game session**: run against the real launcher logs and
+confirm the proposed accounts and characters match the roster already held. A
+notable property of this path — unlike guided capture, it is verifiable without
+launching EVE.
+
+## 6. Out of scope / deferred
+
+- **Hardening guided capture.** `finishCapture()` writes the pairing the moment
+  `capture_diff` reports `detected`, without asking — contrary to the M3b spec's
+  "capture *detects*, the user *confirms*". With a background client running,
+  that turns a coincidence into a silent wrong write. Deliberately left for a
+  follow-up once this path exists.
+- **Evidence on account cards** (last EVE write time, profile folder) to make the
+  manual picker less of a guess for users the launcher log does not cover.
+- **`[client-queue] Queued client startup`** — carries `profile`, which could
+  disambiguate which profile folder an account was launched into. Unused here.
+- **Caching the parse** by `(path, mtime)`. One read per Accounts-view mount over
+  ~8 MB is acceptable; revisit only if it drags.
