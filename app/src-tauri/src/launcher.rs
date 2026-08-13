@@ -27,11 +27,9 @@ pub struct LauncherRoster {
     pub accounts: HashMap<u64, Vec<u64>>,
 }
 
-/// The id list from an `[esi] Fetching character details for …` line, sorted and
-/// deduped so it can key the vote. `None` for any other line, or if any token is
-/// not a plain integer.
-fn fetching_ids(line: &str) -> Option<Vec<u64>> {
-    let rest = line.split_once("[esi] Fetching character details for ")?.1;
+/// A comma-separated id list, sorted and deduped so it can key the vote.
+/// `None` if any token is not a plain integer.
+fn parse_id_list(rest: &str) -> Option<Vec<u64>> {
     let mut ids: Vec<u64> =
         rest.split(',').map(|t| t.trim().parse::<u64>()).collect::<Result<_, _>>().ok()?;
     if ids.is_empty() {
@@ -42,6 +40,19 @@ fn fetching_ids(line: &str) -> Option<Vec<u64>> {
     Some(ids)
 }
 
+/// Whether this is an `[esi] Fetching character details for …` line, and the
+/// ids it names.
+///
+/// `None` — not a request line at all.
+/// `Some(None)` — a request line whose id list will not parse. The request still
+/// happened, so it must still count as in flight; treating it as "not a line"
+/// would credit the next answer to the *previous* request, which is a confident
+/// wrong pairing rather than a missing one.
+fn fetching_ids(line: &str) -> Option<Option<Vec<u64>>> {
+    let rest = line.split_once("[esi] Fetching character details for ")?.1;
+    Some(parse_id_list(rest))
+}
+
 /// `(count, user_id)` from an `[esi] Fetched N character details for U` line.
 fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
     let rest = line.split_once("[esi] Fetched ")?.1;
@@ -49,15 +60,25 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
     Some((n.trim().parse().ok()?, rest.trim().parse().ok()?))
 }
 
-/// Mine `lines` — **oldest-first**, which `read_roster_from` guarantees — for the
-/// launcher's char↔account pairings.
+/// Mine the launcher's char↔account pairings from `files` — one `Vec` of lines
+/// per log file, **files oldest-first and lines in order**, which
+/// `read_roster_from` guarantees.
 ///
 /// Three passes, each of which can only remove pairings:
-///  1. **Vote.** Tally `sorted(char ids) → user id` over every matched pair.
-///     A `Fetching` arriving while one is still unanswered discards it AND
-///     poisons the next `Fetched`: with two requests in flight a `Fetched` can
-///     be answering either, and pairing it with whichever is pending attributes
-///     one account's whole character list to the other account. Both drop.
+///  1. **Vote.** Tally `sorted(char ids) → user id` over every matched pair, and
+///     only when **exactly one request is in flight**. With two outstanding, a
+///     `Fetched` can be answering either, and pairing it with whichever is
+///     pending attributes one account's whole character list to the other
+///     account. A bool is not enough here: it forgets the still-outstanding
+///     request as soon as one answer is dropped, so the *next* pair looks clean
+///     while a late reply is in flight — measured at 10 of 186 tallies on a real
+///     install, each one a confident, unopposed, wrong pairing.
+///
+///     The counter is **reset per file**, which is why this takes files rather
+///     than one line stream: a request that never got its answer would otherwise
+///     leave the count above one forever and silently drop everything after it
+///     (measured: 170 of 182 tallies lost).
+///
 ///     This is not airtight — a longer interleave can still leave exactly one
 ///     plausible candidate — which is why the vote exists rather than a single
 ///     reading being trusted.
@@ -66,33 +87,38 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
 ///  3. **Disjointness.** A character claimed by two surviving accounts is
 ///     dropped from both — a character belongs to exactly one account, so two
 ///     claims mean one of them is wrong and we cannot tell which.
-pub fn parse_logs<I: IntoIterator<Item = String>>(lines: I) -> LauncherRoster {
+pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
     let mut votes: HashMap<Vec<u64>, HashMap<u64, u32>> = HashMap::new();
     let mut last_seen: HashMap<Vec<u64>, usize> = HashMap::new();
-    let mut pending: Option<Vec<u64>> = None;
-    // Set when a `Fetching` displaced one that was never answered. The next
-    // `Fetched` could be answering either request, so it may not pair.
-    let mut contested = false;
+    // Runs across files so the recency rule sees one timeline.
+    let mut seq = 0usize;
 
-    for (seq, line) in lines.into_iter().enumerate() {
-        if let Some(ids) = fetching_ids(&line) {
-            contested = pending.is_some();
-            pending = Some(ids);
-            continue;
-        }
-        if let Some((n, user)) = fetched_count_and_user(&line) {
-            // `take` clears the pending set either way: an unmatched count is a
-            // mis-pairing, not something to hold on to.
-            let candidate = pending.take();
-            if !contested {
-                if let Some(ids) = candidate {
-                    if ids.len() == n {
-                        *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
-                        last_seen.insert(ids, seq);
+    for lines in files {
+        let mut pending: Option<Vec<u64>> = None;
+        let mut in_flight = 0usize;
+        for line in lines {
+            seq += 1;
+            if let Some(ids) = fetching_ids(line) {
+                in_flight += 1;
+                pending = ids;
+                continue;
+            }
+            if let Some((n, user)) = fetched_count_and_user(line) {
+                // `take` clears the pending set either way: an unmatched count is
+                // a mis-pairing, not something to hold on to.
+                let candidate = pending.take();
+                if in_flight == 1 {
+                    if let Some(ids) = candidate {
+                        if ids.len() == n {
+                            *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
+                            last_seen.insert(ids, seq);
+                        }
                     }
                 }
+                // An answer with nothing outstanding means the log starts
+                // mid-request; saturating rather than panicking.
+                in_flight = in_flight.saturating_sub(1);
             }
-            contested = false;
         }
     }
 
@@ -171,18 +197,20 @@ pub fn read_roster_from(dir: &Path) -> LauncherRoster {
     let mut files: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "log"))
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("log")))
         .collect();
     // Names are date-stamped (eve-online-launcher-YYYY.MM.DD-HH.MM.SS.log), so
     // lexical order is chronological — what parse_logs' recency rule needs.
     files.sort();
-    let lines: Vec<String> = files
+    // One Vec per file, not one flat stream: parse_logs resets its in-flight
+    // counter at each boundary, and an unanswered request must not cross one.
+    let per_file: Vec<Vec<String>> = files
         .iter()
         .filter_map(|p| fs::read(p).ok())
         // Lossy rather than strict: one mangled byte must not cost a whole file.
-        .flat_map(|b| String::from_utf8_lossy(&b).lines().map(str::to_owned).collect::<Vec<_>>())
+        .map(|b| String::from_utf8_lossy(&b).lines().map(str::to_owned).collect())
         .collect();
-    parse_logs(lines)
+    parse_logs(&per_file)
 }
 
 pub fn read_launcher_roster() -> LauncherRoster {
@@ -250,11 +278,11 @@ mod tests {
 
     #[test]
     fn a_clean_pair_across_unrelated_lines_is_read() {
-        let r = parse_logs([
+        let r = parse_logs(&[vec![
             fetching(&[90000001, 90000002, 90000003]),
             noise(),
             fetched(3, 80000001),
-        ]);
+        ]]);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
         assert_eq!(r.accounts.len(), 1);
     }
@@ -263,27 +291,69 @@ mod tests {
     fn an_interleaved_launch_drops_both_sets() {
         // Two launches overlap and only one answer arrives. WHICH request it
         // answers is not knowable from the log, so neither set is claimed.
-        let r = parse_logs([
+        let r = parse_logs(&[vec![
             fetching(&[90000001, 90000002, 90000003]),
             fetching(&[90000004, 90000005, 90000006]),
             fetched(3, 80000002),
-        ]);
+        ]]);
         assert!(r.accounts.is_empty(), "an unanswered request poisons the next answer");
     }
 
     #[test]
     fn two_overlapping_launches_pair_nothing_rather_than_guessing() {
-        // The dangerous shape, and the reason `contested` exists: both requests
+        // The dangerous shape, and the reason the counter exists: both requests
         // are answered. Pairing the first answer with what is pending hands one
         // account the OTHER account's three characters — a confident, wrong,
         // unopposed pairing. Real logs contain this shape.
-        let r = parse_logs([
+        let r = parse_logs(&[vec![
             fetching(&[90000001, 90000002, 90000003]),
             fetching(&[90000004, 90000005, 90000006]),
             fetched(3, 80000001),
             fetched(3, 80000002),
-        ]);
+        ]]);
         assert!(r.accounts.is_empty(), "a guess here misattributes a whole account");
+    }
+
+    #[test]
+    fn a_reply_still_in_flight_does_not_make_the_next_pair_look_clean() {
+        // The shape a bool misses: after the first dropped answer it forgets
+        // that request B is STILL outstanding, so C/U2 reads as an undisputed
+        // pair — a ghost carrying no conflict and no opposing vote, which rides
+        // along in Accept all. Counting requests instead keeps C poisoned.
+        let r = parse_logs(&[vec![
+            fetching(&[90000001, 90000002, 90000003]), // A
+            fetching(&[90000004, 90000005, 90000006]), // B
+            fetched(3, 80000001),                      // answers A or B
+            fetching(&[90000007, 90000008, 90000009]), // C, with one still open
+            fetched(3, 80000002),
+            fetched(3, 80000003),
+        ]]);
+        assert!(r.accounts.is_empty(), "a late reply must not certify the next pair");
+    }
+
+    #[test]
+    fn an_unanswered_request_does_not_poison_the_next_file() {
+        // The counter resets at every file boundary. Without that, one request
+        // that never got its answer leaves it above one for the rest of time and
+        // every later pairing is silently lost.
+        let r = parse_logs(&[
+            vec![fetching(&[90000001, 90000002, 90000003])], // no answer, file ends
+            vec![fetching(&[90000004, 90000005, 90000006]), fetched(3, 80000002)],
+        ]);
+        assert_eq!(chars(&r, 80000002), vec![90000004, 90000005, 90000006]);
+    }
+
+    #[test]
+    fn an_unparseable_id_list_still_counts_as_a_request() {
+        // The ids are unreadable, so this request's own pairing is lost — but it
+        // IS a request, and the answer that follows may be its. Crediting that
+        // answer to the earlier clean request would invent a wrong pairing.
+        let r = parse_logs(&[vec![
+            fetching(&[90000001, 90000002, 90000003]),
+            format!("{} (retry)", fetching(&[90000004])),
+            fetched(3, 80000001),
+        ]]);
+        assert!(r.accounts.is_empty(), "an unreadable request is opaque, not absent");
     }
 
     #[test]
@@ -295,37 +365,37 @@ mod tests {
         }
         lines.push(fetching(&[90000001, 90000002, 90000003]));
         lines.push(fetched(3, 80000009)); // one mis-attribution from an interleave
-        let r = parse_logs(lines);
+        let r = parse_logs(&[lines]);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
         assert!(!r.accounts.contains_key(&80000009), "the outvoted claim is dropped");
     }
 
     #[test]
     fn a_tied_vote_drops_the_set_entirely() {
-        let r = parse_logs([
+        let r = parse_logs(&[vec![
             fetching(&[90000001, 90000002, 90000003]),
             fetched(3, 80000001),
             fetching(&[90000001, 90000002, 90000003]),
             fetched(3, 80000002),
-        ]);
+        ]]);
         assert!(r.accounts.is_empty(), "1:1 is not evidence");
     }
 
     #[test]
     fn a_character_claimed_by_two_surviving_accounts_is_dropped_from_both() {
-        let r = parse_logs([
+        let r = parse_logs(&[vec![
             fetching(&[90000001, 90000002, 90000003]),
             fetched(3, 80000001),
             fetching(&[90000003, 90000004, 90000005]), // 90000003 in both
             fetched(3, 80000002),
-        ]);
+        ]]);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002]);
         assert_eq!(chars(&r, 80000002), vec![90000004, 90000005]);
     }
 
     #[test]
     fn a_count_that_disagrees_with_the_id_list_is_ignored() {
-        let r = parse_logs([fetching(&[90000001, 90000002, 90000003]), fetched(2, 80000001)]);
+        let r = parse_logs(&[vec![fetching(&[90000001, 90000002, 90000003]), fetched(2, 80000001)]]);
         assert!(r.accounts.is_empty());
     }
 
@@ -340,18 +410,19 @@ mod tests {
         }
         lines.push(fetching(&[90000001, 90000002, 90000007]));
         lines.push(fetched(3, 80000001));
-        let r = parse_logs(lines);
+        let r = parse_logs(&[lines]);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000007]);
     }
 
     #[test]
     fn no_lines_yield_an_empty_roster() {
-        assert_eq!(parse_logs(Vec::<String>::new()), LauncherRoster::default());
+        assert_eq!(parse_logs(&[]), LauncherRoster::default());
+        assert_eq!(parse_logs(&[vec![]]), LauncherRoster::default());
     }
 
     #[test]
     fn unrelated_lines_alone_yield_an_empty_roster() {
-        assert_eq!(parse_logs([noise(), noise()]), LauncherRoster::default());
+        assert_eq!(parse_logs(&[vec![noise(), noise()]]), LauncherRoster::default());
     }
 
     use crate::accounts::{confirm, AccountsStore};
@@ -390,6 +461,19 @@ mod tests {
 
         let r = read_roster_from(&d);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000007]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_uppercase_extension_is_still_a_log() {
+        let d = temp_dir("case");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("eve-online-launcher-2026.01.01-10.00.00.LOG"),
+            format!("{}\n{}\n", fetching(&[90000001, 90000002, 90000003]), fetched(3, 80000001)),
+        )
+        .unwrap();
+        assert_eq!(chars(&read_roster_from(&d), 80000001), vec![90000001, 90000002, 90000003]);
         let _ = fs::remove_dir_all(&d);
     }
 

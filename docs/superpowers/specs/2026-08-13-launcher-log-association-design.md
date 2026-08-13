@@ -73,7 +73,9 @@ Pure parse + impure reader, mirroring the `names.rs` / `accounts.rs` split.
 ```rust
 pub struct LauncherRoster { pub accounts: HashMap<u64 /*user_id*/, Vec<u64>> }
 
-pub fn parse_logs(lines: impl Iterator<Item = String>) -> LauncherRoster; // pure, FS-free
+// Pure, FS-free. One Vec per log file — files oldest-first, lines in order —
+// because the in-flight counter below resets at each file boundary.
+pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster;
 pub fn log_dir() -> Option<PathBuf>;                                      // per-OS
 pub fn read_launcher_roster() -> LauncherRoster;                          // orchestrator
 ```
