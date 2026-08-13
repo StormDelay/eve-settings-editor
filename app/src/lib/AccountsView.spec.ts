@@ -196,10 +196,24 @@ describe("accept all is scoped to the visible cards", () => {
       ],
       { profiles: PROFILES, openPath: OPEN },
     );
-    const all = await waitFor(() => screen.getByRole("button", { name: /accept all — 1 /i }));
+    // Also pins the count's pluralisation: one character, not "1 characters".
+    const all = await waitFor(() =>
+      screen.getByRole("button", { name: /^accept all — 1 character$/i }),
+    );
     await fireEvent.click(all);
     await waitFor(() =>
       expect(calls.only("confirm_pairings").args).toEqual({ pairs: [[90000001, 80000001]] }),
     );
+  });
+
+  test("proposals only for off-screen accounts still explain the empty state", async () => {
+    // Nothing renders for them — no card, no ghost, no Accept all — so counting
+    // them as "the logs found something" leaves a panel that says nothing at all.
+    mount([{ char_id: 90000002, user_id: 80000002, conflict: null }], {
+      profiles: PROFILES,
+      openPath: OPEN,
+    });
+    await waitFor(() => screen.getByText(/launcher logs say nothing/i));
+    expect(screen.queryByRole("button", { name: /accept all/i })).toBeNull();
   });
 });
