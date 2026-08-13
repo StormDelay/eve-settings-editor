@@ -77,20 +77,37 @@ fn plex_user(line: &str) -> Option<u64> {
     rest.split_once('\'')?.0.trim().parse().ok()
 }
 
-/// Undo a tally recorded from a claim. The vote must genuinely leave the map:
-/// leaving it to stand beside the contradicting one turns positive evidence of
-/// interleaving into a tie at best, and a surviving wrong pairing at worst.
-fn retract(votes: &mut HashMap<Vec<u64>, HashMap<u64, u32>>, ids: &[u64], user: u64) {
-    let Some(users) = votes.get_mut(ids) else { return };
-    if let Some(count) = users.get_mut(&user) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            users.remove(&user);
+/// Undo a tally recorded from a claim — **both halves of it**, which is why the
+/// two maps are undone here together rather than at the call site.
+///
+/// The vote must genuinely leave the map: left to stand beside the contradicting
+/// one it turns positive evidence of interleaving into a tie at best, and a
+/// surviving wrong pairing at worst. And `last_seen` must go back to `prior`: a
+/// leftover timestamp from a retracted observation carries its id set past a
+/// genuinely newer one in the recency pass even with its own vote gone, as long
+/// as the set holds any other surviving vote.
+fn retract(
+    votes: &mut HashMap<Vec<u64>, HashMap<u64, u32>>,
+    last_seen: &mut HashMap<Vec<u64>, usize>,
+    ids: &[u64],
+    user: u64,
+    prior: Option<usize>,
+) {
+    if let Some(users) = votes.get_mut(ids) {
+        if let Some(count) = users.get_mut(&user) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                users.remove(&user);
+            }
+        }
+        if users.is_empty() {
+            votes.remove(ids);
         }
     }
-    if users.is_empty() {
-        votes.remove(ids);
-    }
+    match prior {
+        Some(seq) => last_seen.insert(ids.to_vec(), seq),
+        None => last_seen.remove(ids),
+    };
 }
 
 /// Mine the launcher's char↔account pairings from `files` — one `Vec` of lines
@@ -128,9 +145,12 @@ fn retract(votes: &mut HashMap<Vec<u64>, HashMap<u64, u32>>, ids: &[u64], user: 
 ///
 ///     A claim is cleared by **another request or another reply** — either means
 ///     the launch cycle that Plex line belonged to has moved on, and the account
-///     it named no longer describes what is being requested now. Not by a
-///     line-distance window: the honest gaps run from 1 line to 38, so any
-///     distance is a guess, while the two barriers separate the corpus exactly.
+///     it named no longer describes what is being requested now — and it is
+///     **voided outright by a second, differing Plex line**, which is two
+///     concurrent launches naming two accounts for one request with nothing in
+///     between for the other barriers to catch. Not cleared by a line-distance
+///     window: the honest gaps run from 1 line to 38, so any distance is a
+///     guess, while these structural barriers separate the corpus exactly.
 ///
 ///     If a later `Fetched` for that same request still names a *different*
 ///     account, the observation is **retracted**, not merely doubted — a
@@ -148,14 +168,28 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
     let mut seq = 0usize;
 
     for lines in files {
-        // The pending request's ids, and the account a Plex line claimed for it.
-        let mut pending: Option<(Vec<u64>, Option<u64>)> = None;
-        let mut claimed: Option<u64> = None;
+        // The pending request's ids, the account a Plex line claimed for it, and
+        // the `last_seen` value that claim's tally displaced.
+        let mut pending: Option<(Vec<u64>, Option<u64>, Option<usize>)> = None;
+        // Absent / one claim / **void**. Not last-write-wins: two concurrent
+        // launches emit two Plex lines back to back, and neither barrier below
+        // fires on that — no request and no reply comes between them. Taking the
+        // last would hand one account the other's whole character list, with
+        // nothing left to contradict it if the file ends before the reply.
+        let mut claimed: Option<Option<u64>> = None;
         let mut in_flight = 0usize;
         for line in lines {
             seq += 1;
             if let Some(user) = plex_user(line) {
-                claimed = Some(user);
+                claimed = Some(match claimed {
+                    // A differing account before the request: ambiguous, so void
+                    // — and it stays void until something consumes it.
+                    Some(Some(held)) if held != user => None,
+                    // A repeat of the same account is the same claim, not a
+                    // conflict; an already-void claim stays void.
+                    Some(held) => held,
+                    None => Some(user),
+                });
                 continue;
             }
             if let Some(ids) = fetching_ids(line) {
@@ -163,13 +197,18 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
                 // `take`: the claim belongs to ONE request. A second request
                 // finds nothing to claim. No line-distance window — the real
                 // gaps vary and a distance is arbitrary; what makes a claim
-                // stale is another request or another reply, not its age.
-                let claim = claimed.take();
+                // stale is a competing claim, another request or another reply,
+                // never its age. `flatten` drops a void claim to the in-flight
+                // rule, which is where every ambiguity here is meant to land.
+                let claim = claimed.take().flatten();
+                let mut prior = None;
                 if let (Some(ids), Some(user)) = (&ids, claim) {
                     *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
-                    last_seen.insert(ids.clone(), seq);
+                    // `insert` hands back what it displaced — exactly what a
+                    // retraction has to put back.
+                    prior = last_seen.insert(ids.clone(), seq);
                 }
-                pending = ids.map(|ids| (ids, claim));
+                pending = ids.map(|ids| (ids, claim, prior));
                 continue;
             }
             if let Some((n, user)) = fetched_count_and_user(line) {
@@ -180,12 +219,12 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
                     // when it agrees — a second tally would let one launch
                     // outvote a genuinely disagreeing one — and when it
                     // disagrees it retracts.
-                    Some((ids, Some(claim))) => {
+                    Some((ids, Some(claim), prior)) => {
                         if claim != user {
-                            retract(&mut votes, &ids, claim);
+                            retract(&mut votes, &mut last_seen, &ids, claim, prior);
                         }
                     }
-                    Some((ids, None)) if in_flight == 1 && ids.len() == n => {
+                    Some((ids, None, _)) if in_flight == 1 && ids.len() == n => {
                         *votes.entry(ids.clone()).or_default().entry(user).or_default() += 1;
                         last_seen.insert(ids, seq);
                     }
@@ -484,6 +523,51 @@ mod tests {
         ]]);
         assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
         assert_eq!(r.accounts.len(), 1, "B's claim was A's, and B has none of its own");
+    }
+
+    #[test]
+    fn two_accounts_claiming_one_request_void_the_claim() {
+        // Two concurrent launches, and the file ends before either reply. No
+        // request and no reply sits between the two Plex lines, so the other
+        // barriers see nothing — and nothing ever arrives to retract with.
+        // Last-write-wins here hands one account the other's whole character
+        // list, unopposed. Voiding drops it to the in-flight rule instead.
+        let r = parse_logs(&[vec![
+            plex(80000002, 80000009),
+            plex(80000001, 80000009),
+            fetching(&[90000004, 90000005, 90000006]),
+        ]]);
+        assert!(r.accounts.is_empty(), "two claimants for one request is not evidence");
+    }
+
+    #[test]
+    fn a_repeated_plex_line_for_the_same_account_is_still_a_claim() {
+        // Voiding is about disagreement, not about counting lines: the same
+        // account said twice says the same thing.
+        let r = parse_logs(&[vec![
+            plex(80000001, 80000009),
+            plex(80000001, 80000009),
+            fetching(&[90000001, 90000002, 90000003]),
+        ]]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
+    }
+
+    #[test]
+    fn a_retraction_gives_recency_back_to_the_genuinely_newer_set() {
+        // The retracted observation's vote is gone, but its timestamp must go
+        // too. The old set still holds its own honest vote, so a leftover
+        // timestamp is enough to carry it past the newer set in the recency pass
+        // — a character transferred away years ago reappearing on the card.
+        let r = parse_logs(&[vec![
+            fetching(&[90000001, 90000002, 90000003]), // the old set
+            fetched(3, 80000001),
+            fetching(&[90000001, 90000002, 90000007]), // the newer set
+            fetched(3, 80000001),
+            plex(80000001, 80000009), // a claimed observation for the OLD set…
+            fetching(&[90000001, 90000002, 90000003]),
+            fetched(3, 80000002), // …contradicted, so retracted
+        ]]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000007]);
     }
 
     #[test]

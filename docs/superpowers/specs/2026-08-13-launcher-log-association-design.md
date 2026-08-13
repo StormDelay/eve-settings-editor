@@ -154,12 +154,29 @@ The complete parse rule:
    gaps run from 1 line to 38, so any distance is a guess, while these two
    structural barriers separate the measured corpus exactly (§2).
 
+   A **second, differing Plex line before the request voids the claim
+   outright** — the state is absent / one claim / void, never last-write-wins.
+   Two concurrent launches emit two Plex lines back to back, and neither barrier
+   above fires on that: no request and no reply comes between them. Taking the
+   later one would pair one account with the other's entire character list, and
+   if the file ends before the replies arrive there is nothing left to retract
+   with — a confident wrong pairing, unopposed. A repeat of the *same* account id
+   is not a disagreement and stays a valid claim. A voided claim falls through to
+   the in-flight rule, which is where every ambiguity here is meant to land.
+   Cost on the measured corpus: **zero** — it contains no competing pair.
+
    When a *Fetching* carries a claimed account, the pairing is complete at
    request time from two adjacent lines, so **tally it immediately and ignore the
    in-flight count for that observation** — interleaving cannot corrupt a fact
    that never spans a gap. If a later *Fetched* then names a *different* account,
    **drop the observation entirely**: a contradiction is positive evidence of
    interleaving, which is the one thing steps 1-2 can only avoid, never detect.
+
+   The retraction must undo **both halves** of the tally — the vote *and* the
+   `last_seen` entry it displaced, restored to what it was. The vote alone is not
+   enough: whenever the retracted set holds any other surviving vote, a leftover
+   timestamp carries it past a genuinely newer set in step 4's recency pass,
+   which is a character transferred away years ago reappearing on the card.
 
    A *Fetching* with no claimed account falls through to the in-flight rule
    unchanged — 43 of 191 requests on the measured corpus. Net effect: **188 of
@@ -285,7 +302,10 @@ synthetic lines — synthetic ids only, per the repo rule:
 - a character appearing in two winning sets dropping both;
 - `n` disagreeing with the pending list length dropping the pair;
 - a Plex claim pairing with two other requests in flight;
-- an intervening *Fetching*, and an intervening *Fetched*, each voiding the claim;
+- an intervening *Fetching*, and an intervening *Fetched*, each clearing the claim;
+- two differing Plex lines before one request pairing nothing, while a repeated
+  identical one still pairs;
+- a retraction giving recency back to the genuinely newer set;
 - a *Fetched* naming a different account retracting the tally to nothing;
 - a *Fetched* agreeing leaving one vote, not two (pinned by holding it against a
   single opposing observation: the correct count ties and drops the set);
