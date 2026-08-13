@@ -1,7 +1,27 @@
 # Phase 1 — Design tokens and shared primitives
 
-Status: **planned, nothing implemented.** Prerequisite for phases 2–5b.
+Status: **IMPLEMENTED** on `feat/ui-redesign-phase-1`. Prerequisite for phases 2–5b.
 Behaviour change: **none.** Layout moves: **none.**
+
+> **This document has been corrected against what shipped.** Building Phase 1
+> found seven places where it was wrong, self-contradictory, or asked for
+> something a platform or an existing test forbade. **Each is fixed at the point
+> of its own rule**, not annotated here, so that reading a section straight
+> through now gives the right answer. This list is only an index:
+>
+> | What | Fixed in |
+> | --- | --- |
+> | §7.4 forbade the spec edit §5.5 requires — a detector overruling the thing it was detecting for | §7.4, and the new §7.5 ledger |
+> | `toast.svelte.ts` collides with `Toast.svelte` on a case-insensitive filesystem | §5.12, §6 step 2 |
+> | §4.2 and §4.3 disagreed about ChatSplit's four 10px lines | §4.3, §7.1 item 4 |
+> | `Toast` cannot take all three `.flash` sites in Phase 1 | §5.12 |
+> | `PanelHeader` and `EmptyState` would move something at five call sites | §5.6, §5.7 |
+> | `Field` and `ListRow` needed props no one anticipated | §5.2, §5.10 |
+> | The 4px scale cannot express the primitives' or the canvas's geometry | §7.1 item 6 |
+>
+> Two things did **not** need correcting, and that is worth recording: §4's rule
+> 1 (never rename a class) held for all fourteen at-risk spec queries, and every
+> APCA floor in §3.6 was met by the values as published.
 
 ### What v0.34 changed
 
@@ -225,7 +245,11 @@ numbers are in §3.6 and the check is in §7.2.
 :root {
   color-scheme: dark;
   font-family: system-ui, "Segoe UI", sans-serif;
-  font-size: 14px;
+  /* The document base. `var(--t-ui)` rather than a repeated `14px`: the token
+     is declared in this same block, so it resolves here, and the base size
+     then has exactly one spelling. `type-scale` in §7.1 would flag the
+     literal. */
+  font-size: var(--t-ui);
 
   /* --- surfaces: four evenly-stepped OKLCH elevations ------------------- */
   --bg:               #0f1216;   /* app ground */
@@ -810,15 +834,21 @@ style rule was added, removed or changed.
 | `InsertForm:137` | `.hint` | `InlineMessage variant="info"` |
 | `BackupsPanel:87-94` | `.subtitle { opacity: 0.7; font-size: 0.85em }` | `PanelHeader`'s `subtitle` — `var(--text-muted)`, `var(--t-caption)` |
 
-### 4.3 The seven `font-size` lines that do not move to a token
+### 4.3 The three `font-size` lines that do not move to a token
 
-`DetailParts.svelte:44` (`9px`), `LayoutView.svelte:1039` and `:1097` (`11px`),
-and `ChatSplit.svelte:89, 100, 115, 127` (`10px`) are **drawings of EVE's screen
-at canvas scale**, not app chrome. `--t-caption` is 12px; forcing it would make
-the labels overflow the rectangles they name at typical canvas scales. Keep the
-literal px and mark each with a one-line comment saying it is canvas-scale type.
-The guard test in §7.1 carries exactly these seven lines as its font-size
-allowlist.
+`DetailParts.svelte:44` (`9px`) and `LayoutView.svelte:1039` and `:1097`
+(`11px`) are **drawings of EVE's screen at canvas scale**, not app chrome.
+`--t-caption` is 12px; forcing it would make the labels overflow the rectangles
+they name at typical canvas scales. Keep the literal px and mark each with a
+one-line comment saying it is canvas-scale type. The guard test in §7.1 carries
+exactly these three lines as its font-size allowlist.
+
+**`ChatSplit.svelte:89, 100, 115, 127` (`10px`) are NOT on this list**, though an
+earlier draft of this section listed them and made it seven. ChatSplit renders
+inside `WindowPanel`'s side panel — it is a form for editing chat split sizes,
+not a thing drawn on the canvas — so it is chrome and takes the scale like all
+other chrome. §4.2's own table already converts all four to `var(--t-caption)`;
+the two sections disagreed and §4.2 is the half that is right.
 
 `LayoutView.svelte:1192` is also `11px` but is **not** on the list — it is
 `.ref`, a status line below the canvas, and it becomes `var(--t-caption)`.
@@ -910,7 +940,7 @@ siblings at `:764`, `:801` that are not opacity at all.
 
 ## 5 The twelve primitives
 
-All live in `app/src/lib/ui/`, one `.svelte` file each, plus `toast.svelte.ts`
+All live in `app/src/lib/ui/`, one `.svelte` file each, plus `toasts.svelte.ts`
 and `apca.ts`. Svelte 5 runes throughout. **No dependency is added** —
 `app/package.json` carries no component library today and this phase does not
 change that.
@@ -985,11 +1015,16 @@ Replaces: the global `button` rule (`app.css:17-22`), `button:disabled`
 ```ts
 type FieldProps = {
   kind?: "text" | "number" | "select" | "checkbox" | "radio" | "search" | "color";
-  value?: string | number | boolean;   // $bindable
+  value?: any;                 // $bindable — `kind` discriminates it, see below
   label?: string;              // renders a <label>; otherwise ariaLabel is required
   ariaLabel?: string;
   id?: string;                 // auto-generated when absent, so label/for always pairs
-  options?: { value: string; label: string; group?: string }[];  // select only
+  // select only. `value` is NOT narrowed to string and an option may be
+  // disabled — a null "Choose a character…" placeholder has to round-trip as
+  // null, and Svelte's select binding stores the value on the element rather
+  // than stringifying it, so this needs no coercion at the call site.
+  options?: { value: unknown; label: string; group?: string; disabled?: boolean }[];
+  radioValue?: string;         // this radio's own value; `value` holds the GROUP's
   placeholder?: string;
   disabled?: boolean;
   disabledReason?: string;
@@ -998,11 +1033,47 @@ type FieldProps = {
   width?: string;              // CSS width, e.g. "5rem"
   error?: string;              // renders an InlineMessage below + aria-invalid + aria-describedby
   layout?: "row" | "column";   // label beside vs above — default "row"
-  class?: string;
+  element?: HTMLInputElement | HTMLSelectElement;  // $bindable — for focus management
+  class?: string;              // on the wrapper
+  controlClass?: string;       // on the control itself
   onchange?: (e: Event) => void;
   oninput?: (e: Event) => void;
 };
 ```
+
+`value` is `any` deliberately: `kind` discriminates it — a select's is a string,
+a checkbox's a boolean, a number field's a number — and spelling that as a
+discriminated union would make every one of ~40 call sites annotate a generic to
+buy nothing.
+
+Four of these props exist because an **existing spec** forced them, not because
+they were anticipated. They are worth knowing before Phase 2 reaches for the
+component:
+
+- **`radioValue`** gives a radio group `bind:value` semantics equivalent to
+  Svelte's `bind:group`. `BatchView` and `OverviewFiltersTab` both need it, and
+  without it each would have kept a native radio and its own `accent-color` —
+  re-duplicating the rule this component exists to delete.
+- **`controlClass`** puts a hook on the control rather than the wrapper.
+  `ProbeViewer.spec` reads `.scene-pick`'s `selectedIndex`, and two Overview
+  specs do the same, so the class has to land on the element that has the
+  property.
+- **`element`** hands back the control node. `WindowPanel`'s parent focuses and
+  selects the filter box from outside the component, and two rename boxes used a
+  `use:` action — which Svelte cannot apply to a component — so they focus from
+  an effect on this instead.
+- **A raw `aria-label` passed through wins over the generated one.** Three
+  controls keep an accessible name a component would otherwise have renamed:
+  "Filter windows" (`SearchField` would name it from its built placeholder,
+  which carries a trailing ellipsis), "range for every probe", and the tab
+  colour swatch. `title` is *not* a label source for `getByLabelText`.
+
+**A checkbox or radio with a `label` renders the label WRAPPING the control.**
+That is how every checkbox in this codebase was already written, it makes the
+whole row the hit target, and three existing specs reach the caption through
+`checkbox.closest("label")` — which a `for`-paired sibling returns `null` for.
+Without a `label`, it renders the bare control, for callers like `HudPanel`
+whose rows are their own wrapping label already.
 
 One style block, and it is the entire reason this component exists:
 
@@ -1203,6 +1274,7 @@ type PanelProps = {
   bordered?: boolean;                  // default true
   class?: string;
   children: Snippet;
+  [key: string]: unknown;              // spread onto the root — see below
 };
 
 type PanelHeaderProps = {
@@ -1230,6 +1302,23 @@ The `subtitle` slot exists because `BackupsPanel:87-94` is exactly this, and it
 is the panel whose *subject silently changes* (structural fault 3). Phase 1
 makes it legible (`opacity: .7` at Lc 40.6 → `--text-muted` at Lc 71.1);
 Phase 2 changes what it says.
+
+**Where this component is deliberately NOT used.** `PanelHeader` lays its
+subtitle out *beside* the title and fixes the title at `--t-title`. Two of the
+call sites listed below cannot take that without something moving, and "layout
+moves: none" outranks this list:
+
+- **`BackupsPanel`** keeps its subtitle on its own line below the title. It is a
+  full file path in a 280px column; inline it would be squeezed to nothing. What
+  that file actually needed from `PanelHeader` was the legibility, and that is a
+  token, not a component.
+- **`NeocomButtons`'s "Buttons" label** stays a plain heading element. It is a
+  sub-list label inside `HudPanel`'s already-headed 12px column, and
+  `--t-title`'s 16px bold would make it dominate the panel it sits inside. It
+  still stops using dimness for rank — that is what weight is for — which is
+  §3.1's actual point.
+
+Both keep a real heading element, so the document outline is right either way.
 
 Replaces the ad-hoc headers at: `BackupsPanel:73-83` (`.backups-head`),
 `Sidebar:201-213` (`.sidebar-top`), `AccountsView:189-200` (`.accounts-head`,
@@ -1260,6 +1349,24 @@ different button treatments*. One component, one treatment.
 
 Replaces the "nothing here" half of `.hint` (§4.5), the **unstyled** `.empty`
 (`KeybindsView:84, 90`), and `.muted`-as-empty (`BatchView:303, 341`).
+
+**Where this component is deliberately NOT used.** `EmptyState` is a centred
+block with `var(--s6)` padding and a 44ch measure — it assumes it is the only
+thing on screen. Three of §4.5's sites are not that, and take
+`InlineMessage variant="info"` instead:
+
+- **`Sidebar:143, 145`** and **`AccountsView:218`** — content follows them (the
+  preset group, the profile rows, the account cards), so a centred 32px block
+  would shove it down.
+- **`AutofillView:85`** and **`ProbeFormationsView:465`** — the sentence wraps a
+  button *mid-clause* ("Link **{name}** to an account…"), and `title` and
+  `description` are plain strings that cannot hold markup. `Sidebar.spec` also
+  reads one of these paragraphs as a single element whose text names
+  "Open file…", which splitting across title and description would break.
+
+The complaint §5.7 actually raises about `AutofillView:85` and
+`OverviewView:325` — that they render the same prompt with *two different button
+treatments* — is fixed regardless: both are a `Button` now.
 
 ### 5.8 `InlineMessage.svelte`
 
@@ -1337,9 +1444,11 @@ type ListRowProps = {
   selected?: boolean;
   indent?: 0 | 1 | 2;          // padding-left in --s5 steps
   onclick?: () => void;        // when given, the label becomes a real <button>
+  disabled?: boolean;          // a row that exists but cannot be opened
+  disabledReason?: string;
   oncontextmenu?: (e: MouseEvent) => void;
   actions?: MenuItem[];        // renders a ghost "⋯" that opens the same menu
-  draggable?: boolean;         // renders a grip and forwards the 5 drag handlers
+  draggable?: boolean;         // renders a grip and forwards the 4 drag handlers
   ondragstart?: (e: DragEvent) => void;
   ondragover?: (e: DragEvent) => void;
   ondrop?: (e: DragEvent) => void;
@@ -1417,8 +1526,15 @@ type SheetProps = {
   footer?: Snippet;
   class?: string;
   children: Snippet;
+  [key: string]: unknown;      // spread onto the BACKDROP, which is the root
 };
 ```
+
+Both `Panel` and `Sheet` take a rest spread, and both because a caller needs to
+put an attribute on the root that the props above cannot express: `AccountsView`'s
+calibration panel is a labelled `role="dialog"`, and `AboutPanel.spec` and
+`FormationPicker.spec` each identify the modal they are dismissing by a
+`data-testid` on the backdrop.
 
 `placement="center"` is the modal three call sites already render by hand
 (`AboutPanel:21-24`, `FormationPicker:30-31`, `routes/+page.svelte:665-666`,
@@ -1438,10 +1554,16 @@ and `Escape` (today only `AboutPanel` and `FormationPicker` close on a backdrop
 click, and nothing closes on Escape except `ContextMenu`). That is an
 accessibility floor, not a feature — §"When NOT to be lazy" applies.
 
-### 5.12 `Toast.svelte` + `toast.svelte.ts`
+### 5.12 `Toast.svelte` + `toasts.svelte.ts`
+
+The store is `toasts.svelte.ts`, **plural**, and it cannot be the singular this
+section first named. On a case-insensitive filesystem `./toast.svelte` resolves
+to `Toast.svelte`, the host component beside it, and TypeScript rejects the pair
+as differing only in casing. The plural also reads better against its main
+export.
 
 ```ts
-// toast.svelte.ts
+// toasts.svelte.ts
 export type ToastVariant = "info" | "success" | "warn" | "error";
 export function toast(
   message: string,
@@ -1472,11 +1594,26 @@ The `fade-out` keyframes move here from `app.css:81` **with a
 `@media (prefers-reduced-motion: reduce)` guard**, which the current animation
 does not have.
 
-Replaces `.flash` (`app.css:66-69`) and its three hand-rolled timer pairs:
-`Sidebar:85-88`, `Sidebar:102-104`, `ProbeFormationsView:304-306`, plus
-`AccountsView`'s `captureNote` (`:215`). Phase 5 routes the ~58 `message()`
-dialogs through it; Phase 1 changes only the three existing call sites, keeping
-their exact wording.
+Replaces `.flash` (`app.css:66-69`). **In Phase 1 that means Sidebar's two timer
+pairs only** (`:85-88`, `:102-104`), keeping their exact wording. The other two
+sites stay where they are, and both for reasons that outrank this section:
+
+- **`ProbeFormationsView:304-306`** (the copy confirmation) stays inline. The
+  Toast host is mounted once, in `routes/+page.svelte`, and
+  `ProbeFormationsView.spec.ts` mounts the view *alone* — so a toast is
+  invisible to the test that asserts the confirmation appears, and §7.4 does not
+  carve out a message relocating. It becomes `InlineMessage variant="success"`
+  in place, keeping its 2000 ms timer. Phase 5 owns moving it, and can move the
+  assertion with it.
+- **`AccountsView`'s `captureNote` (`:215`)** stays inline because it was never
+  a flash. It only ever borrowed `.flash`'s class: nothing clears it but the
+  next capture, and it carries multi-sentence instructions about the calibration
+  panel directly above it ("log in as one character, change something, log out,
+  and retry"). Giving it a timer, or moving it to a corner away from the panel
+  it explains, would both be behaviour changes.
+
+So Phase 1 lands the component and two call sites; Phase 5 routes the ~58
+`message()` dialogs through it and finishes these two.
 
 ---
 
@@ -1517,7 +1654,7 @@ proceeds, and their deletion in step 5 is what proves the swap is complete.
 | `ScopeBanner.svelte` | §5.9 |
 | `ListRow.svelte` | §5.10 |
 | `Popover.svelte`, `Sheet.svelte` | §5.11 |
-| `Toast.svelte`, `toast.svelte.ts` | §5.12 |
+| `Toast.svelte`, `toasts.svelte.ts` | §5.12 — plural; the singular collides with `Toast.svelte` on a case-insensitive filesystem |
 
 plus the specs in §7.3. `ContextMenu.svelte` is rewritten over `Popover` in
 this step, keeping its module-level `MenuItem` export.
@@ -1586,13 +1723,26 @@ Written with `check()` from `$lib/test/check.ts`.
    have caught `--line` and `--panel`.* Assert it against the current tree first
    and watch it fail — a guard test that has never failed proves nothing.
 4. **`type-scale`** — every `font-size` value is one of the five `--t-*` tokens,
-   except the five canvas-scale lines allowlisted in §4.3. No `em` anywhere.
+   except the three canvas-scale lines allowlisted in §4.3. No `em` anywhere.
 5. **`radius-scale`** — every `border-radius` is `--r-sm`, `--r-md`,
    `--r-pill`, or `50%`. The three `50%` sites are circles, not corners, and
    are allowlisted: `DetailParts:55` (the round HUD buttons), `DetailParts:65`
    (the capacitor arc) and `LayoutView:1072` (the anchor dot).
 6. **`space-scale`** — every `padding`, `gap` and `margin` value is a `--s*`
-   token, `0`, `auto`, or a percentage/`fr`.
+   token, `0`, `auto`, or a percentage/`fr`, with two narrow exemptions:
+   - **`lib/ui/` may use `1px`, `2px` and `-1px`.** The scale is a 4px base, but
+     a dense tool needs sub-step padding on the small button and the chip, and
+     the underline tab needs `-1px` to lap its border over the strip's.
+   - **`DetailParts` and `LayoutView` may use any px**, for the same reason §4.3
+     exempts their font sizes: their padding and margin are *geometry*, not
+     spacing. `.anchor-dot`'s `-5px` is half a 9px dot plus its border,
+     straddling the corner it marks; the rect labels' `1px 3px` sits inside an
+     11px-labelled rectangle. Rounding either onto a 4px scale would move the
+     drawing, not tidy it.
+
+   Both are deliberately narrow. Inventing a `--s0` to spell them instead would
+   put a half-step in reach of all 25 views, which is how 55 distinct padding
+   values happened the first time.
 7. **`one-opacity`** — every `opacity` declaration is `var(--o-disabled)`, or
    on the ten-line graphics allowlist in §4.7.
 8. **`mini-is-gone`** — `app/src/**` contains no `class="mini"` and no
@@ -1634,21 +1784,51 @@ assertions.
 | `Tabs.spec.ts` | `role="tab"` + `aria-selected` on every tab; Left/Right/Home/End move selection; a `disabled` tab has `aria-disabled="true"`, its `disabledReason` as `title`, and cannot be selected by click or key |
 | `InlineMessage.spec.ts` | `warn` and `error` get `role="alert"`; `info`/`success` get `role="status"`; `dismissible` calls `ondismiss` |
 | `ScopeBanner.spec.ts` | renders the label; renders **nothing** when the label is `""` (matching the four `{#if sharedLabel}` guards) |
-| `ListRow.spec.ts` | with `onclick`, the label is a real `<button>` and is keyboard-activatable; the five drag handlers forward; `selected` sets `aria-selected` |
+| `ListRow.spec.ts` | with `onclick`, the label is a real `<button>`; the four drag handlers forward; `selected` sets `aria-selected` |
 | `Popover.spec.ts` | clamps inside the viewport (port the `ContextMenu:48-55` case, which has no test today); Escape closes; an outside `pointerdown` closes; a `pointerdown` inside does not |
 | `Sheet.spec.ts` | Escape closes; focus moves into the sheet on open and returns to the opener on close; Tab is trapped; `role="dialog"` + `aria-modal="true"` + `aria-label={title}` |
 | `Toast.spec.ts` | auto-dismisses after `duration` (fake timers); `duration: 0` persists; `error` defaults to sticky; the region is `aria-live="polite"` |
 
 ### 7.4 Regression
 
-- **All 37 existing frontend test files (1064 tests) must pass untouched.**
-  That is the acceptance criterion for "no behaviour change", and it is why
-  §4's rule 1 forbids renaming a class. If a spec needs editing, the change was
-  not a refactor — stop and re-read. v0.34 added two of the 37
-  (`AccountsView.spec.ts`, `launcher.test.ts`); `AccountsView.spec.ts` is the
-  one this phase is most likely to disturb, because `Chip` and `Button` replace
-  the markup it exercises. It queries only by role and accessible name, so a
-  faithful swap does not touch it.
+- **All 37 existing frontend test files (1064 tests) must pass unmodified, with
+  one class of exception: a query naming an ARIA *role* this phase deliberately
+  changes moves with it.** Every such edit is listed in §7.5. Nothing else may
+  change — if a spec needs editing for a renamed class, a moved control, or
+  different copy, the change was not a refactor; stop and re-read. §4's rule 1
+  forbids renaming a class for exactly that reason.
+
+  **Accessible names are not carved out, and must be preserved.** Three controls
+  needed work to keep theirs, because a primitive would otherwise have renamed
+  them: `SearchField` names its box from its built placeholder, so
+  `WindowPanel`'s "Filter windows" would have gained a trailing ellipsis; a
+  visible `label` overrides `ariaLabel` in `Field`, which would have renamed
+  "range for every probe"; and `OverviewView`'s colour swatch has no text
+  content at all. All three pass a raw `aria-label` through instead (§5.2). If
+  a name has to change, that is a Phase 5 copy decision, not a Phase 1 one.
+
+  The carve-out exists because this gate is a **detector, not a goal**. It is a
+  proxy for "no behaviour changed", and §5.5 orders one deliberate semantic
+  change in this phase: the view strip becomes a real tablist. Changing a role
+  is observable, so the proxy fires — correctly, on work this document
+  commanded. When the detector fires on the thing the spec asked for, the
+  detector is what is wrong. The last bullet below already anticipated
+  `role="tab"` arriving; it simply did not notice that the first bullet forbade
+  the consequence.
+
+  Note that this gate is Phase 1's alone. Phases 3 and 5 change behaviour by
+  design — the Accounts sheet, the dialog diet, the reworded copy — so they
+  cannot carry an untouched-specs gate at all, and must not inherit this one.
+
+  **A moved query must not become weaker.** This is the part worth checking by
+  hand: an assertion that something is *absent* keeps passing when the role it
+  names no longer exists, so it silently stops being able to fail. Re-read every
+  moved assertion and confirm it can still fail.
+
+  v0.34 added two of the 37 (`AccountsView.spec.ts`, `launcher.test.ts`);
+  `AccountsView.spec.ts` is the one this phase is most likely to disturb,
+  because `Chip` and `Button` replace the markup it exercises. It queries only
+  by role and accessible name, so a faithful swap does not touch it.
 - `detail.test.ts:484-485` pins `pointer-events: none` in
   `DetailParts.svelte`'s `<style>` and forbids `pointer-events: auto`. Both
   survive.
@@ -1656,6 +1836,29 @@ assertions.
   after `Tabs` specifically: the new `role="tab"` / roving-tabindex wiring is
   the one place in this phase that can introduce an a11y warning.
 - The Rust test modules are untouched — no Rust file changes in this phase.
+
+### 7.5 The spec edits this phase makes, in full
+
+One file, three queries, all of them a role. **No accessible name changed** —
+see §7.4 on the three that took work to preserve. If this list ever grows past
+ARIA roles, something has gone wrong.
+
+| File | Was | Is | Why |
+| --- | --- | --- | --- |
+| `routes/page.spec.ts:179` | `queryByRole("button", …)` ×6, absent | `queryByRole("tab", …)` | §5.5: the view strip is a tablist |
+| `routes/page.spec.ts:190` | `findByRole("button", …)` ×4, present | `findByRole("tab", …)` | as above |
+| `routes/page.spec.ts:202` | `queryByRole("button", "Layout")`, absent | `queryByRole("tab", …)` | as above |
+
+Two of the three assert **absence**, and those are the dangerous ones: against a
+tablist they would have kept passing as `role="button"` — no button by that name
+exists any more — and could no longer have failed whatever the strip rendered.
+Leaving them alone would have looked like honouring §7.4 while quietly disarming
+two tests. That is the failure mode the "must not become weaker" rule above
+exists to catch.
+
+Nothing else in any of the 37 files changed. In particular `AccountsView.spec.ts`
+(219 lines, the one most exposed to this phase) passes untouched, because it
+queries by accessible name rather than by markup.
 
 ---
 
@@ -1724,10 +1927,10 @@ Net effect: **`--warn` means exactly one thing again.**
       `Chip state="proposed"`, carries **no `opacity`**, and reads at least as
       loud as the settled chip beside it (§5.4).
 - [ ] Exactly 3 `border-radius` tokens (plus the 3 allowlisted `50%` circles)
-      and 5 `font-size` tokens (plus the 7 allowlisted canvas-scale lines).
-      No `em` font sizes anywhere.
+      and 5 `font-size` tokens (plus the 3 allowlisted canvas-scale lines of
+      §4.3). No `em` font sizes anywhere.
 - [ ] Every `padding`/`gap`/`margin` is a `--s*` token, `0`, `auto`, or
-      relative.
+      relative — except the two narrow exemptions in §7.1 item 6.
 - [ ] Exactly one `opacity` value in HTML chrome — `var(--o-disabled)` — plus
       the 10 allowlisted graphics uses. All 35 current declarations are
       accounted for by §4.7.
@@ -1740,13 +1943,16 @@ Net effect: **`--warn` means exactly one thing again.**
       the three `.subtabs`/`.viewtabs`/`.tree-file` strips, the four `.badge`
       definitions, the five `.chip` meanings and the three `.flash` timer pairs
       are each one component.
-- [ ] `app/src/lib/ui/` holds the twelve primitives, `apca.ts`, and the eleven
-      specs in §7.3.
+- [ ] `app/src/lib/ui/` holds the twelve primitives (fourteen files —
+      Panel/PanelHeader, Popover/Sheet and Toast/store are three pairs),
+      `apca.ts`, and the eleven specs in §7.3, plus `snippet.ts`, a two-line
+      helper so a spec can hand `children` to a primitive.
 - [ ] `tokens.test.ts`'s eight guards pass — and each was demonstrated to
       **fail** against the pre-migration tree.
 - [ ] `apca.test.ts`'s 41 pairings meet their floors. No WCAG 2 check exists.
 - [ ] All 37 pre-existing frontend test files (1064 tests) pass **without
-      modification**.
+      modification**, except the ARIA-role queries itemised in §7.5 — and every
+      moved assertion was re-read and can still fail.
 - [ ] `npm test` and `npm run check` are clean.
 - [ ] The app has been launched and every one of the eight views screenshotted
       against its pre-migration shot. Nothing moved.
