@@ -31,7 +31,9 @@
     width,
     error,
     layout = "row",
+    element = $bindable(),
     class: klass = "",
+    controlClass = "",
     onchange,
     oninput,
     ...rest
@@ -64,7 +66,14 @@
     width?: string;
     error?: string;
     layout?: "row" | "column";
+    /** The control node, for callers that manage focus. WindowPanel's parent
+        focuses and selects the filter box from outside the component. */
+    element?: HTMLInputElement | HTMLSelectElement;
     class?: string;
+    /** Goes on the control itself rather than the wrapper. Three existing specs
+        identify a select or input by a class and then read a property only that
+        element has, so the hook has to land on the element. */
+    controlClass?: string;
     onchange?: (e: Event) => void;
     oninput?: (e: Event) => void;
     [key: string]: unknown;
@@ -97,6 +106,7 @@
 
   const shared = $derived({
     id: fid,
+    class: [kind === "color" ? "swatch" : "", controlClass].filter(Boolean).join(" ") || undefined,
     disabled,
     title: tip,
     "aria-label": label ? undefined : ariaLabel,
@@ -127,7 +137,13 @@
   {:else}
     {#if label}<label for={fid}>{label}</label>{/if}
     {#if kind === "select"}
-      <select bind:value style={width ? `width: ${width}` : undefined} {onchange} {...shared} {...rest}>
+      <select
+        bind:value
+        bind:this={element}
+        style={width ? `width: ${width}` : undefined}
+        {onchange}
+        {...shared}
+        {...rest}>
         {#each groups as g (g.name ?? g.items[0].label)}
           {#if g.name}
             <optgroup label={g.name}>
@@ -160,7 +176,6 @@
       <input
         type="color"
         bind:value
-        class="swatch"
         style={width ? `width: ${width}` : undefined}
         {onchange}
         {oninput}
@@ -182,6 +197,7 @@
       <input
         type={kind}
         bind:value
+        bind:this={element}
         {placeholder}
         {readonly}
         style={width ? `width: ${width}` : undefined}

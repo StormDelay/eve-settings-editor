@@ -11,6 +11,8 @@
     PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type HandleDrag, type Vec3,
   } from "./probes";
   import type { Scene } from "./api";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
 
   let { probes, ranges, formationId, selected, scenes = [], onselect, onmove, oncommit }: {
     probes: Vec3[];
@@ -106,8 +108,13 @@
    * for a face is just ±LIGHT[k] — no dot product needed. */
   const LIGHT = [0.34, 0.86, 0.44];
   const AMBIENT = 0.34;
-  const CUBE_RGB = [79, 156, 240]; // --accent
-  const CUBE_SEL_RGB = [217, 164, 65]; // --warn
+  // The cube's face fills are computed per-face from a shade factor, so they
+  // cannot be `var(--accent)` — but they still have to BE --accent, or the
+  // probe cubes stay on the pre-Phase-1 palette while everything around them
+  // moves. No guard can see these (they are number arrays, not hex literals),
+  // so if the tokens are ever re-solved, these move by hand.
+  const CUBE_RGB = [141, 206, 255]; // --accent #8dceff
+  const CUBE_SEL_RGB = [243, 189, 110]; // --warn #f3bd6e
 
   /** One probe's cube as its visible faces, back-face culled — only three of
    * the six can ever face the camera — each with its own shade.
@@ -672,27 +679,27 @@
   </svg>
 
   <div class="viewer-actions">
-    <button onclick={() => (cam = { ...cam, ...TOP_VIEW })}>Top</button>
-    <button onclick={() => (cam = { ...cam, ...SIDE_VIEW })}>Side</button>
-    <button onclick={fit}>Fit</button>
+    <Button size="sm" onclick={() => (cam = { ...cam, ...TOP_VIEW })}>Top</Button>
+    <Button size="sm" onclick={() => (cam = { ...cam, ...SIDE_VIEW })}>Side</Button>
+    <Button size="sm" onclick={fit}>Fit</Button>
     {#if scenes.length}
-      <label class="toggle">
-        Scene
-        <select class="scene-pick" bind:value={sceneIndex}>
-          <option value={-1}>None</option>
-          {#each scenes as s, i (i)}
-            <option value={i}>{s.name}</option>
-          {/each}
-        </select>
-      </label>
+      <!-- controlClass, not class: ProbeViewer.spec reads `.scene-pick`'s
+           selectedIndex, so the hook has to be on the select itself. -->
+      <Field
+        kind="select"
+        label="Scene"
+        class="toggle"
+        controlClass="scene-pick"
+        bind:value={sceneIndex}
+        options={[
+          { value: -1, label: "None" },
+          ...scenes.map((s, i) => ({ value: i, label: s.name })),
+        ]} />
       {#if scene}
-        <button onclick={fitScene}>Fit scene</button>
+        <Button size="sm" onclick={fitScene}>Fit scene</Button>
       {/if}
     {/if}
-    <label class="toggle">
-      <input type="checkbox" bind:checked={vectors} />
-      Vectors
-    </label>
+    <Field kind="checkbox" class="toggle" label="Vectors" bind:value={vectors} />
     <span class="meta">
       drag to orbit · right-drag to pan · wheel to zoom ·
       double-click a probe or the centre to orbit it, empty space to flip view
@@ -727,7 +734,7 @@
     -webkit-user-select: none;
     cursor: grab;
   }
-  .bg { fill: var(--bg-panel); }
+  .bg { fill: var(--surface); }
   /* Nothing decorative hit-tests. A range circle's fill is a paint even at
      alpha 0.06, so SVG's default `visiblePainted` would hit-test it — and at
      any fitted zoom the circles blanket the markers, so a click meant for a
@@ -738,25 +745,25 @@
      it must not compete with them or with the probes. */
   .ring { stroke: var(--border); stroke-width: 1; opacity: 0.6; }
   .cardinal {
-    fill: var(--fg-dim); font-size: 11px; text-anchor: middle; dominant-baseline: middle;
+    fill: var(--text-muted); font-size: var(--t-caption); text-anchor: middle; dominant-baseline: middle;
   }
   /* North is the one the other three are read from, so it is the one that has
      to be findable at a glance. */
-  .cardinal.north { fill: var(--fg); font-weight: 600; }
+  .cardinal.north { fill: var(--text); font-weight: 600; }
   /* Brighter than the compass, dimmer than a probe. A scene is the thing the
      probes are being placed against, so it has to be findable — but the probes
      are still the subject and the scene must not compete with them. */
-  .scene-vol { fill: rgba(255, 255, 255, 0.035); stroke: var(--border); stroke-width: 1; }
-  .scene-mark { fill: var(--fg); opacity: 0.75; }
-  .scene-label { fill: var(--fg-dim); font-size: 10px; }
+  .scene-vol { fill: var(--text); fill-opacity: 0.04; stroke: var(--border); stroke-width: 1; }
+  .scene-mark { fill: var(--text); opacity: 0.75; }
+  .scene-label { fill: var(--text-muted); font-size: var(--t-caption); }
   .axis { stroke: var(--border); stroke-width: 1; }
-  .axis-label { fill: var(--fg-dim); font-size: 10px; }
-  .range { fill: rgba(79, 156, 240, 0.06); stroke: rgba(79, 156, 240, 0.35); stroke-width: 1; }
+  .axis-label { fill: var(--text-muted); font-size: var(--t-caption); }
+  .range { fill: var(--accent); fill-opacity: 0.06; stroke: var(--accent); stroke-opacity: 0.35; stroke-width: 1; }
   /* Each face is a plane handle, so it hit-tests. Its fill is per-face and
      computed, so it is set inline, not here; the stroke darkens the shared
      edges and is what stops three lit faces reading as one flat blob. */
   .probe-face {
-    stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.6; stroke-linejoin: round; cursor: move;
+    stroke: var(--bg); stroke-opacity: 0.6; stroke-width: 0.6; stroke-linejoin: round; cursor: move;
   }
   /* The face under the pointer, or being dragged, lifts out of the shading —
      brightness rather than a colour change, so which face you are on reads
@@ -766,8 +773,8 @@
   /* A ring, not a disc, so a probe sitting on the formation centre still reads
      through it. Brighter than the axis stubs it sits among, or it is lost in
      the place they all meet. */
-  .centre { fill: none; stroke: var(--fg); stroke-width: 1.3; opacity: 0.75; pointer-events: none; }
-  .centre-dot { fill: var(--fg); opacity: 0.75; pointer-events: none; }
+  .centre { fill: none; stroke: var(--text); stroke-width: 1.3; opacity: 0.75; pointer-events: none; }
+  .centre-dot { fill: var(--text); opacity: 0.75; pointer-events: none; }
   .centre-grab { fill: transparent; cursor: pointer; }
   /* Pressing a handle focuses it, and the UA then outlines its BOUNDING BOX —
      which for a diagonal arrow is a large rectangle across the scene. These
@@ -776,16 +783,16 @@
      to say — which handle you are on — is said properly by `.live` below.
      The numeric table remains the keyboard path. */
   .probe-face:focus, .probe-grab:focus, .centre-grab:focus, .grab:focus { outline: none; }
-  .viewer-actions { display: flex; gap: 4px; align-items: center; }
-  .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
+  .viewer-actions { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
   .vec-head { fill: var(--accent); stroke: none; }
-  .toggle { display: flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--fg-dim); }
+  .viewer-actions :global(.toggle) { font-size: var(--t-caption); color: var(--text-muted); }
 
   /* Axis colours, the near-universal convention: X red, Y green, Z blue. */
-  .gx { stroke: #e06c6c; fill: #e06c6c; }
-  .gy { stroke: #7bc47b; fill: #7bc47b; }
-  .gz { stroke: #6c9ce0; fill: #6c9ce0; }
+  .gx { stroke: var(--danger); fill: var(--danger); }
+  .gy { stroke: var(--ok); fill: var(--ok); }
+  .gz { stroke: var(--accent); fill: var(--accent); }
   /* Eight gizmos at once is a lot of line. Once a probe is chosen the other
      seven fade back so its own handles stay findable — still drawn, still
      grabbable, just no longer competing. */

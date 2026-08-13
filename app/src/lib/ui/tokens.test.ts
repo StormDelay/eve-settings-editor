@@ -169,15 +169,22 @@ test("radius-scale", () => {
 });
 
 // --- 6. one spacing scale --------------------------------------------------
-// 1px, 2px and -1px are allowed inside lib/ui/ and nowhere else. The scale is a
-// 4px base, but a dense tool needs sub-step padding on the small button and the
-// chip, and the underline tab needs -1px to lap its border over the strip's.
-// Inventing a --s0 to spell those would put a half-step in reach of all 25
-// views, which is how 55 distinct padding values happened the first time. The
-// primitives pay the cost; the guard still stops the sprawl where it lives.
+// 1px, 2px and -1px are allowed in two narrow places and nowhere else.
+//
+// The primitives, because the scale is a 4px base but a dense tool needs
+// sub-step padding on the small button and the chip, and the underline tab
+// needs -1px to lap its border over the strip's.
+//
+// The two canvas files, for the same reason §4.3 exempts their font sizes: they
+// are drawings of EVE's screen at arbitrary scale, and a 4px inset inside a
+// 9px-labelled HUD part is not the same kind of measurement as a 4px gap
+// between two controls.
+//
+// Inventing a --s0 to spell either would put a half-step in reach of all 25
+// views, which is how 55 distinct padding values happened the first time.
 test("space-scale", () => {
   const prop = "(?:padding|margin)(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|(?:row-|column-)?gap";
-  const dense = /^lib\/ui\//;
+  const dense = /^lib\/ui\/|^lib\/(DetailParts|LayoutView)\.svelte$/;
   const offenders = styleLines.flatMap((l) => {
     const part = (p: string): boolean =>
       /^var\(--s[1-6]\)$/.test(p) ||
