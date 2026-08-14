@@ -8,8 +8,12 @@
   import { accel } from "./keys";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
       onShowAccounts?: () => void; onShowBatch?: () => void;
       /** Set so the shell's Ctrl+F focuses THIS view's box while it is active,
        *  instead of being suppressed and then doing nothing. */
@@ -46,7 +50,10 @@
     try { binds = await api.keybinds(); }
     catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // See AutofillView: `userOpen`/`userId` do not change across a Discard, a
+  // restore or an undo, so the token is what makes this view reload for any of
+  // the three.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();

@@ -567,6 +567,7 @@
         <div class="scroll">
           <AutofillView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             charOpen={subject.slots.char?.status === "opened"}
             charName={subject.charName}
@@ -578,6 +579,7 @@
         <div class="scroll">
           <KeybindsView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
             onShowBatch={() => (sheet = "batch")}
@@ -588,6 +590,7 @@
         <div class="scroll">
           <ProbeFormationsView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
             onUserDirty={() => (subject.dirty.user = true)} />
