@@ -5,6 +5,7 @@
   import { primaryProfileDir, profileLabels } from "./profiles";
   import { accountsStore, loadRoster } from "./accounts.svelte";
   import { allPresets, loadPresets, summarise } from "./presetLibrary.svelte";
+  import { ASPECT_LABELS } from "./aspects";
   import Button from "./ui/Button.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
@@ -110,15 +111,13 @@
       : (presetDir ? { kind: "preset", dir: presetDir, anchor_dir: folder ?? "" } : null),
   );
 
-  // Aspects. "Everything" is exclusive.
-  const ASPECTS: { key: Aspect; label: string; account: boolean }[] = [
-    { key: "layout", label: "Window layout (positions, neocom, ship HUD, fighter panel, badge)", account: true },
-    { key: "overview", label: "Overview (columns, tabs, presets)", account: true },
-    { key: "autofill", label: "Autofill (remembered text)", account: true },
-    { key: "keybinds", label: "Keybindings", account: true },
-    { key: "probe_formations", label: "Probe formations (custom scan formations)", account: true },
-    { key: "everything", label: "Everything (full clone of both files)", account: true },
-  ];
+  // Aspects. "Everything" is exclusive. Labels are shared with PresetGroup —
+  // one six-item concept had two label sets in two files a user moves between
+  // while doing the same job.
+  const ASPECTS: { key: Aspect; label: string; account: boolean }[] = ASPECT_LABELS.map((a) => ({
+    ...a,
+    account: true,
+  }));
   let selected = $state<Set<Aspect>>(new Set());
   const everything = $derived(selected.has("everything"));
   const anyAccountAspect = $derived([...selected].some((a) => ASPECTS.find((x) => x.key === a)?.account));
