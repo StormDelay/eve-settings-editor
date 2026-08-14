@@ -45,10 +45,14 @@
   import { open as openDialog, message } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
-  // Until Phase 3 turns these two into sheets over the work area. The context
-  // bar is rendered OUTSIDE this branch now, which is the whole point: Save and
-  // the unsaved count survive either takeover.
-  let mainView: "file" | "accounts" | "batch" = $state("file");
+  // One sheet at a time; `null` is the editor. Replaces `mainView`, which had no
+  // third value's worth of meaning — "file" was only ever "no sheet".
+  //
+  // Not a stack: there is exactly one place in the app where one sheet refers to
+  // the other, and it is prose. Nothing can open Accounts from inside Copy
+  // settings, so a stack has no way to form — and a single variable makes `Esc`
+  // unambiguous and gives focus-restore one saved element to hold.
+  let sheet = $state<"accounts" | "batch" | null>(null);
   let sidebarOpen = $state(true);
   // Renamed from `backupsOpen`. The right column is no longer "backups" — it is
   // properties of the current selection in the current view, on every tab.
@@ -91,7 +95,7 @@
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
   const scopeLabel = $derived(
-    mainView === "file" && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
+    sheet === null && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
       ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
       : "",
   );
@@ -105,7 +109,17 @@
   void rescanProfiles();
   void loadPrefs();
 
+  // Measured so a sheet can inset past the two content-sized rows above the work
+   // area. jsdom reports 0 for both, which just makes the sheet full-window there.
+  let barHeight = $state(0);
+  let tabsHeight = $state(0);
+
   let insertTarget: TreeNodeData | null = $state(null);
+  // Slots a batch copy rewrote that could not be re-read because they hold
+  // unsaved edits. Cleared as soon as the slot stops being dirty, so acting on
+  // the message — by Save or by Discard — is what dismisses it.
+  let staleWritten = $state<Slot[]>([]);
+  const staleSlots = $derived(staleWritten.filter((s) => subject.dirty[s]));
   // Selected canvas window, lifted here so it survives Raw/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // One bindable the ACTIVE view sets, generalised from `layoutFocusFilter`.
@@ -140,7 +154,7 @@
   // Jump to a value in the full tree: leave search, expand and scroll to it.
   function revealInTree(path: NodePath) {
     view = "raw";
-    mainView = "file";
+    sheet = null;
     query = "";
     reveal = { path, n: (reveal?.n ?? 0) + 1 };
   }
@@ -199,7 +213,7 @@
       treeFile = slot;
       subject.savedAt += 1;
       const priorView = view;
-      mainView = "file";
+      sheet = null;
       selectedWindowId = null;
       reveal = null;
       try {
@@ -237,7 +251,7 @@
       treeFile = "char";
       subject.savedAt += 1;
       const priorView = view;
-      mainView = "file";
+      sheet = null;
       selectedWindowId = null;
       reveal = null;
       try {
@@ -283,6 +297,39 @@
     }
   }
 
+  /**
+   * A batch copy writes files on disk, behind the in-memory documents.
+   *
+   * A slot it wrote that is CLEAN is simply re-read — the same `api.open` plus
+   * `savedAt` bump that opening and discarding already use, so every
+   * projection-based view refreshes through the mechanism it has.
+   *
+   * A slot it wrote that is DIRTY is never re-read: that would silently destroy
+   * unsaved edits, and no amount of warning makes that acceptable. It gets a
+   * message instead, and both routes out already exist and are already correct —
+   * Discard re-reads both files, and Save hits the backend's changed-on-disk
+   * check and offers the overwrite confirmation. The message only moves the
+   * discovery forward from save time to now.
+   */
+  async function onBatchApplied(written: string[]) {
+    const stale: Slot[] = [];
+    for (const slot of ["char", "user"] as const) {
+      const o = subject.slots[slot];
+      if (o?.status !== "opened" || !written.includes(o.path)) continue;
+      if (subject.dirty[slot]) {
+        stale.push(slot);
+        continue;
+      }
+      try {
+        subject.slots[slot] = await api.open(slot, o.path);
+        subject.savedAt += 1;
+      } catch {
+        stale.push(slot); // couldn't re-read it — say so rather than pretend
+      }
+    }
+    staleWritten = stale;
+  }
+
   const handleEdit = (path: NodePath, text: string) =>
     runMutation({ op: "set_scalar", path, text });
   const handleRemove = (path: NodePath) =>
@@ -315,8 +362,12 @@
     // NOT `viewFocusSearch?.() ?? openSearch()` as §5.12 writes it — those
     // callbacks return void, so the `??` would fire openSearch() every time,
     // including right after the view had focused its own box.
+    //
+    // Suppressed entirely while a sheet is open: every box it could focus is
+    // behind the scrim, and focusing an inert control would break the trap.
     if ((e.ctrlKey || e.metaKey) && e.key === "f") {
       e.preventDefault();
+      if (sheet !== null) return;
       if (viewFocusSearch) viewFocusSearch();
       else openSearch();
     }
@@ -324,17 +375,22 @@
   }}
 />
 
-<main class="shell" class:subjects-railed={!sidebarOpen} class:inspector-railed={!inspectorOpen}>
+<main
+  class="shell"
+  class:subjects-railed={!sidebarOpen}
+  class:inspector-railed={!inspectorOpen}
+  style="--shell-inset-top: {barHeight + tabsHeight}px">
   <ContextBar
     bind:switcherOpen
+    bind:height={barHeight}
     onOpen={openFile}
     onOpenPreset={openPresetPair}
     onGoto={(v) => {
       view = v;
-      mainView = "file";
+      sheet = null;
     }}
-    onShowAccounts={() => (mainView = "accounts")}
-    onShowBatch={() => (mainView = "batch")}
+    onShowAccounts={() => (sheet = "accounts")}
+    onShowBatch={() => (sheet = "batch")}
     onShowAbout={() => (aboutOpen = true)}
     onRestored={(slot, outcome) => {
       subject.slots[slot] = outcome;
@@ -348,19 +404,31 @@
       onPickFile={pickFile}
       onCollapse={() => (sidebarOpen = false)}
       onOpenPreset={openPresetPair}
-      onShowAccounts={() => (mainView = "accounts")} />
+      onShowAccounts={() => (sheet = "accounts")} />
   {:else}
     <button class="rail rail-left" onclick={() => (sidebarOpen = true)}
       title="Show file list" aria-label="Show file list">&raquo;</button>
   {/if}
 
-  <ViewTabs bind:value={view} onpick={() => (mainView = "file")} />
+  <ViewTabs bind:value={view} bind:height={tabsHeight} onpick={() => (sheet = null)} />
 
-  {#if mainView === "accounts"}
-    <div class="work"><div class="scroll"><AccountsView openPath={subjectPath} /></div></div>
-  {:else if mainView === "batch"}
-    <div class="work"><div class="scroll"><BatchView openPath={subjectPath} /></div></div>
-  {:else if current === null}
+  <!-- §7.2(c). A slot Copy settings rewrote that could not be re-read, because
+       it holds unsaved edits. Both routes out already exist and both are
+       correct; this only moves the discovery forward from save time to now.
+       Dismissed by acting — Discard clears the dirty flags, Save writes. -->
+  {#if staleSlots.length > 0}
+    <div class="stale">
+      <InlineMessage variant="warn">
+        {staleSlots.length === 1 ? "The" : "Both the"}
+        {staleSlots.map((s) => (s === "char" ? "character" : "account")).join(" and ")}
+        file {staleSlots.length === 1 ? "was" : "were"} rewritten on disk by Copy settings. Your
+        unsaved edits are still here — saving will overwrite what was just copied. Discard to take
+        the copied version instead.
+      </InlineMessage>
+    </div>
+  {/if}
+
+  {#if current === null}
     <div class="work">
       <div class="scroll">
         <EmptyState
@@ -441,7 +509,7 @@
             onUserDirty={() => (subject.dirty.user = true)}
             onCharDirty={() => (subject.dirty.char = true)}
             onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
-            onShowAccounts={() => (mainView = "accounts")} />
+            onShowAccounts={() => (sheet = "accounts")} />
         </div>
       {:else if view === "autofill"}
         <div class="scroll">
@@ -450,7 +518,7 @@
             userId={subject.userId}
             charOpen={subject.slots.char?.status === "opened"}
             charName={subject.charName}
-            onShowAccounts={() => (mainView = "accounts")}
+            onShowAccounts={() => (sheet = "accounts")}
             onUserDirty={() => (subject.dirty.user = true)}
             bind:focusSearch={viewFocusSearch} />
         </div>
@@ -459,8 +527,8 @@
           <KeybindsView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
-            onShowAccounts={() => (mainView = "accounts")}
-            onShowBatch={() => (mainView = "batch")}
+            onShowAccounts={() => (sheet = "accounts")}
+            onShowBatch={() => (sheet = "batch")}
             onUserDirty={() => (subject.dirty.user = true)}
             bind:focusSearch={viewFocusSearch} />
         </div>
@@ -469,7 +537,7 @@
           <ProbeFormationsView
             userOpen={subject.slots.user?.status === "opened"}
             userId={subject.userId}
-            onShowAccounts={() => (mainView = "accounts")}
+            onShowAccounts={() => (sheet = "accounts")}
             onUserDirty={() => (subject.dirty.user = true)} />
         </div>
       {:else}
@@ -521,7 +589,9 @@
   {#if !inspectorOpen}
     <button class="rail rail-right" onclick={() => (inspectorOpen = true)}
       title="Show properties" aria-label="Show properties">&laquo;</button>
-  {:else if !(mainView === "file" && view === "layout" && current?.status === "opened")}
+  <!-- No longer conditioned on `sheet`: the editor is never unmounted now, so
+       Layout still supplies its own inspector underneath an open sheet. -->
+  {:else if !(view === "layout" && current?.status === "opened")}
     <aside class="inspector">
       <div class="inspector-head">
         <Button variant="ghost" size="sm" iconOnly title="Hide properties"
@@ -543,6 +613,22 @@
         }}
         onCancel={() => (insertTarget = null)} />
     </Sheet>
+  {/if}
+
+  <!-- Both sheets are fixed-positioned, so neither takes a grid track. The
+       editor above them is unconditional: nothing is restored when a sheet
+       closes because nothing was destroyed — the view tab, the canvas selection,
+       the tree search and the scroll position are all still exactly where they
+       were, and the scroll position is the one that no amount of
+       snapshot-and-restore code could have given back. -->
+  {#if sheet === "accounts"}
+    <AccountsView openPath={subjectPath} onClose={() => (sheet = null)} />
+  {:else if sheet === "batch"}
+    <BatchView
+      openCharPath={subject.slots.char?.status === "opened" ? subject.slots.char.path : null}
+      openUserPath={subject.slots.user?.status === "opened" ? subject.slots.user.path : null}
+      onClose={() => (sheet = null)}
+      onApplied={onBatchApplied} />
   {/if}
 </main>
 
@@ -582,5 +668,14 @@
     display: flex;
     justify-content: flex-start;
     padding: var(--s1);
+  }
+  /* Its own row between the tabs and the work area, spanning both the work
+     column and the inspector — it is about the documents, not about a view. */
+  .stale {
+    grid-column: 2 / 4;
+    grid-row: 3;
+    align-self: start;
+    padding: var(--s2) var(--s3) 0;
+    z-index: 1;
   }
 </style>
