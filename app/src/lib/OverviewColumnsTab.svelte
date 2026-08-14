@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns, type OverviewTab } from "./api";
+  import { api, errMessage, errText, type OverviewColumns, type OverviewTab } from "./api";
   import { plainTabName } from "./tabName";
-  import { message } from "@tauri-apps/plugin-dialog";
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
   import Sheet from "./ui/Sheet.svelte";
+  import { toast } from "./ui/toasts.svelte";
 
   let { data, tabIndex, charOpen, onChanged, onUserDirty, onCharDirty }:
     { data: OverviewColumns | null; tabIndex: number | null; charOpen: boolean;
@@ -13,15 +14,35 @@
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
 
+  // Four slots, one per control group: the column row, the width field, the list
+  // as a whole, and the copy panel. Keyed by column where a column owns the
+  // failure, because this list runs to thirty rows and "Edit failed" named none
+  // of them.
+  type Msg = { text: string; detail: string };
+  let rowError = $state<(Msg & { column: string }) | null>(null);
+  let widthError = $state<(Msg & { column: string }) | null>(null);
+  let orderError = $state<Msg | null>(null);
+  let copyError = $state<Msg | null>(null);
+
   async function toggle(column: string, visible: boolean) {
+    rowError = null;
     try { onChanged(await api.setOverviewVisible(tabIndex!, column, visible)); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      rowError = {
+        column,
+        text: `That column wasn't ${visible ? "shown" : "hidden"} — ${errText(e)}`,
+        detail: errMessage(e),
+      };
+    }
   }
   async function setWidth(column: string, raw: string) {
     const width = Number(raw);
     if (!charOpen || raw.trim() === "" || Number.isNaN(width)) return;
+    widthError = null;
     try { onChanged(await api.setOverviewWidth(tabIndex!, column, width)); onCharDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      widthError = { column, text: `That width wasn't stored — ${errText(e)}`, detail: errMessage(e) };
+    }
   }
 
   // Drag-reorder: track the dragged row index, drop reorders the token list.
@@ -32,8 +53,11 @@
     const [moved] = order.splice(dragFrom, 1);
     order.splice(to, 0, moved);
     dragFrom = null;
+    orderError = null;
     try { onChanged(await api.setOverviewOrder(tabIndex!, order)); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      orderError = { text: `The columns weren't reordered — ${errText(e)}`, detail: errMessage(e) };
+    }
   }
 
   // Copy this tab's columns onto others. The panel is inline rather than a
@@ -79,6 +103,7 @@
   }
   async function runCopy() {
     if (chosen.length === 0) return;
+    copyError = null;
     try {
       onChanged(await api.overviewCopyColumns(tabIndex!, chosen, parts.order, parts.visible, copyWidths));
       // Two files, two dirty flags — miss the char one and the copied widths
@@ -86,7 +111,16 @@
       if (parts.order || parts.visible) onUserDirty();
       if (copyWidths) onCharDirty();
       copyOpen = false;
-    } catch (e) { await message(errMessage(e), { title: "Copy failed", kind: "error" }); }
+      // There was no success message here at all, so a copy that worked and a
+      // copy that silently did nothing looked identical.
+      toast(`Columns copied to ${chosen.length} tab${chosen.length === 1 ? "" : "s"}.`, {
+        variant: "success",
+      });
+    } catch (e) {
+      // Inside the panel, above its buttons, so the panel stays open with every
+      // tick intact and the retry is one click rather than a re-pick.
+      copyError = { text: `The columns weren't copied — ${errText(e)}`, detail: errMessage(e) };
+    }
   }
 </script>
 
@@ -117,7 +151,7 @@
           <Field kind="checkbox" label="Visible columns" bind:value={parts.visible} />
           <Field
             kind="checkbox"
-            label="Widths{charOpen ? '' : ' (no character open)'}"
+            label="Widths{charOpen ? '' : ' — no character open'}"
             value={copyWidths}
             disabled={!charOpen}
             disabledReason="Widths are per character — open one to copy them"
@@ -128,7 +162,8 @@
       <section>
         <div class="copy-head">
           <h4>Copy it to</h4>
-          <Button size="sm" onclick={() => pickAll(true)}>Select all</Button>
+          <!-- All / None, everywhere. Four panels used three different pairs. -->
+          <Button size="sm" onclick={() => pickAll(true)}>All</Button>
           <Button size="sm" onclick={() => pickAll(false)}>None</Button>
         </div>
         <div class="copy-targets">
@@ -140,6 +175,9 @@
           {/each}
         </div>
       </section>
+      {#if copyError}
+        <InlineMessage variant="error" detail={copyError.detail}>{copyError.text}</InlineMessage>
+      {/if}
       {#snippet footer()}
         <Button
           variant="primary"
@@ -151,6 +189,9 @@
         <Button onclick={() => (copyOpen = false)}>Cancel</Button>
       {/snippet}
     </Sheet>
+  {/if}
+  {#if orderError}
+    <InlineMessage variant="error" detail={orderError.detail}>{orderError.text}</InlineMessage>
   {/if}
   <ul class="ov-cols">
     {#each tab.columns as col, i (col.name)}
@@ -184,6 +225,12 @@
               placeholder="—"
               onchange={(e) => setWidth(col.name, (e.target as HTMLInputElement).value)} />
           {/snippet}
+          {#if rowError?.column === col.name}
+            <InlineMessage variant="error" detail={rowError.detail}>{rowError.text}</InlineMessage>
+          {/if}
+          {#if widthError?.column === col.name}
+            <InlineMessage variant="error" detail={widthError.detail}>{widthError.text}</InlineMessage>
+          {/if}
         </ListRow>
       </li>
     {/each}

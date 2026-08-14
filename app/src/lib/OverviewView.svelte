@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns } from "./api";
+  import { api, errMessage, errText, type OverviewColumns } from "./api";
   import type { MenuItem } from "./ContextMenu.svelte";
-  import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { confirmDialog } from "./ui/confirm.svelte";
+  import { undoAction } from "./undo.svelte";
   import { documentDir } from "@tauri-apps/api/path";
   import { plainTabName, formatTabName, type TabName } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
@@ -64,9 +66,30 @@
     return Number.isFinite(highest) ? highest : null;
   }
 
-  async function edit(run: () => Promise<OverviewColumns>, title = "Edit failed"): Promise<boolean> {
-    try { data = await run(); return true; }
-    catch (e) { await message(errMessage(e), { title, kind: "error" }); return false; }
+  /** Which control group owns a failure. Eight commands, five groups — the
+   *  message lands at the control that was operated rather than in a modal that
+   *  said "Edit failed" for all of them. */
+  type Where = "name" | "windows" | "entry" | "actions" | "move" | "strip" | "pack";
+  let editError = $state<{ where: Where; text: string; detail: string } | null>(null);
+  const at = (where: Where) => (editError?.where === where ? editError : null);
+
+  /** `sentence` is the app's half of the error grammar — "<thing> wasn't
+   *  <verbed>" — and the backend owns the half after the dash. Every caller
+   *  writes its own, because what names WHICH thing failed is exactly what one
+   *  shared "Edit failed" could never say. */
+  async function edit(
+    run: () => Promise<OverviewColumns>,
+    where: Where,
+    sentence: string,
+  ): Promise<boolean> {
+    editError = null;
+    try {
+      data = await run();
+      return true;
+    } catch (e) {
+      editError = { where, text: `${sentence} — ${errText(e)}`, detail: errMessage(e) };
+      return false;
+    }
   }
 
   async function createTab(name: string, windowIdx: number | null) {
@@ -76,7 +99,7 @@
     // the "Other" group gets the new tab in window 0: arbitrary, but visible and
     // movable, where refusing would leave the command dead for a selection that
     // looks ordinary.
-    if (await edit(() => api.tabCreate(windowIdx ?? 0, name, tabIndex))) {
+    if (await edit(() => api.tabCreate(windowIdx ?? 0, name, tabIndex), "entry", "That wasn't saved")) {
       tabIndex = newestTab() ?? tabIndex;
       onUserDirty();
     }
@@ -88,7 +111,7 @@
     // window's position never persists. Then hand the new window's id up so the
     // Layout editor selects it: it defaults offset on top of window 0, so
     // without selecting it it's easy to miss.
-    if (!(await edit(() => api.overviewWindowAdd(name, tabIndex)))) return;
+    if (!(await edit(() => api.overviewWindowAdd(name, tabIndex), "entry", "That window wasn't added"))) return;
     tabIndex = newestTab() ?? tabIndex;
     onUserDirty();
     onCharDirty();
@@ -100,7 +123,7 @@
   // share one command — see tabName.ts. The inspector composes the string for
   // colour and bold; this only writes it.
   async function renameTab(idx: number, next: string) {
-    if (await edit(() => api.tabRename(idx, next))) onUserDirty();
+    if (await edit(() => api.tabRename(idx, next), "name", "The tab name wasn't changed")) onUserDirty();
   }
 
   // The row editor edits the decomposed name — text, colour, weight — and hands
@@ -115,12 +138,21 @@
     void renameTab(idx, next);
   }
 
+  // The confirm this replaces said "This can't be undone." It could: the delete
+  // mutates the in-memory document, and Discard re-reads both files from disk
+  // and reverses it exactly, up to the moment of Save. Thirty lines away in
+  // LayoutView the genuinely comparable mutation said the opposite and said it
+  // correctly — two dialogs, opposite claims, identical mechanism. That is the
+  // worst available outcome, because a user who reads both learns that this
+  // app's warnings are decoration.
+  //
+  // So: no dialog, and a toast carrying the sentence that is actually true.
   async function deleteTab(idx: number) {
     const target = data?.tabs.find((t) => t.index === idx);
     if (!target) return;
-    const ok = await confirm(`Delete tab "${plainTabName(target.name)}"? This can't be undone.`, { title: "Delete tab", kind: "warning" });
-    if (!ok) return;
-    if (!(await edit(() => api.tabDelete(idx)))) return;
+    const name = plainTabName(target.name);
+    if (!(await edit(() => api.tabDelete(idx), "actions", "That tab wasn't deleted"))) return;
+    toast(`Deleted “${name}”. Save to write it to disk.`, { action: undoAction() });
     tabIndex = data?.tabs[0]?.index ?? null;
     onUserDirty();
     // A delete renumbers the account's tabs, and the backend carries the open
@@ -129,16 +161,19 @@
     if (charOpen) onCharDirty();
   }
 
+  // Also in-memory, also reversed by Discard. The toast is more informative than
+  // the dialog it replaces, because it can COUNT the tabs that moved and the
+  // dialog could only say that they would.
   async function removeWindow(windowIdx: number) {
     if (!data || data.windows.length <= 1) return;
-    const ok = await confirm(
-      `Remove Overview ${windowIdx + 1}? Its tabs move to Overview 1.`,
-      { title: "Remove overview window", kind: "warning" },
-    );
-    if (!ok) return;
+    const moved = data.windows.find((w) => w.index === windowIdx)?.tab_indices.length ?? 0;
     // Edits both slots (grouping + geometry) — mark both dirty so saveFile
     // doesn't skip the char slot.
-    if (!(await edit(() => api.overviewWindowRemove(windowIdx)))) return;
+    if (!(await edit(() => api.overviewWindowRemove(windowIdx), "actions", "That window wasn't removed"))) return;
+    toast(
+      `Removed Overview ${windowIdx + 1}. Its ${moved} tab${moved === 1 ? "" : "s"} moved to Overview 1.`,
+      { action: undoAction() },
+    );
     tabIndex = data.tabs[0]?.index ?? null;
     onUserDirty();
     onCharDirty();
@@ -165,7 +200,7 @@
     // not dirty the file or fire the width warning.
     if (order.length === before.length && order.every((v, i) => v === before[i])) return;
     const selectedAt = tabIndex === null ? -1 : order.indexOf(tabIndex);
-    if (!(await edit(() => api.tabReorder(windowIdx, order)))) return;
+    if (!(await edit(() => api.tabReorder(windowIdx, order), "strip", "The tabs weren't reordered"))) return;
     if (selectedAt >= 0) tabIndex = keepSelection(windowIdx, selectedAt);
     onUserDirty();
     warnWidthSwap();
@@ -176,7 +211,7 @@
     const after = [...dst];
     after.splice(Math.min(pos, after.length), 0, tabIdx);
     const selectedAt = tabIndex === null ? -1 : after.indexOf(tabIndex);
-    if (!(await edit(() => api.tabMove(tabIdx, from, to, pos)))) return;
+    if (!(await edit(() => api.tabMove(tabIdx, from, to, pos), "move", "That tab wasn't moved"))) return;
     if (selectedAt >= 0) tabIndex = keepSelection(to, selectedAt);
     onUserDirty();
     warnWidthSwap();
@@ -195,22 +230,21 @@
   // A windowless account is normal: EVE's own overview importer deletes the
   // tab-to-window mapping, so anyone who has imported a pack lands here. Writing
   // one REPLACES the client's default distribution and pins every tab into a
-  // single window, so it is offered rather than done — and the confirm says so.
+  // single window.
+  //
+  // The dialog is gone, not rewritten. Its text was good, and every word of it
+  // is now in the band directly above the button — which was ALREADY on screen
+  // saying most of it, one line from the control. That is a deletion rather than
+  // a redesign: say what an action costs before it is taken, in the control's
+  // own words, and there is nothing left for a dialog after the click to add.
   async function setUpWindowMapping() {
     if (!data || data.windows.length > 0) return;
     const n = data.tabs.length;
-    const ok = await confirm(
-      `Put all ${n} tab${n === 1 ? "" : "s"} in one overview window?\n\n` +
-        `This account currently lets EVE decide which of your overview windows each tab ` +
-        `appears in. Setting this up replaces that with an explicit list, so every tab ` +
-        `starts in one window and you arrange them from there.\n\n` +
-        `The editor can't undo this — it can't remove the last overview window. If you ` +
-        `save and change your mind, importing an overview pack through the client removes ` +
-        `the list again.`,
-      { title: "Set up per-window tabs", kind: "warning" },
-    );
-    if (!ok) return;
-    if (await edit(() => api.overviewCreateWindowMapping())) onUserDirty();
+    if (!(await edit(() => api.overviewCreateWindowMapping(), "windows", "The windows weren't set up"))) return;
+    onUserDirty();
+    toast(`All ${n} tab${n === 1 ? "" : "s"} are now in one overview window.`, {
+      action: undoAction(),
+    });
   }
 
   // Pack import/export is account-wide, so it lives in the view's ⋯ rather than
@@ -224,7 +258,7 @@
     return [
       { label: "Import overview pack…", run: importPack, disabled: packBusy, hint: packBusy ? "A pack command is in flight" : undefined },
       { label: "Export overview pack…", run: exportPack, disabled: packBusy, hint: packBusy ? "A pack command is in flight" : undefined },
-      { label: "Set up per-window tabs…", run: setUpWindowMapping, disabled: mapped,
+      { label: "Assign tabs to windows", run: setUpWindowMapping, disabled: mapped,
         hint: mapped ? "This account already assigns tabs to windows" : undefined },
     ];
   }
@@ -254,17 +288,23 @@
         .map(([name, count]) => (count > 0 ? `${name} (${count})` : name))
         .join(", ");
       const ignored = summary.ignored.length
-        ? `\n\nIgnored unknown sections: ${summary.ignored.join(", ")}`
+        ? `\nIgnored, not understood: ${summary.ignored.join(", ")}.`
         : "";
       // Per-tab column overrides are only ever stripped inside apply_tabs,
       // which only runs when the pack defines a non-empty tabSetup section —
       // a preset-only pack never touches them, so don't claim it does.
       const dropsColumns = summary.sections.some(([name, count]) => name === "tabSetup" && count > 0);
-      const columnsNote = dropsColumns ? " Per-tab column overrides are discarded." : "";
-      const ok = await confirm(
-        `This pack contains: ${what}.\n\nEach of those replaces your account's current overview settings.${columnsNote}${ignored}`,
-        { title: "Import overview pack", kind: "warning" },
-      );
+      const columnsNote = dropsColumns ? "\nPer-tab column widths are discarded." : "";
+      // The seventh modal surface, and the only one that is NOT a confirmation:
+      // it is a PREVIEW of a file the user has not seen the contents of
+      // anywhere else, so it cannot become a toast after the fact. It appears
+      // only once a pack has been picked.
+      const ok = await confirmDialog({
+        title: `Import ${picked.split(/[\\/]/).pop()}?`,
+        body: `It replaces: ${what}.${columnsNote}${ignored}`,
+        detail: picked,
+        confirm: "Import pack",
+      });
       if (!ok) return;
       const result = await api.packImport(picked);
       data = result.columns;
@@ -274,10 +314,16 @@
       // rule deleteTab already follows.
       if (!data.tabs.some((t) => t.index === tabIndex)) tabIndex = data.tabs[0]?.index ?? null;
       onUserDirty();
-      const warnings = result.report.warnings.length ? `\n\n${result.report.warnings.join("\n")}` : "";
-      await message(`Pack imported. Save to write it to the account file.${warnings}`, { title: "Import overview pack" });
+      const w = result.report.warnings;
+      // Warnings ride the same toast rather than stacking a second modal on the
+      // first. Past three they stop being readable in a toast at all, so it says
+      // how many and the detail stays on hover.
+      const warnings = w.length === 0 ? "" : w.length > 3 ? `\n${w.length} warnings.` : `\n${w.join("\n")}`;
+      toast(`Pack imported. Save to write it to the account file.${warnings}`, {
+        variant: w.length ? "warn" : "success",
+      });
     } catch (e) {
-      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      editError = { where: "pack", text: `The pack wasn't imported — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       packBusy = false;
     }
@@ -292,10 +338,12 @@
     packBusy = true;
     try {
       const report = await api.packExport(picked);
-      const warnings = report.warnings.length ? `\n\n${report.warnings.join("\n")}` : "";
-      await message(`Exported ${report.applied.length} section(s).${warnings}`, { title: "Export overview pack" });
+      const n = report.applied.length;
+      toast(`Exported ${n} section${n === 1 ? "" : "s"} to ${picked.split(/[\\/]/).pop()}.`, {
+        variant: "success",
+      });
     } catch (e) {
-      await message(errMessage(e), { title: "Export failed", kind: "error" });
+      editError = { where: "pack", text: `The pack wasn't exported — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       packBusy = false;
     }
@@ -313,14 +361,16 @@
     {#if !userOpen && charId !== null}
       <div class="scroll">
         <EmptyState
-          title="Link this character to an account to edit shared settings"
+          title="No account paired"
           description="Overview columns live in the account file.">
-          {#snippet action()}<Button onclick={onShowAccounts}>Pair…</Button>{/snippet}
+          {#snippet action()}<Button onclick={onShowAccounts}>Pair this character…</Button>{/snippet}
         </EmptyState>
       </div>
     {:else if !userOpen}
       <div class="scroll">
-        <EmptyState title="Open a character or account file to edit overview columns." />
+        <EmptyState
+          title="No file open"
+          description="Open a character or an account file to edit its overview." />
       </div>
     {:else if error}
       <div class="scroll"><InlineMessage variant="error">{error}</InlineMessage></div>
@@ -344,6 +394,11 @@
              decoration. It is the only home for three account-wide commands. -->
         <MenuButton items={viewMenu} title="Overview actions" variant="default" size="md" />
       </div>
+      <!-- Pack import and export both live in that menu, so their failures land
+           beside the control that opens it. -->
+      {#if at("pack") || at("name")}
+        <InlineMessage variant="error" detail={editError!.detail}>{editError!.text}</InlineMessage>
+      {/if}
       <div class="panes">
         <!-- Just the list. Everything a tab has — its text, its colour, its
              weight, which window it is in, and deleting it — is on the row
@@ -362,7 +417,8 @@
             onRenameTab={renameTabName}
             onReorder={reorder}
             onMove={moveTab}
-            onSetUpWindowMapping={setUpWindowMapping} />
+            onSetUpWindowMapping={setUpWindowMapping}
+            {editError} />
         </div>
         <div class="scroll">
           {#if data.tabs.length > 0}

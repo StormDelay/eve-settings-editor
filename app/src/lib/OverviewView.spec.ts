@@ -48,7 +48,7 @@ const findRow = (name: string) => waitFor(() => row(name));
 /** Open the inline rename editor on the nth row and hand back its input. */
 async function renameEditor(nth = 0) {
   await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
-  await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Rename tab…" }));
   return screen.getByLabelText("Tab name") as HTMLInputElement;
 }
 
@@ -84,7 +84,7 @@ describe("gating on the account file", () => {
 
   test("with no file open at all, nothing is read", async () => {
     mount({ userOpen: false, charId: null });
-    expect(screen.getByText(/open a character or account file/i)).toBeTruthy();
+    expect(screen.getByText(/open a character or an account file/i)).toBeTruthy();
     calls.never("overview_columns");
   });
 
@@ -359,12 +359,12 @@ describe("the view menu", () => {
     await openMenu();
     expect(screen.getByRole("menuitem", { name: "Import overview pack…" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Export overview pack…" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "Set up per-window tabs…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Assign tabs to windows" })).toBeTruthy();
   });
 
   test("set-up is present but disabled once the account has windows", async () => {
     await openMenu(inWindows([tab(0, "PvP")], [{ index: 0, tab_indices: [0] }]));
-    const item = screen.getByRole("menuitem", { name: "Set up per-window tabs…" }) as HTMLButtonElement;
+    const item = screen.getByRole("menuitem", { name: "Assign tabs to windows" }) as HTMLButtonElement;
     expect(item.disabled).toBe(true);
     expect(item.title).toMatch(/already assigns tabs to windows/i);
   });
