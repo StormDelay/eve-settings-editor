@@ -51,6 +51,7 @@
     shellErrors,
   } from "$lib/subject.svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // One sheet at a time; `null` is the editor. Replaces `mainView`, which had no
@@ -262,7 +263,6 @@
       subject.dirty[slot] = false;
       treeFile = slot;
       subject.savedAt += 1;
-      const priorView = view;
       sheet = null;
       selectedWindowId = null;
       reveal = null;
@@ -277,7 +277,17 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
-      view = resolveView(priorView);
+      // `view`, read HERE rather than captured before the awaits above.
+      //
+      // It used to hold a `priorView` snapshot taken before two round trips, and
+      // then assign it back unconditionally — so clicking a tab while a file was
+      // still opening was silently undone a moment later, and the view snapped
+      // back to wherever you had been. A click during the load is the most
+      // recent thing the user asked for, not a stale value to overwrite.
+      //
+      // Reading it late is also a no-op in the common case: `resolveView`
+      // returns its argument when that view is reachable.
+      view = resolveView(view);
     } catch (e) {
       shellErrors.open = { text: `${name} wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
@@ -300,7 +310,6 @@
       subject.preset = p.name;
       treeFile = "char";
       subject.savedAt += 1;
-      const priorView = view;
       sheet = null;
       selectedWindowId = null;
       reveal = null;
@@ -309,7 +318,8 @@
       } catch {
         subject.layoutAvailable = false;
       }
-      view = resolveView(priorView);
+      // Read late, not captured before the await — see the note in `openFile`.
+      view = resolveView(view);
     } catch (e) {
       shellErrors.open = { text: `“${p.name}” wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
@@ -424,10 +434,25 @@
     // Raw's box belongs to the shell; every other view registers its own. A view
     // with neither — Overview, Probes — does nothing rather than reaching for
     // somebody else's field.
+    //
+    // Layout's box lives in the INSPECTOR, so the column has to be open before
+    // there is anything to focus: `focus()` on a `display: none` element does
+    // nothing at all, silently. Ctrl+F then looked completely dead rather than
+    // merely scrolled away, which is how it was reported. Expanding first, then
+    // waiting a tick for the column to render, is what makes the shortcut work
+    // from a railed inspector.
     findInView: () => {
       if (sheet !== null) return;
-      if (view === "raw") openSearch();
-      else viewFocusSearch[view]?.();
+      if (view === "raw") {
+        openSearch();
+        return;
+      }
+      if (view === "layout" && !inspectorOpen) {
+        inspectorOpen = true;
+        void tick().then(() => viewFocusSearch[view]?.());
+        return;
+      }
+      viewFocusSearch[view]?.();
     },
   };
 </script>
