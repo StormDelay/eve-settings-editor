@@ -136,7 +136,7 @@
         ondblclick={startEdit}>{node.display}</span>
     {/if}
     {#if node.in_shared}
-      <span class="shared-mark" title="inside a shared object: edits apply everywhere it is referenced">&</span>
+      <span class="shared-mark" title="Inside a shared object — edits apply everywhere it is referenced">&</span>
     {/if}
     <!-- These three used to be `.mini`, hidden at opacity 0 and revealed only by
          `.row:hover`. They are ghost Buttons now and always visible — the row
@@ -144,15 +144,15 @@
          cannot silently swallow a control the way the old one did to four
          buttons elsewhere. -->
     {#if container}
-      <Button variant="ghost" size="sm" iconOnly class="row-act" title="add entry"
+      <Button variant="ghost" size="sm" iconOnly class="row-act" title="Add entry…"
               onclick={() => onInsertRequest(node)}>+</Button>
     {/if}
     {#if node.removable}
-      <Button variant="ghost" size="sm" iconOnly class="row-act danger-act" title="remove entry"
+      <Button variant="ghost" size="sm" iconOnly class="row-act danger-act" title="Remove entry"
               onclick={() => onRemove(node.path)}>×</Button>
     {/if}
     {#if searching}
-      <Button variant="ghost" size="sm" iconOnly class="row-act" title="show here in the full tree"
+      <Button variant="ghost" size="sm" iconOnly class="row-act" title="Show this in the full tree"
               onclick={() => onReveal(node.path)}>⌖</Button>
     {/if}
   </div>
