@@ -339,9 +339,26 @@ test("a tab clicked while a file is still opening is not undone", async () => {
 });
 
 /** Ctrl+F must reach the window filter on Layout, which lives two components
- *  down and is bound up through LayoutView. */
+ *  down and is bound up through LayoutView.
+ *
+ *  `hud` is stubbed so HudPanel renders above WindowPanel, as it does in the
+ *  real app — without it the filter sits at the top of the inspector and the
+ *  test proves less than it looks like it does. */
 test("Ctrl+F focuses the window filter on Layout", async () => {
   calls.stub("open_file", opened("core_char_950.dat"));
+  calls.stub("hud", {
+    entries: [
+      {
+        name: "shipui_x",
+        kind: "int",
+        scope: "character",
+        value: 10,
+        set: { how: "set", path: [] },
+      },
+    ],
+  });
+  calls.stub("neocom_bar", { buttons: [], original: [] });
+  calls.stub("chat_panels", []);
   calls.stub("window_layout", {
     reference_w: 1920,
     reference_h: 1080,

@@ -325,15 +325,18 @@
             <!-- preventDefault, or the click's default action on the ancestor
                  <summary> toggles the category shut as you bulk-select it. -->
             <summary>
-              <span class="cat-row">
-                <span class="cat-name">{cat.name}</span>
-                <Button variant="ghost" size="sm"
-                        onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
-                        title="Select every group shown in {cat.name}">All</Button>
-                <Button variant="ghost" size="sm"
-                        onclick={(e) => { e.preventDefault(); setCategory(cat, false); }}
-                        title="Deselect every group shown in {cat.name}">None</Button>
-              </span>
+              <!-- Our own marker, because the grid below replaces `list-item`
+                   and takes the native one with it. Rotating one glyph is the
+                   whole cost of putting the name, the arrow and the bulk pair
+                   on one line. -->
+              <span class="marker" aria-hidden="true">▸</span>
+              <span class="cat-name">{cat.name}</span>
+              <Button variant="ghost" size="sm"
+                      onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
+                      title="Select every group shown in {cat.name}">All</Button>
+              <Button variant="ghost" size="sm"
+                      onclick={(e) => { e.preventDefault(); setCategory(cat, false); }}
+                      title="Deselect every group shown in {cat.name}">None</Button>
             </summary>
             {#if isOpen(cat.id)}
               <div class="group-grid">
@@ -406,16 +409,36 @@
   .contents-head { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
   .contents-title { font-weight: 600; }
   .section-heading { margin: var(--s1) 0 0; font-size: var(--t-body); }
-  .group-cat > summary { cursor: pointer; padding: var(--s1) 0; }
   /* The bulk pair used to trail the category name inline, so it sat wherever
      that name happened to end — "Ship" put them near the margin and "Planetary
-     Industry" put them far right, down a list of fifteen. A grid INSIDE the
-     summary rather than on it, so the disclosure marker survives. */
-  .cat-row {
+     Industry" put them far right, down a list of fifteen.
+
+     The grid is ON the summary, not inside it. An inner grid is a BLOCK box, so
+     it dropped onto the line below the disclosure marker and left every name
+     hanging under an arrow.
+
+     `justify-content: start` and a bounded name column are what keep All/None
+     beside the names instead of flung to the panel's right edge — this column
+     is as wide as the window, and a `1fr` name track put the buttons a hand's
+     width from the thing they act on. */
+  .group-cat > summary {
+    cursor: pointer;
+    padding: var(--s1) 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: 1rem minmax(0, 13rem) auto auto;
     align-items: center;
+    justify-content: start;
     gap: var(--s2);
+    list-style: none;
+  }
+  .group-cat > summary::-webkit-details-marker { display: none; }
+  .marker {
+    color: var(--text-muted);
+    transition: transform 0.12s ease;
+  }
+  .group-cat[open] > summary .marker { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .marker { transition: none; }
   }
   .cat-name {
     min-width: 0;
