@@ -153,8 +153,11 @@ describe("the group filter", () => {
   });
 });
 
+// `.cat-row`, not the `.cat-bulk` wrapper it replaces: the bulk pair used to
+// trail the category name inline and so landed at a different x on every row.
+// The buttons are direct grid children of the summary's row now.
 const bulkButton = (category: string, label: "All" | "None"): HTMLElement => {
-  const b = [...categoryNamed(category).querySelectorAll(".cat-bulk button")]
+  const b = [...categoryNamed(category).querySelectorAll(".cat-row button")]
     .find((e) => e.textContent?.trim() === label);
   if (!b) throw new Error(`no ${label} button on "${category}"`);
   return b as HTMLElement;
