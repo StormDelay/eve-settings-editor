@@ -12,6 +12,8 @@
     searching = false,
     revealPath = null,
     revealNonce = 0,
+    selectedPath = null,
+    onSelect,
     onReveal,
     onEdit,
     onRemove,
@@ -26,6 +28,9 @@
     /// A node path to expand-to and scroll-to; `revealNonce` bumps to re-fire.
     revealPath?: NodePath | null;
     revealNonce?: number;
+    /// The selected node, so the inspector and the tree agree on one.
+    selectedPath?: NodePath | null;
+    onSelect: (node: TreeNodeData) => void;
     onReveal: (path: NodePath) => void;
     onEdit: (path: NodePath, text: string) => Promise<void>;
     onRemove: (path: NodePath) => Promise<void>;
@@ -65,6 +70,9 @@
   let editing = $state(false);
   let draft = $state("");
 
+  const isSelected = $derived(
+    selectedPath !== null && JSON.stringify(selectedPath) === JSON.stringify(node.path),
+  );
   const hasChildren = $derived(node.children.length > 0);
   const container = $derived(
     node.kind === "dict" || node.kind === "list" || node.kind === "tuple",
@@ -110,11 +118,21 @@
         }}
         onblur={commitEdit} />
     {:else}
+      <!-- Single click selects, double click still edits. The tree had no
+           selection at all, so its per-node metadata had nowhere to be shown
+           and lived as a text colour and a one-character glyph. -->
       <span
         class="display kind-{node.kind}"
         class:editable={node.editable}
-        role="none"
-        title={node.editable ? "double-click to edit" : undefined}
+        class:selected={isSelected}
+        role="button"
+        tabindex="0"
+        aria-pressed={isSelected}
+        title={node.editable ? "click to select · double-click to edit" : "click to select"}
+        onclick={() => onSelect(node)}
+        onkeydown={(e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(node); }
+        }}
         ondblclick={startEdit}>{node.display}</span>
     {/if}
     {#if node.in_shared}
@@ -148,6 +166,8 @@
           {searching}
           {revealPath}
           {revealNonce}
+          {selectedPath}
+          {onSelect}
           {onReveal}
           {onEdit}
           {onRemove}
@@ -172,5 +192,19 @@
   .row :global(.edit) {
     flex: 1;
     min-width: 200px;
+  }
+  .display {
+    cursor: pointer;
+  }
+  /* The same accent-dim ground ListRow's selected variant uses, so "selected"
+     means one thing everywhere. */
+  .display.selected {
+    background: var(--accent-dim);
+    border-radius: var(--r-sm);
+  }
+  .display:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-radius: var(--r-sm);
   }
 </style>
