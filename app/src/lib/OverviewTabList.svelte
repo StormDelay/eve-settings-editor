@@ -26,7 +26,7 @@
     onAddWindow,
     onRemoveWindow,
     onDeleteTab,
-    onRenameRequest,
+    onRenameTab,
     onReorder,
     onMove,
     onSetUpWindowMapping,
@@ -40,7 +40,10 @@
     onAddWindow: (name: string) => void;
     onRemoveWindow: (windowIdx: number) => void;
     onDeleteTab: (tabIdx: number) => void;
-    onRenameRequest: () => void;
+    /** The READABLE text, not the stored markup: the view re-composes the
+        colour and bold around it. Spacing goes out verbatim — padding is how a
+        tab is widened in game. */
+    onRenameTab: (tabIdx: number, text: string) => void;
     onReorder: (windowIdx: number, order: number[]) => void;
     onMove: (tabIdx: number, from: number, to: number, pos: number) => void;
     onSetUpWindowMapping: () => void;
@@ -85,7 +88,10 @@
 
   function rowMenu(t: OverviewTab): MenuItem[] {
     return [
-      { label: "Rename", run: () => { onSelect(t.index); onRenameRequest(); } },
+      // Renaming happens ON the row. A rename started here and finished in a
+      // panel below was two places for one gesture, and it left a Name field
+      // sitting there permanently for the 99% of the time nobody is renaming.
+      { label: "Rename", run: () => startRename(t) },
       { label: "Delete tab", run: () => onDeleteTab(t.index) },
     ];
   }
@@ -111,9 +117,11 @@
     return items;
   }
 
-  // Name entry for the two things that are genuinely "name the new thing".
-  // Renaming moved to the inspector, which is where a tab's name lives now.
-  let pending = $state<{ kind: "tab" | "window"; windowIdx: number | null; value: string } | null>(null);
+  // One inline editor for all three name gestures: create a tab, name a new
+  // window's first tab, and rename an existing tab in place.
+  let pending = $state<
+    { kind: "tab" | "window" | "rename"; windowIdx: number | null; tabIdx?: number; value: string } | null
+  >(null);
   let nameInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
   $effect(() => {
     if (!nameInput) return;
@@ -124,10 +132,22 @@
   function startCreate(g: Group | null) {
     pending = { kind: "tab", windowIdx: g?.windowIdx ?? null, value: "" };
   }
+  function startRename(t: OverviewTab) {
+    onSelect(t.index);
+    // The READABLE text, padding and all — never the stored markup.
+    pending = { kind: "rename", windowIdx: null, tabIdx: t.index, value: parseTabName(t.name).text };
+  }
   function submit() {
     const p = pending;
     pending = null;
     if (!p) return;
+    if (p.kind === "rename") {
+      // `p.value`, not a trimmed copy: padding is how a tab is widened in game
+      // ("  main  ", "  3  "). The trim only answers "did they type anything at
+      // all", which is also how the pre-Phase-4 rename box read it.
+      if (p.value.trim() && p.tabIdx !== undefined) onRenameTab(p.tabIdx, p.value);
+      return;
+    }
     const name = p.value.trim();
     if (!name) return;
     if (p.kind === "window") onAddWindow(name);
@@ -182,6 +202,18 @@
       <ul>
         {#each g.tabs as t, i (t.index)}
           <li>
+            {#if pending?.kind === "rename" && pending.tabIdx === t.index}
+              <!-- The row BECOMES the editor. Enter commits, Escape cancels,
+                   and leaving it commits — the same three keys the name box it
+                   replaces used. -->
+              <Field bind:value={pending.value} bind:element={nameInput}
+                     ariaLabel="Tab name" placeholder="Tab name"
+                     onblur={submit}
+                     onkeydown={(e: KeyboardEvent) => {
+                       if (e.key === "Enter") { e.preventDefault(); submit(); }
+                       else if (e.key === "Escape") pending = null;
+                     }} />
+            {:else}
             <ListRow
               selected={t.index === tabIndex}
               onclick={() => onSelect(t.index)}
@@ -202,6 +234,7 @@
                    colour and weight, the way it looks in game. -->
               <span style={style(t.name)}>{plainTabName(t.name)}</span>
             </ListRow>
+            {/if}
           </li>
         {/each}
         {#if pending?.kind === "tab" && pending.windowIdx === g.windowIdx}
@@ -228,12 +261,15 @@
   </div>
 
   <div class="foot">
-    {#if pending}
+    <!-- No footer buttons while renaming: that editor commits on blur, so a
+         Cancel button would commit on the way to being clicked. Enter, Escape
+         and clicking away are its three exits. -->
+    {#if pending && pending.kind !== "rename"}
       <Button variant="primary" onclick={submit}>
         {pending.kind === "window" ? "Add window" : "Add tab"}
       </Button>
       <Button onclick={() => (pending = null)}>Cancel</Button>
-    {:else}
+    {:else if !pending}
       <Button size="sm" onclick={() => startCreate(selectedGroup)}
               disabled={data.tabs.length === 0}
               disabledReason="This account file has no overview tabs">+ Tab</Button>
