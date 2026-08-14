@@ -572,11 +572,20 @@
   /* Every "give the native control explicit dark colours" rule in this file is
      gone — the search box, the two selects and the number inputs are Fields
      now, and Field is the only place in the app that styles one. */
+  /* NO `overflow-y` here, and that is the fix rather than a tidy-up.
+
+     This panel used to BE the right-hand column and owned its own scrolling.
+     It is now one of several stacked inside `.inspector`, which is a flex
+     column that scrolls — so a second scroll container nested in the first made
+     this a flex item that shrinks to whatever space HudPanel left and hides the
+     remainder inside itself. HudPanel does not scroll, so it took the room, and
+     this panel collapsed to a sliver at the bottom of the column.
+
+     The visible result was that the window filter did not exist as far as
+     anyone could tell: present in the DOM, focusable by Ctrl+F, and never on
+     screen. One scroll container per column. */
   .window-panel {
-    overflow-y: auto;
     font-size: var(--t-body);
-    border-left: 1px solid var(--border);
-    background: var(--surface);
     color: var(--text);
   }
   .window-panel :global(.orphans) {
