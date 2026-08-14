@@ -8,6 +8,7 @@
   import Chip from "./ui/Chip.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
+  import MenuButton from "./ui/MenuButton.svelte";
   import SearchField from "./ui/SearchField.svelte";
 
   let {
@@ -254,6 +255,13 @@
       {w.geom?.screen_w}×{w.geom?.screen_h}
     </Chip>
   {/if}
+  <!-- The same menu the right-click opens, and the right-click keeps working:
+       this ADDS a route, it does not replace one. Four commands — including the
+       per-window clutter escape hatch — were reachable only by right-clicking a
+       row that advertised nothing. It lives inside `rowHead` rather than at the
+       end of each of the three `.row-head` containers so that it always sits in
+       the same place relative to the name it acts on. -->
+  <MenuButton items={() => rowMenu(w)} title="Window actions" />
 {/snippet}
 
 {#snippet detail(w: WindowRect)}
