@@ -162,13 +162,18 @@ describe("tab name markup", () => {
     expect(await findRow("main")).toBeTruthy();
   });
 
+  // Colour and bold are edited in the row's own editor, beside the text: all
+  // three are one markup-bearing string in the file, so they commit as ONE
+  // rename when the editor closes.
   test("picking a colour rewrites the name, keeping the text and the bold", async () => {
     calls.stub("overview_columns", columns(tab(0, marked)));
     mount();
     await findRow("main");
 
+    const box = await renameEditor();
     await fireEvent.click(screen.getByLabelText("Tab name colour"));
     await fireEvent.click(screen.getByLabelText("#40ff40"));
+    await fireEvent.keyDown(box, { key: "Enter" });
 
     expect(calls.only("tab_rename").args).toEqual({
       tabIdx: 0,
@@ -182,8 +187,10 @@ describe("tab name markup", () => {
     mount();
     await findRow("main");
 
+    const box = await renameEditor();
     await fireEvent.click(screen.getByLabelText("Tab name colour"));
     await fireEvent.click(screen.getByText("No colour"));
+    await fireEvent.keyDown(box, { key: "Enter" });
 
     expect((calls.only("tab_rename").args as { name: string }).name).toBe("<b>   main   </b>");
   });
@@ -193,29 +200,29 @@ describe("tab name markup", () => {
     mount();
     await findRow("main");
 
+    const box = await renameEditor();
     await fireEvent.click(screen.getByTitle("Bold tab name"));
+    await fireEvent.keyDown(box, { key: "Enter" });
 
     expect((calls.only("tab_rename").args as { name: string }).name).toBe("<color=0xFFFF6F75>   main   </color>");
   });
 
   // A name the parser can't decompose must never be silently rewritten by the
-  // act of looking at it — only an explicit colour/bold click may replace it.
-  // The Name field is seeded rather than bound for exactly this reason, so
-  // focusing and leaving it has to write nothing either.
+  // act of looking at it — only an explicit colour or bold change may replace
+  // it. Opening the editor on one and committing it untouched has to write
+  // nothing, because it re-emits as itself.
   test("an unparseable name is left alone and shows no colour", async () => {
     const weird = "<color=0xFFFF0000>a</color><color=0xFF00FF00>b</color>";
     calls.stub("overview_columns", columns(tab(0, weird)));
     mount();
-    await screen.findByLabelText("Tab name colour");
+    await findRow(weird);
 
     calls.never("tab_rename");
-    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
 
-    // Opening the editor on it and committing it untouched must not rewrite it
-    // either: it re-emits as itself, so there is nothing to write.
     const box = await renameEditor();
     expect(box.value).toBe(weird);
-    await fireEvent.blur(box);
+    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
+    await fireEvent.keyDown(box, { key: "Enter" });
     calls.never("tab_rename");
   });
 
@@ -394,17 +401,16 @@ describe("the shell grid contract", () => {
     expect(root.children[0].classList.contains("wide")).toBe(true);
   });
 
-  // The tab's fields sit under the list that selects it, in the same column —
-  // not across the window from it.
-  test("the tab's properties are in the side pane, beside the list", async () => {
+  // There is no properties pane. Everything a tab has is on its row, and the
+  // two fields that outlived the move turned out to duplicate controls that
+  // already existed elsewhere — see §13.
+  test("no properties pane, and no inspector column", async () => {
     calls.stub("overview_columns", columns(tab(0, "PvP")));
     mount();
     await findRow("PvP");
 
-    const side = document.querySelector(".side") as HTMLElement;
-    expect(side.querySelector(".tablist")).toBeTruthy();
-    expect(side.querySelector(".inspect")).toBeTruthy();
-    // And the shell's inspector column is not being used by this view at all.
+    expect(document.querySelector(".side .tablist")).toBeTruthy();
+    expect(document.querySelector(".inspect")).toBeNull();
     expect(document.querySelector("aside.inspector")).toBeNull();
   });
 });
