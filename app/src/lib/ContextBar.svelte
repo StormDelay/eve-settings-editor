@@ -91,6 +91,10 @@
       <span class="name">{subject.subjectName ?? "No character open"}</span>
       {#if aliasSuffix}<span class="alias">{aliasSuffix}</span>{/if}
       <span aria-hidden="true">▾</span>
+      <!-- On the control it opens, so the shortcut is found by looking rather
+           than by knowing — which was the deleted palette button's one real
+           job. -->
+      <span class="kbd">{accel("K")}</span>
     </Button>
   </span>
 
@@ -103,19 +107,15 @@
 
   <span class="spacer"></span>
 
-  <!-- A bordered control, not a hint: it sits where a search field would sit, so
-       it is found by looking rather than by knowing. In Phase 2 it opens the
-       subject switcher with a "Go to…" section; Phase 5 turns the same component
-       into the command palette, which is why it is not built twice. -->
-  <Button
-    class="palette"
-    title="Search or run a command"
-    onpointerdown={(e: PointerEvent) => e.stopPropagation()}
-    onclick={() => (switcherOpen = !switcherOpen)}>
-    <span aria-hidden="true">⌕</span>
-    <span class="palette-label">Search or run a command</span>
-    <span class="kbd">{accel("K")}</span>
-  </Button>
+  <!-- The "Search or run a command" button that used to sit here is gone. It
+       ran `switcherOpen = !switcherOpen` — byte for byte what the subject
+       button beside it does — so the bar carried two controls for one job, and
+       it anchored its panel to the SUBJECT button, opening a popup at the far
+       left of the bar in response to a click at the far right.
+       Phase 2 accepted that on the grounds that Phase 5 turns this component
+       into a real command palette. When it does, it earns an entry point back,
+       for a job the subject button should not have. Until then the shortcut
+       lives on the control it actually opens. -->
 
   <SaveCluster />
 
@@ -166,9 +166,9 @@
 
        §4.3 sheds the alias, then the palette label, then the History label at
        fixed thresholds. This sheds continuously instead: the flexible items
-       carry `min-width: 0` and ellipsis, and Save and the unsaved count carry
-       `flex-shrink: 0`, so the same things give way in the same order at every
-       width rather than at three chosen ones. */
+       carry `min-width: 0` and ellipsis, and Save, the unsaved count and the
+       shortcut hint carry `flex-shrink: 0`, so the same things give way in the
+       same order at every width rather than at three chosen ones. */
     flex-wrap: nowrap;
     min-width: 0;
   }
@@ -198,18 +198,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .context-bar :global(.palette) {
-    min-width: 0;
-    color: var(--text-muted);
-    justify-content: flex-start;
-  }
-  .palette-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .kbd {
+    flex-shrink: 0;
     font-size: var(--t-caption);
     color: var(--text-muted);
     border: 1px solid var(--border);

@@ -116,17 +116,24 @@
              where they do it: `bytes_written` in the save result, and per-backup
              size in History. -->
         <ListRow
+          class={alias ? "paired" : ""}
           onclick={() => onOpen(f.path)}
-          title="{f.file_name} · {Math.round(f.size / 1024)} KB">
+          title="{f.file_name} · {Math.round(f.size / 1024)} KB{alias ? ` · account ${alias}` : ''}">
           {#snippet leading()}
             <span class="dot" class:open={f.path === openPath} aria-hidden="true">●</span>
           {/snippet}
           {resolvedName(f.kind, f.id) ?? f.file_name}
-          <!-- Chip and action both in `trailing`, NOT beside the name. This is
-               the narrow column, and ListRow's label ellipsises: with the chip
-               inside the label a long name simply clipped it away, which turned
-               "no chip means no account" from a rule into a coin flip. Only the
-               name truncates now; the chip is `nowrap` and always drawn.
+          <!-- Chip and action both in `trailing`, NOT beside the name, so the
+               chip cannot be clipped away by a long name — "no chip means no
+               account" has to be a rule rather than a coin flip.
+
+               But the chip does not win the row either. It was drawn `nowrap`,
+               which made the CHARACTER NAME the thing that gave way, and an
+               account whose characters share a prefix ("Storm Hold…" four times
+               over) is exactly where that hurts most. Owner's call,
+               2026-08-14: the name has priority, the chip ellipsises first, and
+               the full account is in the row's tooltip. See the flex rules
+               below — this is the whole of that decision.
 
                A Chip is a CONFIRMED pairing and nothing else. No chip means no
                account — including for a character the launcher merely proposes,
@@ -134,7 +141,7 @@
                what an unpaired one can until someone accepts it. -->
           {#snippet trailing()}
             {#if alias}
-              <Chip size="sm">{alias}</Chip>
+              <Chip size="sm" title={alias}><span class="alias">{alias}</span></Chip>
             {:else}
               <Button
                 variant="ghost"
@@ -211,6 +218,41 @@
   }
   li :global(.row:hover .link-btn) {
     color: var(--accent);
+  }
+  /* Which of the two gives up its width first. ListRow's `.trailing` is
+     `nowrap`, so by default the chip kept every pixel it wanted and the name
+     ellipsised — the wrong way round, because the name is what identifies the
+     row and the account is a qualifier on it. A shrink factor this large means
+     the chip is down to a stub before the name loses a character; past that the
+     name ellipsises too, and the row's tooltip has both in full. */
+  /* ONLY on a row that carries a chip. An unpaired row's trailing content is the
+     `Link…` BUTTON, and a squeezed button is worse than a truncated name — it
+     was being clipped against the panel edge. Those rows keep ListRow's own
+     rules, where the label has a zero basis, grows into what is left and
+     ellipsises on its own.
+
+     On a paired row the two do compete, and `flex: 1` is why the chip used to
+     win by default: it is `flex: 1 1 0%`, a ZERO basis, so the label never took
+     part in shrinking at all — it just grew into whatever the chip left over.
+     A content basis is what puts them in competition; only then does the shrink
+     factor decide, and 999 means the chip is a stub before the name gives up a
+     character. */
+  li :global(.row.paired .label) {
+    flex: 1 1 auto;
+  }
+  li :global(.row.paired .trailing) {
+    flex-shrink: 999;
+    min-width: 0;
+  }
+  li :global(.row.paired .trailing .chip) {
+    min-width: 0;
+  }
+  .alias {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .foot {
     display: flex;

@@ -1155,3 +1155,230 @@ nothing written to disk differently.
 - [ ] `git diff --stat app/src-tauri crates` is empty.
 
 _Added 2026-08-13 (UI/UX redesign proposal, Phase 4)._
+
+---
+
+## 13. What actually shipped, and where it differs
+
+**Read this before trusting any `file:line` or any claim in §§1–12.** Phase 4 was
+built on 2026-08-14 on `feat/ui-redesign-phase-4`, in the three commits §11
+plans. Written against v0.34; Phases 1–3 have moved things since, and the spec
+was wrong about several of them.
+
+**Baseline.** §§ throughout cite "37 test files / 1064 tests". That was v0.34.
+The real pre-phase baseline was **55 files / 1259 tests** and the phase ends at
+**59 files / 1334 tests**. `npm run check` clean over 500 files, `npm run build`
+clean, and `git diff origin/master -- app/src-tauri crates` empty.
+
+**Phase 1 had already done more than §2 says.** The `<style>` blocks §2.5 counts
+nine button rules in were already tokenised and mostly gone; `.pack-actions` was
+already out of the tablist (Phase 1 moved it beside, with a comment naming this
+phase); the shared-account banner was already the shell's; and every control was
+already a `Button`/`Field`. What was left for Phase 4 was structural, not
+cosmetic — which is the same lesson Phase 3 recorded.
+
+### Load-bearing divergences
+
+1. **§7.6's slot contract does not exist, so Overview took Layout's route.**
+   Phase 2 shipped an always-present `<aside class="inspector">` holding a
+   placeholder, and no snippet or slot API. `OverviewView`'s root is
+   `display: contents` with exactly two children, exactly as `LayoutView` does
+   it — no portal, no prop hoisting. Consequences: `scopeLabel` became a prop
+   (Overview renders the shell's banner itself), `+page.svelte` grew a
+   `viewOwnsInspector` derived, and Overview is now pinned by the same
+   shell-grid-contract test LayoutView has. §7.6's local-grid fallback was not
+   needed and was not built.
+
+2. **The DoD's "Autofill, Keybinds and Probes … get the full width" IS met — the
+   owner settled it after seeing it.** This was flagged as an open conflict:
+   Phase 2 shipped the column on *every* tab with a written rationale (one that
+   comes and goes is the same fault as a tab strip that changes membership), and
+   §7 contradicts it. On screen the argument did not survive — on those three
+   views the pane only ever said *"Select something to see its properties"*,
+   which is a pane teaching people it is broken while taking a fifth of the
+   window to do it.
+
+   `INSPECTOR_VIEWS` in `+page.svelte` is now the whole of the rule: **Layout
+   and Raw**. Everything else — the other three views, Overview, and the
+   no-file and unreadable-file states — takes the column too, through
+   `.work.wide` (`grid-column: 2 / 4`, a shell rule in `app.css` because both
+   the shell's wrappers and OverviewView's set it). No aside and no rail, since
+   a 1.5rem strip of nothing is the same furniture in miniature.
+   `page.spec.ts`'s "which views get an inspector" pins all six.
+
+3. **The inspector's hide control was missing on Layout and would have gone
+   missing on Overview too.** The shell's `»` lives in the aside those two views
+   replace, so the column could be reopened from every tab but closed only from
+   the four that have the shell's own. Both views render it now and
+   `.inspector-head` moved to `app.css`, where the three components that draw
+   into that column can all reach it. Not in the spec; it is a regression this
+   phase would otherwise have doubled.
+
+4. **Cross-window drag can move a tab that is not the selected one, which
+   `moveTab` never could.** `keepSelection` itself moved verbatim, as §4.3 and
+   §11 demand. What changed is its *call*: both handlers now compute the
+   selection's position in the affected strip **before** the call and re-point
+   from the returned data after it, instead of assuming the moved tab is the
+   selected one. This is sound because `renumber_to_strip_order` redistributes
+   only the renumbered window's own index slots
+   (`overview_tabs.rs:249-251`) — a selection in any other window is untouched.
+
+5. **A drop in place is no longer an edit.** Today's `dropTab` called the backend
+   even when the order was unchanged. §4.3.1 asks for a toast after a reorder
+   "that actually changed the order", so the guard had to exist; it also stops a
+   no-op drag dirtying the file.
+
+6. **`.stack-head` and `.fam-head` get no `⋯`.** §8.2 asks for one. They are
+   *group* heads with no `WindowRect` behind them and no right-click menu today,
+   so there is nothing to reveal — a menu there would mean inventing commands,
+   which this phase does not do. All three `.row-head` sites do have one.
+
+7. **The row `⋯` lives inside `rowHead`, not at the end of each `.row-head`.**
+   Three call sites render `rowHead`, and two of them append their own trailing
+   controls (a count chip, the stack buttons). Inside the snippet the `⋯` sits
+   in the same place relative to the name it acts on in all three.
+
+8. **A row's "Rename" also selects the row.** §4.2 says only "moves focus to the
+   inspector's Name field", but the inspector shows the *selected* tab — so
+   renaming from a non-selected row's menu had to select it first.
+
+### Smaller ones
+
+- **`MenuButton` is a new `lib/ui/` primitive**, not in §9's file list. Five call
+  sites needed "a visible ⋯ opening a flat menu, positioned from the button's own
+  rect": the tab row, the window-group header, the Overview view header and
+  WindowPanel's three row heads. `ListRow`'s inlined copy became a use of it.
+- **`ContextMenu`'s `MenuItem` gained `disabled` and `hint`**, as §4.2's fallback
+  anticipated — Phase 1's `ListRow` menu did not supply them.
+- **`+ Window` is present-and-disabled on a windowless account** rather than
+  hidden, which is today's rule (`{#if data.windows.length >= 1}`). Same
+  "hiding becomes disabling with a reason" rule as `Remove this window`; the
+  spec did not say either way.
+- **`page.spec.ts` stubbed `overview_columns` as `{ tabs: [], columns: [] }`.**
+  `columns` was never a field of `OverviewColumns` and `windows` was missing.
+  The tab list reads `windows`, so the lie surfaced as an unhandled throw — and
+  an unhandled throw exits `npm test` non-zero with every test passing, which is
+  the trap Phase 2 recorded. The fixture was fixed rather than the component
+  taught to defend against an impossible reply.
+- **The palette grid's 24 swatches are still bare `<button>`s** with a local
+  style rule, moved verbatim from `OverviewView`. A 1.1rem colour square is not
+  a `Button`; Phase 1 shipped it this way and this phase did not change it. It
+  is the one exception to §12's "no `<style>` block declares a button".
+
+### The live pass happened, and it moved four things
+
+The visual pass ran on 2026-08-14 against the owner's own session. Four
+changes came out of it, and the first is a reversal of a decision in §5.
+
+1. **Overview has no inspector at all. `OverviewInspector.svelte` is deleted,
+   and §5 with it.** This went in three steps over one session, each one the
+   owner looking at the previous one:
+
+   - §5 put Name, Colour, Bold, In window and Widths from in the shell's
+     right-hand inspector. On a 2560px monitor that put the list you click on
+     the far left and the field you type in on the far right, so the pane moved
+     to sit under the tab list.
+   - Then the *name* moved onto the row (see (5) below), which made the split
+     obvious: renaming happened on the row, but the colour and weight of that
+     same name — the same markup string in the file — were still in the pane.
+     They joined the row editor.
+   - What was left was `In window` and `Widths from`, and **both turned out to
+     be duplicates**. `Widths from` calls `loadCharacter`, which is what
+     clicking the character in the sidebar already does — and it was that
+     function's only caller in the app. `In window` calls `tabMove`, which
+     §4.3's cross-window drag already does. Neither is a property you *read*;
+     each is a second control for a job something else already owns, which is
+     the exact fault §1 says this phase exists to remove.
+
+   So the pane is gone. Nothing is lost: `In window` became **`Move to Overview
+   N` items in the row's `⋯`**, keeping the keyboard route the drag does not
+   provide, present-and-disabled with a reason for a tab in no window. The
+   Widths helper text — including §4.3.1's mandatory reordering sentence — moved
+   under the column list in `OverviewColumnsTab`, next to the width boxes it is
+   about, which is a better home than the pane ever was.
+
+   **§7's rule is therefore not demonstrated by Overview.** It still governs
+   Layout and Raw, and the honest statement of what this phase found is the
+   §7 sentence the spec already wrote and then under-applied: *a view is not
+   required to have an inspector*. Overview turns out to be a view that does not
+   want one, because every property of a tab fits on the tab.
+
+2. **The column and appearance lists are capped at a reading width.** `ListRow`
+   pushes its trailing control to the container's right edge, which is correct
+   in a 20rem panel and absurd in a work area that is most of a wide monitor:
+   the width box for `Name` sat about 1,700px from the word `Name`. Capped at
+   26rem, the widest row either list can produce.
+
+3. **The view's `⋯` is a real button, beside the sub-tabs.** As a small ghost
+   pinned to the far right margin it was, in the owner's words, "very hard to
+   find" — several hundred pixels from anything, reading as decoration. It is
+   the only home for three account-wide commands, so it now looks like a
+   control and sits next to the tabs it belongs to.
+
+4. **The sidebar's account chip gives up its width before the character name
+   does** (`Sidebar.svelte`, outside this phase's file list — small corrective
+   work riding the branch). The chip was `nowrap`, so the *name* ellipsised, and
+   an account whose characters share a prefix left four rows all reading
+   "Storm Holde…". The name identifies the row; the account qualifies it.
+   Worth recording the actual bug, because the first attempt did not work:
+   `ListRow`'s `.label` is `flex: 1`, i.e. a **zero** basis, so it never takes
+   part in shrinking at all — it just grows into whatever the chip leaves and
+   ellipsises. A shrink factor on the chip does nothing until the label has a
+   content basis (`flex: 1 1 auto`) to compete with. The *second* attempt then
+   over-applied it: an unpaired row's trailing content is the `Link…` **button**,
+   which got squeezed and clipped against the panel edge. The rules are scoped
+   to a `paired` class now — a squeezed button is worse than a truncated name,
+   and on a row with no chip there is nothing to compete with anyway.
+
+5. **Renaming happens ON the row, and §5.1's Name field is gone.** Starting a
+   rename from the row's `⋯` and finishing it in a panel below was two places
+   for one gesture, and it cost a Name field that sat there permanently doing
+   nothing for as long as nobody was renaming. The row becomes an inline `Field`
+   — the same editor `+ Tab` and `+ Window` already use — seeded with
+   `parseTabName(...).text`, committing on Enter and on blur, cancelling on
+   Escape. The inspector keeps Colour, Bold, In window and Widths from.
+   `OverviewTabList` hands back the **readable text**; `OverviewView` composes
+   the colour and bold around it, which is where the no-op guard lives. Note
+   that guard is byte-comparison and always has been: `formatTabName` is the
+   inverse of `parseTabName` only *up to tag nesting*, so re-committing
+   `<color=…>   <b>x</b>   </color>` untouched really does write — same
+   rendering, different bytes, documented in `tabName.ts` and true before this
+   phase too.
+
+6. **The context bar had two buttons opening the same panel.** The subject
+   button and a `Search or run a command` button beside it both ran
+   `switcherOpen = !switcherOpen` — and `SubjectSwitcher` anchors to the
+   *subject* button, so a click at the far right of the bar opened a popup at
+   the far left. `02-shell.md` accepted the pair on the grounds that Phase 5
+   turns the component into a real command palette; until it does, that is two
+   controls for one job in the bar, which is the fault §1 names. The palette
+   button is deleted and the `Ctrl+K` hint moved onto the control it opens —
+   being *found by looking rather than by knowing* was the deleted button's one
+   real job. Phase 5 earns an entry point back when the panel does something the
+   subject button should not.
+
+7. **A paired character on an UNNAMED account rendered as unpaired.**
+   `accountAliasOf` returned the alias and `null` otherwise, so an account
+   nobody had named drew no chip and got a `Link…` button offering to create a
+   pairing that already existed — breaking the rule its own doc comment states,
+   that "a chip means a CONFIRMED pairing and absence means no account". It
+   falls back to `#<id>` now. The id alone, not `core_user_<id>`: the prefix is
+   on every account, so it distinguishes nothing while taking more than half the
+   chip in the narrowest column in the app — which was visible immediately, as
+   names that had been whole started truncating the moment the fallback landed.
+
+### Not verified
+
+**"All 63 controls in §3 are reachable in the running app" is still not walked
+control by control.** The layout was seen and corrected (above) and the
+sidebar's chip behaviour was confirmed from a capture, but nobody has ticked off
+all 63. Everything else in §12 is covered by a test, and Overview's half of the
+shell-grid contract — the part that breaks silently, because jsdom computes no
+layout — is pinned by a structural test of its own.
+
+A note for the next phase, because it cost time here: the app was already
+running **from this worktree**, so every edit hot-reloaded straight into the
+owner's window, and `PrintWindow` with `PW_RENDERFULLCONTENT` captures it
+without touching focus. That is what caught the failed first attempt at (4).
+Check what is on port 1420 *and which directory it serves* before concluding a
+dev server belongs to another session.

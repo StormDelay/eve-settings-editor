@@ -12,6 +12,7 @@
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
@@ -27,6 +28,7 @@
     readOnly,
     accountReadOnly = false,
     refreshToken,
+    onCollapseInspector,
     userOpen,
     selectedId = $bindable(null),
     onReveal,
@@ -41,6 +43,10 @@
      * rows write that file, so it is theirs alone to honour. */
     accountReadOnly?: boolean;
     refreshToken: number;
+    /** A view that supplies its own inspector supplies its own hide control
+        too — otherwise the column can be reopened from here but only closed
+        from a view that has the shell's aside. */
+    onCollapseInspector?: () => void;
     userOpen: boolean;
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
@@ -928,36 +934,63 @@
           </div>
         {/each}
       </div>
-      <p class="ref">
-        reference {layout.reference_w}×{layout.reference_h}
-        <Field
-          kind="checkbox"
-          class="det"
-          label="Detail"
-          value={detailOn()}
-          onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
-        {#if !readOnly}
-          <span class="hintish">· Shift-drag onto another window to stack · drag a tab to reorder or pull out</span>
-        {/if}
-        {#if filterIsActive(filter)}
-          <span class="showing">
-            · showing {shownCount} of {totalCount} windows
-            <!-- Back to the DEFAULT, not to nothing: `reset` undoes what the
-                 user narrowed, and hiding clutter is the view they started
-                 from rather than something they chose. Showing every window is
-                 one click away on the toggle itself. -->
-            <Button variant="ghost" size="sm" class="linkish" onclick={() => (filter = { ...DEFAULT_FILTER })}>reset</Button>
-          </span>
-        {/if}
-        {#if overrideCount(documentWindowIds) > 0}
-          <span class="showing">
-            · {overrideCount(documentWindowIds)} overridden
-            <Button variant="ghost" size="sm" class="linkish" onclick={() => clearClutterOverrides(documentWindowIds)}>clear</Button>
-          </span>
-        {/if}
-      </p>
+      <!-- A status BAR, not a sentence: one line used to carry a fact, a view
+           setting, an instruction and two counters with links, in five tones.
+           Left is what is true and what you are looking at, and neither half
+           ever appears or disappears. Right is what is currently NARROWING the
+           view — chips, because both are exceptional states with an escape and
+           both vanish when there is nothing to say. The drag hint was
+           instruction rather than status and moved to the inspector. -->
+      <div class="statusbar">
+        <span class="facts">
+          <span class="ref">reference {layout.reference_w}×{layout.reference_h}</span>
+          <Field
+            kind="checkbox"
+            class="det"
+            label="Detail"
+            value={detailOn()}
+            onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
+        </span>
+        <span class="narrowing">
+          {#if filterIsActive(filter)}
+            <Chip tone="warn" size="sm">
+              {shownCount} of {totalCount} windows
+              <!-- Back to the DEFAULT, not to nothing: dismissing undoes what
+                   the user narrowed, and hiding clutter is the view they
+                   started from rather than something they chose. Showing every
+                   window is one click away on the toggle itself. -->
+              {#snippet actions()}
+                <Button variant="ghost" size="sm" iconOnly title="Show every window again"
+                  onclick={() => (filter = { ...DEFAULT_FILTER })}>✕</Button>
+              {/snippet}
+            </Chip>
+          {/if}
+          {#if overrideCount(documentWindowIds) > 0}
+            <Chip tone="warn" size="sm">
+              {overrideCount(documentWindowIds)} overridden
+              {#snippet actions()}
+                <Button variant="ghost" size="sm" iconOnly title="Clear the clutter overrides"
+                  onclick={() => clearClutterOverrides(documentWindowIds)}>✕</Button>
+              {/snippet}
+            </Chip>
+          {/if}
+        </span>
+      </div>
     </div>
     <aside class="inspector">
+      <div class="inspector-head">
+        <Button variant="ghost" size="sm" iconOnly title="Hide properties"
+          onclick={() => onCollapseInspector?.()}>&raquo;</Button>
+      </div>
+      <!-- "What can I do here", where the pane has to say something anyway.
+           The canvas's gestures were explained in a status line, in an
+           instruction wedged between two facts; none of it is true on a
+           read-only file, which is the gate the old line already carried. -->
+      {#if selectedId === null && !readOnly}
+        <EmptyState
+          title="Nothing selected"
+          description="Click a window on the canvas to edit it. Shift-drag onto another window to stack · drag a tab to reorder or pull out." />
+      {/if}
       {#if hud}
         <HudPanel
           {hud}
@@ -1204,30 +1237,33 @@
   .resize.tr { right: 0; top: 0; cursor: nesw-resize; }
   .resize.bl { left: 0; bottom: 0; cursor: nesw-resize; }
   .resize.br { right: 0; bottom: 0; cursor: nwse-resize; }
-  /* Not canvas-scale: this is a status line BELOW the canvas, so it takes the
+  /* Not canvas-scale: this is a status bar BELOW the canvas, so it takes the
      type scale like the rest of the chrome. */
-  .ref {
-    color: var(--text-muted);
+  .statusbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
     font-size: var(--t-caption);
-    margin: var(--s1) 0 0;
+    margin-top: var(--s1);
   }
-  .showing {
-    color: var(--warn);
+  .facts {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
   }
-  /* Was #666 on the app ground: Lc 21.9, which is effectively invisible, for
-     text that explains the canvas's gestures. --text-muted is Lc 72. */
-  .hintish {
-    color: var(--text-muted);
+  .ref { color: var(--text-muted); }
+  /* Right-aligned: the two halves say different kinds of thing, and the gap is
+     what separates "this is true" from "this is hiding something from you". */
+  .narrowing {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
   }
   /* The dark-native-control rule is gone — Field owns it. */
-  .inspector :global(.det) {
+  .statusbar :global(.det) {
     color: var(--text-secondary);
     cursor: pointer;
-    margin-left: var(--s1);
-  }
-  :global(.linkish) {
-    color: var(--accent);
-    padding: 0;
-    text-decoration: underline;
   }
 </style>

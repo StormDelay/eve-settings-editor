@@ -151,11 +151,27 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   grid-column: 2; grid-row: 3;
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
 }
+/* A view with nothing to inspect takes the inspector's column too, rather than
+   parking a pane that says "select something" beside it forever. Global rather
+   than per-view because two components set it: this file's work wrappers and
+   OverviewView's, which arrives through `display: contents`. */
+.shell .work.wide { grid-column: 2 / 4; }
 .shell .inspector {
   grid-column: 3; grid-row: 3;
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
   overflow: auto;
   background: var(--surface); border-left: 1px solid var(--border);
+}
+/* Shell, not view: THREE components render an inspector into this column now
+   (the shell's own, LayoutView's and OverviewView's, the last two arriving
+   through `display: contents`), and each has to carry the same hide control —
+   a column you can reopen from every tab but only close from some of them is
+   worse than one that never collapses. Scoped to `+page.svelte` this rule
+   reached exactly one of the three. */
+.shell .inspector-head {
+  display: flex;
+  justify-content: flex-start;
+  padding: var(--s1);
 }
 /* The scrolling part of a work area whose head (a tab strip, a search bar, a
    scope banner) must stay put. */

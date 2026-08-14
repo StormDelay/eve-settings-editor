@@ -10,9 +10,10 @@
 // and exactly one keyup, so "preview on keydown, commit on keyup" is what keeps
 // a held arrow from being dozens of writes. Nothing else checks that.
 import { describe, expect, test, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import LayoutView from "$lib/LayoutView.svelte";
 import { calls } from "$lib/test/setup";
+import { setClutterOverride, clearClutterOverrides } from "$lib/prefs.svelte";
 import type { WindowLayout, WindowRect } from "$lib/api";
 
 const path = (n: string) => [{ s: "d", i: 1 }, { s: "k", i: 0 }, { s: n }];
@@ -196,6 +197,60 @@ describe("arrow-key nudge", () => {
  * pixels are checked in the running app — but this is the half that gets broken
  * later by an edit that has nothing to do with the grid.
  */
+// The status line carried a fact, a view setting, an instruction and two
+// counters with links, in one sentence and five tones. What NARROWS the view is
+// two chips now: each appears only when it has something to say, and each
+// carries its own escape.
+describe("the status bar", () => {
+  test("a chip counts what the filter is hiding, and dismissing it resets", async () => {
+    calls.stub("window_layout", layout(win("overview"), win("market")));
+    mount();
+    await waitFor(() => expect(calls.of("window_layout").length).toBe(1));
+
+    const box = (await screen.findByLabelText("Filter windows")) as HTMLInputElement;
+    await fireEvent.input(box, { target: { value: "market" } });
+    const chip = await screen.findByText(/of 2 windows/);
+
+    // Back to the DEFAULT, which hides clutter — not to nothing.
+    await fireEvent.click(within(chip.parentElement as HTMLElement).getByRole("button", { name: "Show every window again" }));
+    expect(box.value).toBe("");
+  });
+
+  test("a chip counts the clutter overrides, and dismissing it clears them", async () => {
+    setClutterOverride("market", "clutter");
+    calls.stub("window_layout", layout(win("overview"), win("market")));
+    mount();
+
+    const chip = await screen.findByText("1 overridden");
+    await fireEvent.click(within(chip.parentElement as HTMLElement).getByRole("button", { name: "Clear the clutter overrides" }));
+    await waitFor(() => expect(screen.queryByText("1 overridden")).toBeNull());
+  });
+
+  test("no overrides, no chip", async () => {
+    clearClutterOverrides(new Set(["overview", "market"]));
+    calls.stub("window_layout", layout(win("overview")));
+    mount();
+    await waitFor(() => expect(calls.of("window_layout").length).toBe(1));
+    expect(screen.queryByText(/overridden/)).toBeNull();
+  });
+
+  // Instruction, not status: it moved to the pane that has to say something
+  // when nothing is selected anyway.
+  test("the drag hint is in the inspector, not under the canvas", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    mount({ selectedId: null });
+    const hint = await screen.findByText(/Shift-drag onto another window to stack/);
+    expect(hint.closest(".inspector")).toBeTruthy();
+  });
+
+  test("a read-only file is told none of it", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    mount({ selectedId: null, readOnly: true });
+    await waitFor(() => expect(calls.of("window_layout").length).toBe(1));
+    expect(screen.queryByText(/Shift-drag onto another window to stack/)).toBeNull();
+  });
+});
+
 describe("the shell grid contract", () => {
   test("the root renders exactly the work area and the inspector, as siblings", async () => {
     calls.stub("window_layout", layout(win("overview")));
@@ -211,5 +266,16 @@ describe("the shell grid contract", () => {
     expect(kids).toHaveLength(2);
     expect(kids[0].classList.contains("work")).toBe(true);
     expect(kids[1].classList.contains("inspector")).toBe(true);
+  });
+
+  // The shell's hide control lives in the aside this view replaces, so without
+  // one here the column could be reopened from Layout and only closed from
+  // another tab. Missing since the shell grew the column.
+  test("the inspector can be collapsed from here", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    const onCollapseInspector = vi.fn();
+    mount({ onCollapseInspector });
+    await fireEvent.click(await screen.findByRole("button", { name: "Hide properties" }));
+    expect(onCollapseInspector).toHaveBeenCalled();
   });
 });

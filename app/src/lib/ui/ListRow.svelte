@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import ContextMenu, { type MenuItem } from "../ContextMenu.svelte";
-  import Button from "./Button.svelte";
+  import type { MenuItem } from "../ContextMenu.svelte";
+  import MenuButton from "./MenuButton.svelte";
 
   // One row. It absorbs eight hand-rolled row treatments, five copies of
   // `.grip { opacity: 0.6 }`, and the min-width/ellipsis truncation that two
@@ -49,8 +49,6 @@
     class?: string;
     children: Snippet;
   } = $props();
-
-  let menu: { x: number; y: number } | null = $state(null);
 </script>
 
 <div
@@ -82,19 +80,8 @@
     <span class="label">{@render children()}</span>
   {/if}
   {#if trailing}<span class="trailing">{@render trailing()}</span>{/if}
-  {#if actions}
-    <Button
-      variant="ghost"
-      size="sm"
-      iconOnly
-      title="More actions"
-      onclick={(e: MouseEvent) => (menu = { x: e.clientX, y: e.clientY })}>⋯</Button>
-  {/if}
+  {#if actions}<MenuButton items={actions} />{/if}
 </div>
-
-{#if menu && actions}
-  <ContextMenu x={menu.x} y={menu.y} items={actions} onClose={() => (menu = null)} />
-{/if}
 
 <style>
   .row {
