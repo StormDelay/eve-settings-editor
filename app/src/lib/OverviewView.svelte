@@ -18,15 +18,11 @@
   import { toast } from "./ui/toasts.svelte";
 
   let { userOpen, userId, charId, charOpen, characters, refreshToken, scopeLabel = "",
-        onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, onCollapseInspector }:
+        onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
       scopeLabel?: string;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void;
-      /** A view that supplies its own inspector supplies its own hide control
-          too — otherwise the column can be reopened here but only closed from a
-          view that has the shell's aside. */
-      onCollapseInspector?: () => void } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -298,11 +294,13 @@
   }
 </script>
 
-<!-- Two children, no portal: `display: contents` on the root makes them grid
-     items of the shell, landing in the work column and the inspector column —
-     the same route LayoutView already takes to the pane it owns. -->
+<!-- ONE child, spanning the work column and the column an inspector would sit
+     in. `display: contents` on the root is what lets it reach across: the root
+     stops participating in layout and `.work` becomes the grid item.
+     A tab's properties are docked under the list that selects it (§13), so
+     there is no third column to leave for the shell to fill. -->
 <div class="overview-view">
-  <div class="work">
+  <div class="work wide">
     <ScopeBanner label={scopeLabel} compact />
     {#if !userOpen && charId !== null}
       <div class="scroll">
@@ -332,21 +330,50 @@
             ]}
             bind:value={sub} />
         {/if}
-        <MenuButton items={viewMenu} title="Overview actions" />
+        <!-- A real button, beside the tabs rather than pinned to the far edge
+             of the work column: as a small ghost at the right margin of a wide
+             window it was several hundred pixels from anything and read as
+             decoration. It is the only home for three account-wide commands. -->
+        <MenuButton items={viewMenu} title="Overview actions" variant="default" size="md" />
       </div>
       <div class="panes">
-        <OverviewTabList
-          {data}
-          {tabIndex}
-          onSelect={(i) => (tabIndex = i)}
-          onCreateTab={createTab}
-          onAddWindow={addWindow}
-          onRemoveWindow={removeWindow}
-          onDeleteTab={deleteTab}
-          onRenameRequest={() => focusName?.()}
-          onReorder={reorder}
-          onMove={moveTab}
-          onSetUpWindowMapping={setUpWindowMapping} />
+        <!-- The list and the properties of what it selects, in one column.
+             Selecting a tab on the far left and renaming it on the far right
+             was a screen's width apart on a wide monitor — the same complaint,
+             in the same phase, as the width box that ended up a screen away
+             from its column. -->
+        <div class="side">
+          <OverviewTabList
+            {data}
+            {tabIndex}
+            onSelect={(i) => (tabIndex = i)}
+            onCreateTab={createTab}
+            onAddWindow={addWindow}
+            onRemoveWindow={removeWindow}
+            onDeleteTab={deleteTab}
+            onRenameRequest={() => focusName?.()}
+            onReorder={reorder}
+            onMove={moveTab}
+            onSetUpWindowMapping={setUpWindowMapping} />
+          <div class="props">
+            <OverviewInspector
+              {tab}
+              windows={data.windows}
+              {currentWindowIndex}
+              {charId}
+              {characters}
+              onRename={renameTab}
+              onMove={(to) => {
+                if (tab && currentWindowIndex !== null) {
+                  moveTab(tab.index, currentWindowIndex, to,
+                    data?.windows.find((w) => w.index === to)?.tab_indices.length ?? 0);
+                }
+              }}
+              {onLoadCharacter}
+              {onShowAccounts}
+              bind:focusName />
+          </div>
+        </div>
         <div class="scroll">
           {#if data.tabs.length > 0}
             <div hidden={sub !== "Columns"}>
@@ -363,47 +390,37 @@
       </div>
     {/if}
   </div>
-
-  <!-- Declared, therefore always rendered: a pane that comes and goes is the
-       same fault as a toolbar whose membership changes. -->
-  <aside class="inspector">
-    <div class="inspector-head">
-      <Button variant="ghost" size="sm" iconOnly title="Hide properties"
-        onclick={() => onCollapseInspector?.()}>&raquo;</Button>
-    </div>
-    {#if userOpen && data}
-      <OverviewInspector
-        {tab}
-        windows={data.windows}
-        {currentWindowIndex}
-        {charId}
-        {characters}
-        onRename={renameTab}
-        onMove={(to) => {
-          if (tab && currentWindowIndex !== null) {
-            moveTab(tab.index, currentWindowIndex, to,
-              data?.windows.find((w) => w.index === to)?.tab_indices.length ?? 0);
-          }
-        }}
-        {onLoadCharacter}
-        {onShowAccounts}
-        bind:focusName />
-    {:else}
-      <EmptyState title="Select a tab to edit its name, colour and window." />
-    {/if}
-  </aside>
 </div>
 
 <style>
   .overview-view { display: contents; }
-  .sub-row { display: flex; align-items: flex-end; gap: var(--s2); margin: var(--s2) var(--s3); }
-  .sub-row :global(.subtabs) { flex: 1; }
+  /* Spans the work column AND the column an inspector would occupy. This view's
+     inspector is docked under the list that selects the tab, so there is no
+     third column and nothing for the shell to draw in it. */
+  .wide { grid-column: 2 / 4; }
+  .sub-row { display: flex; align-items: flex-end; gap: var(--s3); margin: var(--s2) var(--s3); }
   /* Bounded side column, unbounded centre — the same reasoning LayoutView's
-     grid uses, and the reason the tab list cannot eat the content. */
+     grid uses, and the reason the tab list cannot eat the content. Wider than
+     a bare list needs, because the side now carries the selected tab's fields
+     as well. */
   .panes {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(11rem, 15rem) minmax(0, 1fr);
+    grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
+  }
+  /* The list scrolls; the properties stay put beneath it. Sharing one scroller
+     would put the fields for the tab you just clicked forty rows below it. */
+  .side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+  }
+  .side :global(.tablist) { flex: 1 1 auto; min-height: 4rem; }
+  .props {
+    flex: 0 1 auto;
+    overflow: auto;
+    border-top: 1px solid var(--border);
   }
 </style>
