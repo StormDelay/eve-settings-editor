@@ -1,213 +1,227 @@
 <script lang="ts">
-  import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, errMessage, type Profile, type PresetInfo } from "./api";
-  import { resolveNames, refreshNames } from "./names.svelte";
-  import { loadRoster, aliasFor, accountsStore } from "./accounts.svelte";
-  import { accountOf } from "./overview";
-  import { byResolvedName, resolvedName } from "./filesort.svelte";
-  import { primaryProfileDir, profileLabels, profileNote } from "./profiles";
+  // A subject browser and nothing else.
+  //
+  // Its top block used to hold six buttons of four different kinds — Open file…,
+  // rescan, Refresh names, Accounts, Copy settings, About — in a `flex-wrap:
+  // wrap` container above a list none of them were about. Five moved to the app
+  // menu. "Open file…" stayed, because it IS a file-list operation and it is the
+  // only route to an account file directly.
+  //
+  // The per-profile `<details>` loop became ONE flat list of the selected
+  // profile's characters, in exactly the order it had before. Account grouping
+  // was proposed and rejected: browsing is this column's whole job, it happens
+  // every session, and grouping breaks alphabetical order and makes a character
+  // harder to find. Knowing which characters share settings matters at EDIT
+  // time, and is stated at both moments it bites — the save disclosure names the
+  // siblings at the moment of writing, and `ScopeBanner` says so on every
+  // account-scoped view before the edit.
+  import { subject, accountAliasOf, noCharactersHint } from "./subject.svelte";
+  import { resolvedName } from "./filesort.svelte";
+  import { profileLabels, primaryProfileDir, profileNote } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
-  import AboutPanel from "./AboutPanel.svelte";
   import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
-  import { toast } from "./ui/toasts.svelte";
+  import type { PresetInfo } from "./api";
 
   let {
     onOpen,
-    onShowAccounts,
-    onShowBatch,
+    onPickFile,
     onCollapse,
     onOpenPreset,
-    charOpen,
-    userOpen,
-    openPresetName,
+    onShowAccounts,
   }: {
     onOpen: (path: string) => void;
-    onShowAccounts: () => void;
-    onShowBatch: () => void;
+    /** The OS file dialog lives in the shell, because the launch empty state
+     *  offers the same button and two copies of it would be two copies. */
+    onPickFile: () => void;
     onCollapse: () => void;
     onOpenPreset: (p: PresetInfo) => void;
-    charOpen: boolean;
-    userOpen: boolean;
-    openPresetName: string | null;
+    /** Kept, though §7 lists it among the toolbar's deleted props: §5.7 gives
+     *  every chip-less row a `Link…` action, and this is where it goes. Since
+     *  0.34 that is often a one-click fix rather than a manual pairing chore,
+     *  because the launcher's own proposal is waiting there with an Accept. */
+    onShowAccounts: () => void;
   } = $props();
 
-  // Naming and ordering come from filesort, shared with the batch-apply target
-  // list so the two cannot drift apart.
-  const byName = byResolvedName;
+  // The scan itself belongs to the shell now — it fires once on mount, for the
+  // store. This column used to run its own `api.discover()` beside it, so the
+  // app sent `discover_profiles` twice on every start.
+  const labels = $derived(profileLabels(subject.profiles));
+  const primaryDir = $derived(primaryProfileDir(subject.profiles));
+  const isPrimary = $derived(subject.profileDir !== null && subject.profileDir === primaryDir);
 
-  let profiles: Profile[] = $state([]);
-  let error: string | null = $state(null);
-  let aboutOpen = $state(false);
-  let namesBusy = $state(false);
-  // Hide user-made backups / anomalous names, keeping only EVE's own working
-  // file names (core_char_<id>.dat / core_user_<id>.dat). On by default.
-  let hideNonStandard = $state(true);
-  const isStandardName = (name: string) => /^core_(char|user)_\d+\.dat$/.test(name);
-
-  // Profile labels come from profiles.ts, shared with the batch-apply source
-  // picker (which faces the same ambiguity). Full path is on the tooltip.
-  // discover() returns them alphabetically; the profile EVE itself wrote last
-  // is the one actually in use, so it gets pinned on top and opened. Array.sort
-  // is stable, so the rest keep their alphabetical run.
-  const rows = $derived.by(() => {
-    const labels = profileLabels(profiles);
-    const primaryDir = primaryProfileDir(profiles);
-    return profiles
-      .map((p) => ({ p, label: labels.get(p.dir)!, primary: p.dir === primaryDir }))
-      .sort((a, b) => Number(b.primary) - Number(a.primary));
-  });
-
-  // Mirrors the per-row filter below: a profile with no character file renders
-  // no header at all (its account files are reachable via "Open file..."), so
-  // when EVERY profile is in that state the sidebar came up blank with nothing
-  // saying why. The filter lives in the template because each row needs its own
-  // sorted list; this only needs to know whether any row will draw.
-  const anyCharVisible = $derived(
-    profiles.some((p) =>
-      p.files.some((f) => f.kind === "char" && (!hideNonStandard || isStandardName(f.file_name))),
-    ),
+  // The selector carries the folder count, so it is never a secret that other
+  // folders exist — which is the accepted cost of single-select.
+  const options = $derived(
+    subject.profiles.map((p) => ({ value: p.dir, label: labels.get(p.dir) ?? p.dir })),
   );
 
-  const charIds = (ps: Profile[]) =>
-    ps
-      .flatMap((p) => p.files)
-      .filter((f) => f.kind === "char" && f.id != null)
-      .map((f) => f.id as number);
-
-  async function refresh(announce = false) {
-    try {
-      profiles = await api.discover();
-      void resolveNames(charIds(profiles));
-      void loadRoster();
-      error = null;
-      if (announce) {
-        const n = profiles.length;
-        toast(`Refreshed — ${n} profile${n === 1 ? "" : "s"}`, { variant: "success" });
-      }
-    } catch (e) {
-      error = errMessage(e);
-    }
-  }
-
-  async function refreshNamesClick() {
-    if (namesBusy) return;
-    namesBusy = true;
-    try {
-      await refreshNames(charIds(profiles));
-    } finally {
-      namesBusy = false;
-    }
-    toast("Names refreshed", { variant: "success" });
-  }
-
-  async function pickFile() {
-    const picked = await openDialog({
-      multiple: false,
-      filters: [{ name: "EVE settings", extensions: ["dat"] }],
-    });
-    if (typeof picked === "string") onOpen(picked);
-  }
-
-  refresh();
+  const openPath = $derived(
+    subject.slots.char?.status === "opened" ? subject.slots.char.path : null,
+  );
 </script>
 
 <aside class="sidebar">
   <div class="sidebar-top">
-    <div class="sidebar-actions">
-      <Button onclick={pickFile}>Open file…</Button>
-      <Button iconOnly onclick={() => refresh(true)} title="Rescan standard EVE locations">⟳</Button>
-      <Button
-        onclick={refreshNamesClick}
-        disabled={namesBusy}
-        disabledReason="Already refreshing"
-        title="Re-fetch character names from ESI">{namesBusy ? "Refreshing…" : "Refresh names"}</Button>
-      <Button onclick={onShowAccounts} title="Manage account names and character associations">
-        Accounts
-      </Button>
-      <Button onclick={onShowBatch} title="Copy settings from one file to many, backing up each target first">
-        Copy settings
-      </Button>
-      <Button onclick={() => (aboutOpen = true)} title="Version and licence">About</Button>
-    </div>
+    <Field
+      kind="select"
+      label="Profile"
+      class="profile"
+      layout="column"
+      width="100%"
+      options={options}
+      bind:value={subject.selectedProfileDir}
+      title={subject.profileDir ?? undefined} />
     <Button variant="ghost" size="sm" iconOnly title="Hide file list" onclick={onCollapse}>«</Button>
   </div>
-  <div class="toggle" title="Show only EVE's own core_char_<id>.dat files">
-    <Field kind="checkbox" label="Hide non-standard files" bind:value={hideNonStandard} />
-  </div>
-  {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
+  {#if subject.profiles.length > 0}
+    <!-- Was a `<span class="meta">` inside the profile's `<summary>`, so it
+         wrapped with the label and repeated once per folder. One selection, one
+         chip. A non-live profile is a real hazard, not a detail: editing one
+         looks like it worked and changes nothing the game reads. -->
+    <p class="status">
+      <Chip tone={isPrimary ? "ok" : "warn"} size="sm">{profileNote(isPrimary)}</Chip>
+      {#if subject.profiles.length > 1}
+        <span class="count">{subject.profiles.length} profiles</span>
+      {/if}
+    </p>
+  {/if}
+
+  {#if subject.profilesError}<InlineMessage variant="error">{subject.profilesError}</InlineMessage>{/if}
   <!-- InlineMessage rather than EmptyState, though §4.5 files these under
        "there is nothing here". Two reasons: content follows them (the preset
-       group and any profile rows), so EmptyState's centred 32px block would
+       group and any character rows), so EmptyState's centred 32px block would
        push that down, and Sidebar.spec asserts that the "no character files"
        hint is ONE element whose text also names "Open file…" — splitting it
        across EmptyState's title and description would break that. -->
-  {#if profiles.length === 0}
+  {#if subject.profiles.length === 0}
     <InlineMessage>No EVE profiles found in standard locations. Use “Open file…”.</InlineMessage>
-  {:else if !anyCharVisible}
-    <InlineMessage>
-      {hideNonStandard
-        ? "No character files with EVE's own names in these profiles. Untick “Hide non-standard files”, or use “Open file…”."
-        : "These profiles hold no character files. Use “Open file…” to open an account file directly."}
-    </InlineMessage>
+  {:else if subject.characters.length === 0}
+    <InlineMessage>{noCharactersHint()}</InlineMessage>
   {/if}
-  <PresetGroup {onOpenPreset} {charOpen} {userOpen} {openPresetName} />
-  {#each rows as { p, label, primary } (p.dir)}
-    {@const chars = p.files
-      .filter((f) => f.kind === "char" && (!hideNonStandard || isStandardName(f.file_name)))
-      .sort(byName)}
-    {#if chars.length > 0}
-      <details open={primary}>
-        <summary title={p.dir}>
-          {label}
-          <span class="meta" class:not-live={!primary}>{profileNote(primary)}</span>
-        </summary>
-        <ul>
-          {#each chars as f (f.path)}
-            {@const userId = f.id === null ? null : accountOf(f.id, accountsStore.roster)}
-            {@const alias = userId === null ? null : aliasFor(userId)}
-            <!-- The size stays INSIDE the label rather than moving to ListRow's
-                 `trailing`, so the whole row remains the hit target it is
-                 today. -->
-            <li>
-              <ListRow onclick={() => onOpen(f.path)} title={f.file_name}>
-                {resolvedName(f.kind, f.id) ?? f.file_name}
-                {#if alias}<span class="acct">· {alias}</span>{/if}
-                <span class="meta">{Math.round(f.size / 1024)} KB</span>
-              </ListRow>
-            </li>
-          {/each}
-        </ul>
-      </details>
-    {/if}
-  {/each}
+
+  <ul>
+    {#each subject.characters as f (f.path)}
+      {@const alias = accountAliasOf(f)}
+      <li>
+        <!-- The KB per row is gone from the row and folded into its tooltip,
+             beside the file name it belongs to. Every `core_char_*.dat` in a
+             profile is within a few KB of every other, so the number never
+             separated two rows, never indicated health, and never answered a
+             question anyone brought to the app — pure per-row noise in the one
+             list that has to be scannable. Sizes that DO answer a question stay
+             where they do it: `bytes_written` in the save result, and per-backup
+             size in History. -->
+        <ListRow
+          onclick={() => onOpen(f.path)}
+          title="{f.file_name} · {Math.round(f.size / 1024)} KB">
+          {#snippet leading()}
+            <span class="dot" class:open={f.path === openPath} aria-hidden="true">●</span>
+          {/snippet}
+          {resolvedName(f.kind, f.id) ?? f.file_name}
+          <!-- Chip and action both in `trailing`, NOT beside the name. This is
+               the narrow column, and ListRow's label ellipsises: with the chip
+               inside the label a long name simply clipped it away, which turned
+               "no chip means no account" from a rule into a coin flip. Only the
+               name truncates now; the chip is `nowrap` and always drawn.
+
+               A Chip is a CONFIRMED pairing and nothing else. No chip means no
+               account — including for a character the launcher merely proposes,
+               which is truthful, because a proposed character can do exactly
+               what an unpaired one can until someone accepts it. -->
+          {#snippet trailing()}
+            {#if alias}
+              <Chip size="sm">{alias}</Chip>
+            {:else}
+              <Button
+                variant="ghost"
+                size="sm"
+                class="link-btn"
+                title="Pair this character with an account"
+                onclick={onShowAccounts}>Link…</Button>
+            {/if}
+          {/snippet}
+        </ListRow>
+      </li>
+    {/each}
+  </ul>
+
+  <PresetGroup
+    {onOpenPreset}
+    charOpen={subject.slots.char?.status === "opened"}
+    userOpen={subject.slots.user?.status === "opened"}
+    openPresetName={subject.preset} />
+
+  <div class="foot">
+    <div class="toggle" title="Show only EVE's own core_char_<id>.dat files">
+      <Field kind="checkbox" label="Hide non-standard files" bind:value={subject.hideNonStandard} />
+    </div>
+    <Button onclick={onPickFile}>Open file…</Button>
+  </div>
 </aside>
 
-{#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
-
 <style>
-  .toggle {
-    padding: var(--s1) 0 var(--s2);
-    cursor: pointer;
-  }
-  .acct { color: var(--text-muted); font-size: var(--t-caption); margin: 0 var(--s1); }
-  /* A non-live profile is a real hazard, not a detail: editing one looks like
-     it worked and changes nothing the game reads. --warn is declared, so the
-     old `var(--warn, #d08770)` fallback was dead code pointing at a fifth
-     amber. */
-  .meta.not-live { color: var(--warn); }
-  /* Collapse chevron pinned to the sidebar's inner (right) edge; the toolbar
-     takes the remaining width and wraps within it. */
   .sidebar-top {
     display: flex;
     align-items: flex-start;
     gap: var(--s2);
     margin-bottom: var(--s2);
   }
-  .sidebar-top .sidebar-actions {
+  .sidebar-top :global(.profile) {
     flex: 1;
-    margin-bottom: 0;
+    min-width: 0;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: 0 0 var(--s2);
+  }
+  .count {
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+  }
+  ul {
+    list-style: none;
+    margin: var(--s1) 0;
+    padding: 0;
+  }
+  li {
+    list-style: none;
+  }
+  /* The open marker occupies its slot on every row, so a row does not shift
+     sideways when it becomes the open one. */
+  .dot {
+    color: transparent;
+    font-size: var(--t-caption);
+  }
+  .dot.open {
+    color: var(--accent);
+  }
+  /* Recedes by COLOUR until the row is hovered, never by hiding: `.mini`'s
+     `opacity: 0` shipped four permanently-invisible but still-clickable buttons,
+     and Phase 1 retired that pattern. Most rows in a real install are unpaired,
+     so at full strength this reads as a column of buttons rather than a column
+     of names. */
+  li :global(.link-btn) {
+    color: var(--text-muted);
+  }
+  li :global(.row:hover .link-btn) {
+    color: var(--accent);
+  }
+  .foot {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    padding-top: var(--s2);
+    border-top: 1px solid var(--border);
+  }
+  .toggle {
+    cursor: pointer;
   }
 </style>

@@ -6,12 +6,21 @@
   import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
-  import ScopeBanner from "./ui/ScopeBanner.svelte";
+  import { accel } from "./keys";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, sharedLabel = "" }:
+  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
-      onShowAccounts?: () => void; onShowBatch?: () => void; sharedLabel?: string } = $props();
+      onShowAccounts?: () => void; onShowBatch?: () => void;
+      /** Set so the shell's Ctrl+F focuses THIS view's box while it is active,
+       *  instead of being suppressed and then doing nothing. */
+      focusSearch?: () => void } = $props();
+
+  let searchInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  focusSearch = () => {
+    searchInput?.focus();
+    if (searchInput instanceof HTMLInputElement) searchInput.select();
+  };
 
   let binds = $state<Keybinds | null>(null);
   let error = $state<string | null>(null);
@@ -107,14 +116,15 @@
     {/snippet}
   </EmptyState>
 {:else if binds}
-  <ScopeBanner label={sharedLabel ?? ""} />
-  <!-- Its own class, not the global `.searchbar`: that rule belongs to the
-       tree's search bar and is deleted with it. -->
+  <!-- The scope banner is the shell's now, rendered once for all four
+       account-scoped views. -->
+  <!-- Its own class, not the global `.searchbar`: that rule belonged to the
+       tree's search bar and is renamed `.raw-search` with it. -->
   <div class="search-row">
-    <!-- No "(Ctrl+F)" hint: that shortcut still opens the Tree search from the
-         page-level handler. Wiring it per-view is being done on the layout
-         branch; this placeholder gains the hint when that lands. -->
-    <SearchField verb="search" nouns="commands and keys" bind:value={query} class="search" />
+    <!-- The Ctrl+F hint this placeholder was waiting for. `focusSearch` is one
+         bindable the ACTIVE view sets, so the shortcut now reaches this box
+         instead of being suppressed and doing nothing. -->
+    <SearchField verb="search" nouns="commands and keys" shortcut={accel("F")} bind:element={searchInput} bind:value={query} class="search" />
     <span class="meta">Click a binding, then press the combination you want.</span>
   </div>
   {#each grouped as [group, entries] (group)}
