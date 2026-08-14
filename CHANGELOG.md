@@ -21,6 +21,15 @@ All notable changes to this project are documented here. The format follows
 - **The Accounts panel now names the characters it is about to pair** instead of counting them, and offering one says "Accept" rather than "Accept all".
 - A calibration keeps running if you close the Accounts panel to go and use EVE, and pressing Calibrate again won't restart it behind your back.
 - "Keep mine" and the pairings your launcher offers are remembered for the whole session, not just until you close the panel.
+- **Overview is one list of tabs**, and everything a tab has — its name, its colour, its weight, which window it is in, and deleting it — is on the tab's own row.
+- Layout gained a status bar under the canvas, and its rows a visible ⋯ menu instead of right-click only.
+- The Raw tree gained a selection and a properties panel, and the properties column is now drawn only on the tabs that have something to show.
+- **Seventy-three blocking pop-ups are down to six.** Anything the app can undo just happens and tells you in a passing message; the six that survive are the ones that write or delete something no backup can bring back.
+- **A failure now appears next to the control that failed**, in plain words, instead of in a dialog that names none of them. The diagnostic code moved to the tooltip.
+- **One Save writes both your files and says so once**, naming the character and the account rather than two file names. The byte count and backup path moved to History.
+- **Undo.** Ctrl+Z takes back the last change, Ctrl+Shift+Z or Ctrl+Y puts it back, and one press undoes one action even when that action changed both files.
+- Press Ctrl+K to search characters, presets and commands; the menu and every search box now show their own shortcut, and Ctrl+/ lists them all.
+- History lists the five most recent backups per file, with the rest one click away.
 
 ### Fixed
 - **Four buttons that were invisible but still clickable are now visible.** Clearing an autofill list, removing an autofill entry, resetting a keybinding to EVE's default, and clearing the tree search.
@@ -29,11 +38,19 @@ All notable changes to this project are documented here. The format follows
 - **Save no longer disappears when you open Accounts or Copy settings** with unsaved changes.
 - **The backups list no longer silently switches to a different file** when you change tab, and the window title no longer changes with it either.
 - **"Accept all" in the Accounts view no longer depends on which tab you were on** when you opened it.
-- Ctrl+F now works on the Keybinds and Autofill tabs, where it used to do nothing at all.
+- **Ctrl+F now reaches whichever search box the tab you are on has.** It used to do nothing at all on most of them, and nothing on Raw once you had visited Layout.
 - The character list no longer repeats a character once per profile folder.
 - **Copy settings now names the file it is about to rewrite behind you**, and catches the case it never could before: an account file being written by a copy onto one of its other characters.
 - **After a copy, an affected file you have open is reloaded** — unless you have unsaved edits in it, in which case it says so instead of quietly discarding them.
 - **Cancelling a calibration now actually discards it.** It used to leave the measurement behind, where the next calibration would silently compare against it.
+- **"Delete tab" no longer claims it cannot be undone.** It always could — Discard put it back, and now Ctrl+Z does too.
+- **Discarding your changes, or restoring a backup, now updates the Autofill, Keybinds and Probes tabs.** They kept showing the old values until you switched tabs and back.
+- **A copy that fails part-way no longer leaves half of itself applied.** Copying columns onto a read-only character used to write the order and then report failure.
+- **Clicking a tab while a file is still opening is no longer undone** a moment later.
+- Confirming a backup restore no longer closes the History panel out from under you.
+- The window filter on Layout was squeezed to nothing and could not be seen at all.
+- Columns in the HUD, window and overview-filter panels now line up instead of each row choosing its own position.
+- The profile list no longer labels a folder "in use by EVE" or not. It was never about a running client, and its other half was usually untrue.
 
 ## [0.34.0] - 2026-08-13
 
