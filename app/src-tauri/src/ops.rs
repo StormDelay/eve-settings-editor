@@ -389,11 +389,35 @@ pub fn begin_capture(state: &AppState, roots: &[PathBuf]) {
     *state.capture.lock().unwrap() = Some(snap);
 }
 
-/// Diff the current files against the capture baseline (empty if none set).
+/// Discard the guided-capture baseline. Cancelling the wizard — or finishing
+/// it — must leave nothing behind for the next `resolve_capture` to diff
+/// against.
+///
+/// No `Result`: it writes `None` into a `Mutex` the caller already owns and
+/// cannot fail. A poisoned mutex panics on `.unwrap()` exactly as
+/// `begin_capture` and every other `AppState` accessor in this file already
+/// does; making this the one fallible-looking capture command would force a
+/// `catch` at a call site with nothing to do about it.
+pub fn clear_capture(state: &AppState) {
+    *state.capture.lock().unwrap() = None;
+}
+
+/// Diff the current files against the capture baseline.
 /// Excludes both open documents from the "after" snapshot too, so they never
 /// enter the diff (symmetric with `begin_capture`'s baseline exclusion).
 pub fn resolve_capture(state: &AppState, roots: &[PathBuf]) -> accounts::CaptureResult {
-    let baseline = state.capture.lock().unwrap().clone().unwrap_or_default();
+    // No baseline is NOT an empty baseline. `capture_diff` reads a path the
+    // baseline does not hold as "appeared since baseline", so diffing against
+    // `default()` reports every file on disk as changed — and in a profile
+    // holding one character and one account file that is a confident, entirely
+    // fabricated `detected` pairing, one confirm away from the store.
+    //
+    // Unreachable before `clear_capture` existed, because the only caller is the
+    // wizard's Done button and that button only exists once `begin_capture` has
+    // run. Adding a way to empty the slot is what makes it reachable.
+    let Some(baseline) = state.capture.lock().unwrap().clone() else {
+        return accounts::CaptureResult::default();
+    };
     let profiles = discover(roots);
     let mut after = accounts::snapshot_from_profiles(&profiles, None);
     for p in open_paths(state) {
@@ -1197,6 +1221,42 @@ mod tests {
 
         let r = resolve_capture(&state, &[root]);
         assert_eq!(r.detected, Some((90000001, 987654)));
+    }
+
+    /// The two halves of §4.4: the slot can be emptied, and an empty slot means
+    /// "nothing to compare against" rather than "everything changed".
+    ///
+    /// The last two assertions are the ones that matter. `capture_diff` counts
+    /// any path the baseline does not hold as advanced, so without the early
+    /// return in `resolve_capture` a discarded baseline reports BOTH files as
+    /// changed — which in a one-char-one-account profile is a confident, wholly
+    /// invented `detected` pairing, one confirm away from being written.
+    #[test]
+    fn clear_capture_discards_the_baseline_and_resolve_then_detects_nothing() {
+        let root = std::env::temp_dir().join(format!("app-cap-clear-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let sdir = root.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&sdir).unwrap();
+        let cf = sdir.join("core_char_90000001.dat");
+        let uf = sdir.join("core_user_987654.dat");
+        fs::write(&cf, b"x").unwrap();
+        fs::write(&uf, b"x").unwrap();
+
+        let state = AppState::new();
+        begin_capture(&state, std::slice::from_ref(&root));
+        assert!(state.capture.lock().unwrap().is_some(), "the baseline is set");
+
+        clear_capture(&state);
+        assert!(state.capture.lock().unwrap().is_none(), "the slot is empty");
+
+        // Both files advance after the discarded baseline.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(&cf, b"xy").unwrap();
+        fs::write(&uf, b"xy").unwrap();
+
+        let r = resolve_capture(&state, &[root]);
+        assert_eq!(r.detected, None, "no baseline must not invent a pairing");
+        assert!(r.changed_chars.is_empty() && r.changed_users.is_empty());
     }
 
     #[test]

@@ -17,6 +17,10 @@ All notable changes to this project are documented here. The format follows
 - Accounts, Copy settings, About, Refresh names and Rescan moved into the menu button at the top left.
 - Opening a character now lands you on Layout or Overview rather than on the raw data tree, which is renamed "Raw" and sits last.
 - Press Ctrl+K to jump to any character by typing part of its name or its account's.
+- **Accounts and Copy settings open over the editor instead of replacing it**, and close with Escape, a close button, or a click outside. Everything you had open — your tab, your selection, your search, even your scroll position — is exactly where you left it.
+- **The Accounts panel now names the characters it is about to pair** instead of counting them, and offering one says "Accept" rather than "Accept all".
+- A calibration keeps running if you close the Accounts panel to go and use EVE, and pressing Calibrate again won't restart it behind your back.
+- "Keep mine" and the pairings your launcher offers are remembered for the whole session, not just until you close the panel.
 
 ### Fixed
 - **Four buttons that were invisible but still clickable are now visible.** Clearing an autofill list, removing an autofill entry, resetting a keybinding to EVE's default, and clearing the tree search.
@@ -27,6 +31,9 @@ All notable changes to this project are documented here. The format follows
 - **"Accept all" in the Accounts view no longer depends on which tab you were on** when you opened it.
 - Ctrl+F now works on the Keybinds and Autofill tabs, where it used to do nothing at all.
 - The character list no longer repeats a character once per profile folder.
+- **Copy settings now names the file it is about to rewrite behind you**, and catches the case it never could before: an account file being written by a copy onto one of its other characters.
+- **After a copy, an affected file you have open is reloaded** — unless you have unsaved edits in it, in which case it says so instead of quietly discarding them.
+- **Cancelling a calibration now actually discards it.** It used to leave the measurement behind, where the next calibration would silently compare against it.
 
 ## [0.34.0] - 2026-08-13
 

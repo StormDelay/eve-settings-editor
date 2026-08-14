@@ -7,7 +7,7 @@ import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/svelte";
 import { resetSubject } from "../subject.svelte";
 import { resetNames } from "../names.svelte";
-import { resetRoster } from "../accounts.svelte";
+import { resetRoster, resetAccountsSession } from "../accounts.svelte";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => calls.dispatch(cmd, args),
@@ -73,6 +73,10 @@ afterEach(() => {
   // working around.
   resetNames();
   resetRoster();
+  // The capture and launcher runes, for the same reason. The Accounts sheet is
+  // dismissable now, so these deliberately outlive an unmount — which is exactly
+  // what makes them leak between tests without this.
+  resetAccountsSession();
 });
 
 export interface InvokeCall {
