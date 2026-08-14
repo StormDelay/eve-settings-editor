@@ -107,6 +107,39 @@ test("each group's Restore targets that group's slot", async () => {
 });
 
 /**
+ * A long history for one file must not bury the other file's group.
+ *
+ * History renders one group per open slot, character first. With thirteen
+ * character backups the account's group sat below the fold of a scrolling
+ * popover — and since saving from Probes writes only the ACCOUNT file, the group
+ * that had just changed was the one you could not see. It read as "the save
+ * added nothing".
+ */
+test("a file with many backups shows only its most recent, so both groups fit", async () => {
+  subject.slots.char = opened("core_char_950.dat");
+  subject.slots.user = opened("core_user_140.dat");
+  calls.stub("list_file_backups", (args: Record<string, unknown> | undefined) =>
+    args?.slot === "char"
+      ? Array.from({ length: 13 }, (_, i) =>
+          backup(`core_char_950.dat.2026-08-${String(14 - i).padStart(2, "0")}T100000Z.bak`),
+        )
+      : [backup("core_user_140.dat.2026-08-14T112028Z.bak")],
+  );
+  mount();
+
+  const box = await screen.findByRole("dialog", { name: "History" });
+  // Five of thirteen, and the rest behind a control that names how many.
+  await waitFor(() => expect(within(box).getAllByRole("button", { name: "Restore" })).toHaveLength(6));
+  expect(within(box).getByRole("button", { name: "8 older" })).toBeTruthy();
+
+  // The account's own group — the one a Probes save writes — is present.
+  expect(within(box).getByText(/2026-08-14T112028Z/)).toBeTruthy();
+
+  await fireEvent.click(within(box).getByRole("button", { name: "8 older" }));
+  await waitFor(() => expect(within(box).getAllByRole("button", { name: "Restore" })).toHaveLength(14));
+});
+
+/**
  * Confirming inside the dialog must not dismiss the popover underneath it.
  *
  * A native `ask()` raised an OS window and produced no DOM pointer events at
