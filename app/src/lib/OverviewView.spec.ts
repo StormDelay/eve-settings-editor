@@ -350,6 +350,39 @@ describe("the view menu", () => {
   });
 });
 
+/**
+ * Overview is the SECOND view that fills both shell columns, and it reaches the
+ * inspector column the same way LayoutView does: `display: contents` on the
+ * root, so its two children stop participating in its layout and become grid
+ * items of `.shell`, landing in columns 2 and 3 through the `.work` /
+ * `.inspector` rules in `app.css`.
+ *
+ * That holds only while the root has EXACTLY those two element children. Wrap
+ * them in a scroller, or add a third sibling, and the tab list silently moves
+ * into the inspector's column with nothing failing.
+ */
+describe("the shell grid contract", () => {
+  test("the root renders exactly the work area and the inspector, as siblings", async () => {
+    calls.stub("overview_columns", columns(tab(0, "PvP")));
+    mount();
+    await findRow("PvP");
+
+    const root = document.querySelector(".overview-view") as HTMLElement;
+    const kids = Array.from(root.children);
+    expect(kids).toHaveLength(2);
+    expect(kids[0].classList.contains("work")).toBe(true);
+    expect(kids[1].classList.contains("inspector")).toBe(true);
+  });
+
+  // A view that declares an inspector always renders it — an EmptyState when
+  // there is nothing to show, never an absent column.
+  test("the inspector is there even with no account file open", () => {
+    mount({ userOpen: false, charId: null });
+    const root = document.querySelector(".overview-view") as HTMLElement;
+    expect(root.children[1].classList.contains("inspector")).toBe(true);
+  });
+});
+
 // Add window writes the account grouping AND the char-file geometry. Miss the
 // second flag and the new window's position is silently dropped on save.
 test("+ Window dirties both slots and hands the new window up", async () => {
