@@ -23,6 +23,25 @@ export function inAField(t: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || el.isContentEditable === true;
 }
 
+/**
+ * Scroll a search field into view, focus it, and select what is in it.
+ *
+ * The scroll is the part that is easy to leave out and the part that was
+ * missing: Layout's window filter lives at the top of a tall inspector, so
+ * `Ctrl+F` focused a box that was scrolled off screen — the shortcut worked and
+ * looked like it had done nothing. Focusing something invisible is the same
+ * fault as reporting an error somewhere nobody is looking.
+ *
+ * `block: "nearest"` so a field already on screen does not jump.
+ */
+export function revealAndFocus(el: HTMLInputElement | HTMLSelectElement | undefined): void {
+  if (!el) return;
+  el.scrollIntoView?.({ block: "nearest" });
+  el.focus();
+  // `select` only exists on an input; Field is typed for either control.
+  if (el instanceof HTMLInputElement) el.select();
+}
+
 /** `Ctrl` on Windows and Linux, `⌘` on macOS — matching what `accel()` PRINTS.
  *  The app already tested both here; only the rendering half was missing. */
 const primary = (e: KeyboardEvent) => e.ctrlKey || e.metaKey;
