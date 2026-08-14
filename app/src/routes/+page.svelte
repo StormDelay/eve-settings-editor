@@ -1,6 +1,7 @@
 <script lang="ts">
   import Sidebar from "$lib/Sidebar.svelte";
   import TreeNode from "$lib/TreeNode.svelte";
+  import RawInspector from "$lib/RawInspector.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
   import ContextBar from "$lib/ContextBar.svelte";
   import ViewTabs from "$lib/ViewTabs.svelte";
@@ -57,6 +58,16 @@
   // Renamed from `backupsOpen`. The right column is no longer "backups" — it is
   // properties of the current selection in the current view, on every tab.
   let inspectorOpen = $state(true);
+  // The Raw tree's selection, held as a PATH rather than as the node: an edit
+  // rebuilds the tree, and a held node would go on showing its old value.
+  let selectedPath = $state<NodePath | null>(null);
+  // A path is an index route, not a name, so the SAME path names a different
+  // node in a different file. Dropped whenever the tree underneath changes.
+  $effect(() => {
+    void treeFile;
+    void current;
+    selectedPath = null;
+  });
   let aboutOpen = $state(false);
   let switcherOpen = $state(false);
   // Which file the Raw view shows; a Raw-local switch flips it to the account
@@ -94,6 +105,23 @@
   // The four views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
+  // The views that have something to inspect, and the whole of the rule.
+  //
+  // Phase 2 drew this column on EVERY tab, reasoning that one which comes and
+  // goes is the same fault as a tab strip that changes membership. Six weeks of
+  // it on screen says otherwise: on Autofill, Keybinds and Probes it only ever
+  // said "Select something to see its properties", because there is nothing to
+  // select in the first, the second's selection is transient and its capture bar
+  // is already beside the row it arms, and the third already has a selection
+  // rail and an editor. A pane that says "nothing" forever teaches people the
+  // pane is broken, and costs the view a fifth of the window to do it.
+  //
+  // Overview had one and lost it too: every property of a tab fits on the tab.
+  const INSPECTOR_VIEWS: View[] = ["layout", "raw"];
+  const hasInspector = $derived(current?.status === "opened" && INSPECTOR_VIEWS.includes(view));
+  // Layout supplies its own through `display: contents`, so the shell must not
+  // draw one over it. Raw's is the shell's own.
+  const viewOwnsInspector = $derived(hasInspector && view === "layout");
   const scopeLabel = $derived(
     sheet === null && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
       ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
@@ -429,7 +457,7 @@
   {/if}
 
   {#if current === null}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <div class="scroll">
         <EmptyState
           title="Open a character to begin"
@@ -466,7 +494,7 @@
       </div>
     </div>
   {:else if current.status !== "opened"}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <div class="scroll">
         <InlineMessage variant="error">Cannot edit: {current.message} (offset {current.offset})</InlineMessage>
         <pre class="hex">{current.hex_preview}</pre>
@@ -484,34 +512,36 @@
       refreshToken={subject.savedAt}
       userOpen={subject.slots.user?.status === "opened"}
       bind:selectedId={selectedWindowId}
+      onCollapseInspector={() => (inspectorOpen = false)}
       onReveal={revealInTree}
       onDirty={(slot) => (subject.dirty[slot] = true)}
       sharedNames={subject.sharedNames}
       bind:focusSearch={viewFocusSearch} />
+  {:else if view === "overview"}
+    <!-- Reaches across both columns by the same `display: contents` route
+         LayoutView uses, but with ONE child rather than two: a tab's properties
+         are docked under the list that selects it. It renders the scope banner
+         itself for that reason. -->
+    <OverviewView
+      {scopeLabel}
+      userOpen={subject.slots.user?.status === "opened"}
+      userId={subject.userId}
+      charId={subject.charId}
+      charOpen={subject.slots.char?.status === "opened"}
+      refreshToken={subject.savedAt}
+      onUserDirty={() => (subject.dirty.user = true)}
+      onCharDirty={() => (subject.dirty.char = true)}
+      onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
+      onShowAccounts={() => (sheet = "accounts")} />
   {:else}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <!-- One of ScopeBanner's two shell-owned call sites. Scope has to be
            legible BEFORE the edit, not only at save time; the other is inside
            the save disclosure. What went away is the duplication — four
            components taking a `sharedLabel` prop and each rendering its own
            byte-identical paragraph and CSS block. -->
       <ScopeBanner label={scopeLabel} compact />
-      {#if view === "overview"}
-        <div class="scroll">
-          <OverviewView
-            userOpen={subject.slots.user?.status === "opened"}
-            userId={subject.userId}
-            charId={subject.charId}
-            charOpen={subject.slots.char?.status === "opened"}
-            characters={subject.accountCharacters}
-            refreshToken={subject.savedAt}
-            onLoadCharacter={loadCharacter}
-            onUserDirty={() => (subject.dirty.user = true)}
-            onCharDirty={() => (subject.dirty.char = true)}
-            onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
-            onShowAccounts={() => (sheet = "accounts")} />
-        </div>
-      {:else if view === "autofill"}
+      {#if view === "autofill"}
         <div class="scroll">
           <AutofillView
             userOpen={subject.slots.user?.status === "opened"}
@@ -569,6 +599,8 @@
               {searching}
               revealPath={reveal?.path ?? null}
               revealNonce={reveal?.n ?? 0}
+              {selectedPath}
+              onSelect={(n) => (selectedPath = n.path)}
               onReveal={revealInTree}
               onEdit={handleEdit}
               onRemove={handleRemove}
@@ -581,23 +613,39 @@
     </div>
   {/if}
 
-  <!-- The inspector column exists on EVERY tab. A column that is there on one
-       tab and gone on the others is the same class of fault as a tab strip that
-       changes membership, so this is a visible promise rather than a collapsed
-       column — and anyone who wants the width back rails it. Layout supplies its
-       own through `display: contents`, so the shell does not draw one over it. -->
-  {#if !inspectorOpen}
+  <!-- Drawn only where there is something to inspect. A view without one takes
+       the full width through `.work.wide` — not even the rail, which would
+       leave a 1.5rem strip of nothing beside a view that has no use for it. -->
+  {#if !hasInspector}
+    <!-- nothing -->
+  {:else if !inspectorOpen}
     <button class="rail rail-right" onclick={() => (inspectorOpen = true)}
       title="Show properties" aria-label="Show properties">&laquo;</button>
   <!-- No longer conditioned on `sheet`: the editor is never unmounted now, so
        Layout still supplies its own inspector underneath an open sheet. -->
-  {:else if !(view === "layout" && current?.status === "opened")}
+  {:else if !viewOwnsInspector}
     <aside class="inspector">
       <div class="inspector-head">
         <Button variant="ghost" size="sm" iconOnly title="Hide properties"
           onclick={() => (inspectorOpen = false)}>&raquo;</Button>
       </div>
-      <EmptyState title="Select something to see its properties." />
+      <!-- Raw is the third view with an inspector, and the strongest case in the
+           app: every one of these fields was invisible, hover-only, or encoded
+           as a colour. Autofill, Keybinds and Probes declare none — there is
+           nothing to select in the first, the second's selection is transient
+           and its capture bar is already in the right place, and the third
+           already has a selection rail and an editor. -->
+      {#if view === "raw" && current?.status === "opened"}
+        <RawInspector
+          root={found?.tree ?? null}
+          path={selectedPath}
+          file={treeFile}
+          onReveal={revealInTree}
+          onRemove={handleRemove}
+          onInsertRequest={(n) => (insertTarget = n)} />
+      {:else}
+        <EmptyState title="Select something to see its properties." />
+      {/if}
     </aside>
   {/if}
 
@@ -663,11 +711,6 @@
     margin: var(--s3) 0 0;
     color: var(--text-muted);
     font-size: var(--t-body);
-  }
-  .inspector-head {
-    display: flex;
-    justify-content: flex-start;
-    padding: var(--s1);
   }
   /* Its own row between the tabs and the work area, spanning both the work
      column and the inspector — it is about the documents, not about a view. */

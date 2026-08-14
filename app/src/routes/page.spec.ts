@@ -72,7 +72,14 @@ async function mount(profiles: Profile[], roster: AccountRoster = { accounts: []
   // backend can return — stub the ones the shell and its views fire on mount
   // rather than teaching them to defend against an impossible reply.
   calls.stub("list_file_backups", []);
-  calls.stub("overview_columns", { tabs: [], columns: [] });
+  // `columns` was never a field of OverviewColumns and `windows` was missing —
+  // the tab list reads the latter, so the lie surfaced as an unhandled throw.
+  calls.stub("overview_columns", {
+    tabs: [],
+    windows: [],
+    presets: [],
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+  });
   // Both the app menu's proposal count and the Accounts view read this.
   calls.stub("launcher_proposals", []);
   // This file now mounts the Layout and Probes views — Phase 2 made every tab
@@ -529,5 +536,90 @@ describe("the launch empty state", () => {
     const inWork = await within(work).findByText(/no character files/i);
     const inSidebar = within(sidebar()).getByText(/no character files/i);
     expect(inWork.textContent).toBe(inSidebar.textContent);
+  });
+});
+
+// The context bar carried TWO controls running `switcherOpen = !switcherOpen`:
+// the subject button and a "Search or run a command" button beside it. Same
+// panel, same toggle, and the panel anchors to the SUBJECT button — so a click
+// at the far right of the bar opened a popup at the far left. One door now, and
+// the shortcut is written on it.
+describe("opening the subject switcher", () => {
+  const panel = () => screen.queryByPlaceholderText(/search characters and views/i);
+
+  test("the subject button opens it, and it is the only button that does", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    expect(panel()).toBeNull();
+    expect(screen.queryByRole("button", { name: /search or run a command/i })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: /no character open/i }));
+    await waitFor(() => expect(panel()).toBeTruthy());
+  });
+
+  test("so does the shortcut it advertises", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await waitFor(() => expect(panel()).toBeTruthy());
+  });
+});
+
+/**
+ * The inspector column is drawn only where there is something to inspect.
+ *
+ * Phase 2 drew it on every tab and Phase 4 kept that for a while: a column that
+ * comes and goes is the same class of fault as a tab strip that changes
+ * membership. What settled it was seeing it — on Autofill, Keybinds and Probes
+ * it only ever said "Select something to see its properties", which is a pane
+ * teaching people it is broken while taking a fifth of the window to do it.
+ *
+ * Layout is absent from the assertions below on purpose: it supplies its own
+ * pane through `display: contents`, so the shell must NOT draw one, and
+ * `LayoutView.spec.ts` owns that half.
+ */
+describe("which views get an inspector", () => {
+  const shellAside = () => document.querySelector("aside.inspector");
+  const work = () => document.querySelector(".work") as HTMLElement;
+
+  const selected = (tab: string) => screen.getByRole("tab", { name: tab }).getAttribute("aria-selected");
+
+  /** Open the character AND wait for the view resolution that follows it.
+   *  `openFile` sets `view = resolveView(...)` after several awaits, so a tab
+   *  clicked before that lands is silently undone by it. */
+  async function openChar() {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(selected("Layout")).toBe("false"));
+  }
+
+  async function on(tab: string) {
+    await fireEvent.click(screen.getByRole("tab", { name: tab }));
+    await waitFor(() => expect(selected(tab)).toBe("true"));
+  }
+
+  test("Raw has one, and it is the shell's", async () => {
+    await openChar();
+    await on("Raw");
+    await waitFor(() => expect(shellAside()).toBeTruthy());
+    expect(work().classList.contains("wide")).toBe(false);
+  });
+
+  for (const tab of ["Autofill", "Keybinds", "Probes", "Overview"]) {
+    test(`${tab} has none, and takes the width instead`, async () => {
+      await openChar();
+      await on(tab);
+      await waitFor(() => expect(shellAside()).toBeNull());
+      // Overview draws its own `.work`, and it is wide for the same reason.
+      expect(work().classList.contains("wide")).toBe(true);
+      // Nor a rail, which would be 1.5rem of nothing beside a view with no use
+      // for the column.
+      expect(document.querySelector(".rail-right")).toBeNull();
+    });
+  }
+
+  test("with no file open there is nothing to inspect either", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    expect(shellAside()).toBeNull();
+    expect(work().classList.contains("wide")).toBe(true);
   });
 });

@@ -2,6 +2,11 @@
   export interface MenuItem {
     label: string;
     run: () => void;
+    /** Present but inert. "Hiding becomes disabling with a reason" — a command
+        that vanishes when the backend would refuse it teaches nothing, and its
+        row moves under the cursor. `hint` is that reason, as a tooltip. */
+    disabled?: boolean;
+    hint?: string;
   }
 </script>
 
@@ -42,7 +47,8 @@
   ariaLabel="Actions"
   class="context-menu">
   {#each items as item (item.label)}
-    <button role="menuitem" onclick={() => pick(item)}>{item.label}</button>
+    <button role="menuitem" disabled={item.disabled} title={item.hint}
+      onclick={() => pick(item)}>{item.label}</button>
   {/each}
 </Popover>
 
@@ -68,9 +74,13 @@
     white-space: nowrap;
   }
   /* Tone on its own dim ground, not dark text on a saturated fill (§3.4). */
-  button:hover {
+  button:not(:disabled):hover {
     background: var(--accent-dim);
     color: var(--accent);
+  }
+  button:disabled {
+    opacity: var(--o-disabled);
+    cursor: default;
   }
   button:focus-visible {
     outline: 2px solid var(--accent);
