@@ -105,16 +105,23 @@
   // The four views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
-  // Layout supplies its own inspector through `display: contents`, so the shell
-  // does not draw one over it. Every view that neither supplies nor fills gets
-  // the shell's placeholder, because the column is a promise: one that is there
-  // on one tab and gone on the next is the same fault as a tab strip that
-  // changes membership.
-  const viewOwnsInspector = $derived(current?.status === "opened" && view === "layout");
-  // Overview is the exception, by the owner's call: it docks a tab's properties
-  // under the list that selects the tab, so it spans both columns and there is
-  // no third one to fill.
-  const viewFillsWidth = $derived(current?.status === "opened" && view === "overview");
+  // The views that have something to inspect, and the whole of the rule.
+  //
+  // Phase 2 drew this column on EVERY tab, reasoning that one which comes and
+  // goes is the same fault as a tab strip that changes membership. Six weeks of
+  // it on screen says otherwise: on Autofill, Keybinds and Probes it only ever
+  // said "Select something to see its properties", because there is nothing to
+  // select in the first, the second's selection is transient and its capture bar
+  // is already beside the row it arms, and the third already has a selection
+  // rail and an editor. A pane that says "nothing" forever teaches people the
+  // pane is broken, and costs the view a fifth of the window to do it.
+  //
+  // Overview had one and lost it too: every property of a tab fits on the tab.
+  const INSPECTOR_VIEWS: View[] = ["layout", "raw"];
+  const hasInspector = $derived(current?.status === "opened" && INSPECTOR_VIEWS.includes(view));
+  // Layout supplies its own through `display: contents`, so the shell must not
+  // draw one over it. Raw's is the shell's own.
+  const viewOwnsInspector = $derived(hasInspector && view === "layout");
   const scopeLabel = $derived(
     sheet === null && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
       ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
@@ -450,7 +457,7 @@
   {/if}
 
   {#if current === null}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <div class="scroll">
         <EmptyState
           title="Open a character to begin"
@@ -487,7 +494,7 @@
       </div>
     </div>
   {:else if current.status !== "opened"}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <div class="scroll">
         <InlineMessage variant="error">Cannot edit: {current.message} (offset {current.offset})</InlineMessage>
         <pre class="hex">{current.hex_preview}</pre>
@@ -527,7 +534,7 @@
       onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
       onShowAccounts={() => (sheet = "accounts")} />
   {:else}
-    <div class="work">
+    <div class="work" class:wide={!hasInspector}>
       <!-- One of ScopeBanner's two shell-owned call sites. Scope has to be
            legible BEFORE the edit, not only at save time; the other is inside
            the save disclosure. What went away is the duplication — four
@@ -606,14 +613,11 @@
     </div>
   {/if}
 
-  <!-- The inspector column exists on EVERY tab. A column that is there on one
-       tab and gone on the others is the same class of fault as a tab strip that
-       changes membership, so this is a visible promise rather than a collapsed
-       column — and anyone who wants the width back rails it. Layout supplies its
-       own through `display: contents`, so the shell does not draw one over it. -->
-  {#if viewFillsWidth}
-    <!-- Nothing: Overview's work area spans this column too. Not even the rail,
-         which would leave a 1.5rem strip of nothing over the view. -->
+  <!-- Drawn only where there is something to inspect. A view without one takes
+       the full width through `.work.wide` — not even the rail, which would
+       leave a 1.5rem strip of nothing beside a view that has no use for it. -->
+  {#if !hasInspector}
+    <!-- nothing -->
   {:else if !inspectorOpen}
     <button class="rail rail-right" onclick={() => (inspectorOpen = true)}
       title="Show properties" aria-label="Show properties">&laquo;</button>

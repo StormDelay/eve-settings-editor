@@ -1189,14 +1189,22 @@ cosmetic — which is the same lesson Phase 3 recorded.
    shell-grid-contract test LayoutView has. §7.6's local-grid fallback was not
    needed and was not built.
 
-2. **The DoD's "Autofill, Keybinds and Probes … get the full width" is NOT met,
-   deliberately.** Phase 2 shipped the inspector column on *every* tab with a
-   written rationale — a column present on one tab and gone on the next is the
-   same fault as a tab strip that changes membership — and §7's rule contradicts
-   it. Two merged positions, one owner decision; the shipped one was left
-   standing rather than re-litigated in a phase that does not own it. Everything
-   else in §7 holds: Layout, Overview and Raw have real inspectors, and the
-   other three still show the shell's placeholder.
+2. **The DoD's "Autofill, Keybinds and Probes … get the full width" IS met — the
+   owner settled it after seeing it.** This was flagged as an open conflict:
+   Phase 2 shipped the column on *every* tab with a written rationale (one that
+   comes and goes is the same fault as a tab strip that changes membership), and
+   §7 contradicts it. On screen the argument did not survive — on those three
+   views the pane only ever said *"Select something to see its properties"*,
+   which is a pane teaching people it is broken while taking a fifth of the
+   window to do it.
+
+   `INSPECTOR_VIEWS` in `+page.svelte` is now the whole of the rule: **Layout
+   and Raw**. Everything else — the other three views, Overview, and the
+   no-file and unreadable-file states — takes the column too, through
+   `.work.wide` (`grid-column: 2 / 4`, a shell rule in `app.css` because both
+   the shell's wrappers and OverviewView's set it). No aside and no rail, since
+   a 1.5rem strip of nothing is the same furniture in miniature.
+   `page.spec.ts`'s "which views get an inspector" pins all six.
 
 3. **The inspector's hide control was missing on Layout and would have gone
    missing on Overview too.** The shell's `»` lives in the aside those two views
