@@ -13,6 +13,47 @@ Workflow:
 
 ## Open
 
+- [ ] **A failed launcher-log read is reported as "your logs say nothing".**
+  `AccountsView.svelte:233` swallows the launcher read with `.catch(() => {})`
+  and the `.finally` on the next line sets `launcherState.loaded = true`
+  regardless, so a *throw* and a *successful read that found nothing* arrive at
+  the empty state identically — `proposals` empty, `loaded` true. The message
+  then tells the user their logs hold nothing when the truth is that reading
+  them failed. This is the fourth of the four reasons the Accounts empty state
+  can fire, and the only one that is an error rather than a fact; the other
+  three are a wording problem, tracked as its own entry. Diagnosed 2026-08-14 on
+  the owner's install: the launcher had named exactly 30 characters, all 30 were
+  already paired, so the honest message there is "all 30 are already paired".
+  Fix shape: keep the rejection, and have the empty state distinguish *read
+  failed* from *read succeeded, nothing new*. Have `launcher_proposals` report
+  how many characters the launcher named while you are in there, which is what
+  the already-paired case needs. `launcher.rs` and `launcher.ts` were untouched
+  by the redesign, so the backend half is conflict-free. Seen and deliberately
+  not blocked on during the 0.35.0 live pass. _Added 2026-08-14 (UI redesign
+  live pass)._
+
+- [ ] **Overview → Filters has a search box that `Ctrl+F` does not reach.** The
+  box exists — `OverviewFiltersTab.svelte:296-300`, labelled "Filter groups",
+  over a list that runs to ~400 rows, which is exactly the size that wants a
+  shortcut. But `+page.svelte:177`'s `viewFocusSearch` is bound for `layout`,
+  `autofill` and `keybinds` only (`:582`, `:617`, `:628`), and `findInView`'s
+  comment at `:435` asserts Overview has no field to focus — true when it was
+  written, wrong now. Wiring it is the established `focusSearch = $bindable()`
+  chain (`LayoutView.svelte:39` → `:1077`), threaded `+page` → `OverviewView` →
+  `OverviewFiltersTab`.
+
+  **Two traps, both already paid for once.** The sub-tabs render with
+  `hidden={sub !== "Filters"}` (`OverviewView.svelte:425-433`), so the Filters
+  DOM is always mounted and merely hidden — and `focus()` on a hidden element
+  does nothing, *silently*. A naive binding will therefore look completely dead
+  rather than merely scrolled away, which is precisely how Layout's box was
+  reported three times before the cause was found. So `findInView` has to switch
+  `sub` to "Filters" first and `await tick()` before focusing, mirroring the
+  `inspectorOpen` dance at `+page.svelte:450-453`. And jsdom computes no layout,
+  so a `findByLabelText` plus a focus assertion will pass against an element the
+  user cannot see: the test has to assert the tab was switched, not just that
+  something got focus. _Added 2026-08-14 (UI redesign live pass)._
+
 - [ ] **Reordering two overview tabs swaps their per-tab column widths.** Widths
   and the per-tab sort setting live in the *character* file keyed
   `(overviewScroll2, tabIndex)`, while the order lives in the account file. A
