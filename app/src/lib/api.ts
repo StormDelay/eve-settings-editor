@@ -576,6 +576,24 @@ export const api = {
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
 };
 
+/**
+ * The backend's prose, and nothing else. This is what a user reads.
+ *
+ * Split out of `errMessage` because every one of the app's error surfaces was
+ * showing a bracketed machine code — `[conflict] …`, `[io] …` — inside a
+ * user-facing sentence. That is why the error grammar looked cosmetic: the SHAPE
+ * of the message was never the app's to control.
+ */
+export function errText(e: unknown): string {
+  const err = e as ErrDto;
+  return err && err.code ? err.message : String(e);
+}
+
+/**
+ * The diagnostic form, code included. For where a human is DIAGNOSING rather
+ * than reading: the `title=` of an inline message, so the code is one hover
+ * away, and the History detail line. Never the sentence itself.
+ */
 export function errMessage(e: unknown): string {
   const err = e as ErrDto;
   return err && err.code ? `[${err.code}] ${err.message}` : String(e);
