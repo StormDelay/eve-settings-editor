@@ -1294,7 +1294,11 @@ changes came out of it, and the first is a reversal of a decision in §5.
    `ListRow`'s `.label` is `flex: 1`, i.e. a **zero** basis, so it never takes
    part in shrinking at all — it just grows into whatever the chip leaves and
    ellipsises. A shrink factor on the chip does nothing until the label has a
-   content basis (`flex: 1 1 auto`) to compete with.
+   content basis (`flex: 1 1 auto`) to compete with. The *second* attempt then
+   over-applied it: an unpaired row's trailing content is the `Link…` **button**,
+   which got squeezed and clipped against the panel edge. The rules are scoped
+   to a `paired` class now — a squeezed button is worse than a truncated name,
+   and on a row with no chip there is nothing to compete with anyway.
 
 ### Not verified
 

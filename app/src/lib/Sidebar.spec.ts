@@ -135,6 +135,13 @@ describe("the character list", () => {
     // One chip across the whole list: 950 has one, 951 does not.
     expect(screen.getAllByText("stormdelay2")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Link…" })).toHaveLength(1);
+
+    // `paired` is what carries the "the name outranks the chip" flex rules, and
+    // it must NOT reach an unpaired row: there the trailing content is the
+    // `Link…` button, and squeezing a button is worse than truncating a name.
+    expect(document.querySelectorAll(".row.paired")).toHaveLength(1);
+    const linkRow = screen.getByRole("button", { name: "Link…" }).closest(".row");
+    expect(linkRow?.classList.contains("paired")).toBe(false);
   });
 
   // The chip ellipsises before the character name does, so the account is also

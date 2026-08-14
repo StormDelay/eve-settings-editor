@@ -116,6 +116,7 @@
              where they do it: `bytes_written` in the save result, and per-backup
              size in History. -->
         <ListRow
+          class={alias ? "paired" : ""}
           onclick={() => onOpen(f.path)}
           title="{f.file_name} · {Math.round(f.size / 1024)} KB{alias ? ` · account ${alias}` : ''}">
           {#snippet leading()}
@@ -224,18 +225,26 @@
      row and the account is a qualifier on it. A shrink factor this large means
      the chip is down to a stub before the name loses a character; past that the
      name ellipsises too, and the row's tooltip has both in full. */
-  /* `flex: 1` is `flex: 1 1 0%` — a ZERO basis, so the label never takes part in
-     shrinking at all: it simply grows into whatever the chip left over and
-     ellipsises. A content basis is what puts the two in competition, and only
-     then does the shrink factor below decide who loses. */
-  li :global(.row .label) {
+  /* ONLY on a row that carries a chip. An unpaired row's trailing content is the
+     `Link…` BUTTON, and a squeezed button is worse than a truncated name — it
+     was being clipped against the panel edge. Those rows keep ListRow's own
+     rules, where the label has a zero basis, grows into what is left and
+     ellipsises on its own.
+
+     On a paired row the two do compete, and `flex: 1` is why the chip used to
+     win by default: it is `flex: 1 1 0%`, a ZERO basis, so the label never took
+     part in shrinking at all — it just grew into whatever the chip left over.
+     A content basis is what puts them in competition; only then does the shrink
+     factor decide, and 999 means the chip is a stub before the name gives up a
+     character. */
+  li :global(.row.paired .label) {
     flex: 1 1 auto;
   }
-  li :global(.row .trailing) {
+  li :global(.row.paired .trailing) {
     flex-shrink: 999;
     min-width: 0;
   }
-  li :global(.row .trailing .chip) {
+  li :global(.row.paired .trailing .chip) {
     min-width: 0;
   }
   .alias {
