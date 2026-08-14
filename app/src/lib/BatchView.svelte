@@ -416,10 +416,12 @@
     <section>
       <div class="head">
         {fileMode ? "Copy onto" : "Target characters"}
+        <!-- All / None. `Clear` here meant "untick", which collided with
+             "Clear list" and "Clear all remembered text" two views away. -->
         <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={selectAllTargets}>
-          Select all
+          All
         </Button>
-        <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={clearTargets}>Clear</Button>
+        <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={clearTargets}>None</Button>
         <Field kind="checkbox" label="Show other folders" bind:value={allowOtherFolders} />
       </div>
       {#if candidates.length === 0}

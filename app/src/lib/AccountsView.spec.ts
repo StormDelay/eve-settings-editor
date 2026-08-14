@@ -95,9 +95,9 @@ describe("launcher proposals", () => {
     expect(warning).toBeTruthy();
   });
 
-  test("move it repairs the pairing to the account the launcher names", async () => {
+  test("Move to repairs the pairing to the account the launcher names", async () => {
     mount([{ char_id: 90000009, user_id: 80000001, conflict: 80000002 }]);
-    const move = await waitFor(() => screen.getByRole("button", { name: /move Zulu/i }));
+    const move = await waitFor(() => screen.getByRole("button", { name: /^Move to /i }));
     await fireEvent.click(move);
     await waitFor(() => expect(calls.only("confirm_pairing").args).toEqual({
       charId: 90000009,
@@ -105,18 +105,18 @@ describe("launcher proposals", () => {
     }));
   });
 
-  test("move it drops its proposal from the list", async () => {
+  test("Move to drops its proposal from the list", async () => {
     mount([{ char_id: 90000009, user_id: 80000001, conflict: 80000002 }]);
-    const move = await waitFor(() => screen.getByRole("button", { name: /move Zulu/i }));
+    const move = await waitFor(() => screen.getByRole("button", { name: /^Move to /i }));
     await fireEvent.click(move);
     await waitFor(() =>
       expect(screen.queryByText(/launcher log puts Zulu/i)).toBeNull(),
     );
   });
 
-  test("keep mine drops the warning and writes nothing", async () => {
+  test("Keep here drops the warning and writes nothing", async () => {
     mount([{ char_id: 90000009, user_id: 80000001, conflict: 80000002 }]);
-    const keep = await waitFor(() => screen.getByRole("button", { name: /keep Zulu/i }));
+    const keep = await waitFor(() => screen.getByRole("button", { name: /^Keep here$/i }));
     await fireEvent.click(keep);
     await waitFor(() =>
       expect(screen.queryByText(/launcher log puts Zulu/i)).toBeNull(),
@@ -156,7 +156,7 @@ describe("launcher proposals", () => {
     });
     const all = await waitFor(() => bulkAccept());
     await fireEvent.click(all);
-    await waitFor(() => screen.getByText(/Alpha could not join Main/i));
+    await waitFor(() => screen.getByText(/Alpha wasn.t paired with Main/i));
     // Not claimed as applied: the ghost stays, so the user can retry after
     // unpairing something on that account.
     expect(screen.queryByRole("button", { name: /accept Alpha/i })).not.toBeNull();
@@ -353,7 +353,7 @@ describe("state that has to outlive a dismissal", () => {
     // The account is named by ALIAS. "account 80000001" is a raw `core_user`
     // number and does not tell the user which account they just paired — the
     // same reason the rejection copy names it.
-    const note = await waitFor(() => screen.getByText(/↔ account Main\./));
+    const note = await waitFor(() => screen.getByText(/ with Main\./));
     expect(note.textContent).not.toMatch(/80000001/);
     expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
   });
@@ -414,7 +414,7 @@ describe("the sheet frame", () => {
     mount([]);
     const dialog = await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
     expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh accounts" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /calibrate/i })).toBeTruthy();
     // The capture panel's own role="dialog" is gone: inside a sheet that was a
     // dialog within a dialog.
