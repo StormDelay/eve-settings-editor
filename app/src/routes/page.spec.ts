@@ -13,6 +13,9 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import Page from "./+page.svelte";
 import { calls } from "$lib/test/setup";
 import { subject } from "$lib/subject.svelte";
+import { names } from "$lib/names.svelte";
+import { accountsStore } from "$lib/accounts.svelte";
+import { toasts } from "$lib/ui/toasts.svelte";
 import type { AccountRoster, OpenOutcome, Profile, TreeNodeData } from "$lib/api";
 
 // The shell sets the OS window title from the SUBJECT. `vi.hoisted` so the spy
@@ -230,6 +233,61 @@ describe("saving", () => {
     expect(screen.getByText(/1 unsaved/)).toBeTruthy();
   });
 
+  /**
+   * §2.9's bug, pinned.
+   *
+   * Saving a character whose overview was edited marks BOTH slots dirty, so one
+   * Save writes two files — and it used to `message()` inside the loop, stacking
+   * two native modals, each naming a raw filename and a backup path, each
+   * needing its own dismissal. One click, two modals, to report success.
+   *
+   * One toast now, naming people rather than files.
+   */
+  test("one Save that writes both slots produces exactly one toast", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("save_document", { bytes_written: 1024, backup_path: "/eve/backups/x.bak" });
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    // Both slots resolved, so the toast can name people. The filename fallback
+    // is correct when a name is unknown; what is under test is that a KNOWN name
+    // is used, which is what the old message never did.
+    names[950] = { name: "Baguette Commander", category: "character" };
+    accountsStore.roster = { accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950] }], unassigned: [] };
+    subject.slots.user = opened("core_user_140.dat");
+    subject.dirty.char = true;
+    subject.dirty.user = true;
+    toasts.length = 0;
+
+    await fireEvent.click(save());
+
+    // Both files written...
+    await waitFor(() => expect(calls.of("save_document").length).toBe(2));
+    // ...and reported once.
+    await waitFor(() => expect(toasts).toHaveLength(1));
+    expect(toasts[0].message).toBe("Saved Baguette Commander and stormdelay2.");
+    // The two facts nobody reads at save time are NOT in it; they live in
+    // History, where they are wanted.
+    expect(toasts[0].message).not.toMatch(/bytes|backup|\.dat/i);
+  });
+
+  test("a single-slot save names the one file it wrote", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("save_document", { bytes_written: 1024, backup_path: "/eve/backups/x.bak" });
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    subject.dirty.char = true;
+    toasts.length = 0;
+    await fireEvent.click(save());
+
+    await waitFor(() => expect(calls.of("save_document").length).toBe(1));
+    await waitFor(() => expect(toasts).toHaveLength(1));
+    expect(toasts[0].message).not.toContain(" and ");
+  });
+
   // §5.10's one free line: a tab click leaves the takeover, so Accounts and
   // Copy settings have a way out before Phase 3 turns them into sheets.
   test("clicking a view tab leaves the Accounts takeover", async () => {
@@ -241,6 +299,88 @@ describe("saving", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: /accounts/i })).toBeNull());
   });
+});
+
+/**
+ * Opening a file is several round trips long, and a tab click during it is the
+ * most recent thing the user asked for — not a stale value to overwrite.
+ *
+ * `openFile` used to snapshot the view BEFORE those awaits and assign it back
+ * afterwards, so clicking Probes while a character was still opening was
+ * silently undone a moment later and the view snapped back to Layout.
+ */
+test("a tab clicked while a file is still opening is not undone", async () => {
+  calls.stub("open_file", opened("core_char_950.dat"));
+  // Hold the load open on its first round trip, so the click lands mid-flight.
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  calls.stub("window_layout", async () => {
+    await held;
+    return { reference_w: 0, reference_h: 0, windows: [], stacks: [] };
+  });
+
+  await mount([profile(file("core_char_950.dat", "char", 950))]);
+  await openFile("core_char_950.dat");
+  await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+  // The user reaches for a tab before the open has finished.
+  await fireEvent.click(screen.getByRole("tab", { name: "Probes" }));
+  expect(screen.getByRole("tab", { name: "Probes" }).getAttribute("aria-selected")).toBe("true");
+
+  release();
+  // Let the rest of the open — the layout probe and the slot reconcile — run to
+  // completion, which is where the snap-back used to happen.
+  await waitFor(() => expect(calls.of("window_layout").length).toBeGreaterThan(0));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(
+    screen.getByRole("tab", { name: "Probes" }).getAttribute("aria-selected"),
+    "the open must not snap the view back",
+  ).toBe("true");
+});
+
+/** Ctrl+F must reach the window filter on Layout, which lives two components
+ *  down and is bound up through LayoutView.
+ *
+ *  `hud` is stubbed so HudPanel renders above WindowPanel, as it does in the
+ *  real app — without it the filter sits at the top of the inspector and the
+ *  test proves less than it looks like it does. */
+test("Ctrl+F focuses the window filter on Layout", async () => {
+  calls.stub("open_file", opened("core_char_950.dat"));
+  calls.stub("hud", {
+    entries: [
+      {
+        name: "shipui_x",
+        kind: "int",
+        scope: "character",
+        value: 10,
+        set: { how: "set", path: [] },
+      },
+    ],
+  });
+  calls.stub("neocom_bar", { buttons: [], original: [] });
+  calls.stub("chat_panels", []);
+  calls.stub("window_layout", {
+    reference_w: 1920,
+    reference_h: 1080,
+    windows: [
+      {
+        id: "w1",
+        geom: null,
+        flags: [],
+        stack: null,
+        open: true,
+        resolution_matches: true,
+      },
+    ],
+    stacks: [],
+  });
+  await mount([profile(file("core_char_950.dat", "char", 950))]);
+  await openFile("core_char_950.dat");
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Layout" }).getAttribute("aria-selected")).toBe("true"));
+
+  const box = await screen.findByLabelText("Filter windows");
+  await fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+  await waitFor(() => expect(document.activeElement).toBe(box));
 });
 
 describe("the view tabs", () => {
@@ -545,7 +685,7 @@ describe("the launch empty state", () => {
 // at the far right of the bar opened a popup at the far left. One door now, and
 // the shortcut is written on it.
 describe("opening the subject switcher", () => {
-  const panel = () => screen.queryByPlaceholderText(/search characters and views/i);
+  const panel = () => screen.queryByPlaceholderText(/search characters, presets and commands/i);
 
   test("the subject button opens it, and it is the only button that does", async () => {
     await mount([profile(file("core_char_950.dat", "char", 950))]);

@@ -153,8 +153,11 @@ describe("the group filter", () => {
   });
 });
 
+// The buttons are direct children of the summary now, not of a `.cat-bulk`
+// wrapper: that wrapper made them trail the name inline, so they landed at a
+// different x on every category. `categoryNamed` already returns the summary.
 const bulkButton = (category: string, label: "All" | "None"): HTMLElement => {
-  const b = [...categoryNamed(category).querySelectorAll(".cat-bulk button")]
+  const b = [...categoryNamed(category).querySelectorAll("button")]
     .find((e) => e.textContent?.trim() === label);
   if (!b) throw new Error(`no ${label} button on "${category}"`);
   return b as HTMLElement;

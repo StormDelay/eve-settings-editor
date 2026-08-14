@@ -1,14 +1,21 @@
 <script lang="ts">
-  // The five global actions that used to sit in the sidebar's top block — six
-  // buttons of four different kinds inside a `flex-wrap: wrap` container, above
-  // a list they had nothing to do with. The sidebar becomes a subject browser
-  // and nothing else; these become a menu.
+  // The complete, mouse-only route to everything global. Someone who never
+  // learns Ctrl+K loses nothing — that is discovery rule 1, and this menu is
+  // what makes it true, which is why it ships BEFORE the palette rather than
+  // beside it.
+  //
+  // Its rows are the registry filtered by `homes`, not a hand-written list, so
+  // the menu cannot drift from the commands — it IS them. The two rows that are
+  // not commands (Rescan, Refresh names) are here because they act on the
+  // profile scan rather than on a document, and neither has a subject the
+  // palette could name.
   //
   // "Open file…" is NOT here. It is a file-list operation and the only route to
   // an account file directly, so it stays in the sidebar, at the bottom.
   import { api, type Proposal } from "./api";
   import { rescanProfiles, allCharIds } from "./subject.svelte";
   import { refreshNames } from "./names.svelte";
+  import { COMMANDS, type Command, type Ctx } from "./commands";
   import { toast } from "./ui/toasts.svelte";
   import Chip from "./ui/Chip.svelte";
   import Popover from "./ui/Popover.svelte";
@@ -16,25 +23,16 @@
   let {
     anchor,
     onclose,
-    onShowAccounts,
-    onShowBatch,
-    onShowAbout,
+    ctx,
   }: {
     anchor: HTMLElement;
     onclose: () => void;
-    onShowAccounts: () => void;
-    onShowBatch: () => void;
-    onShowAbout: () => void;
+    ctx: Ctx;
   } = $props();
 
   // Computed WHEN THE MENU OPENS — this component is only mounted while it is
-  // open — and never at app start. §5.7.1 refuses a per-character proposal chip
-  // in the sidebar partly because it would move `read_roster_from`'s scan of
-  // every launcher `.log` onto startup, for a signal that changes nothing the
-  // user can do from there. A menu is opened on demand, and opening Accounts
-  // already pays that cost, so this adds no work to a path that did not already
-  // do it. A count briefly absent while the scan runs is correct: it is not yet
-  // known.
+  // open — and never at app start. A count briefly absent while the scan runs is
+  // correct: it is not yet known.
   //
   // It COUNTS, it does not name. Naming characters is `Accept all`'s job inside
   // the sheet, where there is room and the objects are on screen.
@@ -46,9 +44,29 @@
 
   let namesBusy = $state(false);
 
-  function pick(run: () => void) {
+  /** The menu's shape, as ids. A `null` is a divider. Grouped by what the row
+   *  acts on — the open file, then the places you go, then the profile scan. */
+  const LAYOUT: (string | null)[] = [
+    "file.save",
+    "file.discard",
+    "file.history",
+    null,
+    "go.accounts",
+    "go.copySettings",
+    null,
+    "help.shortcuts",
+    "file.about",
+  ];
+
+  const rows = $derived(
+    LAYOUT.map((id) => (id === null ? null : COMMANDS.find((c) => c.id === id)!)),
+  );
+
+  function pick(c: Command) {
+    // Close FIRST, then run. A command that raises a confirmation or an OS
+    // picker would otherwise stack it on a menu that is no longer reachable.
     onclose();
-    run();
+    c.run(ctx);
   }
 
   async function refreshNamesClick() {
@@ -72,23 +90,38 @@
 </script>
 
 <Popover {anchor} placement="bottom-start" {onclose} role="menu" ariaLabel="App menu" class="app-menu">
-  <button role="menuitem" onclick={() => pick(onShowAccounts)}>
-    <span>Accounts…</span>
-    <!-- The one signpost that proposals are waiting. It attaches to no
-         character's row and names nobody, so §5.7.2 rule 6 stands: no list gains
-         an account chip from a `Proposal`. -->
-    {#if waiting}
-      <Chip state="proposed" size="sm" title="Pairings your EVE launcher log proposes">{waiting}</Chip>
+  {#each rows as row, i (i)}
+    {#if row === null}
+      <hr />
+    {:else}
+      {@const why = row.enabled()}
+      <!-- Disabled with a REASON, never hidden. A row that vanishes when the
+           backend would refuse it teaches nothing and moves the rows under the
+           cursor; "Save — nothing has changed" is an answer. The reason comes
+           from the same predicate the palette renders. -->
+      <button
+        role="menuitem"
+        disabled={why !== true}
+        title={why === true ? undefined : why}
+        onclick={() => pick(row)}>
+        <span>{row.label}</span>
+        <span class="right">
+          {#if row.id === "go.accounts" && waiting}
+            <Chip state="proposed" size="sm" title="Pairings your EVE launcher log proposes">{waiting}</Chip>
+          {/if}
+          <!-- Every item shows its accelerator, per platform. That is discovery
+               rule 3: people learn the shortcut at the moment they use the slow
+               path. -->
+          {#if row.accel}<kbd>{row.accel}</kbd>{/if}
+        </span>
+      </button>
     {/if}
-  </button>
-  <button role="menuitem" onclick={() => pick(onShowBatch)}>Copy settings…</button>
+  {/each}
   <hr />
   <button role="menuitem" disabled={namesBusy} onclick={() => void refreshNamesClick()}>
-    {namesBusy ? "Refreshing…" : "Refresh names"}
+    <span>{namesBusy ? "Refreshing character names…" : "Refresh character names"}</span>
   </button>
-  <button role="menuitem" onclick={() => void rescan()}>Rescan profiles</button>
-  <hr />
-  <button role="menuitem" onclick={() => pick(onShowAbout)}>About</button>
+  <button role="menuitem" onclick={() => void rescan()}><span>Rescan profiles</span></button>
 </Popover>
 
 <style>
@@ -96,7 +129,7 @@
      scope. The buttons below are authored here, so they scope normally —
      matching ContextMenu, which solved this first. */
   :global(.popover.app-menu) {
-    min-width: 14rem;
+    min-width: 16rem;
     display: flex;
     flex-direction: column;
   }
@@ -104,7 +137,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--s2);
+    gap: var(--s3);
     background: none;
     border: none;
     border-radius: var(--r-sm);
@@ -115,7 +148,19 @@
     padding: var(--s1) var(--s2);
     cursor: pointer;
   }
-  button:hover {
+  .right {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-shrink: 0;
+  }
+  kbd {
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--t-caption);
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) {
     background: var(--surface-raised);
   }
   button:focus-visible {
@@ -125,9 +170,6 @@
   button:disabled {
     opacity: var(--o-disabled);
     cursor: default;
-  }
-  button:disabled:hover {
-    background: none;
   }
   hr {
     border: none;

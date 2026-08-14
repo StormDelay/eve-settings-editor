@@ -120,13 +120,13 @@ describe("the target anchor, which is stored as a fraction", () => {
 describe("writing a value", () => {
   test("an int field rounds a fractional entry before writing", () => {
     const { onSet } = mount(hud());
-    fireEvent.change(input("Fighter UI", "x"), { target: { value: "1.5" } });
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "1.5" } });
     expect(onSet).toHaveBeenCalledWith("fighter_x", "2");
   });
 
   test("an int field rounds half-down for a negative fraction the same way", () => {
     const { onSet } = mount(hud());
-    fireEvent.change(input("Fighter UI", "x"), { target: { value: "3.4" } });
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "3.4" } });
     expect(onSet).toHaveBeenCalledWith("fighter_x", "3");
   });
 
@@ -138,13 +138,13 @@ describe("writing a value", () => {
 
   test("a blank input writes nothing rather than a zero", () => {
     const { onSet } = mount(hud());
-    fireEvent.change(input("Fighter UI", "x"), { target: { value: "   " } });
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "   " } });
     expect(onSet).not.toHaveBeenCalled();
   });
 
   test("a non-numeric input writes nothing", () => {
     const { onSet } = mount(hud());
-    fireEvent.change(input("Fighter UI", "x"), { target: { value: "abc" } });
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "abc" } });
     expect(onSet).not.toHaveBeenCalled();
   });
 
@@ -153,7 +153,7 @@ describe("writing a value", () => {
     // edit used to leave the typed text on screen next to a value that is not
     // it, until some unrelated re-render cleared it.
     mount(hud());
-    const el = input("Fighter UI", "x");
+    const el = input("Fighter panel", "x");
     await fireEvent.change(el, { target: { value: "   " } });
     expect(el.value).toBe("326");
   });
@@ -162,7 +162,7 @@ describe("writing a value", () => {
     // 326.4 rounds to 326, which the model already holds — nothing changes, so
     // nothing re-renders, so the field kept showing 326.4.
     const { onSet } = mount(hud());
-    const el = input("Fighter UI", "x");
+    const el = input("Fighter panel", "x");
     await fireEvent.change(el, { target: { value: "326.4" } });
     expect(onSet).toHaveBeenCalledWith("fighter_x", "326");
     expect(el.value).toBe("326");
@@ -170,7 +170,7 @@ describe("writing a value", () => {
 
   test("a checkbox writes the string the backend parses, not a boolean", () => {
     const { onSet } = mount(hud());
-    fireEvent.click(input("Fighter UI", "Detached"));
+    fireEvent.click(input("Fighter panel", "Detached"));
     expect(onSet).toHaveBeenCalledWith("fighter_detached", "true");
   });
 });
@@ -222,7 +222,7 @@ describe("what the panel refuses to edit", () => {
 
   test("a field the file cannot hold is disabled on its own", () => {
     mount(hud(entry("badge_x", "int", null, { set: UNAVAILABLE })));
-    expect(input("Fighter UI", "x").disabled).toBe(false);
+    expect(input("Fighter panel", "x").disabled).toBe(false);
     expect(input("Notification badge", "x").disabled).toBe(true);
   });
 
@@ -232,15 +232,15 @@ describe("what the panel refuses to edit", () => {
     // read-only one — the refusal then arrived as a backend dialog.
     mount(hud(), { accountReadOnly: true });
     expect(input("Neocom", "Width").disabled).toBe(true);
-    expect(input("Fighter UI", "Detached").disabled).toBe(true);
-    expect(input("Fighter UI", "x").disabled).toBe(false);
+    expect(input("Fighter panel", "Detached").disabled).toBe(true);
+    expect(input("Fighter panel", "x").disabled).toBe(false);
     expect(input("Ship HUD", "Offset from centre").disabled).toBe(false);
   });
 
   test("a fighter axis the file cannot hold is disabled without taking its sibling with it", () => {
     mount(hud(entry("fighter_y", "int", null, { set: UNAVAILABLE })));
-    expect(input("Fighter UI", "y").disabled).toBe(true);
-    expect(input("Fighter UI", "x").disabled).toBe(false);
+    expect(input("Fighter panel", "y").disabled).toBe(true);
+    expect(input("Fighter panel", "x").disabled).toBe(false);
   });
 });
 
@@ -253,7 +253,7 @@ describe("what the panel shows", () => {
 
   test("account-scoped rows are badged so an account-wide write is visible", () => {
     mount(hud());
-    expect(row("Fighter UI", "Detached").textContent).toContain("account");
+    expect(row("Fighter panel", "Detached").textContent).toContain("account");
     expect(row("Notification badge", "y").textContent).not.toContain("account");
   });
 

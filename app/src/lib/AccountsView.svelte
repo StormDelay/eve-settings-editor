@@ -93,7 +93,7 @@
   // hint and leave a blank state that explains nothing.
   const everFound = $derived(launcherState.foundCards.some((u) => onScreen.has(u)));
 
-  const accountLabel = (userId: number) => aliasFor(userId) ?? `core_user_${userId}`;
+  const accountLabel = (userId: number) => aliasFor(userId) ?? `account ${userId}`;
 
   /**
    * The sentence that names what `Accept all` will pair.
@@ -126,7 +126,7 @@
   // "Account already has 3 characters" does not say WHICH account, and the user
   // has to know that to fix it.
   const rejectionText = (r: Rejected) =>
-    `${nameOf(r.char_id)} could not join ${accountLabel(r.user_id)} — ` +
+    `${nameOf(r.char_id)} wasn't paired with ${accountLabel(r.user_id)} — ` +
     `${r.reason.charAt(0).toLowerCase()}${r.reason.slice(1)}. Unpair one there and try again.`;
 
   async function acceptAll() {
@@ -191,7 +191,7 @@
         // the account by alias rather than by its bare id, for the reason
         // `rejectionText` already gives: a raw `core_user` number does not tell
         // the user which account they just paired.
-        await endCapture(`Paired ${nameOf(charId)} ↔ account ${accountLabel(userId)}.`);
+        await endCapture(`Paired ${nameOf(charId)} with ${accountLabel(userId)}.`);
       } catch (e) {
         // NOT an ending: the cap was hit, the wizard stays open, and the next
         // press must diff against the same baseline.
@@ -246,7 +246,7 @@
        NOT, because a count is not an answer to "which characters am I about to
        assign?" — it moves into the body with the names (§4.8). -->
   {#snippet actions()}
-    <Button onclick={() => loadRoster()}>Refresh</Button>
+    <Button onclick={() => loadRoster()}>Refresh accounts</Button>
     <Button onclick={startCapture} disabled={captureState.active}
             disabledReason="A calibration is already in progress">Calibrate an account…</Button>
   {/snippet}
@@ -293,15 +293,15 @@
   <!-- InlineMessage, not EmptyState: the account cards follow it. -->
   {#if launcherState.loaded && !everFound}
     <InlineMessage>
-      Your EVE launcher logs say nothing about these accounts — use “Calibrate an account…”
-      to pair a character by hand.
+      Your EVE launcher logs say nothing about these accounts. Calibrate an account to pair a
+      character by hand.
     </InlineMessage>
   {/if}
 
   {#if accounts.length === 0}
     <EmptyState
-      title="No accounts in this profile yet."
-      description="Open a profile file, or run a calibration." />
+      title="No accounts here yet"
+      description="Open a profile file, or calibrate an account to identify one." />
   {/if}
 
   <ul class="cards">
@@ -327,7 +327,9 @@
               <Chip class="filled">
                 {nameOf(charId)}
                 {#snippet actions()}
-                  <Button variant="ghost" size="sm" iconOnly title="Unpair" onclick={() => unpair(charId)}>
+                  <Button variant="ghost" size="sm" iconOnly
+                          title="Unpair {nameOf(charId)} from this account"
+                          onclick={() => unpair(charId)}>
                     ✕
                   </Button>
                 {/snippet}
@@ -369,7 +371,7 @@
                     addPick[acct.user_id] = "";
                   }}
                   options={[
-                    { value: "", label: "＋ add character" },
+                    { value: "", label: "Add a character" },
                     ...sortedUnassigned.map((uid) => ({ value: String(uid), label: nameOf(uid) })),
                   ]} />
               {/if}
@@ -383,7 +385,7 @@
         {/if}
         {#each ghosts.slice(free) as gid (gid)}
           <InlineMessage class="from-launcher">
-            Your launcher log also puts {nameOf(gid)} here, but all three slots are full.
+            Your launcher log also puts {nameOf(gid)} here, but this account is full.
             <Button size="sm" onclick={() => onConfirm(gid, acct.user_id)}>Accept anyway</Button>
           </InlineMessage>
         {/each}
@@ -392,10 +394,16 @@
         {#each card?.conflicts ?? [] as c (c.charId)}
           <InlineMessage variant="warn" class="conflict">
             Your launcher log puts {nameOf(c.charId)} on {accountLabel(c.target)}.
-            <Button size="sm" aria-label="Move {nameOf(c.charId)}"
-                    onclick={() => onConfirm(c.charId, c.target)}>Move it</Button>
-            <Button size="sm" aria-label="Keep {nameOf(c.charId)}"
-                    onclick={() => (launcherState.dismissed = [...launcherState.dismissed, c.charId])}>Keep mine</Button>
+            <!-- The visible label answers the question on its own. "Move it"
+                 needed the sentence above it to parse, and the aria-labels that
+                 propped it up disagreed with the visible text — an accessible
+                 name that differs from the label is the same fault twice.
+                 "Mine" is not a word this app uses for anything; what the button
+                 actually answers is WHICH account holds this character. -->
+            <Button size="sm"
+                    onclick={() => onConfirm(c.charId, c.target)}>Move to {accountLabel(c.target)}</Button>
+            <Button size="sm"
+                    onclick={() => (launcherState.dismissed = [...launcherState.dismissed, c.charId])}>Keep here</Button>
           </InlineMessage>
         {/each}
       </li>
@@ -404,7 +412,7 @@
 
   {#if unassigned.length > 0}
     <div class="unassigned">
-      <h3>Unassigned characters</h3>
+      <h3>Characters not on any account</h3>
       <ul>
         {#each sortedUnassigned as uid (uid)}
           <li>{nameOf(uid)}</li>

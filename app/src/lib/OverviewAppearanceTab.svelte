@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns } from "./api";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { api, errMessage, errText, type OverviewColumns } from "./api";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import {
     stateLabel, rgbaToHex, hexToRgba, moveInOrder, defaultColor,
     DEFAULT_BACKGROUND_ORDER, DEFAULT_BACKGROUND_STATES,
@@ -57,9 +57,22 @@
   const colors = $derived(new Map(appearance?.colors ?? []));
   const bools = $derived(new Map(appearance?.bools ?? []));
 
+  // At the top of the sub-tab, which is the control group that owns every failure
+  // this function can report. This tab is mounted-but-hidden when another
+  // sub-tab is showing, so `escalate` matters here more than anywhere: an error
+  // rendered into a panel nobody is looking at is a silent failure, and a modal
+  // never was one.
+  let error = $state<{ text: string; detail: string } | null>(null);
+
   async function edit(fn: () => Promise<OverviewColumns>) {
+    error = null;
     try { onChanged(await fn()); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      error = {
+        text: `That appearance setting wasn't changed — ${errText(e)}`,
+        detail: errMessage(e),
+      };
+    }
   }
 
   // Enabled and order are independent lists: a toggle writes only *States2, a
@@ -105,6 +118,9 @@
 </script>
 
 {#if appearance}
+  {#if error}
+    <InlineMessage variant="error" detail={error.detail}>{error.text}</InlineMessage>
+  {/if}
   <div class="bools">
     {#each BOOL_LABELS as [key, label] (key)}
       {#if key === "applyToStructures"}

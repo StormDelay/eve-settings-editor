@@ -43,14 +43,14 @@ describe("FormationPicker", () => {
   test("with nothing ticked, confirm is disabled", async () => {
     open();
     // Everything is on, so the button offers the inverse.
-    await fireEvent.click(screen.getByText("Select none"));
+    await fireEvent.click(screen.getByText("None"));
     expect((screen.getByText("Import 0") as HTMLButtonElement).disabled).toBe(true);
   });
 
   test("select all re-ticks everything after a manual untick", async () => {
     open();
     await fireEvent.click(screen.getByLabelText("close"));
-    await fireEvent.click(screen.getByText("Select all"));
+    await fireEvent.click(screen.getByText("All"));
     expect(screen.getByText("Import 3")).toBeTruthy();
   });
 

@@ -2,15 +2,20 @@
   import type { NeocomBar } from "$lib/api";
   import { addableButtons, type CatalogButton } from "$lib/neocom";
   import CATALOG from "$lib/data/neocom-buttons.json";
-  import { confirm } from "@tauri-apps/plugin-dialog";
+  import { toast } from "./ui/toasts.svelte";
+  import { undoAction } from "./undo.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
   import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
 
-  let { bar, readOnly, busy = false, onReorder, onRemove, onAdd, onReset }: {
+  let { bar, readOnly, busy = false, error = null, onReorder, onRemove, onAdd, onReset }: {
     bar: NeocomBar;
     readOnly: boolean;
+    /** A refused neocom edit, owned by LayoutView (which runs the command) and
+     *  rendered here (which owns the control). */
+    error?: { text: string; detail: string } | null;
     /** True while a neocom command is in flight. Commands key by index, so a
      * second click before the re-projection lands could reuse a now-stale
      * index — disable the whole list for the round trip rather than risk it. */
@@ -51,20 +56,22 @@
     if (addChoice !== "" && !addable.some((a) => a.id === addChoice)) addChoice = "";
   });
 
-  // The Tauri dialog, not the bare browser confirm() — titled and iconed like
-  // every other destructive prompt in this app (OverviewView's deleteTab,
-  // AutofillView's clearAll, ...), not the unstyled default.
-  async function resetBar() {
-    const ok = await confirm(
-      "Reset the neocom to the client's original buttons?",
-      { title: "Reset neocom", kind: "warning" },
-    );
-    if (ok) onReset();
+  // No confirmation. The mutation is in-memory, Discard reverses it exactly, and
+  // the button's own tooltip already carries the consequence BEFORE the click —
+  // which is the rule (say what an action costs in the control's own words, not
+  // in a dialog after the fact). Friction proportional to consequence: this one
+  // costs a click to put back.
+  function resetBar() {
+    onReset();
+    toast("Neocom reset to the client's original buttons.", { action: undoAction() });
   }
 </script>
 
 <div class="buttons">
   <h4 class="head">Buttons</h4>
+  {#if error}
+    <InlineMessage variant="error" detail={error.detail}>{error.text}</InlineMessage>
+  {/if}
   {#each bar.buttons as b (b.index)}
     <ListRow class="row">
       <span class="id" title={b.icon_path}>{b.id}</span>
