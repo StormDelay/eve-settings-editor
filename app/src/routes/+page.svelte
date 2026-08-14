@@ -1,6 +1,7 @@
 <script lang="ts">
   import Sidebar from "$lib/Sidebar.svelte";
   import TreeNode from "$lib/TreeNode.svelte";
+  import RawInspector from "$lib/RawInspector.svelte";
   import InsertForm from "$lib/InsertForm.svelte";
   import ContextBar from "$lib/ContextBar.svelte";
   import ViewTabs from "$lib/ViewTabs.svelte";
@@ -57,6 +58,16 @@
   // Renamed from `backupsOpen`. The right column is no longer "backups" — it is
   // properties of the current selection in the current view, on every tab.
   let inspectorOpen = $state(true);
+  // The Raw tree's selection, held as a PATH rather than as the node: an edit
+  // rebuilds the tree, and a held node would go on showing its old value.
+  let selectedPath = $state<NodePath | null>(null);
+  // A path is an index route, not a name, so the SAME path names a different
+  // node in a different file. Dropped whenever the tree underneath changes.
+  $effect(() => {
+    void treeFile;
+    void current;
+    selectedPath = null;
+  });
   let aboutOpen = $state(false);
   let switcherOpen = $state(false);
   // Which file the Raw view shows; a Raw-local switch flips it to the account
@@ -578,6 +589,8 @@
               {searching}
               revealPath={reveal?.path ?? null}
               revealNonce={reveal?.n ?? 0}
+              {selectedPath}
+              onSelect={(n) => (selectedPath = n.path)}
               onReveal={revealInTree}
               onEdit={handleEdit}
               onRemove={handleRemove}
@@ -606,7 +619,23 @@
         <Button variant="ghost" size="sm" iconOnly title="Hide properties"
           onclick={() => (inspectorOpen = false)}>&raquo;</Button>
       </div>
-      <EmptyState title="Select something to see its properties." />
+      <!-- Raw is the third view with an inspector, and the strongest case in the
+           app: every one of these fields was invisible, hover-only, or encoded
+           as a colour. Autofill, Keybinds and Probes declare none — there is
+           nothing to select in the first, the second's selection is transient
+           and its capture bar is already in the right place, and the third
+           already has a selection rail and an editor. -->
+      {#if view === "raw" && current?.status === "opened"}
+        <RawInspector
+          root={found?.tree ?? null}
+          path={selectedPath}
+          file={treeFile}
+          onReveal={revealInTree}
+          onRemove={handleRemove}
+          onInsertRequest={(n) => (insertTarget = n)} />
+      {:else}
+        <EmptyState title="Select something to see its properties." />
+      {/if}
     </aside>
   {/if}
 
