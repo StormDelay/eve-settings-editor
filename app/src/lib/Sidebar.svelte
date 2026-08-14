@@ -17,7 +17,7 @@
   // account-scoped view before the edit.
   import { subject, accountAliasOf, noCharactersHint, shellErrors } from "./subject.svelte";
   import { resolvedName } from "./filesort.svelte";
-  import { profileLabels, primaryProfileDir, profileNote } from "./profiles";
+  import { profileLabels } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
@@ -50,8 +50,6 @@
   // store. This column used to run its own `api.discover()` beside it, so the
   // app sent `discover_profiles` twice on every start.
   const labels = $derived(profileLabels(subject.profiles));
-  const primaryDir = $derived(primaryProfileDir(subject.profiles));
-  const isPrimary = $derived(subject.profileDir !== null && subject.profileDir === primaryDir);
 
   // The selector carries the folder count, so it is never a secret that other
   // folders exist — which is the accepted cost of single-select.
@@ -77,17 +75,19 @@
       title={subject.profileDir ?? undefined} />
     <Button variant="ghost" size="sm" iconOnly title="Hide file list" onclick={onCollapse}>«</Button>
   </div>
-  {#if subject.profiles.length > 0}
-    <!-- Was a `<span class="meta">` inside the profile's `<summary>`, so it
-         wrapped with the label and repeated once per folder. One selection, one
-         chip. A non-live profile is a real hazard, not a detail: editing one
-         looks like it worked and changes nothing the game reads. -->
-    <p class="status">
-      <Chip tone={isPrimary ? "ok" : "warn"} size="sm">{profileNote(isPrimary)}</Chip>
-      {#if subject.profiles.length > 1}
-        <span class="count">{subject.profiles.length} profiles</span>
-      {/if}
-    </p>
+  <!-- The "in use by EVE" / "not in use" chip that used to sit here is gone.
+       It read as live process state — "is EVE running?" — and answered a
+       question nobody asked, while its negative half asserted something
+       usually false: "EVE has not written here" was shown for every folder
+       that simply was not the MOST RECENTLY written, including ones the client
+       had written days earlier.
+
+       What the ranking is actually for survives untouched: `primaryProfileDir`
+       still decides which folder is SELECTED by default, which is the part
+       that matters and the part the 2026-07-28 incident was about. The
+       selection does the work; the chip only narrated it. -->
+  {#if subject.profiles.length > 1}
+    <p class="status"><span class="count">{subject.profiles.length} profiles</span></p>
   {/if}
 
   {#if subject.profilesError}<InlineMessage variant="error">{subject.profilesError}</InlineMessage>{/if}

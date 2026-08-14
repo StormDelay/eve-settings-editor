@@ -56,15 +56,14 @@ export function primaryProfileDir(profiles: Profile[]): string | null {
   return null;
 }
 
-/**
- * What to show beside a profile in the list. The wording is deliberately about
- * EVE rather than about timestamps: "most recent" is what this used to say, and
- * it reads as a ranking rather than as "this is the one the game loads" — which
- * is the question a user with nine backup folders is actually asking.
- */
-export function profileNote(isPrimary: boolean): string {
-  return isPrimary ? "in use by EVE" : "not in use — EVE has not written here";
-}
+// `profileNote` used to live here, wording the sidebar's "in use by EVE" chip.
+// Both are gone. The chip read as live process state and answered a question
+// nobody was asking, and its negative half was usually false: it took a single
+// boolean, so it could not tell "EVE wrote here, just less recently" from "EVE
+// has never written here" and asserted the second for both.
+//
+// The ranking itself stays. `primaryProfileDir` is what picks the folder that
+// opens by default, which is the half that does the work.
 
 export function profileLabels(profiles: Profile[]): Map<string, string> {
   const key = (p: Profile) => `${p.server} / ${p.profile}`;
