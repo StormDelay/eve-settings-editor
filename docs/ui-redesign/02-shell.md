@@ -3,6 +3,11 @@
 Context bar, save cluster, view tab row, History popover, subject browser,
 launch state, and the inspector rule.
 
+> **Implemented on `feat/ui-redesign-phase-2`.** The text below is the plan as
+> written; §11 at the end lists every place the shipped result differs from it
+> and why. Each divergence is also commented at its site in the code — that
+> section is the index, not the argument.
+
 Companion to `docs/ui-redesign/01-tokens-and-primitives.md` (Phase 1), which
 owns every colour, size and shared primitive named here. This document names
 tokens (`--surface`, `--text-muted`, `--accent`) and primitives (`Button`,
@@ -1609,3 +1614,119 @@ backend, so there is no data-shape or file-format exposure at any point.
       settings, About, Refresh names, Rescan, Open file…, presets, the
       non-standard filter, restore, discard, the Raw file switch, and all six
       views.
+
+---
+
+## 11. What shipped, and where it differs from the above
+
+Added after the phase landed. Everything in §§1–10 is the plan as written; this
+is the diff. Each entry is commented at its site in the code too.
+
+**Landed in two commits**, as §9.1 asks. Commit 1 extracted
+`subject.svelte.ts` and passed the full suite with **no assertion touched**.
+
+### Divergences
+
+- **`openFile` / `openPresetPair` did not move into the store.** §6.1 nominates
+  them. They interleave subject state with `treeFile`, `view`, `mainView` and
+  the selection, which §6.2 keeps in the shell, and the interleaving is
+  load-bearing: `treeFile = slot` has to land *before* the `savedAt` bump, or
+  the bump fires while the edit slot still names the outgoing file and the
+  backups list refetches the wrong one. Moving them meant a callback into the
+  shell or a reordering that changes behaviour. §6.1's "structurally impossible
+  to thread as props" argument covers state *reads*; every consumer that opens a
+  file is a descendant of `+page.svelte` and takes it as a prop.
+
+- **`subject.svelte.ts` is a class, not `accountsStore`'s object literal.**
+  `$derived` cannot cross a module boundary as a bare `export const` — the
+  compiler rewrites reads, not bindings, and the only read it can rewrite in
+  another module is a property access.
+
+- **`resetSubject()` is wired into the shared test setup**, not into each
+  mounting suite's `afterEach` as §6.3 asks. Same guarantee, one line, and it
+  cannot be forgotten by the next suite that mounts the shell — which is the
+  failure §6.3 is actually worried about. `resetNames()` and `resetRoster()`
+  went in beside it: `page.spec.ts` documented that exact flakiness against
+  those two stores and worked around it rather than fixing it.
+
+- **Two things the store gained that §6.1 does not list**: `hideNonStandard`
+  (so the sidebar, the switcher and the launch empty state filter one list
+  rather than three) and `profilesError`. The scan now has two callers — mount
+  and the app menu's Rescan — and a sidebar that is empty for an unstated reason
+  is the thing this phase replaces.
+
+- **§5.12's Ctrl+F expression is wrong and was not used.**
+  `viewFocusSearch?.() ?? openSearch()` fires `openSearch()` every time, because
+  those callbacks return void. It ships as an `if`/`else`.
+
+- **Ctrl+F reaches four tabs, not six.** §5.12 says the other four "bind nothing
+  yet"; §10 says it focuses something on all six. §5.12 is the honest one, and
+  Keybinds and Autofill already had search boxes, so they are bound too. Overview
+  and Probes have no field to focus and gain one in Phase 4.
+
+- **Auto-railing at 1200px/900px (§4.3) is not built.** It needs the shell's own
+  width, `bind:clientWidth` needs a ResizeObserver, and jsdom reports 0 for every
+  element — so the thresholds would rail both columns in every component test and
+  take the sidebar's rows off the screen the suite queries. Manual rails, both
+  sides, persisting for the session. The DoD asks that they "rail
+  independently", which they do.
+
+- **Short tab labels below 900px (§4.3 rule 3) are not built.** There is no
+  configured minimum window width to fit them to, and the six labels fit a window
+  far narrower than anyone runs. The row is `nowrap` with shrinking, ellipsising
+  tabs instead, which holds "never wraps, never scrolls" at *every* width rather
+  than at one threshold, and keeps six readable words instead of six
+  abbreviations.
+
+- **The `⋯` view menu (§5.5) is not rendered.** Phase 2 fills it with nothing —
+  every view contributes zero actions until Phase 4/5 — and a slot that is always
+  hidden is not a slot. It arrives with its first item.
+
+- **`Sidebar` keeps `onShowAccounts`**, which §7 lists among the toolbar's
+  deleted props, because §5.7 gives every chip-less row a `Link…` action.
+
+- **The account chip sits in `ListRow`'s `trailing`, not beside the name.** With
+  it inside the label, the 17.5rem column's ellipsis clipped it away on a long
+  name — which turns "no chip means no account" from a rule into a coin flip.
+  Found in the running app, not in a test. `Link…` recedes to `--text-muted`
+  until the row is hovered, by colour rather than by hiding, per Phase 1's rule.
+
+- **`primaryProfileDir` returning null needed a caller-side fallback.** It
+  returns null when no profile carries a usable timestamp and says so. A list of
+  `<details>` did not care because it drew every folder; a single-select list
+  drew nothing at all. Falls back to the first discovered profile.
+
+- **`.searchbar` in `app.css` was renamed `.raw-search`.** It was the same class
+  name `SearchField` gives its own root, so that global rule had been landing a
+  bottom border and 12px of side padding on every search box in the app since
+  Phase 1.
+
+- **Fault (b)'s third head was fixed too.** `AccountsView` and `BatchView` now
+  take the *subject's* path rather than `slots[editSlot]`'s, so which tab you
+  were on no longer decides which pairings `Accept all` commits.
+
+### Not verified
+
+- **The Layout tab was not opened in the running app.** The shell grid, context
+  bar, sidebar, launch state and inspector placeholder are confirmed by
+  screenshot on Windows; `display: contents` placing LayoutView's two children
+  in columns 2 and 3 is pinned by a DOM-structure test
+  (`LayoutView.spec.ts`, "the shell grid contract") but not seen. macOS and
+  Linux/WebKitGTK are unverified — §4.5's fallback is unchanged and still costs
+  one line if it misbehaves.
+
+### Numbers
+
+50 test files / 1197 tests before, **55 / 1234 after**. `npm run check` clean
+over 492 files. No new dependency; nothing under `app/src-tauri/` touched.
+
+`+page.svelte` went 718 → 548 (commit 1) → **586** (commit 2), which misses §7's
+"target: under 300 lines" and is worth stating plainly rather than quietly. The
+file bar, the backups column and the sidebar's action row left it; the launch
+empty state's character list, the inspector column and its rail, and a
+six-branch view switch that now names every view instead of five arrived. §7
+itself rules out the obvious cut — "No `LaunchEmpty.svelte`: the empty state is
+~15 lines of `EmptyState` plus a list, with one call site" — and splitting the
+view switch would move markup without removing any. The 300 was a guess made
+before the launch state and the inspector were counted; the honest figure is
+586, and nothing in it is duplication.

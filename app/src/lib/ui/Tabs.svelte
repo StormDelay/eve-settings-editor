@@ -11,12 +11,17 @@
     value = $bindable(),
     variant = "segmented",
     ariaLabel,
+    onpick,
     class: klass = "",
   }: {
     tabs: { id: string; label: string; disabled?: boolean; disabledReason?: string }[];
     value?: string;
     variant?: "segmented" | "underline";
     ariaLabel: string;
+    /** Fired only on a USER pick, never on a programmatic `value` change. The
+     *  view strip needs that distinction: clicking a tab also leaves the
+     *  Accounts takeover, but code setting `view` must not. */
+    onpick?: (id: string) => void;
     class?: string;
   } = $props();
 
@@ -29,6 +34,7 @@
     if (!t || t.disabled) return;
     value = t.id;
     els[i]?.focus();
+    onpick?.(t.id);
   }
 
   function onkeydown(e: KeyboardEvent) {
