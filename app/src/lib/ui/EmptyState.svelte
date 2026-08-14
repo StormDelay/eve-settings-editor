@@ -14,17 +14,26 @@
   let {
     title,
     description,
+    variant = "empty",
     action,
     class: klass = "",
   }: {
     title: string;
     description?: string;
+    /** `error` for the BROKEN empty: a view with nothing to show because
+        something failed, not because there is nothing there yet. Today a
+        dismissed "Layout unavailable" modal left an empty canvas with no
+        explanation at all, which is the case this exists for. */
+    variant?: "empty" | "error";
     action?: Snippet;
     class?: string;
   } = $props();
 </script>
 
-<div class="empty-state {klass}">
+<div
+  class="empty-state {klass}"
+  class:error={variant === "error"}
+  role={variant === "error" ? "alert" : undefined}>
   <p class="title">{title}</p>
   {#if description}<p class="description">{description}</p>{/if}
   {#if action}<div class="action">{@render action()}</div>{/if}
@@ -46,6 +55,12 @@
     font-size: var(--t-title);
     font-weight: 600;
     color: var(--text);
+  }
+  /* The tone, not the whole block: the sentence stays at --text, because a role
+     colour measures ~25 points of contrast worse on this ground and would say
+     what the heading already says. */
+  .error .title {
+    color: var(--danger);
   }
   .description {
     margin: 0;

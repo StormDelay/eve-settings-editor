@@ -33,11 +33,17 @@
     userOpen,
     sharedNames,
     onSetChatSplits,
+    stackError = null,
+    chatError = null,
     filter = $bindable({ ...NO_FILTER }),
     focusFilter = $bindable(undefined),
   }: {
     windows: WindowRect[];
     stacks: Stack[];
+    /** Refused edits, owned by LayoutView and rendered at the control group each
+     *  belongs to: the stack list, and the chat split fields. */
+    stackError?: { text: string; detail: string } | null;
+    chatError?: { text: string; detail: string } | null;
     selectedId: string | null;
     readOnly: boolean;
     onSelect: (id: string) => void;
@@ -269,7 +275,7 @@
   <div class="detail">
     <div class="coords">
       {#each COORDS as field}
-        <label title="right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
+        <label title="Right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
           {field}
           <Field
             kind="number"
@@ -284,7 +290,7 @@
       {#each detailFlags(w) as f (f.name)}
         <label
           class="flag"
-          title={f.set.how === "unavailable" ? "Not present in this file" : "right-click for actions"}
+          title={f.set.how === "unavailable" ? "Not present in this file" : "Right-click for actions"}
           oncontextmenu={(e) => openMenu(e, flagMenu(w, f))}>
           <Field
             kind="checkbox"
@@ -312,6 +318,9 @@
         readOnly={accountReadOnly || !userOpen}
         {sharedNames}
         onSet={onSetChatSplits} />
+      {#if chatError}
+        <InlineMessage variant="error" detail={chatError.detail}>{chatError.text}</InlineMessage>
+      {/if}
     {/if}
   </div>
 {/snippet}
@@ -420,8 +429,14 @@
     <InlineMessage variant="warn" class="orphans">
       {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
       rectangle with nothing in it.
-      <Button size="sm" type="button" onclick={onDeleteOrphans}>Delete them</Button>
+      <!-- "Delete them" needed the sentence above it to parse, which is what
+           makes it a caption rather than a label. -->
+      <Button size="sm" type="button" onclick={onDeleteOrphans}>Delete empty frames</Button>
     </InlineMessage>
+  {/if}
+  <!-- Above the stack list, which is what every one of these failures is about. -->
+  {#if stackError}
+    <InlineMessage variant="error" detail={stackError.detail}>{stackError.text}</InlineMessage>
   {/if}
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
@@ -505,10 +520,10 @@
                   class="stack-btn"
                   disabled={readOnly}
                   disabledReason="This file is read-only"
-                  title="Remove from stack"
-                  aria-label="Remove from stack"
+                  title="Remove this window from the stack"
+                  aria-label="Remove this window from the stack"
                   onclick={() => onUnstack(w.id)}>
-                  unstack
+                  Unstack
                 </Button>
               </div>
               {#if w.id === selectedId && w.geom}

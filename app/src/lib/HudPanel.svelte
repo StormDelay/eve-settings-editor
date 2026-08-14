@@ -11,9 +11,16 @@
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
     targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
+    hudError = null, neocomError = null,
   }: {
     hud: Hud;
     readOnly: boolean;
+    /** Refused edits, owned by LayoutView (which runs the commands) and rendered
+     *  here (which owns the controls). `hudError` carries the field's `name` so
+     *  it lands under the row that failed rather than at the top of a panel with
+     *  twenty rows in it. */
+    hudError?: { name: string; text: string; detail: string } | null;
+    neocomError?: { text: string; detail: string } | null;
     /** The ACCOUNT document's read-only flag, which only the account-scoped
      * rows care about. False when no account file is open — those rows are
      * already `unavailable` then. */
@@ -65,7 +72,7 @@
       { name: "ship_offset", label: "Offset from centre" },
       { name: "ship_top", label: "Align to top" },
     ] },
-    { title: "Fighter UI", kind: "fighter", rows: [
+    { title: "Fighter panel", kind: "fighter", rows: [
       { name: "fighter_x", label: "x" },
       { name: "fighter_y", label: "y" },
       { name: "fighter_detached", label: "Detached" },
@@ -235,6 +242,9 @@
               <Chip tone="neutral" size="sm">default</Chip>
             {/if}
           </label>
+          {#if hudError?.name === row.name}
+            <InlineMessage variant="error" detail={hudError.detail}>{hudError.text}</InlineMessage>
+          {/if}
         {/if}
       {/each}
       {#if g.kind === "shipui"}
@@ -278,7 +288,8 @@
           onReorder={onNeocomReorder}
           onRemove={onNeocomRemove}
           onAdd={onNeocomAdd}
-          onReset={onNeocomReset} />
+          onReset={onNeocomReset}
+          error={neocomError} />
       {/if}
     </div>
   {/each}
