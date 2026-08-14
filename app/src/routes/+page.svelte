@@ -24,7 +24,7 @@
   import Sheet from "$lib/ui/Sheet.svelte";
   import Tabs from "$lib/ui/Tabs.svelte";
   import Toast from "$lib/ui/Toast.svelte";
-  import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
+  import { api, errMessage, errText, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { resolveNames } from "$lib/names.svelte";
@@ -43,8 +43,9 @@
     reconcileUserSlot,
     rescanProfiles,
     saveFile,
+    shellErrors,
   } from "$lib/subject.svelte";
-  import { open as openDialog, message } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // One sheet at a time; `null` is the editor. Replaces `mainView`, which had no
@@ -258,7 +259,7 @@
       else await reconcileCharSlot(outcome);
       view = resolveView(priorView);
     } catch (e) {
-      await message(errMessage(e), { title: "Open failed", kind: "error" });
+      shellErrors.open = { text: `${name} wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -290,15 +291,22 @@
       }
       view = resolveView(priorView);
     } catch (e) {
-      await message(errMessage(e), { title: "Open failed", kind: "error" });
+      shellErrors.open = { text: `“${p.name}” wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
-  // `rethrow` is for callers with somewhere better to put the error than a
-  // dialog — the insert form shows it inline and stays open on failure.
+  // `rethrow` is for callers with somewhere better to put the error than the
+  // default slot — the insert form shows it inline and stays open on failure.
+  // A refused tree edit, above the tree. Not keyed to the node: `Mutation` is a
+  // union and only some arms carry a `path`, so keying would mean either a cast
+  // or a message that vanishes for insert. Above the tree it is always visible
+  // and always right.
+  let treeError = $state<{ text: string; detail: string } | null>(null);
+
   async function runMutation(m: Mutation, rethrow = false) {
     const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
+    treeError = null;
     try {
       const tree = await api.mutate(editSlot, m);
       // Reassign (not mutate-in-place) so the derived `current` refires.
@@ -306,7 +314,7 @@
       subject.dirty[editSlot] = true;
     } catch (e) {
       if (rethrow) throw e;
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -316,13 +324,14 @@
     const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
     if (ms.length === 0) return;
+    treeError = null;
     try {
       const tree = await api.mutateMany(editSlot, ms);
       subject.slots[editSlot] = { ...doc, tree };
       subject.dirty[editSlot] = true;
     } catch (e) {
       if (rethrow) throw e;
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -592,6 +601,12 @@
             count={searching ? (found?.count ?? 0) : undefined}
             onclear={closeSearch} />
         </div>
+        <!-- The node that refused the edit is several hundred rows down a
+             collapsed tree, so the message goes where the tree is rather than
+             hunting the row. -->
+        {#if treeError}
+          <InlineMessage variant="error" detail={treeError.detail}>{treeError.text}</InlineMessage>
+        {/if}
         <div class="scroll">
           {#if found?.tree}
             <TreeNode
