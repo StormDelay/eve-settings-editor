@@ -105,3 +105,42 @@ test("each group's Restore targets that group's slot", async () => {
   await waitFor(() => expect(landed).toBe("user"));
   expect(calls.only("restore_backup").args).toMatchObject({ slot: "user" });
 });
+
+/**
+ * Confirming inside the dialog must not dismiss the popover underneath it.
+ *
+ * A native `ask()` raised an OS window and produced no DOM pointer events at
+ * all. An in-app confirmation raises a Sheet in a SEPARATE subtree, so its own
+ * buttons looked exactly like a click on the page behind — and Popover closes on
+ * any window pointerdown it did not stop itself. Clicking "Restore" in the
+ * confirmation made History vanish under the dialog, which reads as "the restore
+ * did nothing".
+ *
+ * The fix is a containment test in Popover, so this asserts the mechanism rather
+ * than the symptom: a pointerdown inside a `[data-modal]` that does not contain
+ * the popover is not an outside click.
+ */
+test("a click inside a modal above it does not close the popover", async () => {
+  subject.slots.char = opened("core_char_950.dat");
+  calls.stub("list_file_backups", []);
+  let closed = false;
+  render(HistoryPopover, {
+    props: { anchor: document.body, onclose: () => (closed = true), onRestored: () => {} },
+  });
+  await screen.findByRole("dialog", { name: "History" });
+
+  // A modal layer over the top, as ConfirmDialog's Sheet renders it.
+  const modal = document.createElement("div");
+  modal.setAttribute("data-modal", "");
+  const button = document.createElement("button");
+  modal.appendChild(button);
+  document.body.appendChild(modal);
+
+  await fireEvent.pointerDown(button);
+  expect(closed, "the confirmation's own click is not an outside click").toBe(false);
+
+  // A click that is genuinely outside still dismisses.
+  await fireEvent.pointerDown(document.body);
+  expect(closed).toBe(true);
+  modal.remove();
+});

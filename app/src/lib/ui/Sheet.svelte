@@ -98,8 +98,13 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- `data-modal` is a contract with Popover, not decoration: a popover behind
+       a modal must not treat the modal's own clicks as an outside click and
+       close itself. Before this, confirming a restore inside the History
+       popover made the popover vanish underneath the dialog. -->
   <div
     class="overlay"
+    data-modal
     class:end={placement === "end"}
     class:work={placement === "work"}
     onclick={onclose}
