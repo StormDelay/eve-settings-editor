@@ -148,3 +148,47 @@ describe("the dialog diet, as a count", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("the undo boundary (05b §8)", () => {
+  /**
+   * `Ctrl+Z` means the DOCUMENT stack and never reinterprets itself. So a toast
+   * for something the document stack cannot reverse — a settings-preset delete,
+   * a backup restore, a batch copy, an account pairing — must not offer Undo:
+   * clicking it would revert an unrelated document edit while leaving the
+   * pairing written.
+   *
+   * The mistake would be a wrong import rather than a subtle one, which is
+   * exactly what a source scan catches. Every legitimate `undoAction()` lives in
+   * a file that edits an open document.
+   */
+  const DOCUMENT_EDITORS = [
+    "OverviewView.svelte",
+    "OverviewFiltersTab.svelte",
+    "LayoutView.svelte",
+    "NeocomButtons.svelte",
+    "undo.svelte.ts",
+  ];
+
+  test("only files that edit an open document mint an Undo action", () => {
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      if (DOCUMENT_EDITORS.some((d) => f.endsWith(d))) continue;
+      for (const { line, text } of codeLines(f)) {
+        if (text.includes("undoAction(")) {
+          offenders.push(`${f.replace(SRC, "")}:${line} ${text.trim()}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /** The roster is not a settings document and never reaches `doc.value`, so
+   *  `api.undo()` cannot reverse a pairing. Its remedy is `unpair`, on the card. */
+  test("the accounts view never calls undo", () => {
+    const accounts = FILES.filter((f) => f.endsWith("AccountsView.svelte"));
+    expect(accounts.length).toBe(1);
+    for (const { text } of codeLines(accounts[0])) {
+      expect(text).not.toMatch(/\bundoAction\b|api\.undo\b/);
+    }
+  });
+});

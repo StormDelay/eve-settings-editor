@@ -18,6 +18,12 @@
   // of them names a subject the palette could show — "nudge the selected window"
   // is not a row in a command list.
   const LOCAL: { keys: string; does: string; where: string }[] = [
+    // Undo and redo are not registry commands: they act on the document stack
+    // rather than on a subject the palette could name. This table is their only
+    // written home.
+    { keys: accel("Z"), does: "Undo the last change", where: "Everywhere" },
+    { keys: `${accel("Z")} with Shift`, does: "Redo", where: "Everywhere" },
+    { keys: accel("Y"), does: "Redo — the Windows spelling of the same thing", where: "Everywhere" },
     { keys: "Esc", does: "Close the topmost thing — menu, sheet, or the search box", where: "Everywhere" },
     { keys: "Enter", does: "Commit an inline name entry", where: "Overview, Presets, Autofill, Accounts, Raw" },
     { keys: "Esc", does: "Cancel an inline name entry", where: "the same six" },
