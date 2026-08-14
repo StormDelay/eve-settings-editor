@@ -351,45 +351,48 @@ describe("the view menu", () => {
 });
 
 /**
- * Overview is the SECOND view that fills both shell columns, and it reaches the
- * inspector column the same way LayoutView does: `display: contents` on the
- * root, so its two children stop participating in its layout and become grid
- * items of `.shell`, landing in columns 2 and 3 through the `.work` /
- * `.inspector` rules in `app.css`.
+ * Overview reaches across both shell columns the way LayoutView reaches into
+ * the second one: `display: contents` on the root, so the root stops
+ * participating in layout and its child becomes a grid item of `.shell`.
  *
- * That holds only while the root has EXACTLY those two element children. Wrap
- * them in a scroller, or add a third sibling, and the tab list silently moves
- * into the inspector's column with nothing failing.
+ * Unlike Layout it has exactly ONE child, spanning columns 2 to 4 — a tab's
+ * properties are docked under the list that selects it, so there is no third
+ * column. Wrap the child in a scroller and it silently stops spanning; add a
+ * second and it lands in the column the shell is no longer drawing anything in.
+ * jsdom computes no layout, so nothing else would fail.
  */
 describe("the shell grid contract", () => {
-  test("the root renders exactly the work area and the inspector, as siblings", async () => {
+  test("the root renders exactly one child, the work area", async () => {
     calls.stub("overview_columns", columns(tab(0, "PvP")));
     mount();
     await findRow("PvP");
 
     const root = document.querySelector(".overview-view") as HTMLElement;
     const kids = Array.from(root.children);
-    expect(kids).toHaveLength(2);
+    expect(kids).toHaveLength(1);
     expect(kids[0].classList.contains("work")).toBe(true);
-    expect(kids[1].classList.contains("inspector")).toBe(true);
+    expect(kids[0].classList.contains("wide")).toBe(true);
   });
 
-  // A view that declares an inspector always renders it — an EmptyState when
-  // there is nothing to show, never an absent column.
-  test("the inspector is there even with no account file open", () => {
+  test("it still spans with no account file open", () => {
     mount({ userOpen: false, charId: null });
     const root = document.querySelector(".overview-view") as HTMLElement;
-    expect(root.children[1].classList.contains("inspector")).toBe(true);
+    expect(Array.from(root.children)).toHaveLength(1);
+    expect(root.children[0].classList.contains("wide")).toBe(true);
   });
 
-  // A view that supplies its own inspector supplies its own hide control: the
-  // shell's lives in the aside this one replaces, so without it the column
-  // could be reopened from here and only closed from another tab.
-  test("the inspector can be collapsed from here", async () => {
-    const onCollapseInspector = vi.fn();
-    mount({ onCollapseInspector });
-    await fireEvent.click(screen.getByRole("button", { name: "Hide properties" }));
-    expect(onCollapseInspector).toHaveBeenCalled();
+  // The tab's fields sit under the list that selects it, in the same column —
+  // not across the window from it.
+  test("the tab's properties are in the side pane, beside the list", async () => {
+    calls.stub("overview_columns", columns(tab(0, "PvP")));
+    mount();
+    await findRow("PvP");
+
+    const side = document.querySelector(".side") as HTMLElement;
+    expect(side.querySelector(".tablist")).toBeTruthy();
+    expect(side.querySelector(".inspect")).toBeTruthy();
+    // And the shell's inspector column is not being used by this view at all.
+    expect(document.querySelector("aside.inspector")).toBeNull();
   });
 });
 

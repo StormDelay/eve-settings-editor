@@ -105,13 +105,16 @@
   // The four views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
-  // The views that supply their own inspector through `display: contents`. The
-  // shell draws its placeholder for every other one, because the column is a
-  // promise: a column that is there on one tab and gone on the next is the same
-  // fault as a tab strip that changes membership.
-  const viewOwnsInspector = $derived(
-    current?.status === "opened" && (view === "layout" || view === "overview"),
-  );
+  // Layout supplies its own inspector through `display: contents`, so the shell
+  // does not draw one over it. Every view that neither supplies nor fills gets
+  // the shell's placeholder, because the column is a promise: one that is there
+  // on one tab and gone on the next is the same fault as a tab strip that
+  // changes membership.
+  const viewOwnsInspector = $derived(current?.status === "opened" && view === "layout");
+  // Overview is the exception, by the owner's call: it docks a tab's properties
+  // under the list that selects the tab, so it spans both columns and there is
+  // no third one to fill.
+  const viewFillsWidth = $derived(current?.status === "opened" && view === "overview");
   const scopeLabel = $derived(
     sheet === null && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
       ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
@@ -508,12 +511,12 @@
       sharedNames={subject.sharedNames}
       bind:focusSearch={viewFocusSearch} />
   {:else if view === "overview"}
-    <!-- The second view that fills both columns, by the same `display: contents`
-         route: its tab list is the work area and its inspector is the tab's
-         properties. It renders the scope banner itself for that reason. -->
+    <!-- Reaches across both columns by the same `display: contents` route
+         LayoutView uses, but with ONE child rather than two: a tab's properties
+         are docked under the list that selects it. It renders the scope banner
+         itself for that reason. -->
     <OverviewView
       {scopeLabel}
-      onCollapseInspector={() => (inspectorOpen = false)}
       userOpen={subject.slots.user?.status === "opened"}
       userId={subject.userId}
       charId={subject.charId}
@@ -610,7 +613,10 @@
        changes membership, so this is a visible promise rather than a collapsed
        column — and anyone who wants the width back rails it. Layout supplies its
        own through `display: contents`, so the shell does not draw one over it. -->
-  {#if !inspectorOpen}
+  {#if viewFillsWidth}
+    <!-- Nothing: Overview's work area spans this column too. Not even the rail,
+         which would leave a 1.5rem strip of nothing over the view. -->
+  {:else if !inspectorOpen}
     <button class="rail rail-right" onclick={() => (inspectorOpen = true)}
       title="Show properties" aria-label="Show properties">&laquo;</button>
   <!-- No longer conditioned on `sheet`: the editor is never unmounted now, so
