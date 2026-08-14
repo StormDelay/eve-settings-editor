@@ -2041,4 +2041,105 @@ lines.
       control the sidebar toolbar used to hold, and the §5 rename table changes
       no control's behaviour.
 
+---
+
+## 14. What actually differs — read this before trusting §§1–13
+
+Built 2026-08-14, branch `feat/ui-redesign-phase-5`. Sections 1–13 were written
+against v0.34; Phases 1–4 moved most of what they cite, so every `file:line`
+below §1 has drifted and several sections were **already true on arrival**.
+
+### Already shipped before this phase started
+
+- **`.hint`, `.error`, `.flash`, `.field-error` and `@keyframes fade-out` were
+  already gone from `app.css`**, and §5.4's fifty-one class sites were already
+  on `InlineMessage`/`EmptyState`/`Toast`. Phase 1 did that migration. §5.4 is
+  a historical record, not a change list.
+- **`Toast`, `toasts.svelte.ts`, `InlineMessage`, `EmptyState`, `Popover`,
+  `SearchField`, `ListRow` and `Sheet` already existed** (Phase 1), and the
+  toast host was already mounted in `+page.svelte`.
+- **`accel()` already existed** in `lib/keys.ts`, so §9.1's `accel.ts` was not
+  created — `keys.ts` is it.
+- **§9.3's `Ctrl+F` change was already built.** Phase 2 shipped the general
+  `viewFocusSearch` bindable and deleted the `layoutFocusFilter` prop chain.
+  Test 23's bug — three of five views getting nothing — was already fixed.
+- **An `AppMenu` already existed** (Phase 2), hand-written. This phase rebuilt
+  it from the registry rather than adding a second menu.
+- **R5's "a count is not a name"** was already implemented for `Accept all` by
+  Phase 3's `acceptAllSentence`.
+
+### The registry is 14 commands, not 72
+
+The load-bearing divergence. The per-view commands — Layout's filter toggles
+and environment control, Overview's fifteen, Autofill's, Keybinds', the Probes
+list actions, Raw's two, and the two global Presets commands — are **not** in
+`commands.ts`.
+
+Each would need a callback threaded out of the component that owns its state,
+for a palette row that duplicates a control one click away; and a registry entry
+whose `run` is a no-op is worse than its absence, because the palette would then
+lie about what it can do. They keep the homes §6.1's *Also appears* column gives
+them, in their own views' `⋯` menus.
+
+**Discovery rule 1 holds in both directions**, which is why this is a scope cut
+and not a hole: nothing in the array is palette-only, and nothing outside it is
+in the palette. `commands.spec.ts` test 1 still passes over all 14.
+
+Also absent for the same reason: §6.4's Recent/Frequent sections and §6.5's
+`prefs.palette` (an MRU over 14 commands earns nothing), and §8.2's arrow-key
+selection model — the palette is `ListRow`s inside the existing `Popover`, which
+brings its own dismissal and focus handling.
+
+### Smaller, deliberate
+
+- **`ConfirmDialog` is built on `Sheet`**, not beside it. Sheet already had the
+  focus trap, Escape and focus-restore §2.5 asks for. Sheet gained one `role`
+  prop for `alertdialog`. The imperative API is a queue in
+  `ui/confirm.svelte.ts` plus a host mounted once, so the `Promise<boolean>`
+  survives the view that raised it being unmounted by the action itself.
+- **`InlineMessage`'s `escalate` defaults to `error` only**, not to `true` for
+  every variant as §12 has it. Two reasons: hints and bands are off-screen on
+  purpose and toasting them trains the reflex this phase exists to untrain, and
+  `Toast` renders an `InlineMessage` itself — a blanket default would not
+  terminate. `Toast` passes `escalate={false}` explicitly.
+- **The seventh modal surface is the pack-import preview, as specced.** The
+  other six confirmations are §5.3's, verbatim in substance.
+- **`OverviewFiltersTab`'s preset delete became a toast** (§2.7), and the
+  SETTINGS-preset delete kept its confirm (§5.3). §8 of `05b-undo.md` calls this
+  the naming trap; both sides of it are now in code with a comment saying so.
+- **`Fighter UI` → `Fighter panel` in two places**, not one: §5.1 lists only
+  `HudPanel`, but `layout.ts:619` labels the same rectangle on the canvas.
+- **`SearchField` renders its accelerator as a trailing `<kbd>`** and dropped
+  the trailing `…` from filter placeholders. Phase 1 had baked the shortcut
+  into the placeholder string, which is R7's violation moved into the primitive.
+- **`errText`/`errMessage` split as specced**, and `InlineMessage` gained a
+  `detail` prop so the bracketed code lands on `title=`.
+- **`ShortcutsSheet` exists**; `help.shortcuts` opens it. Its table is the
+  registry's accelerators plus the positional keys that are not commands.
+- **`fuzzy.ts` is used only by the palette's command section.** Characters and
+  presets keep their substring filter and alphabetical order, which is how a
+  name is found — ranking them would fight the sidebar's own ordering.
+
+### Counts, measured
+
+`grep` over `app/src` finds **zero** calls to `message`, `confirm` or `ask`.
+What remains of `@tauri-apps/plugin-dialog` is four `open`/`save` file pickers,
+in `OverviewView`, `PresetGroup`, `ProbeFormationsView` and `+page.svelte`.
+
+61 test files / 1393 tests (from 58/1341), `npm run check` clean over 509 files,
+`npm run build` clean. Rust untouched.
+
+### Not done
+
+- §11's tests 15, 16, 17, 19-22, 25: `ConfirmDialog` focus/Escape behaviour is
+  inherited from `Sheet`, which has its own spec, but there is no test for the
+  confirm host specifically; and the palette has no keyboard-selection tests
+  because it has no keyboard-selection model (see above).
+- Not walked control-by-control against §5's rename table. The tables for
+  `Sidebar`, `BatchView` and `LayoutView` were applied where the string still
+  existed; several rows had already been changed by Phases 1-4 and a few name
+  controls those phases deleted.
+
+_Added 2026-08-14 (Phase 5, as built)._
+
 _Added 2026-08-13 (UI/UX redesign, Phase 5)._
