@@ -1345,7 +1345,19 @@ changes came out of it, and the first is a reversal of a decision in §5.
    rendering, different bytes, documented in `tabName.ts` and true before this
    phase too.
 
-6. **A paired character on an UNNAMED account rendered as unpaired.**
+6. **The context bar had two buttons opening the same panel.** The subject
+   button and a `Search or run a command` button beside it both ran
+   `switcherOpen = !switcherOpen` — and `SubjectSwitcher` anchors to the
+   *subject* button, so a click at the far right of the bar opened a popup at
+   the far left. `02-shell.md` accepted the pair on the grounds that Phase 5
+   turns the component into a real command palette; until it does, that is two
+   controls for one job in the bar, which is the fault §1 names. The palette
+   button is deleted and the `Ctrl+K` hint moved onto the control it opens —
+   being *found by looking rather than by knowing* was the deleted button's one
+   real job. Phase 5 earns an entry point back when the panel does something the
+   subject button should not.
+
+7. **A paired character on an UNNAMED account rendered as unpaired.**
    `accountAliasOf` returned the alias and `null` otherwise, so an account
    nobody had named drew no chip and got a `Link…` button offering to create a
    pairing that already existed — breaking the rule its own doc comment states,
