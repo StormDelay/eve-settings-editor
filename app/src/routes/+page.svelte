@@ -35,6 +35,7 @@
   import { accel } from "$lib/keys";
   import type { Ctx } from "$lib/commands";
   import { handleKey } from "$lib/keymap";
+  import { noteEdit } from "$lib/undo.svelte";
   import { resolveView, type View } from "$lib/views";
   import {
     subject,
@@ -318,6 +319,7 @@
       // Reassign (not mutate-in-place) so the derived `current` refires.
       subject.slots[editSlot] = { ...doc, tree };
       subject.dirty[editSlot] = true;
+      noteEdit();
     } catch (e) {
       if (rethrow) throw e;
       treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
@@ -335,6 +337,7 @@
       const tree = await api.mutateMany(editSlot, ms);
       subject.slots[editSlot] = { ...doc, tree };
       subject.dirty[editSlot] = true;
+      noteEdit();
     } catch (e) {
       if (rethrow) throw e;
       treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
@@ -536,7 +539,7 @@
       bind:selectedId={selectedWindowId}
       onCollapseInspector={() => (inspectorOpen = false)}
       onReveal={revealInTree}
-      onDirty={(slot) => (subject.dirty[slot] = true)}
+      onDirty={(slot) => { subject.dirty[slot] = true; noteEdit(); }}
       sharedNames={subject.sharedNames}
       bind:focusSearch={viewFocusSearch} />
   {:else if view === "overview"}
@@ -551,8 +554,8 @@
       charId={subject.charId}
       charOpen={subject.slots.char?.status === "opened"}
       refreshToken={subject.savedAt}
-      onUserDirty={() => (subject.dirty.user = true)}
-      onCharDirty={() => (subject.dirty.char = true)}
+      onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
+      onCharDirty={() => { subject.dirty.char = true; noteEdit(); }}
       onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
       onShowAccounts={() => (sheet = "accounts")} />
   {:else}
@@ -572,7 +575,7 @@
             charOpen={subject.slots.char?.status === "opened"}
             charName={subject.charName}
             onShowAccounts={() => (sheet = "accounts")}
-            onUserDirty={() => (subject.dirty.user = true)}
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
             bind:focusSearch={viewFocusSearch} />
         </div>
       {:else if view === "keybinds"}
@@ -583,7 +586,7 @@
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
             onShowBatch={() => (sheet = "batch")}
-            onUserDirty={() => (subject.dirty.user = true)}
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
             bind:focusSearch={viewFocusSearch} />
         </div>
       {:else if view === "probes"}
@@ -593,7 +596,7 @@
             refreshToken={subject.savedAt}
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
-            onUserDirty={() => (subject.dirty.user = true)} />
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }} />
         </div>
       {:else}
         {#if subject.slots.user?.status === "opened"}

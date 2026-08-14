@@ -65,6 +65,28 @@ export interface SaveReport {
   bytes_written: number;
 }
 
+export interface UndoState {
+  can_undo: boolean;
+  can_redo: boolean;
+  /** Nothing renders this. It is what the "one command, one step" tests assert
+   *  on, and no other observation can see it. */
+  depth: number;
+}
+
+export interface UndoOutcome {
+  /** A fresh projection per open slot. The Raw view reads `slots[x].tree`
+   *  directly and no refresh token reaches it, so the trees come back rather
+   *  than being re-fetched. */
+  char_tree: TreeNodeData | null;
+  user_tree: TreeNodeData | null;
+  /** Authoritative, and the reason the frontend keeps no opinion of its own:
+   *  after edit → save → edit → undo the file is clean, and after one more undo
+   *  it is dirty again. Only something that knows where the save point sits can
+   *  tell those two apart. */
+  dirty: { char: boolean; user: boolean };
+  state: UndoState;
+}
+
 export interface BackupInfo {
   path: string;
   file_name: string;
@@ -425,6 +447,12 @@ export const api = {
   mutateMany: (slot: Slot, mutations: Mutation[]) =>
     invoke<TreeNodeData>("apply_mutations", { slot, mutations }),
   save: (slot: Slot, force: boolean) => invoke<SaveReport>("save_document", { slot, force }),
+  /** `null` means "nothing to undo" — NOT an error, and it must not reach an
+   *  error surface. Undo takes no arguments, touches no disk, and restores
+   *  trees the backend produced itself, so there is no other failure mode. */
+  undo: () => invoke<UndoOutcome | null>("undo"),
+  redo: () => invoke<UndoOutcome | null>("redo"),
+  undoState: () => invoke<UndoState>("undo_state"),
   listBackups: (slot: Slot) => invoke<BackupInfo[]>("list_file_backups", { slot }),
   restoreBackup: (slot: Slot, backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { slot, backupPath }),

@@ -34,6 +34,7 @@ import {
   userSlotFor,
 } from "./overview";
 import { confirmDialog } from "./ui/confirm.svelte";
+import { forgetUndoHistory } from "./undo.svelte";
 import { toast } from "./ui/toasts.svelte";
 
 /**
@@ -331,6 +332,9 @@ export async function clearSlot(slot: Slot): Promise<void> {
   } catch { /* best-effort */ }
   subject.slots[slot] = null;
   subject.dirty[slot] = false;
+  // `close_file` cleared the backend stack; this is the mirror, so the Undo
+  // control does not go on offering a step that no longer exists.
+  forgetUndoHistory();
 }
 
 // After a character lands in the char slot, make the user slot its paired
@@ -422,7 +426,11 @@ export async function discardChanges(): Promise<void> {
   const many = subject.dirty.char && subject.dirty.user;
   const ok = await confirmDialog({
     title: "Discard unsaved changes?",
-    body: `${dirtyNames()} ${many ? "are" : "is"} reloaded from disk as ${many ? "they were" : "it was"} at the last save. Your backups aren't touched.`,
+    // The undo history goes with them, and saying so is one clause. It would
+    // otherwise be a silently wrong sentence the moment undo shipped — the
+    // copy already promised the backups were safe, so the omission would read
+    // as a promise about the history too.
+    body: `${dirtyNames()} ${many ? "are" : "is"} reloaded from disk as ${many ? "they were" : "it was"} at the last save. Your backups aren't touched, but the undo history goes.`,
     confirm: "Discard changes",
     cancel: "Keep editing",
     danger: true,
@@ -435,6 +443,9 @@ export async function discardChanges(): Promise<void> {
     subject.dirty.char = false;
     subject.dirty.user = false;
     subject.savedAt += 1;
+    // Discard re-opens every open file, so `open_file` has already cleared the
+    // backend stack — this phase needed no backend change for Discard at all.
+    forgetUndoHistory();
   } catch (e) {
     shellErrors.save = { text: `Your changes weren't discarded — ${errText(e)}`, detail: errMessage(e) };
   }
