@@ -58,13 +58,34 @@
       y: Math.max(0, Math.min(base.y, window.innerHeight - r.height)),
     };
   });
+
+  /**
+   * True when the event happened inside a modal that does NOT contain this
+   * popover — that is, in a layer sitting on top of it.
+   *
+   * Such an event is not an outside click and not our Escape: it belongs to the
+   * layer above, and dismissing on it unwinds two layers for one gesture.
+   *
+   * This is what a native dialog used to give free. `ask()` raised an OS window
+   * and produced no DOM pointer events at all; an in-app confirmation raises a
+   * Sheet in a separate subtree, so its own buttons looked exactly like a click
+   * on the page behind. Confirming a backup restore from inside the History
+   * popover closed the popover underneath the dialog.
+   *
+   * The containment test is what keeps a popover opened FROM INSIDE a sheet
+   * working normally — that modal does contain it, so its clicks still dismiss.
+   */
+  function aboveMe(target: EventTarget | null): boolean {
+    const modal = (target as Element | null)?.closest?.("[data-modal]");
+    return !!modal && !modal.contains(el ?? null);
+  }
 </script>
 
 <!-- Outside the {#if}: <svelte:window> may not sit inside a block. -->
 <svelte:window
-  onpointerdown={() => open && onclose()}
+  onpointerdown={(e) => open && !aboveMe(e.target) && onclose()}
   onkeydown={(e) => {
-    if (open && e.key === "Escape") onclose();
+    if (open && e.key === "Escape" && !aboveMe(e.target)) onclose();
   }} />
 
 {#if open}
