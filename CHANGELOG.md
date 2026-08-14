@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-08-14
+
+The whole app, redrawn — and Ctrl+Z.
+
 ### Changed
 - The whole app has been repainted on one colour palette, chosen so every piece of text is actually readable — the small grey text everywhere was well below what is legible, and the status badges were the worst of it.
 - Buttons, fields, tabs and messages now look and behave the same in every view.
