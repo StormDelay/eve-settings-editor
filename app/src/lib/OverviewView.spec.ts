@@ -381,6 +381,16 @@ describe("the shell grid contract", () => {
     const root = document.querySelector(".overview-view") as HTMLElement;
     expect(root.children[1].classList.contains("inspector")).toBe(true);
   });
+
+  // A view that supplies its own inspector supplies its own hide control: the
+  // shell's lives in the aside this one replaces, so without it the column
+  // could be reopened from here and only closed from another tab.
+  test("the inspector can be collapsed from here", async () => {
+    const onCollapseInspector = vi.fn();
+    mount({ onCollapseInspector });
+    await fireEvent.click(screen.getByRole("button", { name: "Hide properties" }));
+    expect(onCollapseInspector).toHaveBeenCalled();
+  });
 });
 
 // Add window writes the account grouping AND the char-file geometry. Miss the
