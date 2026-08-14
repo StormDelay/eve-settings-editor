@@ -1257,13 +1257,57 @@ cosmetic — which is the same lesson Phase 3 recorded.
   a `Button`; Phase 1 shipped it this way and this phase did not change it. It
   is the one exception to §12's "no `<style>` block declares a button".
 
+### The live pass happened, and it moved four things
+
+The visual pass ran on 2026-08-14 against the owner's own session. Four
+changes came out of it, and the first is a reversal of a decision in §5.
+
+1. **The inspector is docked under the tab list, not across the window from it,
+   and Overview has no right-hand column at all.** §5 puts the tab's Name,
+   Colour, Bold and In window in the shell's inspector; on a 2560px monitor that
+   put the list you click on the far left and the field you type in on the far
+   right. Owner's call: the properties join the list. `OverviewView` therefore
+   spans columns 2–4 with ONE child, and `+page.svelte` draws neither an aside
+   nor a rail for this view. §7's rule survives in substance — the properties
+   are still exactly the selection's, and nothing unrelated is beside them —
+   but Overview is no longer an example of it in the *right-hand pane* sense.
+   `OverviewInspector` did not change; only where it is rendered did.
+
+2. **The column and appearance lists are capped at a reading width.** `ListRow`
+   pushes its trailing control to the container's right edge, which is correct
+   in a 20rem panel and absurd in a work area that is most of a wide monitor:
+   the width box for `Name` sat about 1,700px from the word `Name`. Capped at
+   26rem, the widest row either list can produce.
+
+3. **The view's `⋯` is a real button, beside the sub-tabs.** As a small ghost
+   pinned to the far right margin it was, in the owner's words, "very hard to
+   find" — several hundred pixels from anything, reading as decoration. It is
+   the only home for three account-wide commands, so it now looks like a
+   control and sits next to the tabs it belongs to.
+
+4. **The sidebar's account chip gives up its width before the character name
+   does** (`Sidebar.svelte`, outside this phase's file list — small corrective
+   work riding the branch). The chip was `nowrap`, so the *name* ellipsised, and
+   an account whose characters share a prefix left four rows all reading
+   "Storm Holde…". The name identifies the row; the account qualifies it.
+   Worth recording the actual bug, because the first attempt did not work:
+   `ListRow`'s `.label` is `flex: 1`, i.e. a **zero** basis, so it never takes
+   part in shrinking at all — it just grows into whatever the chip leaves and
+   ellipsises. A shrink factor on the chip does nothing until the label has a
+   content basis (`flex: 1 1 auto`) to compete with.
+
 ### Not verified
 
-**"All 63 controls in §3 are reachable in the running app" is the one
-definition-of-done item not checked.** Port 1420 was held by another session's
-dev server from the previous evening, so launching would either fail or open a
-window pointed at someone else's code; the foreground window was a game, so
-driving the UI would have stolen focus mid-session. Everything else in §12 is
-covered by a test. Overview's half of the shell-grid contract — the part that
-breaks silently, because jsdom computes no layout — is pinned by the same
-structural test Phase 2 wrote for Layout. **Run the visual pass before merging.**
+**"All 63 controls in §3 are reachable in the running app" is still not walked
+control by control.** The layout was seen and corrected (above) and the
+sidebar's chip behaviour was confirmed from a capture, but nobody has ticked off
+all 63. Everything else in §12 is covered by a test, and Overview's half of the
+shell-grid contract — the part that breaks silently, because jsdom computes no
+layout — is pinned by a structural test of its own.
+
+A note for the next phase, because it cost time here: the app was already
+running **from this worktree**, so every edit hot-reloaded straight into the
+owner's window, and `PrintWindow` with `PW_RENDERFULLCONTENT` captures it
+without touching focus. That is what caught the failed first attempt at (4).
+Check what is on port 1420 *and which directory it serves* before concluding a
+dev server belongs to another session.

@@ -3,7 +3,10 @@
 // The sidebar is a subject browser and nothing else. Two properties are worth
 // more than the rest and both are pinned below: the list is FLAT and in
 // resolved-name order, and an account chip means a CONFIRMED pairing — never a
-// launcher proposal.
+// launcher proposal. Since 2026-08-14 the chip gives up its width before the
+// character name does: the chip was `nowrap`, so a shared name prefix left four
+// rows all reading "Storm Holde…". The account is on the row's tooltip too, for
+// when the chip is down to a stub.
 //
 // The empty-state cases stay: a profile with no character file used to render
 // no header at all, so when every profile was in that state the sidebar came up
@@ -134,6 +137,22 @@ describe("the character list", () => {
     expect(screen.getAllByRole("button", { name: "Link…" })).toHaveLength(1);
   });
 
+  // The chip ellipsises before the character name does, so the account is also
+  // on the row itself — that is what you hover once the chip is a stub, and it
+  // is why the name is allowed to win the row.
+  test("the row's tooltip names the account in full", async () => {
+    await mount([profile([file("core_char_950.dat", "char", 950)])], {
+      accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950] }],
+      unassigned: [],
+    });
+    const paired = await waitFor(() => {
+      const found = document.querySelectorAll('[title*="account stormdelay2"]');
+      expect(found).toHaveLength(1);
+      return found[0] as HTMLElement;
+    });
+    expect(paired.title).toContain("core_char_950.dat");
+  });
+
   /**
    * §5.7.1, and the assertion that fails if anyone adds a third chip state.
    *
@@ -156,6 +175,9 @@ describe("the character list", () => {
     });
     await waitFor(() => expect(screen.getByRole("button", { name: "Link…" })).toBeTruthy());
     expect(screen.queryByText("stormdelay2")).toBeNull();
+    // Not in the tooltip either — the row must not claim a pairing that the
+    // batch copy and all four account-scoped views would refuse to honour.
+    expect(document.querySelector('[title*="account stormdelay2"]')).toBeNull();
     calls.never("launcher_proposals");
   });
 

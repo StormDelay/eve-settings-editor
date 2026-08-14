@@ -195,7 +195,13 @@
 
 <style>
   /* The width input's dark-native-control rule is gone — Field owns it. */
-  .ov-cols { list-style: none; padding: 0; margin: 0; }
+  /* A reading width, NOT the work column's width. `ListRow` pushes its trailing
+     control to the container's right edge, which is right for a row in a 20rem
+     panel and absurd for one in a work area that is most of a wide monitor: the
+     width box ended up a screen away from the column it belongs to. Capped at
+     the widest row this list can actually produce — grip, checkbox,
+     "Transversalvelocity", and the 5rem number box. */
+  .ov-cols { list-style: none; padding: 0; margin: 0; max-width: 26rem; }
   .ov-cols li { list-style: none; }
   .meta { color: var(--text-muted); font-size: var(--t-caption); }
   .col-actions { display: flex; gap: var(--s1); margin-bottom: var(--s1); }

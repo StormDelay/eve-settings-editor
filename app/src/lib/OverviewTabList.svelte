@@ -252,7 +252,6 @@
     gap: var(--s2);
     min-height: 0;
     padding: var(--s2);
-    border-right: 1px solid var(--border);
   }
   .groups { flex: 1; min-height: 0; overflow: auto; }
   .group-head { display: flex; align-items: center; gap: var(--s1); }
