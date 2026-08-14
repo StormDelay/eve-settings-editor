@@ -1300,6 +1300,31 @@ changes came out of it, and the first is a reversal of a decision in §5.
    to a `paired` class now — a squeezed button is worse than a truncated name,
    and on a row with no chip there is nothing to compete with anyway.
 
+5. **Renaming happens ON the row, and §5.1's Name field is gone.** Starting a
+   rename from the row's `⋯` and finishing it in a panel below was two places
+   for one gesture, and it cost a Name field that sat there permanently doing
+   nothing for as long as nobody was renaming. The row becomes an inline `Field`
+   — the same editor `+ Tab` and `+ Window` already use — seeded with
+   `parseTabName(...).text`, committing on Enter and on blur, cancelling on
+   Escape. The inspector keeps Colour, Bold, In window and Widths from.
+   `OverviewTabList` hands back the **readable text**; `OverviewView` composes
+   the colour and bold around it, which is where the no-op guard lives. Note
+   that guard is byte-comparison and always has been: `formatTabName` is the
+   inverse of `parseTabName` only *up to tag nesting*, so re-committing
+   `<color=…>   <b>x</b>   </color>` untouched really does write — same
+   rendering, different bytes, documented in `tabName.ts` and true before this
+   phase too.
+
+6. **A paired character on an UNNAMED account rendered as unpaired.**
+   `accountAliasOf` returned the alias and `null` otherwise, so an account
+   nobody had named drew no chip and got a `Link…` button offering to create a
+   pairing that already existed — breaking the rule its own doc comment states,
+   that "a chip means a CONFIRMED pairing and absence means no account". It
+   falls back to `#<id>` now. The id alone, not `core_user_<id>`: the prefix is
+   on every account, so it distinguishes nothing while taking more than half the
+   chip in the narrowest column in the app — which was visible immediately, as
+   names that had been whole started truncating the moment the fallback landed.
+
 ### Not verified
 
 **"All 63 controls in §3 are reachable in the running app" is still not walked

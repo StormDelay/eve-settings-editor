@@ -43,54 +43,25 @@ function mount(over: Record<string, unknown> = {}) {
   return spies;
 }
 
-const nameBox = () => document.querySelector(".inspect input") as HTMLInputElement;
-
-describe("the Name field", () => {
-  // Padding is how a tab is widened in game, so the field carries it verbatim.
-  test("is seeded with the readable text, spacing and all", () => {
-    mount();
-    expect(nameBox().value).toBe("   main   ");
-  });
-
-  test("commits on Enter, keeping the colour and the bold", async () => {
-    const { onRename } = mount({ tab: t(0, "<color=0xFFFF6F75><b>   main   </b></color>") });
-    const box = nameBox();
-    await fireEvent.input(box, { target: { value: "  fleet  " } });
-    await fireEvent.keyDown(box, { key: "Enter" });
-    expect(onRename).toHaveBeenCalledWith(0, "<color=0xFFFF6F75><b>  fleet  </b></color>");
-  });
-
-  test("commits on blur too", async () => {
-    const { onRename } = mount();
-    const box = nameBox();
-    await fireEvent.input(box, { target: { value: "fleet" } });
-    await fireEvent.blur(box);
-    expect(onRename).toHaveBeenCalledWith(0, "fleet");
-  });
-
-  // A name that did not change is not an edit.
-  test("committing an unchanged name writes nothing", async () => {
-    const { onRename } = mount();
-    await fireEvent.blur(nameBox());
-    expect(onRename).not.toHaveBeenCalled();
-  });
-
-  // The field is SEEDED, not bound to a derived parse: a name the parser cannot
-  // decompose must survive being looked at, focused and blurred.
-  test("an unparseable name is never rewritten by being looked at", async () => {
-    const weird = "<color=0xFFFF0000>a</color><color=0xFF00FF00>b</color>";
-    const { onRename } = mount({ tab: t(0, weird) });
-    expect(nameBox().value).toBe(weird);
-    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
-
-    await fireEvent.focus(nameBox());
-    await fireEvent.blur(nameBox());
-    expect(onRename).not.toHaveBeenCalled();
-  });
+// Renaming is done on the row, in the tab list — there is no Name field here,
+// and that is the point: a permanently-visible name box does nothing for as
+// long as nobody is renaming.
+test("there is no name field: that gesture belongs to the row", () => {
+  mount();
+  expect(screen.queryByLabelText("Name")).toBeNull();
+  expect(screen.queryByLabelText("Tab name")).toBeNull();
 });
 
 describe("colour and bold", () => {
   const marked = "<color=0xFFFF6F75>   <b>main</b>   </color>";
+
+  // A name the parser cannot decompose comes back as raw text with no colour,
+  // and nothing here may rewrite it just by rendering it.
+  test("an unparseable name shows no colour and is not touched", () => {
+    const { onRename } = mount({ tab: t(0, "<color=0xFFFF0000>a</color><color=0xFF00FF00>b</color>") });
+    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
+    expect(onRename).not.toHaveBeenCalled();
+  });
 
   test("picking a colour keeps the text, the padding and the bold", async () => {
     const { onRename } = mount({ tab: t(0, marked) });

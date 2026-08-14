@@ -47,7 +47,7 @@ function mount(over: Partial<Record<string, unknown>> = {}) {
     onAddWindow: vi.fn(),
     onRemoveWindow: vi.fn(),
     onDeleteTab: vi.fn(),
-    onRenameRequest: vi.fn(),
+    onRenameTab: vi.fn(),
     onReorder: vi.fn(),
     onMove: vi.fn(),
     onSetUpWindowMapping: vi.fn(),
@@ -186,14 +186,75 @@ describe("the window menu", () => {
   });
 });
 
-describe("the row menu", () => {
-  test("Rename selects the row and asks for the inspector's field", async () => {
-    const { onSelect, onRenameRequest } = mount();
-    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[1]);
+// Renaming happens ON the row. Started from a menu here and finished in a panel
+// below, it was two places for one gesture — and it cost a permanently-visible
+// Name field that did nothing whenever nobody was renaming.
+describe("renaming in place", () => {
+  async function startRename(nth: number) {
+    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
     await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    return screen.getByLabelText("Tab name") as HTMLInputElement;
+  }
+
+  test("Rename selects the row and turns it into an editor", async () => {
+    const { onSelect } = mount();
+    const box = await startRename(1);
     expect(onSelect).toHaveBeenCalledWith(1);
-    expect(onRenameRequest).toHaveBeenCalled();
+    // The row it replaced is gone while the editor is up.
+    expect(screen.queryByRole("button", { name: "Mining" })).toBeNull();
+    expect(box.value).toBe("Mining");
   });
+
+  // Padding is how a tab is widened in game, so the editor is seeded with the
+  // readable text spacing and all, and sends it back verbatim.
+  test("the editor carries the typed spacing both ways", async () => {
+    const { onRenameTab } = mount({
+      data: { ...data, tabs: [t(0, "   main   "), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
+    });
+    const box = await startRename(0);
+    expect(box.value).toBe("   main   ");
+
+    await fireEvent.input(box, { target: { value: "  fleet  " } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, "  fleet  ");
+  });
+
+  // It is seeded from the READABLE text, never the stored markup — the view
+  // composes the colour and bold back around whatever comes out.
+  test("a marked-up name opens as its readable text", async () => {
+    mount({
+      data: { ...data, tabs: [t(0, "<color=0xFFFF6F75><b>main</b></color>"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
+    });
+    expect((await startRename(0)).value).toBe("main");
+  });
+
+  test("Escape cancels and writes nothing", async () => {
+    const { onRenameTab } = mount();
+    const box = await startRename(1);
+    await fireEvent.input(box, { target: { value: "Ore" } });
+    await fireEvent.keyDown(box, { key: "Escape" });
+    expect(onRenameTab).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Mining" })).toBeTruthy();
+  });
+
+  test("leaving the editor commits, the way the box it replaces did", async () => {
+    const { onRenameTab } = mount();
+    const box = await startRename(1);
+    await fireEvent.input(box, { target: { value: "Ore" } });
+    await fireEvent.blur(box);
+    expect(onRenameTab).toHaveBeenCalledWith(1, "Ore");
+  });
+
+  test("an empty name is not a rename", async () => {
+    const { onRenameTab } = mount();
+    const box = await startRename(1);
+    await fireEvent.input(box, { target: { value: "   " } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onRenameTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("the row menu", () => {
 
   test("Delete tab names the row it was opened on", async () => {
     const { onDeleteTab } = mount();

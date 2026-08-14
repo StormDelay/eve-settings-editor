@@ -45,8 +45,12 @@ const inWindows = (tabs: OverviewTab[], windows: { index: number; tab_indices: n
 const list = () => document.querySelector(".tablist") as HTMLElement;
 const row = (name: string) => within(list()).getByText(name).closest('[role="option"]') as HTMLElement;
 const findRow = (name: string) => waitFor(() => row(name));
-/** The Name field, scoped to the inspector — a column checkbox shares the label. */
-const nameBox = () => document.querySelector(".inspect input") as HTMLInputElement;
+/** Open the inline rename editor on the nth row and hand back its input. */
+async function renameEditor(nth = 0) {
+  await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+  return screen.getByLabelText("Tab name") as HTMLInputElement;
+}
 
 function mount(over: Record<string, unknown> = {}) {
   const spies = {
@@ -207,8 +211,11 @@ describe("tab name markup", () => {
     calls.never("tab_rename");
     expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
 
-    await fireEvent.focus(nameBox());
-    await fireEvent.blur(nameBox());
+    // Opening the editor on it and committing it untouched must not rewrite it
+    // either: it re-emits as itself, so there is nothing to write.
+    const box = await renameEditor();
+    expect(box.value).toBe(weird);
+    await fireEvent.blur(box);
     calls.never("tab_rename");
   });
 
@@ -217,8 +224,8 @@ describe("tab name markup", () => {
     mount();
     await findRow("main");
 
-    // The inspector's field is seeded with the readable text, padding and all.
-    const box = nameBox();
+    // The row's editor is seeded with the readable text, padding and all.
+    const box = await renameEditor();
     expect(box.value).toBe("   main   ");
 
     await fireEvent.input(box, { target: { value: "  fleet  " } });
@@ -228,15 +235,21 @@ describe("tab name markup", () => {
       .toBe("<color=0xFFFF6F75><b>  fleet  </b></color>");
   });
 
-  test("a row's Rename puts the caret in the inspector's Name field", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
+  // A plain name, deliberately: `formatTabName` is the inverse of
+  // `parseTabName` only UP TO TAG NESTING — it re-emits
+  // `<color=…>   <b>x</b>   </color>` as `<color=…><b>   x   </b></color>`,
+  // same rendering, different bytes. That round trip is a real write and always
+  // has been (tabName.ts says so). What must never write is a name that comes
+  // back byte-identical.
+  test("a rename that changes nothing is not a write", async () => {
+    calls.stub("overview_columns", columns(tab(0, "main")));
     mount();
     await findRow("main");
 
-    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[0]);
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const box = await renameEditor();
+    await fireEvent.keyDown(box, { key: "Enter" });
 
-    expect(document.activeElement).toBe(nameBox());
+    calls.never("tab_rename");
   });
 });
 

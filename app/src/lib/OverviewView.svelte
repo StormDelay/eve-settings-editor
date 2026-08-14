@@ -3,7 +3,7 @@
   import type { MenuItem } from "./ContextMenu.svelte";
   import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { documentDir } from "@tauri-apps/api/path";
-  import { plainTabName } from "./tabName";
+  import { plainTabName, parseTabName, formatTabName } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
@@ -65,9 +65,6 @@
     return Number.isFinite(highest) ? highest : null;
   }
 
-  /** Focuses the inspector's Name field — what a row's "Rename" now does. */
-  let focusName: (() => void) | undefined = $state();
-
   async function edit(run: () => Promise<OverviewColumns>, title = "Edit failed"): Promise<boolean> {
     try { data = await run(); return true; }
     catch (e) { await message(errMessage(e), { title, kind: "error" }); return false; }
@@ -101,10 +98,22 @@
   }
 
   // Name, colour and bold all rewrite the same markup-bearing string, so they
-  // share one command — see tabName.ts. The inspector composes the string; this
-  // only writes it.
+  // share one command — see tabName.ts. The inspector composes the string for
+  // colour and bold; this only writes it.
   async function renameTab(idx: number, next: string) {
     if (await edit(() => api.tabRename(idx, next))) onUserDirty();
+  }
+
+  // The tab list edits the READABLE text on the row, so the colour and bold ride
+  // along here rather than being retyped as raw markup. A name that comes back
+  // unchanged is not an edit — and an unparseable one re-emits as itself, which
+  // is what keeps `parseTabName`'s give-up case from being rewritten by the mere
+  // act of opening the editor on it.
+  function renameTabText(idx: number, text: string) {
+    const current = data?.tabs.find((t) => t.index === idx)?.name ?? "";
+    const next = formatTabName({ ...parseTabName(current), text });
+    if (next === current) return;
+    void renameTab(idx, next);
   }
 
   async function deleteTab(idx: number) {
@@ -351,7 +360,7 @@
             onAddWindow={addWindow}
             onRemoveWindow={removeWindow}
             onDeleteTab={deleteTab}
-            onRenameRequest={() => focusName?.()}
+            onRenameTab={renameTabText}
             onReorder={reorder}
             onMove={moveTab}
             onSetUpWindowMapping={setUpWindowMapping} />
@@ -370,8 +379,7 @@
                 }
               }}
               {onLoadCharacter}
-              {onShowAccounts}
-              bind:focusName />
+              {onShowAccounts} />
           </div>
         </div>
         <div class="scroll">

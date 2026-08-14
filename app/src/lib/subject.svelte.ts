@@ -57,7 +57,16 @@ function idIn(o: OpenOutcome | null, kind: "char" | "user"): number | null {
  */
 export function accountAliasOf(f: { id: number | null }): string | null {
   const userId = f.id === null ? null : accountOf(f.id, accountsStore.roster);
-  return userId === null ? null : aliasFor(userId);
+  if (userId === null) return null;
+  // An account with no alias is still an ACCOUNT. Returning null for one made a
+  // PAIRED character render exactly like an unpaired one — no chip, and a
+  // "Link…" button offering to create a pairing that already exists.
+  //
+  // The id, not `core_user_<id>`: the prefix is on every one of them, so it
+  // distinguishes nothing while taking more than half the chip's width in the
+  // narrowest column in the app. `#` is what marks it as an id rather than
+  // somebody's chosen name.
+  return aliasFor(userId) ?? `#${userId}`;
 }
 
 /** The ONE predicate for "saving would write this slot". Save's disabled state,
