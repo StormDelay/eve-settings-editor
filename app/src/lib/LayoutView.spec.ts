@@ -267,4 +267,15 @@ describe("the shell grid contract", () => {
     expect(kids[0].classList.contains("work")).toBe(true);
     expect(kids[1].classList.contains("inspector")).toBe(true);
   });
+
+  // The shell's hide control lives in the aside this view replaces, so without
+  // one here the column could be reopened from Layout and only closed from
+  // another tab. Missing since the shell grew the column.
+  test("the inspector can be collapsed from here", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    const onCollapseInspector = vi.fn();
+    mount({ onCollapseInspector });
+    await fireEvent.click(await screen.findByRole("button", { name: "Hide properties" }));
+    expect(onCollapseInspector).toHaveBeenCalled();
+  });
 });

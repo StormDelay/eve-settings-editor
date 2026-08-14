@@ -502,6 +502,7 @@
       refreshToken={subject.savedAt}
       userOpen={subject.slots.user?.status === "opened"}
       bind:selectedId={selectedWindowId}
+      onCollapseInspector={() => (inspectorOpen = false)}
       onReveal={revealInTree}
       onDirty={(slot) => (subject.dirty[slot] = true)}
       sharedNames={subject.sharedNames}
@@ -512,6 +513,7 @@
          properties. It renders the scope banner itself for that reason. -->
     <OverviewView
       {scopeLabel}
+      onCollapseInspector={() => (inspectorOpen = false)}
       userOpen={subject.slots.user?.status === "opened"}
       userId={subject.userId}
       charId={subject.charId}
@@ -701,11 +703,6 @@
     margin: var(--s3) 0 0;
     color: var(--text-muted);
     font-size: var(--t-body);
-  }
-  .inspector-head {
-    display: flex;
-    justify-content: flex-start;
-    padding: var(--s1);
   }
   /* Its own row between the tabs and the work area, spanning both the work
      column and the inspector — it is about the documents, not about a view. */
