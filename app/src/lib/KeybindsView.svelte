@@ -6,6 +6,7 @@
   import EmptyState from "./ui/EmptyState.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import { accel } from "./keys";
+  import { revealAndFocus } from "./keymap";
   import SearchField from "./ui/SearchField.svelte";
 
   let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
@@ -20,10 +21,7 @@
       focusSearch?: () => void } = $props();
 
   let searchInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
-  focusSearch = () => {
-    searchInput?.focus();
-    if (searchInput instanceof HTMLInputElement) searchInput.select();
-  };
+  focusSearch = () => revealAndFocus(searchInput);
 
   let binds = $state<Keybinds | null>(null);
   let error = $state<string | null>(null);

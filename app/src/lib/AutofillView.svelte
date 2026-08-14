@@ -9,6 +9,7 @@
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
   import { accel } from "./keys";
+  import { revealAndFocus } from "./keymap";
   import SearchField from "./ui/SearchField.svelte";
 
   let { userOpen, userId = null, refreshToken = 0, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
@@ -26,10 +27,7 @@
       focusSearch?: () => void } = $props();
 
   let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
-  focusSearch = () => {
-    filterInput?.focus();
-    if (filterInput instanceof HTMLInputElement) filterInput.select();
-  };
+  focusSearch = () => revealAndFocus(filterInput);
 
   let lists = $state<RememberedList[] | null>(null);
   let error = $state<string | null>(null);
