@@ -539,6 +539,30 @@ describe("the launch empty state", () => {
   });
 });
 
+// The context bar carried TWO controls running `switcherOpen = !switcherOpen`:
+// the subject button and a "Search or run a command" button beside it. Same
+// panel, same toggle, and the panel anchors to the SUBJECT button — so a click
+// at the far right of the bar opened a popup at the far left. One door now, and
+// the shortcut is written on it.
+describe("opening the subject switcher", () => {
+  const panel = () => screen.queryByPlaceholderText(/search characters and views/i);
+
+  test("the subject button opens it, and it is the only button that does", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    expect(panel()).toBeNull();
+    expect(screen.queryByRole("button", { name: /search or run a command/i })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: /no character open/i }));
+    await waitFor(() => expect(panel()).toBeTruthy());
+  });
+
+  test("so does the shortcut it advertises", async () => {
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await waitFor(() => expect(panel()).toBeTruthy());
+  });
+});
+
 /**
  * The inspector column is drawn only where there is something to inspect.
  *
