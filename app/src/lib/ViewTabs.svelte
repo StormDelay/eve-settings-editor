@@ -10,9 +10,13 @@
 
   let {
     value = $bindable(),
+    height = $bindable(0),
     onpick,
   }: {
     value: View;
+    /** Measured for the same reason the context bar's is: a sheet insets past
+     *  both, so that the tabs stay visible above it. */
+    height?: number;
     onpick?: () => void;
   } = $props();
 
@@ -32,7 +36,7 @@
 <!-- Row 2, columns 2-3: the tabs govern the work area and its inspector, and
      govern nothing about the subject list, so spanning the full width would put
      a control above a panel it does not control. -->
-<div class="tabrow">
+<div class="tabrow" bind:clientHeight={height}>
   <Tabs {tabs} ariaLabel="Editor view" bind:value onpick={() => onpick?.()} />
 </div>
 

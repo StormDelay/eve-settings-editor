@@ -372,6 +372,144 @@ describe("fault (b) — a panel that changed subject with the tab", () => {
   });
 });
 
+/**
+ * The sheet contract. Two of the app's eight views were not views at all — they
+ * were takeovers, and entering one replaced the editor with nothing on screen
+ * offering a way out.
+ */
+describe("sheets", () => {
+  const openChar = async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+  };
+
+  // The anti-regression for the whole phase: the editor is never unmounted, so
+  // "restore the prior state" is not a feature — it is the absence of a
+  // destruction.
+  test("the editor stays mounted while a sheet is open", async () => {
+    await openChar();
+    await menu(/accounts/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
+    for (const v of ["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Raw"]) {
+      expect(screen.getByRole("tab", { name: v })).toBeTruthy();
+    }
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+  });
+
+  test("Esc closes the sheet and returns to the editor", async () => {
+    await openChar();
+    await menu(/accounts/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Accounts" })).toBeNull());
+  });
+
+  test("the close button closes the sheet", async () => {
+    await openChar();
+    await menu(/copy settings/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Copy settings" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Copy settings" })).toBeNull());
+  });
+
+  // Fails on master, where the only way back out of a takeover re-opens the file
+  // — which resets the view, the selection and the scroll position with it.
+  test("the view tab survives a sheet round-trip", async () => {
+    await openChar();
+    await fireEvent.click(await screen.findByRole("tab", { name: "Keybinds" }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Keybinds" }).getAttribute("aria-selected")).toBe("true"),
+    );
+    await menu(/accounts/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Accounts" })).toBeNull());
+    expect(screen.getByRole("tab", { name: "Keybinds" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  // Opening a document is a request to be in the editor, so it closes any sheet.
+  test("opening a file closes an open sheet", async () => {
+    await openChar();
+    await menu(/accounts/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Accounts" })).toBeNull());
+  });
+
+  test("a tab click also leaves the sheet", async () => {
+    await openChar();
+    await menu(/accounts/i);
+    await waitFor(() => screen.getByRole("dialog", { name: "Accounts" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Accounts" })).toBeNull());
+  });
+});
+
+/**
+ * A batch copy writes files on disk, behind the in-memory documents. Driven all
+ * the way through the sheet, because the wiring between BatchView's report and
+ * the shell's reaction is the whole of what is under test.
+ */
+describe("a batch copy that wrote the open document", () => {
+  const twoChars = profile(
+    file("core_char_950.dat", "char", 950),
+    file("core_char_951.dat", "char", 951),
+  );
+
+  /** Open 950, open Copy settings, tick 951 and an aspect, and apply — with the
+   *  backend reporting that it wrote the OPEN character file. */
+  async function applyOntoOpenFile(dirty = false) {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("setup_preview", {
+      char_writes: [{ path: "/eve/core_char_951.dat" }],
+      account_writes: [],
+      excluded: [],
+      source_error: null,
+    });
+    calls.stub("setup_apply", [
+      { path: "/eve/core_char_950.dat", ok: true, backup_path: "/eve/b.bak", error: null },
+    ]);
+    // Both characters paired: every aspect Copy settings offers is
+    // account-scoped, so an unpaired target has its checkbox disabled outright.
+    await mount([twoChars], {
+      accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950, 951] }],
+      unassigned: [],
+    });
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+    // After the open, which clears the flag it sets.
+    subject.dirty.char = dirty;
+
+    await menu(/copy settings/i);
+    const box = await screen.findByRole("dialog", { name: "Copy settings" });
+    await fireEvent.click(within(box).getByRole("checkbox", { name: /core_char_951\.dat/ }));
+    await fireEvent.click(within(box).getByRole("checkbox", { name: /window layout/i }));
+    const copy = within(box).getByRole("button", { name: "Copy" });
+    await waitFor(() => expect(copy.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(copy);
+    await waitFor(() => expect(calls.of("setup_apply").length).toBe(1));
+  }
+
+  test("a clean slot it wrote is re-read", async () => {
+    await applyOntoOpenFile();
+    // The same api.open + savedAt bump opening and discarding already use, so
+    // every projection-based view refreshes through the token it already has.
+    await waitFor(() => expect(calls.of("open_file").length).toBe(2));
+    expect(calls.of("open_file")[1].args).toMatchObject({ slot: "char" });
+  });
+
+  test("a dirty slot it wrote is never re-read, and says so", async () => {
+    await applyOntoOpenFile(true);
+    // Re-reading would destroy unsaved edits, and no amount of warning makes a
+    // silent discard acceptable. The message moves the discovery forward from
+    // save time to now; Discard and Save are both already correct routes out.
+    await waitFor(() => screen.getByText(/rewritten on disk by Copy settings/i));
+    expect(calls.of("open_file").length).toBe(1);
+  });
+});
+
 describe("the launch empty state", () => {
   test("offers the profile's characters, and clicking one opens it", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
