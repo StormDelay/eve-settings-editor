@@ -194,7 +194,7 @@ describe("what actually gets written", () => {
     await fireEvent.click(aspect("Overview (columns, tabs, presets)"));
     await waitFor(() => expect(targetBox(90000003).disabled).toBe(true));
 
-    await fireEvent.click(screen.getByRole("button", { name: /select all/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /^All$/ }));
     await waitFor(() => expect(targetBox(90000002).checked).toBe(true));
     expect(targetBox(90000003).checked).toBe(false);
   });

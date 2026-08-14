@@ -75,7 +75,7 @@
     <!-- Unclamped on purpose: a negative area means this account-wide split does
          not fit THIS character's window. See detail.ts's historyArea. -->
     <div class="area" class:bad={area.w <= 0 || area.h <= 0}>
-      history area {area.w} × {area.h}
+      History area {area.w} × {area.h}
     </div>
   {/if}
   {#if targets.length > 1}
@@ -89,7 +89,7 @@
         ? "This channel has no stored sizes to copy"
         : "Not present in this file"}
       onclick={applyToStack}>
-      Apply to all {targets.length} channels in this stack
+      Apply to every channel in this stack ({targets.length})
     </Button>
   {/if}
 </div>
