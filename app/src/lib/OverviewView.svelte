@@ -18,11 +18,15 @@
   import { toast } from "./ui/toasts.svelte";
 
   let { userOpen, userId, charId, charOpen, characters, refreshToken, scopeLabel = "",
-        onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
+        onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, onCollapseInspector }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
       scopeLabel?: string;
       onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void;
+      /** A view that supplies its own inspector supplies its own hide control
+          too — otherwise the column can be reopened here but only closed from a
+          view that has the shell's aside. */
+      onCollapseInspector?: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -363,6 +367,10 @@
   <!-- Declared, therefore always rendered: a pane that comes and goes is the
        same fault as a toolbar whose membership changes. -->
   <aside class="inspector">
+    <div class="inspector-head">
+      <Button variant="ghost" size="sm" iconOnly title="Hide properties"
+        onclick={() => onCollapseInspector?.()}>&raquo;</Button>
+    </div>
     {#if userOpen && data}
       <OverviewInspector
         {tab}
