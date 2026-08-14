@@ -94,6 +94,13 @@
   // The four views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes"];
+  // The views that supply their own inspector through `display: contents`. The
+  // shell draws its placeholder for every other one, because the column is a
+  // promise: a column that is there on one tab and gone on the next is the same
+  // fault as a tab strip that changes membership.
+  const viewOwnsInspector = $derived(
+    current?.status === "opened" && (view === "layout" || view === "overview"),
+  );
   const scopeLabel = $derived(
     sheet === null && ACCOUNT_SCOPED.includes(view) && subject.sharedNames.length
       ? `Shared account settings — also applies to ${subject.sharedNames.join(", ")}`
@@ -488,6 +495,23 @@
       onDirty={(slot) => (subject.dirty[slot] = true)}
       sharedNames={subject.sharedNames}
       bind:focusSearch={viewFocusSearch} />
+  {:else if view === "overview"}
+    <!-- The second view that fills both columns, by the same `display: contents`
+         route: its tab list is the work area and its inspector is the tab's
+         properties. It renders the scope banner itself for that reason. -->
+    <OverviewView
+      {scopeLabel}
+      userOpen={subject.slots.user?.status === "opened"}
+      userId={subject.userId}
+      charId={subject.charId}
+      charOpen={subject.slots.char?.status === "opened"}
+      characters={subject.accountCharacters}
+      refreshToken={subject.savedAt}
+      onLoadCharacter={loadCharacter}
+      onUserDirty={() => (subject.dirty.user = true)}
+      onCharDirty={() => (subject.dirty.char = true)}
+      onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
+      onShowAccounts={() => (sheet = "accounts")} />
   {:else}
     <div class="work">
       <!-- One of ScopeBanner's two shell-owned call sites. Scope has to be
@@ -496,22 +520,7 @@
            components taking a `sharedLabel` prop and each rendering its own
            byte-identical paragraph and CSS block. -->
       <ScopeBanner label={scopeLabel} compact />
-      {#if view === "overview"}
-        <div class="scroll">
-          <OverviewView
-            userOpen={subject.slots.user?.status === "opened"}
-            userId={subject.userId}
-            charId={subject.charId}
-            charOpen={subject.slots.char?.status === "opened"}
-            characters={subject.accountCharacters}
-            refreshToken={subject.savedAt}
-            onLoadCharacter={loadCharacter}
-            onUserDirty={() => (subject.dirty.user = true)}
-            onCharDirty={() => (subject.dirty.char = true)}
-            onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
-            onShowAccounts={() => (sheet = "accounts")} />
-        </div>
-      {:else if view === "autofill"}
+      {#if view === "autofill"}
         <div class="scroll">
           <AutofillView
             userOpen={subject.slots.user?.status === "opened"}
@@ -591,7 +600,7 @@
       title="Show properties" aria-label="Show properties">&laquo;</button>
   <!-- No longer conditioned on `sheet`: the editor is never unmounted now, so
        Layout still supplies its own inspector underneath an open sheet. -->
-  {:else if !(view === "layout" && current?.status === "opened")}
+  {:else if !viewOwnsInspector}
     <aside class="inspector">
       <div class="inspector-head">
         <Button variant="ghost" size="sm" iconOnly title="Hide properties"
