@@ -210,7 +210,11 @@
      "Transversalvelocity", and the 5rem number box. */
   .ov-cols { list-style: none; padding: 0; margin: 0; max-width: 26rem; }
   .ov-cols li { list-style: none; }
-  .meta { color: var(--text-muted); font-size: var(--t-caption); }
+  /* A reading measure. Both of these are prose, and the work area is most of a
+     wide monitor — left to itself the widths sentence ran as one line from edge
+     to edge. Wider than the 26rem list on purpose: a form wants to be narrow,
+     a paragraph wants about 60 characters. */
+  .meta { color: var(--text-muted); font-size: var(--t-caption); max-width: 60ch; }
   .col-actions { display: flex; gap: var(--s1); margin-bottom: var(--s1); }
   /* A rule between the two questions — what to copy, and where to. */
   :global(.copy-panel) section + section { border-top: 1px solid var(--border); padding-top: var(--s2); }
