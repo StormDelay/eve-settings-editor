@@ -13,6 +13,7 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
+  import ShortcutsSheet from "$lib/ShortcutsSheet.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Chip from "$lib/ui/Chip.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
@@ -32,11 +33,14 @@
   import { loadPrefs } from "$lib/prefs.svelte";
   import { resolvedName } from "$lib/filesort.svelte";
   import { accel } from "$lib/keys";
+  import type { Ctx } from "$lib/commands";
+  import { handleKey } from "$lib/keymap";
   import { resolveView, type View } from "$lib/views";
   import {
     subject,
     accountAliasOf,
     confirmDiscardIfDirty,
+    discardChanges,
     loadCharacter,
     noCharactersHint,
     reconcileCharSlot,
@@ -72,6 +76,8 @@
   });
   let aboutOpen = $state(false);
   let switcherOpen = $state(false);
+  let historyOpen = $state(false);
+  let shortcutsOpen = $state(false);
   // Which file the Raw view shows; a Raw-local switch flips it to the account
   // file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
@@ -378,6 +384,36 @@
   // can already derive, in a window where the full list fits.
   const launchRows = $derived(subject.characters.slice(0, 8));
   const launchMore = $derived(subject.characters.length - launchRows.length);
+
+  // The shell half of the registry: the actions a command can perform that this
+  // component owns. State comes from the stores, so this stays small enough to
+  // read in one glance.
+  const ctx: Ctx = {
+    goto: (v) => {
+      view = v;
+      sheet = null;
+    },
+    pickFile,
+    save: () => void saveFile(),
+    discard: () => void discardChanges(),
+    showHistory: () => (historyOpen = true),
+    showAccounts: () => (sheet = "accounts"),
+    showBatch: () => (sheet = "batch"),
+    showAbout: () => (aboutOpen = true),
+    showShortcuts: () => (shortcutsOpen = true),
+    openPalette: () => (switcherOpen = !switcherOpen),
+    // Suppressed while a sheet is open: every box it could focus is behind the
+    // scrim, and focusing an inert control would break the sheet's focus trap.
+    //
+    // NOT `viewFocusSearch?.() ?? openSearch()` — those callbacks return void,
+    // so the `??` would fire openSearch() every time, including right after the
+    // view had focused its own box.
+    findInView: () => {
+      if (sheet !== null) return;
+      if (viewFocusSearch) viewFocusSearch();
+      else openSearch();
+    },
+  };
 </script>
 
 <!-- The webview's stock context menu (Back/Reload/…) means nothing here. Tree
@@ -385,30 +421,10 @@
 <svelte:window
   oncontextmenu={(e) => e.preventDefault()}
   onkeydown={(e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      saveFile();
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-      e.preventDefault();
-      switcherOpen = true;
-    }
-    // Take Ctrl+F off the webview: its find-on-page cannot see collapsed nodes.
-    // The active view focuses its OWN search box if it has one; otherwise this
-    // falls through to the Raw tree's.
-    //
-    // NOT `viewFocusSearch?.() ?? openSearch()` as §5.12 writes it — those
-    // callbacks return void, so the `??` would fire openSearch() every time,
-    // including right after the view had focused its own box.
-    //
-    // Suppressed entirely while a sheet is open: every box it could focus is
-    // behind the scrim, and focusing an inert control would break the trap.
-    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-      e.preventDefault();
-      if (sheet !== null) return;
-      if (viewFocusSearch) viewFocusSearch();
-      else openSearch();
-    }
+    // One map, in keymap.ts, dispatching through the command registry — so the
+    // shortcut a menu PRINTS and the shortcut this fires are the same `accel`
+    // field on the same command and cannot drift apart.
+    if (handleKey(e, ctx)) return;
     if (e.key === "Escape" && searching) closeSearch();
   }}
 />
@@ -420,16 +436,12 @@
   style="--shell-inset-top: {barHeight + tabsHeight}px">
   <ContextBar
     bind:switcherOpen
+    bind:historyOpen
     bind:height={barHeight}
     onOpen={openFile}
     onOpenPreset={openPresetPair}
-    onGoto={(v) => {
-      view = v;
-      sheet = null;
-    }}
-    onShowAccounts={() => (sheet = "accounts")}
-    onShowBatch={() => (sheet = "batch")}
-    onShowAbout={() => (aboutOpen = true)}
+    onGoto={ctx.goto}
+    {ctx}
     onRestored={(slot, outcome) => {
       subject.slots[slot] = outcome;
       subject.dirty[slot] = false;
@@ -697,6 +709,7 @@
 </main>
 
 {#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
+{#if shortcutsOpen}<ShortcutsSheet onClose={() => (shortcutsOpen = false)} />{/if}
 
 <!-- Mounted once, here. Every transient confirmation in the app renders through
      it, so it has to outlive whichever view raised it. -->
