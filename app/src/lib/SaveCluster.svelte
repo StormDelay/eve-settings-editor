@@ -10,6 +10,8 @@
   // Copy settings with unsaved edits used to take Save and both unsaved badges
   // off the screen, with no way back except opening another file.
   import { subject, discardChanges, saveFile, shellErrors } from "./subject.svelte";
+  import { doUndo, undoState } from "./undo.svelte";
+  import { accel } from "./keys";
   import Button from "./ui/Button.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import Popover from "./ui/Popover.svelte";
@@ -55,6 +57,16 @@
         onclick={() => (open = !open)}>{targets.length} unsaved ▾</Button>
     </span>
   {/if}
+  <!-- Nothing is shortcut-only. Undo has a keyboard binding and a toast button,
+       and both are things you have to already know about — so it gets a visible
+       control beside the one other command that walks an edit back. Disabled
+       with a reason rather than absent, like everything else here. -->
+  <Button
+    size="sm"
+    disabled={!undoState.canUndo}
+    disabledReason="Nothing to undo"
+    title="Undo the last change ({accel('Z')})"
+    onclick={() => void doUndo()}>Undo</Button>
   <Button
     variant="primary"
     disabled={!subject.canSave}
