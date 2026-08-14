@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage } from "$lib/api";
+  import { api, errMessage, errText } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
@@ -20,7 +20,9 @@
   import HudPanel from "$lib/HudPanel.svelte";
   import DetailParts from "$lib/DetailParts.svelte";
   import { shipHudParts, fighterParts, neocomParts, targetParts, windowDetail } from "$lib/detail";
-  import { confirm, message } from "@tauri-apps/plugin-dialog";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import { toast } from "./ui/toasts.svelte";
+  import { undoAction } from "./undo.svelte";
 
   let {
     slot,
@@ -120,19 +122,34 @@
     stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, null),
   );
   const shownCount = $derived(drawnWindowCount(units));
+  // One live message per owning control (§3.1). Five slots because this view
+  // drives five separate control groups, and "Edit failed" in a modal named none
+  // of them — which is the whole complaint.
+  type Msg = { text: string; detail: string };
+  let loadError = $state<string | null>(null);
+  let barError = $state<Msg | null>(null);
+  let stackError = $state<Msg | null>(null);
+  let hudError = $state<(Msg & { name: string }) | null>(null);
+  let chatError = $state<Msg | null>(null);
+  let neocomError = $state<Msg | null>(null);
+
   const totalCount = $derived(drawnWindowCount(allUnits));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
   // Every window this document has — NOT the filtered set. See overrideCount.
   const documentWindowIds = $derived(new Set((layout?.windows ?? []).map((w) => w.id)));
 
   async function load() {
+    loadError = null;
     try {
       layout = await api.windowLayout(slot);
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) {
         selectedId = null;
       }
     } catch (e) {
-      await message(errMessage(e), { title: "Layout unavailable", kind: "error" });
+      // Replaces the canvas rather than covering it. A dismissed modal used to
+      // leave an empty canvas with no explanation, which is the worst of both:
+      // the error was blocking AND unrecoverable.
+      loadError = `The window layout couldn't be read — ${errText(e)}`;
     }
     // Furniture is a bonus view: an account file open on its own, or a document
     // with no HUD keys, must not take the canvas down with it.
@@ -214,10 +231,11 @@
 
   async function commit(ms: Mutation[]) {
     if (ms.length === 0) return;
+    barError = null;
     try {
       await runMutations(ms, true);
     } catch (e) {
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      barError = { text: `That window wasn't moved — ${errText(e)}`, detail: errMessage(e) };
     }
     await load(); // refresh paths/values from the authoritative document
   }
@@ -289,13 +307,14 @@
   // --- Stack membership ------------------------------------------------------
 
   async function runStack(p: Promise<WindowLayout>): Promise<boolean> {
+    stackError = null;
     try {
       layout = await p;
       onDirty("char"); // stack ops edit the character document in the backend
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
       return true;
     } catch (e) {
-      await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
+      stackError = { text: `The stack wasn't changed — ${errText(e)}`, detail: errMessage(e) };
       return false;
     }
   }
@@ -304,39 +323,44 @@
   const onAddToStack = (member: string, container: string) => runStack(api.stackAdd(member, container));
   const onCreateStack = (m1: string, m2: string) => runStack(api.stackCreate(m1, m2));
 
-  // Deleting window state is not something to get wrong, so it asks first and
-  // names the count. Safe to offer at all only because the client was verified
-  // not to re-create these (2026-07-28) — see docs/format-notes.md.
+  // It no longer asks. The mutation is in-memory and Discard reverses it
+  // exactly, and the WindowPanel band above the button already explains what an
+  // empty frame is BEFORE the click — so the dialog was a second telling of
+  // something already on screen, charging a modal for it.
+  //
+  // Safe to offer at all only because the client was verified not to re-create
+  // these (2026-07-28) — see docs/format-notes.md.
   async function onDeleteOrphans() {
     const n = layout?.windows.filter(isOrphanFrame).length ?? 0;
-    const ok = await confirm(
-      `Delete ${n} empty stack frame${n === 1 ? "" : "s"}? Each is a leftover container whose ` +
-        `windows were unstacked. EVE does not re-create them. The change is applied to the open ` +
-        `file — save to write it to disk.`,
-      { title: "Delete empty stack frames", kind: "warning" },
-    );
-    if (ok) await runStack(api.stackDeleteOrphans());
+    if (n === 0) return;
+    if (await runStack(api.stackDeleteOrphans())) {
+      toast(`Deleted ${n} empty stack frame${n === 1 ? "" : "s"}. Save to write it to disk.`, {
+        action: undoAction(),
+      });
+    }
   }
 
   /** Write one HUD field and refresh the projection. */
   async function setHud(name: string, text: string) {
+    hudError = null;
     try {
       hud = await api.setHudValue(name, text);
       const e = hud.entries.find((x) => x.name === name);
       onDirty(e?.scope === "account" ? "user" : "char");
     } catch (e) {
-      await message(errMessage(e), { title: "HUD edit failed", kind: "error" });
+      hudError = { name, text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   /** Write one or more channels' splits and take the refreshed projection. The
    * splits live in the account document, so that is the slot that goes dirty. */
   async function setChatSplits(ids: string[], userlistWidth: number | null, inputHeight: number | null) {
+    chatError = null;
     try {
       chats = await api.setChatSplits(ids, userlistWidth, inputHeight);
       onDirty("user");
     } catch (e) {
-      await message(errMessage(e), { title: "Chat layout edit failed", kind: "error" });
+      chatError = { text: `That chat panel wasn't changed — ${errText(e)}`, detail: errMessage(e) };
       // A refused value (a typed negative, the reachable case) must not stay
       // on screen as if it had been stored — re-read what is actually there.
       chats = await api.chatPanels().catch(() => chats);
@@ -353,11 +377,12 @@
   let neocomBusy = $state(false);
   async function runNeocom(p: Promise<NeocomBar>) {
     neocomBusy = true;
+    neocomError = null;
     try {
       neocom = await p;
       onDirty("char");
     } catch (e) {
-      await message(errMessage(e), { title: "Neocom edit failed", kind: "error" });
+      neocomError = { text: `The neocom wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       neocomBusy = false;
     }
@@ -836,7 +861,11 @@
      input losing focus to another inner element won't trip it) — see endNudge. -->
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
-{#if layout === null}
+{#if loadError !== null}
+  <div class="work">
+    <EmptyState variant="error" title="This layout can't be shown" description={loadError} />
+  </div>
+{:else if layout === null}
   <div class="work"><EmptyState title="Loading layout…" /></div>
 {:else}
   <div class="layout-view">
@@ -941,6 +970,11 @@
            view — chips, because both are exceptional states with an escape and
            both vanish when there is nothing to say. The drag hint was
            instruction rather than status and moved to the inspector. -->
+      <!-- The canvas's own failures land here, under the canvas they are about
+           and above nothing that could be pushed out from under the cursor. -->
+      {#if barError}
+        <InlineMessage variant="error" detail={barError.detail}>{barError.text}</InlineMessage>
+      {/if}
       <div class="statusbar">
         <span class="facts">
           <span class="ref">reference {layout.reference_w}×{layout.reference_h}</span>
@@ -1011,11 +1045,15 @@
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
           onNeocomRemove={(i) => runNeocom(api.neocomRemove(i))}
           onNeocomAdd={(id, t, icon) => runNeocom(api.neocomAdd(id, t, icon))}
-          onNeocomReset={() => runNeocom(api.neocomReset())} />
+          onNeocomReset={() => runNeocom(api.neocomReset())}
+          {hudError}
+          {neocomError} />
       {/if}
       <WindowPanel
         windows={layout.windows}
         stacks={layout.stacks}
+        {stackError}
+        {chatError}
         {selectedId}
         {readOnly}
         {onSelect}
