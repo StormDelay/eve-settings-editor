@@ -1668,4 +1668,103 @@ else; reverting 3 takes 4 with it.
 - [ ] `docs/ui-redesign/00-overview.md`'s phase table still describes this phase
       accurately.
 
+---
+
+## 15. What actually differs — read this before trusting §§1–14
+
+Built 2026-08-14, branch `feat/ui-redesign-phase-5`. The design held: the
+chokepoint is still one function, `try_edit_char` still has exactly three call
+sites at `ops.rs:549/639/652`, and the four multi-write commands are the four
+§3.5 names. What follows is what the build changed.
+
+### §4's measurement was run, and it overruled §4.1
+
+§4.1 specified the `Value` clone as the default and set a threshold: switch to
+encoded bytes if peak stack memory would exceed 40 MB. Its back-of-envelope
+guessed a tree-to-file ratio near 10–12.
+
+Measured over **627 real `core_*.dat` files** (`EVE_CORPUS=… cargo test -p app
+--lib undo::tests::snapshot_footprint -- --ignored --nocapture`):
+
+| | |
+| --- | --- |
+| files | 627 |
+| median file bytes | 121,952 |
+| **median tree/file** | **20.39×** |
+| **max tree/file** | **33.72×** |
+| peak stack, `2 × CAP × R × median pair` | **~190 MB** |
+
+Twice the estimate and nearly five times the budget. **`Snap` is
+`Vec<u8>`.** Encoded, the same twenty steps cost about 10 MB. The swap was
+contained to `undo.rs` exactly as §4.1 promised.
+
+One shape change came with it: `capture_unless_grouped` returns a three-armed
+`Capture` rather than an `Option<Entry>`. "This command already pushed" and
+"this tree would not encode" need opposite handling, and an `Option` collapses
+them into the same silent no-op — the second **drops the stack**, because an
+entry silently missing from the middle would make the next undo jump two steps
+back without saying so.
+
+### Tripwire B fired on its first run, and the tripwire was wrong
+
+It flagged `set_chat_splits` as a fifth multi-write command. It is not one. Two
+bugs in §3.4's own code:
+
+1. **`writes()` matches substrings**, so the test helper `ts(` matches inside
+   `set_chat_splits(`. Fixed with a word-boundary check.
+2. **It scans the whole file including `#[cfg(test)]`**, whose fixtures are
+   named `ts`, `bb` and `geom` — so the closure pulls those into the writer set
+   and every fixture builder becomes a "multi-write command". Fixed by cutting
+   at `#[cfg(test)]`, which is what §3.5's own prose ("over the non-test half of
+   `ops.rs`") already said.
+
+A guard that cries wolf gets deleted, which costs the release it was written
+for. Both fixes are in `undo.rs`'s test module with the reason beside them.
+
+### The toast's Undo button carries a depth, not a dismissal
+
+§9.2 says: dismiss the toast on any subsequent edit, "one line at the same six
+sites". That does not work here. It requires every call site to mark the
+document dirty BEFORE raising its toast, and they do not — `NeocomButtons`
+*cannot*, because its dirty flag is set by an async command it only kicks off,
+so the dismissal would kill the toast that the same action just raised.
+
+Instead `undoAction()` captures the stack depth it was minted at and compares at
+click time, refusing with "that isn't the most recent change any more" rather
+than reverting the wrong step. Two extra `undo_state` round trips at human
+keypress speed, and no ordering discipline at any call site.
+
+### Smaller
+
+- **The undo commands live in `undo.rs`, not `ops.rs`.** `pub fn undo` in
+  `ops.rs` collides with `use crate::undo;` in the value namespace. The
+  machinery was already there, so the DTOs went with it.
+- **`inAField` moved to `keymap.ts`, not `layout.ts`** (§9.1). Phase 5 created
+  `keymap.ts` as the app's one global key handler, which is the sibling that
+  actually needed it.
+- **`refreshToken` was the whole of §7.1** and shipped as its own commit, with
+  `refresh.spec.ts` — one test per view, each failing without the prop.
+- **`savedAt` keeps its name**, as §7.1 asks; its comment carries the rest.
+- **The `Undo` control sits in the save cluster** beside Discard, per §9.3's
+  "if 5b lands first" branch — Phase 5's app menu is built from the command
+  registry, and undo is deliberately not a registry command (it names no
+  subject the palette could show), so a menu row would have meant a second
+  mechanism.
+
+### Not done
+
+- §12's vitest test 2 as written (stubbing `undo` inside `page.spec.ts` and
+  asserting the badges clear in the DOM). The same claim is covered in
+  `undo.spec.ts` against the store, which is where the decision actually lives.
+- No `#[ignore]`d measurement is left pointing at `testdata/corpus`; it reads
+  `EVE_CORPUS` instead, because that directory is gitignored and absent here.
+
+### Counts
+
+256 Rust tests (from 238), 63 frontend files / 1413 tests (from 58/1341),
+`npm run check` clean over 511 files, `npm run build` clean, clippy clean with
+`-D warnings`.
+
+_Added 2026-08-14 (Phase 5b, as built)._
+
 _Added 2026-08-13 (UI/UX redesign, Phase 5b)._

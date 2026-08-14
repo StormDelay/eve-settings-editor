@@ -10,6 +10,7 @@
   import InlineMessage from "./ui/InlineMessage.svelte";
   import MenuButton from "./ui/MenuButton.svelte";
   import SearchField from "./ui/SearchField.svelte";
+  import { revealAndFocus } from "$lib/keymap";
 
   let {
     windows,
@@ -33,11 +34,17 @@
     userOpen,
     sharedNames,
     onSetChatSplits,
+    stackError = null,
+    chatError = null,
     filter = $bindable({ ...NO_FILTER }),
     focusFilter = $bindable(undefined),
   }: {
     windows: WindowRect[];
     stacks: Stack[];
+    /** Refused edits, owned by LayoutView and rendered at the control group each
+     *  belongs to: the stack list, and the chat split fields. */
+    stackError?: { text: string; detail: string } | null;
+    chatError?: { text: string; detail: string } | null;
     selectedId: string | null;
     readOnly: boolean;
     onSelect: (id: string) => void;
@@ -85,11 +92,9 @@
   // pick is acted on so each control returns to its prompt.
   let addPick: Record<string, string> = $state({});
   let withPick: Record<string, string> = $state({});
-  focusFilter = () => {
-    filterInput?.focus();
-    // Field's `element` is typed for either control; only an input can select.
-    if (filterInput instanceof HTMLInputElement) filterInput.select();
-  };
+  // Scrolls the box into view as well as focusing it: this one sits at the top
+  // of a tall inspector, so Ctrl+F used to focus something off screen.
+  focusFilter = () => revealAndFocus(filterInput);
 
   // Counted from the same predicate the filter uses, so the offer can never
   // name a number the `Hide clutter` toggle disagrees with.
@@ -269,7 +274,7 @@
   <div class="detail">
     <div class="coords">
       {#each COORDS as field}
-        <label title="right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
+        <label title="Right-click for actions" oncontextmenu={(e) => openMenu(e, [showInTree(geomPath(w, field)), copyId(w.id)])}>
           {field}
           <Field
             kind="number"
@@ -284,7 +289,7 @@
       {#each detailFlags(w) as f (f.name)}
         <label
           class="flag"
-          title={f.set.how === "unavailable" ? "Not present in this file" : "right-click for actions"}
+          title={f.set.how === "unavailable" ? "Not present in this file" : "Right-click for actions"}
           oncontextmenu={(e) => openMenu(e, flagMenu(w, f))}>
           <Field
             kind="checkbox"
@@ -312,6 +317,9 @@
         readOnly={accountReadOnly || !userOpen}
         {sharedNames}
         onSet={onSetChatSplits} />
+      {#if chatError}
+        <InlineMessage variant="error" detail={chatError.detail}>{chatError.text}</InlineMessage>
+      {/if}
     {/if}
   </div>
 {/snippet}
@@ -420,8 +428,14 @@
     <InlineMessage variant="warn" class="orphans">
       {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
       rectangle with nothing in it.
-      <Button size="sm" type="button" onclick={onDeleteOrphans}>Delete them</Button>
+      <!-- "Delete them" needed the sentence above it to parse, which is what
+           makes it a caption rather than a label. -->
+      <Button size="sm" type="button" onclick={onDeleteOrphans}>Delete empty frames</Button>
     </InlineMessage>
+  {/if}
+  <!-- Above the stack list, which is what every one of these failures is about. -->
+  {#if stackError}
+    <InlineMessage variant="error" detail={stackError.detail}>{stackError.text}</InlineMessage>
   {/if}
   {#each stacks as stack (stack.container_id)}
     {@const containerWindow = findWindow(stack.container_id)}
@@ -505,10 +519,10 @@
                   class="stack-btn"
                   disabled={readOnly}
                   disabledReason="This file is read-only"
-                  title="Remove from stack"
-                  aria-label="Remove from stack"
+                  title="Remove this window from the stack"
+                  aria-label="Remove this window from the stack"
                   onclick={() => onUnstack(w.id)}>
-                  unstack
+                  Unstack
                 </Button>
               </div>
               {#if w.id === selectedId && w.geom}
@@ -558,11 +572,20 @@
   /* Every "give the native control explicit dark colours" rule in this file is
      gone — the search box, the two selects and the number inputs are Fields
      now, and Field is the only place in the app that styles one. */
+  /* NO `overflow-y` here, and that is the fix rather than a tidy-up.
+
+     This panel used to BE the right-hand column and owned its own scrolling.
+     It is now one of several stacked inside `.inspector`, which is a flex
+     column that scrolls — so a second scroll container nested in the first made
+     this a flex item that shrinks to whatever space HudPanel left and hides the
+     remainder inside itself. HudPanel does not scroll, so it took the room, and
+     this panel collapsed to a sliver at the bottom of the column.
+
+     The visible result was that the window filter did not exist as far as
+     anyone could tell: present in the DOM, focusable by Ctrl+F, and never on
+     screen. One scroll container per column. */
   .window-panel {
-    overflow-y: auto;
     font-size: var(--t-body);
-    border-left: 1px solid var(--border);
-    background: var(--surface);
     color: var(--text);
   }
   .window-panel :global(.orphans) {

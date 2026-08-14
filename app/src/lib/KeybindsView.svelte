@@ -1,26 +1,27 @@
 <script lang="ts">
-  import { api, errMessage, type Keybinds, type KeybindEntry } from "./api";
+  import { api, errMessage, errText, type Keybinds, type KeybindEntry } from "./api";
   import { labelFor, groupFor, GROUP_ORDER, defaultFor, keysToLabel, eventToKeys } from "./keybinds";
-  import { message } from "@tauri-apps/plugin-dialog";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import { accel } from "./keys";
+  import { revealAndFocus } from "./keymap";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {}, onShowBatch = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
       onShowAccounts?: () => void; onShowBatch?: () => void;
       /** Set so the shell's Ctrl+F focuses THIS view's box while it is active,
        *  instead of being suppressed and then doing nothing. */
       focusSearch?: () => void } = $props();
 
   let searchInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
-  focusSearch = () => {
-    searchInput?.focus();
-    if (searchInput instanceof HTMLInputElement) searchInput.select();
-  };
+  focusSearch = () => revealAndFocus(searchInput);
 
   let binds = $state<Keybinds | null>(null);
   let error = $state<string | null>(null);
@@ -29,6 +30,11 @@
   let listening = $state<string | null>(null);
   /** Transient "took X from Y" notice, keyed by the command that LOST it. */
   let stolenFrom = $state<Record<string, string>>({});
+  /** A refused rebind, on the row that refused it. The `stolenFrom` notice
+   *  beside it already proves a per-row message slot renders there, so this
+   *  needs no new layout — which is the whole reason the error can leave the
+   *  modal and land on the control. */
+  let rowError = $state<{ command: string; text: string; detail: string } | null>(null);
 
   async function reload() {
     // Both are about the CURRENT table, so neither may outlive it. Command
@@ -42,7 +48,10 @@
     try { binds = await api.keybinds(); }
     catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // See AutofillView: `userOpen`/`userId` do not change across a Discard, a
+  // restore or an undo, so the token is what makes this view reload for any of
+  // the three.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -69,6 +78,7 @@
   });
 
   async function commit(command: string, keys: number[] | null) {
+    rowError = null;
     try {
       const res = await api.setKeybind(command, keys);
       binds = res.keybinds;
@@ -78,7 +88,7 @@
       for (const lost of res.stolen) next[lost] = labelFor(command);
       stolenFrom = next;
     } catch (e) {
-      await message(errMessage(e), { title: "Rebind failed", kind: "error" });
+      rowError = { command, text: `That binding wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       listening = null;
     }
@@ -100,7 +110,7 @@
      and nobody noticed. That is the sharpest single piece of evidence for this
      phase: there was no shared thing whose absence would show. -->
 {#if !userOpen}
-  <EmptyState title="No account file open.">
+  <EmptyState title="No account paired" description="Keybindings live in the account file.">
     {#snippet action()}
       <Button onclick={onShowAccounts}>Pair this character…</Button>
     {/snippet}
@@ -109,7 +119,7 @@
   <InlineMessage variant="error">{error}</InlineMessage>
 {:else if binds && !binds.available}
   <EmptyState
-    title="This account has no keybinding table yet."
+    title="No keybindings yet"
     description="EVE only writes one once you have opened the in-game keybinding screen at least once on this account.">
     {#snippet action()}
       <Button onclick={onShowBatch}>Copy bindings from another account…</Button>
@@ -124,7 +134,9 @@
     <!-- The Ctrl+F hint this placeholder was waiting for. `focusSearch` is one
          bindable the ACTIVE view sets, so the shortcut now reaches this box
          instead of being suppressed and doing nothing. -->
-    <SearchField verb="search" nouns="commands and keys" shortcut={accel("F")} bind:element={searchInput} bind:value={query} class="search" />
+    <!-- Filter, not Search: the table is on screen, so this narrows what you can
+         already see. "Commands" now means palette commands. -->
+    <SearchField nouns="keybindings" shortcut={accel("F")} bind:element={searchInput} bind:value={query} class="search" />
     <span class="meta">Click a binding, then press the combination you want.</span>
   </div>
   {#each grouped as [group, entries] (group)}
@@ -158,6 +170,9 @@
                 <span class="meta" title={stolenFrom[e.command]}
                   >taken by {stolenFrom[e.command]}</span>
               {/if}
+              {#if rowError?.command === e.command}
+                <InlineMessage variant="error" detail={rowError.detail}>{rowError.text}</InlineMessage>
+              {/if}
             </td>
             <td class="default">{keysToLabel(defaultFor(e.command))}</td>
             <td>
@@ -167,8 +182,8 @@
                 size="sm"
                 iconOnly
                 disabled={defaultFor(e.command) === null}
-                disabledReason="Reset to EVE's default (not yet captured)"
-                title="Reset to EVE's default"
+                disabledReason="EVE's default for this command hasn't been captured yet"
+                title="Reset to EVE's default ({keysToLabel(defaultFor(e.command))})"
                 onclick={() => commit(e.command, defaultFor(e.command))}>↺</Button>
             </td>
           </tr>

@@ -9,6 +9,7 @@
 import { expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import SubjectSwitcher from "$lib/SubjectSwitcher.svelte";
+import type { Ctx } from "$lib/commands";
 import Sidebar from "$lib/Sidebar.svelte";
 import { calls } from "$lib/test/setup";
 import { rescanProfiles, subject } from "$lib/subject.svelte";
@@ -58,12 +59,28 @@ async function seed() {
 
 // `props:` explicitly — `anchor` is also a Svelte MOUNT option, so a bare props
 // object with that key is read as component options instead.
+const noop = () => {};
 const SWITCHER_PROPS = {
   anchor: document.body,
-  onclose: () => {},
-  onOpen: () => {},
-  onOpenPreset: () => {},
-  onGoto: () => {},
+  onclose: noop,
+  onOpen: noop,
+  onOpenPreset: noop,
+  onGoto: noop,
+  // The palette half: the switcher runs commands as well as opening files now,
+  // so it takes the registry's action context.
+  ctx: {
+    goto: noop,
+    pickFile: noop,
+    save: noop,
+    discard: noop,
+    showHistory: noop,
+    showAccounts: noop,
+    showBatch: noop,
+    showAbout: noop,
+    showShortcuts: noop,
+    openPalette: noop,
+    findInView: noop,
+  } satisfies Ctx,
 };
 
 function mountSwitcher() {

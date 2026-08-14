@@ -1,17 +1,23 @@
 <script lang="ts">
-  import { api, errMessage, type RememberedList } from "./api";
+  import { api, errMessage, errText, type RememberedList } from "./api";
   import { labelFor } from "./autofill";
-  import { message, confirm } from "@tauri-apps/plugin-dialog";
+  import { aliasFor } from "./accounts.svelte";
+  import { confirmDialog } from "./ui/confirm.svelte";
   import Button from "./ui/Button.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
   import { accel } from "./keys";
+  import { revealAndFocus } from "./keymap";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
       /** A character file is open. Separate from `charName`, which stays null
        * until the ESI name lookup resolves — offline, it never does. */
       charOpen?: boolean;
@@ -21,13 +27,18 @@
       focusSearch?: () => void } = $props();
 
   let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
-  focusSearch = () => {
-    filterInput?.focus();
-    if (filterInput instanceof HTMLInputElement) filterInput.select();
-  };
+  focusSearch = () => revealAndFocus(filterInput);
 
   let lists = $state<RememberedList[] | null>(null);
   let error = $state<string | null>(null);
+  // One live message per owning control (§3.1). A refused edit belongs under the
+  // list it was refused for — there are twenty-odd on screen and "Edit failed"
+  // in a modal named none of them.
+  let listError = $state<{ widget: string; text: string; detail: string } | null>(null);
+  // Its own slot, because its owning control is the button rather than a list.
+  let clearError = $state<{ text: string; detail: string } | null>(null);
+
+  const alias = $derived(userId === null ? null : aliasFor(userId));
 
   async function reload() {
     if (!userOpen) { lists = null; return; }
@@ -35,7 +46,12 @@
     try { lists = await api.autofillLists(); }
     catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // `refreshToken` as well as the two ids: neither `userOpen` nor `userId`
+  // changes across a Discard, a backup restore or an undo, so without it this
+  // view goes on showing pre-Discard data indefinitely. That is a bug in the
+  // shipped build, not something undo introduced — Layout and Overview already
+  // took the token and these three did not.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   // Sort by friendly label for findability; the raw path is shown per row.
   const sorted = $derived(
@@ -57,8 +73,13 @@
   });
 
   async function commit(widget: string, entries: string[]) {
+    // Cleared by the operation next succeeding, not by a close button: a message
+    // you dismiss trains exactly the reflex the modals did.
+    listError = null;
     try { lists = await api.setAutofillList(widget, entries); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      listError = { widget, text: `That list wasn't changed — ${errText(e)}`, detail: errMessage(e) };
+    }
   }
   const removeAt = (l: RememberedList, i: number) =>
     commit(l.widget, l.entries.filter((_, j) => j !== i));
@@ -81,14 +102,29 @@
     commit(l.widget, next);
   }
 
+  // Survivor 5, and the one judgement call among the six. By the letter of the
+  // rule this is an in-memory edit that Discard reverses, so it should be a
+  // toast. It keeps its confirmation because its blast radius is EVERY list in
+  // the file, most of them not on screen at the moment of the click, and Discard
+  // is all-or-nothing — reversing it also throws away every other unsaved edit
+  // made in the same session. The last clause below is the honest version of
+  // that asymmetry. Revisit once per-step undo ships.
   async function clearAll() {
-    const ok = await confirm(
-      "Clear ALL remembered text in this account file? Every autofill list will be emptied. A backup is taken on save.",
-      { title: "Clear all remembered text", kind: "warning" },
-    );
+    const n = lists?.length ?? 0;
+    const ok = await confirmDialog({
+      title: "Clear every remembered list?",
+      body:
+        `${n} list${n === 1 ? "" : "s"} in ${alias ?? "this account"} ${n === 1 ? "is" : "are"} emptied. ` +
+        "Nothing is written until you save, and Discard puts them back — along with any other unsaved edits.",
+      confirm: "Clear everything",
+      danger: true,
+    });
     if (!ok) return;
+    clearError = null;
     try { lists = await api.clearAllAutofill(); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Clear all failed", kind: "error" }); }
+    catch (e) {
+      clearError = { text: `The lists weren't cleared — ${errText(e)}`, detail: errMessage(e) };
+    }
   }
 </script>
 
@@ -105,16 +141,20 @@
          prompt and OverviewView's render the same thing with two different
          button treatments — is fixed by both now being a Button. -->
     <div class="pair">
-      <p>Link <strong>{charName ?? "this character"}</strong> to an account to edit shared settings.</p>
-      <Button onclick={onShowAccounts}>Pair…</Button>
+      <p><strong>{charName ?? "This character"}</strong>'s remembered text lives in the account file.</p>
+      <Button onclick={onShowAccounts}>Pair this character…</Button>
     </div>
   {:else}
-    <EmptyState title="Open a character to edit its account's remembered text." />
+    <EmptyState
+      title="No file open"
+      description="Open a character to edit its account's remembered text." />
   {/if}
 {:else if error}
   <InlineMessage variant="error">{error}</InlineMessage>
 {:else if lists && lists.length === 0}
-  <EmptyState title="No remembered text in this account file yet." />
+  <EmptyState
+    title="Nothing remembered yet"
+    description="EVE stores what you type into station, search and fitting boxes here." />
 {:else if lists}
   <!-- The scope banner is the shell's now, rendered once for all four
        account-scoped views. -->
@@ -122,8 +162,12 @@
     <SearchField class="af-filter" nouns="lists" shortcut={accel("F")} bind:element={filterInput} bind:value={query} />
     <Button variant="danger" onclick={clearAll}>Clear all remembered text</Button>
   </div>
+  <!-- At the button that failed, not in a modal over the whole app. -->
+  {#if clearError}
+    <InlineMessage variant="error" detail={clearError.detail}>{clearError.text}</InlineMessage>
+  {/if}
   {#if filtered.length === 0}
-    <EmptyState title="No lists match “{query}”." />
+    <EmptyState title="No matches" description="No lists match “{query}”." />
   {/if}
   {#each filtered as l (l.widget)}
     <section class="af-list">
@@ -138,8 +182,11 @@
           size="sm"
           onclick={() => clearList(l)}
           disabled={l.entries.length === 0}
-          disabledReason="This list is already empty">Clear</Button>
+          disabledReason="This list is already empty">Clear list</Button>
       </header>
+      {#if listError?.widget === l.widget}
+        <InlineMessage variant="error" detail={listError.detail}>{listError.text}</InlineMessage>
+      {/if}
       <ul>
         <!-- Index-keyed: safe only because inputs below are one-way (value=,
              commit-on-change) and edits replace `lists` wholesale afterward.
@@ -163,7 +210,7 @@
                 onchange={(e) => editAt(l, i, (e.target as HTMLInputElement).value)} />
               {#snippet trailing()}
                 <!-- Also `.mini`, also invisible, and this one deletes an entry. -->
-                <Button variant="ghost" size="sm" iconOnly title="Remove" onclick={() => removeAt(l, i)}>
+                <Button variant="ghost" size="sm" iconOnly title="Remove this entry" onclick={() => removeAt(l, i)}>
                   ×
                 </Button>
               {/snippet}
@@ -174,7 +221,7 @@
           <Field
             class="entry"
             ariaLabel="Add remembered text"
-            placeholder="+ add remembered text…"
+            placeholder="Add remembered text"
             onkeydown={(e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
               if (e.key === "Enter") { addTo(l, e.currentTarget.value); e.currentTarget.value = ""; } }} />
         </li>
