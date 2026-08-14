@@ -162,6 +162,13 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   overflow: auto;
   background: var(--surface); border-left: 1px solid var(--border);
 }
+/* The stacked panels keep their natural height and the COLUMN scrolls.
+   Without this they are flex items with the default `flex-shrink: 1`, so a tall
+   panel squeezes the ones after it — Layout stacks HudPanel and WindowPanel,
+   and the second was compressed to a sliver whose contents were unreachable. A
+   scrolling column of stacked panels wants exactly one scroller, and this is
+   what makes it the column. */
+.shell .inspector > * { flex-shrink: 0; }
 /* Shell, not view: THREE components render an inspector into this column now
    (the shell's own, LayoutView's and OverviewView's, the last two arriving
    through `display: contents`), and each has to carry the same hide control —
