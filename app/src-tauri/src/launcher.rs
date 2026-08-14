@@ -351,6 +351,28 @@ pub struct Proposal {
     pub conflict: Option<u64>,
 }
 
+/// The launcher's answer to the whole question, not just its unresolved half.
+///
+/// `known` counts every character the logs named, the ones the store already
+/// pairs included. Without it an empty `proposals` is two different facts at
+/// once — the logs named nobody, and everything they named is already paired —
+/// and the panel reported the second as the first.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LauncherReport {
+    pub proposals: Vec<Proposal>,
+    pub known: usize,
+}
+
+/// `proposals`, plus the count that says which kind of empty an empty list is.
+/// Disjointness (pass 3 of `parse_logs`) makes a character appear under at most
+/// one account, so summing the lists is a distinct-character count.
+pub fn report(launcher: &LauncherRoster, store: &AccountsStore) -> LauncherReport {
+    LauncherReport {
+        known: launcher.accounts.values().map(Vec::len).sum(),
+        proposals: proposals(launcher, store),
+    }
+}
+
 /// What the launcher says that the store does not. Agreement produces nothing;
 /// silence produces a plain proposal; disagreement produces one carrying the
 /// account the store currently uses.
@@ -782,6 +804,25 @@ mod tests {
             vec![Proposal { char_id: 90000001, user_id: 80000001, conflict: Some(80000002) }],
             "the conflict names where the chip is now, so the UI can show it there"
         );
+    }
+
+    #[test]
+    fn a_report_counts_the_characters_the_store_already_pairs() {
+        // The live shape, measured 2026-08-14: the launcher had named 30
+        // characters and all 30 were already paired. Nothing to propose — and
+        // "nothing to propose" must not be reported as "the logs named nobody".
+        let mut store = AccountsStore::default();
+        confirm(&mut store, 90000001, 80000001).unwrap();
+        confirm(&mut store, 90000002, 80000001).unwrap();
+        let r = report(&roster(&[(80000001, &[90000001, 90000002])]), &store);
+        assert!(r.proposals.is_empty(), "agreement is still not a proposal");
+        assert_eq!(r.known, 2, "already paired is still known");
+    }
+
+    #[test]
+    fn a_report_over_silent_logs_knows_nobody() {
+        let r = report(&LauncherRoster::default(), &AccountsStore::default());
+        assert_eq!((r.known, r.proposals.len()), (0, 0));
     }
 
     #[test]

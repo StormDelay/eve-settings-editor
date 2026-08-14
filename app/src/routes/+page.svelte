@@ -432,8 +432,8 @@
     // scrim, and focusing an inert control would break the sheet's focus trap.
     //
     // Raw's box belongs to the shell; every other view registers its own. A view
-    // with neither — Overview, Probes — does nothing rather than reaching for
-    // somebody else's field.
+    // with neither — Probes — does nothing rather than reaching for somebody
+    // else's field.
     //
     // Layout's box lives in the INSPECTOR, so the column has to be open before
     // there is anything to focus: `focus()` on a `display: none` element does
@@ -441,6 +441,10 @@
     // merely scrolled away, which is how it was reported. Expanding first, then
     // waiting a tick for the column to render, is what makes the shortcut work
     // from a railed inspector.
+    //
+    // Overview's box has the same shape of problem one level down — it is on a
+    // sub-tab that is hidden rather than unmounted — and OverviewView does the
+    // same switch-then-tick dance internally, because `sub` is its state.
     findInView: () => {
       if (sheet !== null) return;
       if (view === "raw") {
@@ -595,7 +599,8 @@
       onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
       onCharDirty={() => { subject.dirty.char = true; noteEdit(); }}
       onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
-      onShowAccounts={() => (sheet = "accounts")} />
+      onShowAccounts={() => (sheet = "accounts")}
+      bind:focusSearch={viewFocusSearch.overview} />
   {:else}
     <div class="work" class:wide={!hasInspector}>
       <!-- One of ScopeBanner's two shell-owned call sites. Scope has to be

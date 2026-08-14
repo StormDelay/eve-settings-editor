@@ -92,9 +92,15 @@ pub fn set_state_list(v: &mut Value, which: StateList, ids: &[i64]) -> Result<()
     Ok(())
 }
 
-/// The surface component of a `stateColors` key. Only this surface is edited;
-/// any other is read past and written back untouched.
-const BACKGROUND_SURFACE: &[u8] = b"background";
+/// The surface component of a `stateColors` key that the editor reads and
+/// writes — the same two lists EVE's own Appearance tab shows. Any OTHER surface
+/// (`bracket` occurs on real files) is read past and written back untouched.
+///
+/// `flag` is rare but real: `(flag, 48)` appears in 2 of the 175 corpus
+/// accounts, written by the client itself, and published packs set flag colours
+/// (`zs_full_v10.06.09` sets `flag_48`). Projecting `background` alone left
+/// those colours in the file with nothing in the UI able to show or undo them.
+pub const COLOR_SURFACES: [&str; 2] = ["background", "flag"];
 
 fn as_f64<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<f64> {
     match effective(v, sh) {
@@ -104,14 +110,14 @@ fn as_f64<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<f64> {
     }
 }
 
-/// Read a `(surface, id)` colour key, returning the id only for the background
-/// surface. On a real file the surface string is stored once and the other keys
-/// carry a `Ref` to it, so both parts go through `effective`.
-fn background_color_id<'a>(k: &'a Value, sh: &SharedTable<'a>) -> Option<i64> {
+/// Read a `(surface, id)` colour key, returning the id only for `want`. On a
+/// real file the surface string is stored once and the other keys carry a `Ref`
+/// to it, so both parts go through `effective`.
+fn color_id<'a>(k: &'a Value, sh: &SharedTable<'a>, want: &[u8]) -> Option<i64> {
     let Value::Tuple(parts) = effective(k, sh) else { return None };
     let [surface, id] = parts.as_slice() else { return None };
     match (effective(surface, sh), effective(id, sh)) {
-        (Value::Bytes(s), Value::Int(n)) if s.as_slice() == BACKGROUND_SURFACE => Some(*n),
+        (Value::Bytes(s), Value::Int(n)) if s.as_slice() == want => Some(*n),
         _ => None,
     }
 }
@@ -122,9 +128,9 @@ fn as_rgba<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<[f64; 4]> {
     Some([as_f64(r, sh)?, as_f64(g, sh)?, as_f64(b, sh)?, as_f64(a, sh)?])
 }
 
-/// Every background-surface colour override in the file, as `(state_id, rgba)`.
+/// Every colour override on ONE surface, as `(state_id, rgba)`.
 /// SPARSE: a state absent from this list uses EVE's built-in default colour.
-pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
+pub fn state_colors(v: &Value, surface: &str) -> Vec<(i64, [f64; 4])> {
     let mut sh = SharedTable::new();
     collect_shared(v, &mut sh);
     let Some(ovd) = root_child_dict(v, b"overview", &sh) else { return Vec::new() };
@@ -141,18 +147,26 @@ pub fn state_colors(v: &Value) -> Vec<(i64, [f64; 4])> {
     };
     let Some(d) = inner else { return Vec::new() };
     d.iter()
-        .filter_map(|(k, val)| Some((background_color_id(k, &sh)?, as_rgba(val, &sh)?)))
+        .filter_map(|(k, val)| Some((color_id(k, &sh, surface.as_bytes())?, as_rgba(val, &sh)?)))
         .collect()
 }
 
-/// Set or clear one state's background colour.
+/// Set or clear one state's colour on one surface.
 ///
 /// `Some(rgba)` writes an explicit override; `None` REMOVES the entry, which is
 /// how the UI restores EVE's built-in default for that state — writing an
 /// explicit default-looking colour is not the same thing.
 ///
-/// Entries whose surface is not `background` are left exactly as found.
-pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result<(), OverviewTabError> {
+/// Entries on any OTHER surface — including the other editable one — are left
+/// exactly as found. `surface` is validated against `COLOR_SURFACES` so a typo
+/// crossing the IPC boundary cannot mint a junk surface into a file the client
+/// reads.
+pub fn set_state_color(
+    v: &mut Value, surface: &str, id: i64, rgba: Option<[f64; 4]>,
+) -> Result<(), OverviewTabError> {
+    if !COLOR_SURFACES.contains(&surface) {
+        return Err(OverviewTabError::UnknownSetting { key: surface.to_string() });
+    }
     inline_all(v);
     let ov = overview_mut(v)?;
 
@@ -171,16 +185,17 @@ pub fn set_state_color(v: &mut Value, id: i64, rgba: Option<[f64; 4]>) -> Result
     // `inline_all` above dropped every Shared/Ref, so the write path resolves
     // against an empty slot table.
     let flat = SharedTable::new();
+    let want = surface.as_bytes();
     match rgba {
-        None => entries.retain(|(k, _)| background_color_id(k, &flat) != Some(id)),
+        None => entries.retain(|(k, _)| color_id(k, &flat, want) != Some(id)),
         Some([r, g, b_, a]) => {
             let val = Value::Tuple(vec![
                 Value::Float(r), Value::Float(g), Value::Float(b_), Value::Float(a),
             ]);
-            match entries.iter_mut().find(|(k, _)| background_color_id(k, &flat) == Some(id)) {
+            match entries.iter_mut().find(|(k, _)| color_id(k, &flat, want) == Some(id)) {
                 Some((_, slot)) => *slot = val,
                 None => entries.push((
-                    Value::Tuple(vec![Value::Bytes(BACKGROUND_SURFACE.to_vec()), Value::Int(id)]),
+                    Value::Tuple(vec![Value::Bytes(want.to_vec()), Value::Int(id)]),
                     val,
                 )),
             }
@@ -413,8 +428,9 @@ mod tests {
         Value::Tuple(vec![b(surface), Value::Int(id)])
     }
 
-    /// user -> overview -> stateColors: (ts, { ("background", id): (r,g,b,a) })
-    /// Includes one entry on a foreign surface, which must never be touched.
+    /// user -> overview -> stateColors: (ts, { (surface, id): (r,g,b,a) })
+    /// Carries all three surfaces a real file can: the two editable ones and
+    /// `bracket`, which must never be touched.
     /// The timestamp is the shared `seeded_ts()` (not a zero Long), so a test
     /// can tell "the original was preserved" apart from "a fresh one was minted".
     fn user_with_colors() -> Value {
@@ -424,18 +440,59 @@ mod tests {
                 Value::Dict(vec![
                     (color_key("background", 44), rgba(0.75, 0.0, 0.0, 1.0)),
                     (color_key("background", 20), rgba(0.7, 0.7, 0.7, 0.5)),
+                    (color_key("flag", 48), rgba(0.0, 0.0, 0.0, 1.0)),
                     (color_key("bracket", 44), rgba(0.1, 0.2, 0.3, 1.0)),
                 ]),
             ])),
         ]))])
     }
 
+    /// REPLACES `projects_only_the_background_surface`, which encoded the old
+    /// deliberate behaviour: `flag` colours were read past, so a pack that set
+    /// one (or the client itself) left a colour the UI could not show or undo.
+    /// The projection is now per-surface — one surface at a time, and still
+    /// never `bracket`.
     #[test]
-    fn projects_only_the_background_surface() {
+    fn projects_one_surface_at_a_time() {
         let v = user_with_colors();
-        let mut got = state_colors(&v);
+        let mut got = state_colors(&v, "background");
         got.sort_by_key(|(id, _)| *id);
         assert_eq!(got, vec![(20, [0.7, 0.7, 0.7, 0.5]), (44, [0.75, 0.0, 0.0, 1.0])]);
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.0, 0.0, 0.0, 1.0])]);
+        assert_eq!(state_colors(&v, "bracket"), vec![(44, [0.1, 0.2, 0.3, 1.0])],
+            "readable, but no caller asks for it — `set_state_color` rejects the surface");
+    }
+
+    #[test]
+    fn writes_the_flag_surface_without_disturbing_background() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, "flag", 13, Some([0.2, 0.5, 1.0, 1.0])).unwrap();
+        assert!(state_colors(&v, "flag").contains(&(13, [0.2, 0.5, 1.0, 1.0])));
+        let mut bg = state_colors(&v, "background");
+        bg.sort_by_key(|(id, _)| *id);
+        assert_eq!(bg, vec![(20, [0.7, 0.7, 0.7, 0.5]), (44, [0.75, 0.0, 0.0, 1.0])]);
+    }
+
+    /// The bound on the projection change: a background edit writes exactly what
+    /// it wrote before, so the colortag colours in the file ride through it.
+    #[test]
+    fn a_background_edit_leaves_flag_colours_alone() {
+        let mut v = user_with_colors();
+        set_state_color(&mut v, "background", 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.0, 0.0, 0.0, 1.0])]);
+        set_state_color(&mut v, "background", 48, None).unwrap();
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.0, 0.0, 0.0, 1.0])],
+            "clearing background 48 must not clear flag 48");
+    }
+
+    #[test]
+    fn rejects_a_surface_outside_the_allow_list() {
+        let mut v = user_with_colors();
+        assert!(matches!(
+            set_state_color(&mut v, "bracket", 44, Some([1.0, 1.0, 1.0, 1.0])),
+            Err(OverviewTabError::UnknownSetting { key }) if key == "bracket"
+        ));
+        assert_eq!(state_colors(&v, "bracket"), vec![(44, [0.1, 0.2, 0.3, 1.0])], "untouched");
     }
 
     /// The shape every REAL file has: `b"background"` is stored once and every
@@ -464,7 +521,7 @@ mod tests {
 
     #[test]
     fn resolves_shared_and_ref_colour_keys_and_values() {
-        let mut got = state_colors(&user_with_shared_colors());
+        let mut got = state_colors(&user_with_shared_colors(), "background");
         got.sort_by_key(|(id, _)| *id);
         assert_eq!(got, vec![(10, [0.7, 0.7, 0.7, 1.0]), (12, [0.7, 0.7, 0.7, 1.0])]);
     }
@@ -488,36 +545,36 @@ mod tests {
     #[test]
     fn sets_a_colour_for_a_state_with_no_entry() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
-        assert!(state_colors(&v).contains(&(13, [1.0, 0.0, 0.0, 1.0])));
+        set_state_color(&mut v, "background", 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
+        assert!(state_colors(&v, "background").contains(&(13, [1.0, 0.0, 0.0, 1.0])));
     }
 
     #[test]
     fn overwrites_an_existing_colour() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
-        assert!(state_colors(&v).contains(&(44, [0.0, 1.0, 0.0, 1.0])));
-        assert_eq!(state_colors(&v).iter().filter(|(id, _)| *id == 44).count(), 1);
+        set_state_color(&mut v, "background", 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
+        assert!(state_colors(&v, "background").contains(&(44, [0.0, 1.0, 0.0, 1.0])));
+        assert_eq!(state_colors(&v, "background").iter().filter(|(id, _)| *id == 44).count(), 1);
     }
 
     #[test]
     fn none_removes_the_entry_restoring_eves_default() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 44, None).unwrap();
-        assert!(!state_colors(&v).iter().any(|(id, _)| *id == 44));
+        set_state_color(&mut v, "background", 44, None).unwrap();
+        assert!(!state_colors(&v, "background").iter().any(|(id, _)| *id == 44));
     }
 
     #[test]
     fn removing_an_absent_entry_is_a_no_op() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 13, None).unwrap();
-        assert_eq!(state_colors(&v).len(), 2);
+        set_state_color(&mut v, "background", 13, None).unwrap();
+        assert_eq!(state_colors(&v, "background").len(), 2);
     }
 
     #[test]
     fn a_foreign_surface_entry_is_preserved() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 44, Some([0.0, 0.0, 1.0, 1.0])).unwrap();
+        set_state_color(&mut v, "background", 44, Some([0.0, 0.0, 1.0, 1.0])).unwrap();
         let Value::Dict(root) = &v else { panic!() };
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
@@ -533,14 +590,14 @@ mod tests {
     #[test]
     fn colours_can_be_set_when_the_key_is_absent() {
         let mut v = user_without_states();
-        set_state_color(&mut v, 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
-        assert_eq!(state_colors(&v), vec![(13, [1.0, 0.0, 0.0, 1.0])]);
+        set_state_color(&mut v, "background", 13, Some([1.0, 0.0, 0.0, 1.0])).unwrap();
+        assert_eq!(state_colors(&v, "background"), vec![(13, [1.0, 0.0, 0.0, 1.0])]);
     }
 
     #[test]
     fn color_timestamp_wrapper_survives_the_edit() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
+        set_state_color(&mut v, "background", 44, Some([0.0, 1.0, 0.0, 1.0])).unwrap();
         let Value::Dict(root) = &v else { panic!() };
         let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
         let Value::Dict(ovd) = ov else { panic!() };
@@ -554,7 +611,7 @@ mod tests {
     fn set_state_color_with_no_overview_container_is_an_error() {
         let mut v = Value::Dict(vec![(b("ui"), Value::Dict(Vec::new()))]);
         assert!(matches!(
-            set_state_color(&mut v, 9, Some([0.0, 0.0, 0.0, 1.0])),
+            set_state_color(&mut v, "background", 9, Some([0.0, 0.0, 0.0, 1.0])),
             Err(OverviewTabError::NoOverview)
         ));
     }
@@ -567,7 +624,7 @@ mod tests {
             (b("stateColors"), Value::Int(1)),
         ]))]);
         assert!(matches!(
-            set_state_color(&mut v, 9, Some([0.0, 0.0, 0.0, 1.0])),
+            set_state_color(&mut v, "background", 9, Some([0.0, 0.0, 0.0, 1.0])),
             Err(OverviewTabError::NoOverview)
         ));
     }
@@ -578,8 +635,8 @@ mod tests {
     #[test]
     fn editing_rgb_preserves_a_non_default_alpha() {
         let mut v = user_with_colors();
-        set_state_color(&mut v, 20, Some([0.1, 0.2, 0.3, 0.5])).unwrap();
-        assert!(state_colors(&v).contains(&(20, [0.1, 0.2, 0.3, 0.5])));
+        set_state_color(&mut v, "background", 20, Some([0.1, 0.2, 0.3, 0.5])).unwrap();
+        assert!(state_colors(&v, "background").contains(&(20, [0.1, 0.2, 0.3, 0.5])));
     }
 
     /// user -> overview -> a few boolean settings as (ts, bool) tuples.

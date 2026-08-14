@@ -287,7 +287,7 @@ fn write_scalar(n: &Node) -> String {
 /// 0.098…, consistent with both 0.098 and 0.1 — and `color_name` matches
 /// exactly, by design. Harvest them the same way: probe pack, background state,
 /// EVE's importer.
-pub(crate) const PALETTE: [(&str, [f64; 4]); 6] = [
+pub const PALETTE: [(&str, [f64; 4]); 6] = [
     ("black", [0.0, 0.0, 0.0, 1.0]),
     ("blue", [0.2, 0.5, 1.0, 1.0]),
     ("darkBlue", [0.0, 0.15, 0.6, 1.0]),

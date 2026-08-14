@@ -93,6 +93,29 @@
   // hint and leave a blank state that explains nothing.
   const everFound = $derived(launcherState.foundCards.some((u) => onScreen.has(u)));
 
+  /**
+   * Why no ghost is on screen — which of the reasons it actually is.
+   *
+   * A read that THREW is not among them: it leaves `loaded` false and reports
+   * itself as an error, so this sentence never speaks for a read that did not
+   * happen. Of the rest, "nothing left to propose, and characters were known" is
+   * the success case, and the old single sentence stated the opposite of the
+   * truth there — measured on a live install with 30 characters named by the
+   * launcher and all 30 already paired.
+   */
+  const nothingProposed = $derived.by(() => {
+    if (!launcherState.loaded || everFound) return "";
+    const n = launcherState.known;
+    // Proposals that exist but land on no card here (another profile folder)
+    // are not "already paired", so they keep the original sentence — which is
+    // true as written: the logs say nothing about THESE accounts.
+    if (n === 0 || launcherState.proposals.length > 0)
+      return "Your EVE launcher logs say nothing about these accounts. Calibrate an account to pair a character by hand.";
+    return n === 1
+      ? "The one character your EVE launcher names is already paired."
+      : `All ${n} characters your EVE launcher names are already paired.`;
+  });
+
   const accountLabel = (userId: number) => aliasFor(userId) ?? `account ${userId}`;
 
   /**
@@ -223,15 +246,23 @@
   if (!launcherState.loaded) {
     api
       .launcherProposals()
-      .then(async (p) => {
-        launcherState.proposals = p;
+      .then(async (r) => {
+        launcherState.proposals = r.proposals;
+        launcherState.known = r.known;
         // A disputed proposal shows on the card that holds the chip today, not
         // on the one the launcher names — same routing as `proposalsByCard`.
-        launcherState.foundCards = p.map((x) => x.conflict ?? x.user_id);
-        await resolveNames(p.map((x) => x.char_id));
+        launcherState.foundCards = r.proposals.map((x) => x.conflict ?? x.user_id);
+        // Set here, not in a `.finally`: a `.finally` marked a THROWN read as
+        // loaded, so a failure and a successful read that found nothing reached
+        // the empty state identically and the panel told the user their logs
+        // held nothing when the truth was that reading them failed.
+        launcherState.loaded = true;
+        await resolveNames(r.proposals.map((x) => x.char_id));
       })
-      .catch(() => {})
-      .finally(() => (launcherState.loaded = true));
+      // Surfaced, not swallowed — and `loaded` stays false, so the message below
+      // never speaks for a read that did not happen and reopening the sheet
+      // retries it. A read that failed is the one state worth retrying.
+      .catch((e) => (error = errMessage(e)));
   }
 </script>
 
@@ -291,11 +322,8 @@
   {/if}
 
   <!-- InlineMessage, not EmptyState: the account cards follow it. -->
-  {#if launcherState.loaded && !everFound}
-    <InlineMessage>
-      Your EVE launcher logs say nothing about these accounts. Calibrate an account to pair a
-      character by hand.
-    </InlineMessage>
+  {#if nothingProposed}
+    <InlineMessage>{nothingProposed}</InlineMessage>
   {/if}
 
   {#if accounts.length === 0}

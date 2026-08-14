@@ -26,6 +26,7 @@ import {
   planeHit,
   dragPosition,
   scenePos,
+  rangeTo,
   type Camera,
   type HandleDrag,
   type Vec3,
@@ -391,4 +392,49 @@ check("a plane drag gone edge-on returns null rather than a position", (() => {
   // metres, and touching it here would be a second place units could go wrong.
   const xyz = scenePos({ kind: "xyz", m: [12500, 3000, -8000] });
   check("xyz passes through untouched", xyz[0] === 12500 && xyz[1] === 3000 && xyz[2] === -8000);
+}
+
+// --- range to a scene object ------------------------------------------------
+// "Is probe 3 inside the jump sphere" is a number, and the picture only
+// approximates it. Every distance below is hand-computable: the drifter hole's
+// own slant range, and three 3-4-5 triangles from it.
+//
+// The arithmetic is exact; the scene numbers it runs on are estimates (the
+// shipped files say so themselves), which is the readout's caveat to carry and
+// not this function's.
+{
+  // The K-space drifter hole as the shipped scene gives it: 87.5 km west,
+  // 17.45 degrees up, with a 16 km jump sphere.
+  const hole = scenePos({ kind: "polar", km: 87.5, bearing: 270, elevation: 17.45 });
+  const SPHERE = 16_000;
+  const from = (dx: number, dy: number) =>
+    rangeTo([hole[0] + dx, hole[1] + dy, hole[2]], hole, SPHERE);
+
+  // The ship's own position. Whatever the bearing and elevation do, the slant
+  // range back to the hole is the 87.5 km the file was written with.
+  const centre = rangeTo([0, 0, 0], hole, SPHERE);
+  check("a probe at the formation centre is the scene's own distance away",
+        near(centre.m, 87_500, 1e-6));
+  check("and 87.5 km is not inside a 16 km sphere", centre.inside === false);
+
+  // 9-12-15 and 12-16-20, in kilometres: either side of the 16 km radius.
+  const inside = from(9_000, 12_000);
+  check("a probe 15 km from the hole is inside its jump sphere",
+        near(inside.m, 15_000, 1e-6) && inside.inside);
+  const outside = from(12_000, 16_000);
+  check("a probe 20 km from it is not", near(outside.m, 20_000, 1e-6) && !outside.inside);
+
+  // Exactly on the surface. Which way the boundary falls is a choice, and the
+  // sphere is a player guide's round number — nothing measures it finely enough
+  // for "just outside" to mean anything. Measured from the ORIGIN, not from the
+  // trig-derived hole: an offset added to and subtracted from 87.5 km comes
+  // back a few femtometres off, and that is float noise, not a boundary.
+  const edge = rangeTo([SPHERE, 0, 0], [0, 0, 0], SPHERE);
+  check("a probe exactly on the sphere counts as inside", edge.m === SPHERE && edge.inside);
+
+  // The Beacon, which both shipped scenes carry at the formation centre: a
+  // marker with no volume has no inside to be in.
+  check("an object with no volume is never 'inside'",
+        rangeTo([1, 2, 3], [0, 0, 0]).inside === false);
+  check("but still has a distance", near(rangeTo([3, 4, 0], [0, 0, 0]).m, 5));
 }

@@ -200,12 +200,14 @@ fn confirm_pairings(app: tauri::AppHandle, pairs: Vec<(u64, u64)>) -> accounts::
 }
 
 /// What the EVE launcher's own logs say about char↔account membership, minus
-/// whatever the store already agrees with. Read-only, and separate from
-/// `account_roster` on purpose: that one reloads after every alias edit and
-/// every confirm, and re-reading megabytes of logs on each would be silly.
+/// whatever the store already agrees with — plus a count of every character
+/// those logs named, which is the only thing that separates "the logs say
+/// nothing" from "everything they say is already paired". Read-only, and
+/// separate from `account_roster` on purpose: that one reloads after every alias
+/// edit and every confirm, and re-reading megabytes of logs on each would be silly.
 #[tauri::command]
-fn launcher_proposals(app: tauri::AppHandle) -> Vec<launcher::Proposal> {
-    launcher::proposals(&launcher::read_launcher_roster(), &accounts::load_store(&app_dir(&app)))
+fn launcher_proposals(app: tauri::AppHandle) -> launcher::LauncherReport {
+    launcher::report(&launcher::read_launcher_roster(), &accounts::load_store(&app_dir(&app)))
 }
 
 #[tauri::command]
@@ -308,8 +310,8 @@ fn overview_set_states(state: tauri::State<'_, AppState>, which: String, ids: Ve
 }
 
 #[tauri::command]
-fn overview_set_state_color(state: tauri::State<'_, AppState>, id: i64, rgba: Option<[f64; 4]>) -> Result<settings_model::OverviewColumns, ErrDto> {
-    ops::overview_set_state_color(&state, id, rgba)
+fn overview_set_state_color(state: tauri::State<'_, AppState>, surface: String, id: i64, rgba: Option<[f64; 4]>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_set_state_color(&state, surface, id, rgba)
 }
 
 #[tauri::command]

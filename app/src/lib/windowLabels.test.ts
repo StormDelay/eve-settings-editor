@@ -1,5 +1,5 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
-import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, stackLabel, inEnv } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, neocomLabel, stackLabel, inEnv } from "./windowLabels.ts";
 
 import { check } from "./test/check.ts";
 
@@ -214,6 +214,16 @@ import { check } from "./test/check.ts";
     "stackLabel is null when the backend left it equal to the container id",
     stackLabel({ container_id: "88", container_label: "88" }) === null,
   );
+}
+
+// --- neocomLabel: curated, shared with the window table, else raw ----------
+{
+  check("a neocom-only id gets its curated label", neocomLabel("job_board") === "Job Board");
+  check("an id formatting alone would get wrong is curated", neocomLabel("accessgroups") === "Access Groups");
+  check("a neocom id shared with a window reuses the window label", neocomLabel("mail") === "EVE Mail");
+  // The failure direction that matters: an id nobody has curated shows raw, so
+  // it stays checkable against the file instead of becoming a plausible lie.
+  check("an uncurated id falls back to the raw id", neocomLabel("someFutureBtn") === "someFutureBtn");
 }
 
 // --- clutter overrides ------------------------------------------------------

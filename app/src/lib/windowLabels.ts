@@ -1,5 +1,8 @@
-// Friendly names for EVE window ids. Pure — no DOM, no Svelte, no api types —
-// so it unit-tests under `node --test` like layout.ts and search.ts.
+// Friendly names for EVE window ids — and, at the bottom, for the neocom
+// button ids, which are the same kind of raw client identifier and so live
+// here rather than growing a second labelling scheme. Pure — no DOM, no
+// Svelte, no api types — so it unit-tests under `node --test` like layout.ts
+// and search.ts.
 //
 // A real character file carries a median 296 windows whose ids are raw client
 // identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1038711647935`,
@@ -411,6 +414,47 @@ export function nameOf(w: { id: string; name?: string | null }): WindowName {
  */
 export function stackLabel(s: { container_id: string; container_label: string }): string | null {
   return s.container_label !== s.container_id ? s.container_label : null;
+}
+
+/**
+ * Neocom button ids the client writes — `job_board`, `map_beta`,
+ * `airCareerProgram` — where formatting alone does not produce the in-game
+ * name. Ids the neocom shares with a window (`market`, `mail`, `assets`,
+ * `contracts`, `corporation`, `help`, `notepad`) are deliberately absent: they
+ * fall through to CURATED below, so a button and the window it opens cannot end
+ * up named differently.
+ *
+ * `neocom-buttons.json` is harvested from the corpus by `neocom_catalog.rs` and
+ * would lose anything added to it, so the labels live here.
+ */
+const NEOCOM: Record<string, string> = {
+  ProjectDiscovery: "Project Discovery",
+  accessgroups: "Access Groups",
+  agency: "The Agency",
+  airCareerProgram: "AIR Career Program",
+  chat: "Chat",
+  fitting: "Fitting",
+  fleet: "Fleet",
+  industry: "Industry",
+  inventory: "Inventory",
+  job_board: "Job Board",
+  log: "Log",
+  map_beta: "Map",
+  shipTree: "Ship Tree",
+  structurebrowser: "Structure Browser",
+  wallet: "Wallet",
+};
+
+/**
+ * The name to show for a neocom button. An uncurated id is returned raw, with
+ * no `pretty()` pass: pretty's boilerplate strip is tuned for window ids (it
+ * eats "New", "View", "Panel") and would quietly maul a neocom id nobody has
+ * looked at. A raw id is ugly but checkable against the file, which a wrong
+ * friendly label is not — so the bar's own ids, which can be anything the
+ * client wrote, fail in that direction. Grow NEOCOM lazily as ids show up.
+ */
+export function neocomLabel(id: string): string {
+  return NEOCOM[id] ?? CURATED[id] ?? id;
 }
 
 /** The friendly name as a single string, for places that cannot render the
