@@ -195,7 +195,10 @@
   .apply-note { color: var(--text-muted); font-size: var(--t-caption); margin: var(--s1) 0 0; }
   .meta { color: var(--text-muted); font-size: var(--t-caption); }
   :global(.subtabs) { margin: var(--s1) 0 var(--s2); }
-  .state-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0; }
+  /* A reading width, for the same reason `.ov-cols` has one: ListRow pushes the
+     swatch and its Reset button to the container's right edge, and the
+     container is a wide work area rather than a 20rem panel. */
+  .state-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0; max-width: 26rem; }
   .state-list li { list-style: none; }
   .state-list :global(.state-label) { flex: 1; }
   /* An unset row shows a placeholder colour, so it takes the one disabled
