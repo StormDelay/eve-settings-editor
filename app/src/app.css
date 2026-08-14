@@ -76,62 +76,94 @@
 body { margin: 0; background: var(--bg); color: var(--text); }
 
 /* What is left below is the SHELL: the app grid, the two collapse rails, the
-   sidebar and backups columns, the file bar, the tree area and the tree's own
-   six syntax colours. Everything that used to live here and is not shell —
+   subject column, the work area and its inspector, and the tree's own six
+   syntax colours. Everything that used to live here and is not shell —
    the global `button` rules, .mini, .badge, .hint, .error, .flash,
    .field-error, .searchbar, .edit, .overlay, .modal, .save, .discard,
    .viewtabs, .insert-form — is a component in `lib/ui/` now.
 
+   Phase 2 took the rest of the old three-column shell with it: .backups and its
+   list rules, .editor, .filebar, .filename, .sidebar-actions, .tree-area,
+   .spacer, .stamp and the `.sidebar ul` / `.sidebar .meta` pair. The file bar is
+   a context bar that spans the frame, the backups column is a popover, and the
+   sidebar's rows are ListRows that style themselves.
+
    Nothing here declares a colour, a size, a radius or a space that is not a
    token. `lib/ui/tokens.test.ts` fails the build if that stops being true. */
 
-.layout { display: grid; grid-template-columns: var(--col-left, 280px) 1fr auto; height: 100vh; }
-/* Collapsed sidebar: the 280px column shrinks to the reopen rail's width. The
-   backups column is already `auto`, so its rail sizes it with no override. */
-.layout.sidebar-collapsed { --col-left: auto; }
+/* Three columns and three rows, where there used to be three columns and one.
+   The context bar spans the full width — the only element that does, which is
+   what makes it read as "the frame" rather than as a toolbar belonging to
+   something. The tab row spans columns 2-3 only, because the tabs govern the
+   work area and its inspector and govern nothing about the subject list;
+   spanning the full width would put a control above a panel it does not
+   control, which is the category error the old file bar made by carrying view
+   tabs in a row about a file.
+
+   Row 3 is minmax(0, 1fr) so a scrolling child cannot push the grid past the
+   viewport — the same reason LayoutView already writes it for its canvas. */
+.shell {
+  display: grid;
+  grid-template-columns: var(--col-left, 17.5rem) minmax(0, 1fr) var(--col-right, 20rem);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100vh;
+}
+/* One rail width in both directions, where the left rail used to be 24px and
+   the right column was `auto`-sized by whatever happened to be in it.
+
+   AUTO-railing at 1200px/900px (§4.3) is NOT built. It needs the shell's own
+   width, `bind:clientWidth` needs a ResizeObserver, and jsdom reports 0 for
+   every element — so the thresholds would rail both columns in every component
+   test and take the sidebar's rows off the screen the suite queries. Manual
+   rails, persisting for the session, are what ship; the DoD asks for
+   "rails independently", which they do. */
+.shell.subjects-railed { --col-left: 1.5rem; }
+.shell.inspector-railed { --col-right: 1.5rem; }
+/* Railing the inspector has to hide LayoutView's own panel too, which lands in
+   this column through `display: contents` rather than through markup here. */
+.shell.inspector-railed .inspector { display: none; }
+
 .rail {
-  width: 24px; padding: 0; border: none; border-radius: 0;
+  padding: 0; border: none; border-radius: 0;
   background: var(--surface); color: var(--text-muted); cursor: pointer;
 }
 .rail:hover { color: var(--accent); }
-.rail-left { border-right: 1px solid var(--border); }
-.rail-right { border-left: 1px solid var(--border); }
-.backups {
-  width: 280px; background: var(--surface);
-  border-left: 1px solid var(--border); overflow-y: auto; padding: var(--s2);
-}
-.backups ul { list-style: none; padding: 0; margin: 0; }
-/* The row's own flex/gap/padding is ListRow's now; the li is just the list item
-   it always semantically was. */
-.backups li { list-style: none; }
-.stamp { font-family: Consolas, monospace; }
+.rail-left { grid-column: 1; grid-row: 2 / 4; border-right: 1px solid var(--border); }
+.rail-right { grid-column: 3; grid-row: 3; border-left: 1px solid var(--border); }
+
 .sidebar {
+  grid-column: 1; grid-row: 2 / 4;
   background: var(--surface); border-right: 1px solid var(--border);
   overflow-y: auto; padding: var(--s2);
 }
-.sidebar-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s2); }
-.sidebar ul { list-style: none; margin: var(--s1) 0; padding-left: var(--s3); }
-/* `.sidebar .file` is gone with its class: ListRow's label button already is a
-   full-width, left-aligned, borderless button, and its hover is a background
-   rather than a colour shift. */
-.sidebar .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
-.editor { overflow: hidden; display: flex; flex-direction: column; }
-.filebar {
-  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
-  padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
-}
 
-/* Shrink + ellipsis so a long name doesn't hog the row; combined with the
-   filebar's flex-wrap this keeps the Save button reachable on small windows. */
-.filename { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-area { overflow: auto; flex: 1; padding: var(--s2) var(--s3); }
-/* The tree's search bar. The box itself is a SearchField; this is only the
-   row it sits in. */
-.searchbar {
+/* Neither sets `overflow`: each occupant owns its own scrolling, because the
+   work area is sometimes a wrapper this file renders and sometimes LayoutView's
+   canvas arriving through `display: contents`. Two rules fighting over one
+   class at equal specificity is how that goes wrong. */
+.shell .work {
+  grid-column: 2; grid-row: 3;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+}
+.shell .inspector {
+  grid-column: 3; grid-row: 3;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  overflow: auto;
+  background: var(--surface); border-left: 1px solid var(--border);
+}
+/* The scrolling part of a work area whose head (a tab strip, a search bar, a
+   scope banner) must stay put. */
+.scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--s2) var(--s3); }
+/* The Raw tree's search row. Renamed from `.searchbar`, which was the same name
+   SearchField gives its own root — so this global rule was landing a bottom
+   border and 12px of side padding on EVERY search box in the app, including
+   WindowPanel's filter and the Keybinds and Autofill boxes. A leftover from
+   Phase 1, when the tree's row was the only `.searchbar` there was. */
+.raw-search {
   display: flex; align-items: center; gap: var(--s2);
   padding: var(--s1) var(--s3); border-bottom: 1px solid var(--border);
 }
-.searchbar > :first-child { flex: 1; }
+.raw-search > :first-child { flex: 1; }
 .hex { font-family: Consolas, monospace; padding: var(--s3); white-space: pre; }
 /* The tree's vertical padding goes to 0 rather than to --s1: 1px was already
    below the 4px scale, and rounding a dense tree row UP by 6px would be a
@@ -157,5 +189,7 @@ span.twisty { width: 20px; display: inline-block; }
 .kind-ref, .kind-shared { color: var(--warn); }
 .shared-mark { color: var(--warn); font-weight: bold; }
 .form-actions { display: flex; gap: var(--s2); justify-content: flex-end; margin-top: var(--s3); }
-.spacer { flex: 1; }
-.tree-file { margin: 0 0 var(--s2); }
+/* `.tree-file` stays — the Raw view keeps its character/account file switch, and
+   is the one place in the app where a FILE is legitimately the subject. That is
+   the exception that proves the rule, and it is why the tab is called Raw. */
+.tree-file { margin: var(--s1) var(--s3) 0; }

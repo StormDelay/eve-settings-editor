@@ -32,7 +32,7 @@
     onReveal,
     onDirty,
     sharedNames = [],
-    focusFilter = $bindable(undefined),
+    focusSearch = $bindable(undefined),
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -50,10 +50,14 @@
      * fields are account-wide, so the warning belongs on those rows, not
      * above the whole view. */
     sharedNames?: string[];
-    /** Exposed so +page.svelte's global Ctrl+F handler can focus the window
-     * filter input when this view is active. Forwarded from WindowPanel,
-     * where the input actually lives — see its own focusFilter doc. */
-    focusFilter?: () => void;
+    /** Exposed so the shell's global Ctrl+F handler can focus the window filter
+     * input when this view is active. Forwarded from WindowPanel, where the
+     * input actually lives — see its own focusFilter doc.
+     *
+     * Renamed from `focusFilter`: it is now ONE bindable that whichever view is
+     * active sets, so Ctrl+F stops being a suppressed no-op on the tabs that
+     * have their own search box. */
+    focusSearch?: () => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -827,10 +831,10 @@
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
 {#if layout === null}
-  <EmptyState title="Loading layout…" />
+  <div class="work"><EmptyState title="Loading layout…" /></div>
 {:else}
   <div class="layout-view">
-    <div class="canvas-wrap" bind:clientWidth={containerWidth}>
+    <div class="canvas-wrap work" bind:clientWidth={containerWidth}>
       <!-- The capture-phase blur is what gives the canvas the keyboard:
            startMove/startResize/startFurniture all preventDefault their
            pointerdown, which suppresses the browser's focus transfer, so a
@@ -953,7 +957,7 @@
         {/if}
       </p>
     </div>
-    <div class="side">
+    <aside class="inspector">
       {#if hud}
         <HudPanel
           {hud}
@@ -999,8 +1003,8 @@
         {sharedNames}
         onSetChatSplits={setChatSplits}
         bind:filter
-        bind:focusFilter />
-    </div>
+        bind:focusFilter={focusSearch} />
+    </aside>
   </div>
 {/if}
 
@@ -1009,23 +1013,22 @@
 {/if}
 
 <style>
+  /* This view no longer runs its own two-column grid. It was the ONE view with
+     a right-hand region, which is why the right edge of the app meant "backups"
+     on five tabs and "window properties" on one. The inspector is a column of
+     the SHELL now, and `display: contents` is how a view reaches it without a
+     portal: this root stops participating in layout, and its two children become
+     grid items of `.shell` in columns 2 and 3.
+
+     The old `height: 100%; overflow: hidden` here is exactly what
+     `display: contents` makes redundant — `.canvas-wrap` and `.inspector`
+     already owned their own scrolling. */
   .layout-view {
-    display: grid;
-    /* minmax(0,1fr) lets the canvas take the remaining space without being
-       pushed to zero by a wide window list; the panel is bounded. */
-    grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
-    height: 100%;
-    overflow: hidden;
+    display: contents;
   }
   .canvas-wrap {
     overflow: auto;
     padding: var(--s2);
-  }
-  .side {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: auto;
   }
   .canvas {
     position: relative;
@@ -1217,7 +1220,7 @@
     color: var(--text-muted);
   }
   /* The dark-native-control rule is gone — Field owns it. */
-  .side :global(.det) {
+  .inspector :global(.det) {
     color: var(--text-secondary);
     cursor: pointer;
     margin-left: var(--s1);
