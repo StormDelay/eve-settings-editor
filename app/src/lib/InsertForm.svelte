@@ -98,7 +98,7 @@
     <div class="pair">
       <Field
         kind="select"
-        label="key"
+        label="Key"
         bind:value={keyKind}
         onchange={clearError}
         options={[
@@ -116,7 +116,7 @@
   {:else}
     <Field
       kind="number"
-      label="index"
+      label="Index"
       bind:value={index}
       min={0}
       max={target.children.length}
@@ -126,7 +126,7 @@
   <div class="pair">
     <Field
       kind="select"
-      label="value"
+      label="Value"
       bind:value={valueKind}
       onchange={clearError}
       options={[

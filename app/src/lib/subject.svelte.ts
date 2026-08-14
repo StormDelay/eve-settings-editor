@@ -19,7 +19,7 @@
 //! selection are facts about where the user is LOOKING, read only by the shell.
 //! See `02-shell.md` §6.2.
 
-import { api, errMessage, type ErrDto, type OpenOutcome, type Profile, type Slot } from "./api";
+import { api, errMessage, errText, type ErrDto, type OpenOutcome, type Profile, type Slot } from "./api";
 import { names, resolveNames } from "./names.svelte";
 import { accountsStore, aliasFor, loadRoster } from "./accounts.svelte";
 import { byResolvedName } from "./filesort.svelte";
@@ -33,7 +33,25 @@ import {
   slotsToReload,
   userSlotFor,
 } from "./overview";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "./ui/confirm.svelte";
+import { forgetUndoHistory } from "./undo.svelte";
+import { toast } from "./ui/toasts.svelte";
+
+/**
+ * The shell's two message slots, module state for the same reason the rest of
+ * this file is: the context bar renders them and `+page.svelte` and this module
+ * both write them, and threading two more props through a context bar that
+ * exists only to hold props is the growth this module was extracted to stop.
+ *
+ * `saveError` is owned by the save cluster — Save and Discard both report
+ * there, because that is the control the user operated. `openError` is owned by
+ * whatever list offered the file.
+ */
+export type ShellMessage = { text: string; detail: string } | null;
+export const shellErrors = $state<{ save: ShellMessage; open: ShellMessage }>({
+  save: null,
+  open: null,
+});
 
 /** The id EVE encoded in a slot's file name, or null if that slot holds
  *  something else (an unparsed file, a non-standard name, or nothing). */
@@ -314,6 +332,9 @@ export async function clearSlot(slot: Slot): Promise<void> {
   } catch { /* best-effort */ }
   subject.slots[slot] = null;
   subject.dirty[slot] = false;
+  // `close_file` cleared the backend stack; this is the mirror, so the Undo
+  // control does not go on offering a step that no longer exists.
+  forgetUndoHistory();
 }
 
 // After a character lands in the char slot, make the user slot its paired
@@ -361,18 +382,31 @@ export async function reconcileCharSlot(userOutcome: OpenOutcome): Promise<void>
   if (action.kind === "clear") await clearSlot("char");
 }
 
+/** The dirty slots, named as PEOPLE. "the character and account file" names
+ *  slot roles; the app already resolves both names and already has the fallback
+ *  chain, it just did not use it in the sentences that matter most. */
+function dirtyNames(): string {
+  const names: string[] = [];
+  if (subject.dirty.char) names.push(subject.charName ?? "the character file");
+  if (subject.dirty.user) names.push(subject.userAlias ?? "the account file");
+  return names.join(" and ");
+}
+
 // Shared unsaved-changes prompt for anything that swaps out an open file:
 // the Open-file dialog/sidebar and the character selector alike.
+//
+// Survivor 1a. In-memory work with no backup behind it, because nothing was
+// written — the one loss in the app that no chain can walk back.
 export async function confirmDiscardIfDirty(): Promise<boolean> {
   if (!subject.dirty.char && !subject.dirty.user) return true;
-  const which = [subject.dirty.char && "character", subject.dirty.user && "account"]
-    .filter(Boolean)
-    .join(" and ");
-  const noun = subject.dirty.char && subject.dirty.user ? "files" : "file";
-  return ask(
-    `You have unsaved changes to the ${which} ${noun}. Discard them and open another file?`,
-    { title: "Unsaved changes", kind: "warning" },
-  );
+  const many = subject.dirty.char && subject.dirty.user;
+  return confirmDialog({
+    title: "Discard unsaved changes?",
+    body: `${dirtyNames()} ${many ? "have" : "has"} edits that haven't been saved. Opening another file throws them away.`,
+    confirm: "Discard and open",
+    cancel: "Keep editing",
+    danger: true,
+  });
 }
 
 /// Throw the unsaved edits away and re-read the open file(s) from disk.
@@ -388,19 +422,32 @@ export async function discardChanges(): Promise<void> {
   if (!subject.dirty.char && !subject.dirty.user) return;
   const targets = slotsToReload(subject.slots);
   if (targets.length === 0) return;
-  const ok = await ask(
-    "Discard your unsaved changes and reload from disk? Both the character and the account file are reloaded, and your backups are untouched.",
-    { title: "Discard changes", kind: "warning" },
-  );
+  // Survivor 1b.
+  const many = subject.dirty.char && subject.dirty.user;
+  const ok = await confirmDialog({
+    title: "Discard unsaved changes?",
+    // The undo history goes with them, and saying so is one clause. It would
+    // otherwise be a silently wrong sentence the moment undo shipped — the
+    // copy already promised the backups were safe, so the omission would read
+    // as a promise about the history too.
+    body: `${dirtyNames()} ${many ? "are" : "is"} reloaded from disk as ${many ? "they were" : "it was"} at the last save. Your backups aren't touched, but the undo history goes.`,
+    confirm: "Discard changes",
+    cancel: "Keep editing",
+    danger: true,
+  });
   if (!ok) return;
+  shellErrors.save = null;
   try {
     const reopened = await Promise.all(targets.map((t) => api.open(t.slot, t.path)));
     targets.forEach((t, i) => (subject.slots[t.slot] = reopened[i]));
     subject.dirty.char = false;
     subject.dirty.user = false;
     subject.savedAt += 1;
+    // Discard re-opens every open file, so `open_file` has already cleared the
+    // backend stack — this phase needed no backend change for Discard at all.
+    forgetUndoHistory();
   } catch (e) {
-    await message(errMessage(e), { title: "Discard failed", kind: "error" });
+    shellErrors.save = { text: `Your changes weren't discarded — ${errText(e)}`, detail: errMessage(e) };
   }
 }
 
@@ -416,42 +463,77 @@ export async function loadCharacter(charId: number): Promise<void> {
     subject.dirty.char = false;
     await resolveNames([charId]);
   } catch (e) {
-    await message(errMessage(e), { title: "Open failed", kind: "error" });
+    shellErrors.open = {
+      text: `${names[charId]?.name ?? "That character"} wasn't opened — ${errText(e)}`,
+      detail: errMessage(e),
+    };
   }
 }
 
+/**
+ * ONE toast for the whole save, emitted after the loop rather than inside it.
+ *
+ * Saving a character whose overview was edited marks BOTH slots dirty, so a
+ * single Save wrote two files and stacked two native modals, each naming a raw
+ * filename and a backup path, each needing its own dismissal. That is the shape
+ * of the whole complaint in one function: the app fired a modal to report
+ * success, twice, for one click.
+ *
+ * The toast names PEOPLE. The byte count and the backup path — the two facts in
+ * the old message that nobody reads at save time and everyone wants at restore
+ * time — are in the History popover, which already refetches on `savedAt`.
+ *
+ * Failures stay per-slot, because a two-slot save can half-fail and the user
+ * needs to know which half. So does the conflict question: it is per-file by
+ * nature, and two conflicts are two genuinely separate decisions.
+ */
 export async function saveFile(force = false): Promise<void> {
+  const saved: string[] = [];
+  shellErrors.save = null;
   for (const slot of ["char", "user"] as const) {
     const o = subject.slots[slot];
     if (!saveable(o, subject.dirty[slot])) continue;
     // `saveable` narrows nothing for TypeScript, but it has just asserted this.
     const doc = o as Extract<OpenOutcome, { status: "opened" }>;
+    const who = (slot === "char" ? subject.charName : subject.userAlias) ?? doc.file_name;
     try {
-      const report = await api.save(slot, force);
+      await api.save(slot, force);
       subject.dirty[slot] = false;
       subject.savedAt += 1;
-      const note = `Saved ${report.bytes_written} bytes to ${doc.file_name}.\nBackup: ${report.backup_path}`;
-      await message(note, { title: "Saved", kind: "info" });
+      saved.push(who);
     } catch (e) {
       const err = e as ErrDto;
       if (err.code === "conflict") {
-        const overwrite = await ask(
-          `${doc.file_name} changed on disk after it was loaded (the EVE client may have ` +
-            `written it). Overwrite anyway?\n\nA backup of the on-disk file is taken first either way.`,
-          { title: "File changed on disk", kind: "warning" },
-        );
+        // Survivor 2. The EVE client may have written the file since it was
+        // loaded, and saving replaces whatever it wrote.
+        const overwrite = await confirmDialog({
+          title: `${who} changed on disk`,
+          body:
+            "The EVE client may have written it since you opened it. Saving replaces what's " +
+            "there now. A backup of the on-disk file is taken either way.",
+          detail: doc.file_name,
+          confirm: "Overwrite",
+          danger: true,
+        });
         if (overwrite) {
           try {
             await api.save(slot, true);
             subject.dirty[slot] = false;
             subject.savedAt += 1;
+            saved.push(who);
           } catch (e2) {
-            await message(errMessage(e2), { title: "Save failed", kind: "error" });
+            shellErrors.save = { text: `${who} wasn't saved — ${errText(e2)}`, detail: errMessage(e2) };
           }
         }
       } else {
-        await message(errMessage(e), { title: `Save failed — ${doc.file_name} untouched`, kind: "error" });
+        shellErrors.save = {
+          text: `${who} wasn't saved — ${errText(e)}. Nothing was written.`,
+          detail: errMessage(e),
+        };
       }
     }
+  }
+  if (saved.length) {
+    toast(`Saved ${saved.join(" and ")}.`, { variant: "success" });
   }
 }

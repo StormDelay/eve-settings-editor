@@ -11,9 +11,16 @@
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
     targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
+    hudError = null, neocomError = null,
   }: {
     hud: Hud;
     readOnly: boolean;
+    /** Refused edits, owned by LayoutView (which runs the commands) and rendered
+     *  here (which owns the controls). `hudError` carries the field's `name` so
+     *  it lands under the row that failed rather than at the top of a panel with
+     *  twenty rows in it. */
+    hudError?: { name: string; text: string; detail: string } | null;
+    neocomError?: { text: string; detail: string } | null;
     /** The ACCOUNT document's read-only flag, which only the account-scoped
      * rows care about. False when no account file is open — those rows are
      * already `unavailable` then. */
@@ -65,7 +72,7 @@
       { name: "ship_offset", label: "Offset from centre" },
       { name: "ship_top", label: "Align to top" },
     ] },
-    { title: "Fighter UI", kind: "fighter", rows: [
+    { title: "Fighter panel", kind: "fighter", rows: [
       { name: "fighter_x", label: "x" },
       { name: "fighter_y", label: "y" },
       { name: "fighter_detached", label: "Detached" },
@@ -210,7 +217,17 @@
           <!-- The row stays a wrapping <label> around a bare Field: the label
                names the control, and HudPanel.spec walks `.row input`. Passing
                Field a `label` here would nest one label inside another. -->
-          <label class="row" title={title(e)}>
+          <!-- Label ALWAYS first, checkbox included. It used to lead with the
+               checkbox, which put a control in the label column and a label in
+               the control column — so the bool rows aligned with nothing. Every
+               control now sits in the same track, which is the whole point of a
+               properties panel. -->
+          <!-- `title` on the label TEXT, not on the row: the row is
+               `display: contents` so its cells can share the group's columns,
+               and an element with no box has nothing to hover. The text is
+               where a tooltip is reached for anyway. -->
+          <label class="row">
+            <span class="label" title={title(e)}>{row.label}</span>
             {#if e.kind === "bool"}
               <Field
                 kind="checkbox"
@@ -218,9 +235,7 @@
                 disabled={disabled(e)}
                 disabledReason="Not present in this file"
                 onchange={(ev) => onSet(row.name, (ev.target as HTMLInputElement).checked ? "true" : "false")} />
-              <span class="label">{row.label}</span>
             {:else}
-              <span class="label">{row.label}</span>
               <Field
                 kind="number"
                 width="5.5rem"
@@ -230,11 +245,16 @@
                 disabledReason="Not present in this file"
                 onchange={numberEdit(row.name, e.kind)} />
             {/if}
-            {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
-            {#if e.value === null && e.set.how !== "unavailable"}
-              <Chip tone="neutral" size="sm">default</Chip>
-            {/if}
+            <span class="badges">
+              {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
+              {#if e.value === null && e.set.how !== "unavailable"}
+                <Chip tone="neutral" size="sm">default</Chip>
+              {/if}
+            </span>
           </label>
+          {#if hudError?.name === row.name}
+            <InlineMessage variant="error" detail={hudError.detail}>{hudError.text}</InlineMessage>
+          {/if}
         {/if}
       {/each}
       {#if g.kind === "shipui"}
@@ -251,7 +271,7 @@
             step={1}
             value={effects}
             onchange={viewEdit(() => effects, onEffects)} />
-          <Chip tone="neutral" size="sm">view</Chip>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "target"}
@@ -267,7 +287,7 @@
             step={1}
             value={targets}
             onchange={viewEdit(() => targets, onTargets)} />
-          <Chip tone="neutral" size="sm">view</Chip>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "neocom" && neocom}
@@ -278,7 +298,8 @@
           onReorder={onNeocomReorder}
           onRemove={onNeocomRemove}
           onAdd={onNeocomAdd}
-          onReset={onNeocomReset} />
+          onReset={onNeocomReset}
+          error={neocomError} />
       {/if}
     </div>
   {/each}
@@ -295,6 +316,14 @@
     padding: var(--s1) var(--s2);
   }
   .group {
+    display: grid;
+    /* Label, control, badges. The control track is the same 5.5rem every number
+       Field asks for, so the inputs form a true column; the badge track is
+       `auto`, sized once for the group by its widest chip cell, so the chips
+       share one right edge whether a row carries none, one or two. */
+    grid-template-columns: minmax(0, 1fr) 5.5rem auto;
+    align-items: center;
+    gap: var(--s1) var(--s2);
     margin-bottom: var(--s1);
     /* Transparent by default so selecting a group doesn't shift the layout. */
     border-left: 2px solid transparent;
@@ -325,14 +354,37 @@
   .group.selected :global(.group-title) {
     color: var(--warn);
   }
+  /* The GROUP is the grid and each row is `display: contents`, so every row in
+     a group shares three column tracks.
+
+     Putting the grid on the row instead — which is what this was first — does
+     not align anything: each row is then its own formatting context, so `auto`
+     and `1fr` resolve per row. A row with no chip, one chip, or two ("account"
+     AND "default") each sized its badge column differently, the `1fr` label
+     absorbed the difference, and the value boxes landed at three different x.
+     Alignment ACROSS rows needs tracks shared across rows. */
   .row {
-    display: flex;
-    align-items: center;
-    gap: var(--s1);
-    padding: 0;
+    display: contents;
+  }
+  /* Anything that is not a row spans the whole width: the group heading, a
+     refused-edit message, and the neocom button list. */
+  .group > h4,
+  .group > :global(.msg),
+  .group > :global(.buttons) {
+    grid-column: 1 / -1;
   }
   .label {
     color: var(--text);
-    min-width: 8.5rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* One cell for zero, one or two chips, so a row with none does not let its
+     neighbours slide into the badge column. */
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    justify-self: end;
   }
 </style>

@@ -50,13 +50,13 @@ function setup(over: Partial<Props> = {}) {
 describe("ChatSplit", () => {
   test("shows the history area the splits leave", () => {
     setup();
-    expect(screen.getByText(/history area 152 × 361/)).toBeTruthy();
+    expect(screen.getByText(/History area 152 × 361/)).toBeTruthy();
   });
 
   test("flags an oversized split instead of hiding it", () => {
     setup({ panel: panel(300, 500) });
     // Negative, not clamped: the account-wide value does not fit this window.
-    expect(screen.getByText(/history area -44 × -76/)).toBeTruthy();
+    expect(screen.getByText(/History area -44 × -76/)).toBeTruthy();
   });
 
   test("a blank input writes nothing", async () => {
@@ -75,12 +75,12 @@ describe("ChatSplit", () => {
 
   test("no stack button when the window is not stacked", () => {
     setup();
-    expect(screen.queryByRole("button", { name: /Apply to all/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Apply to every channel/ })).toBeNull();
   });
 
   test("the stack button names the chat channels only", async () => {
     const { onSet } = setup({ stack: stack(["chatchannel_local", "market", "chatchannel_corp"]) });
-    const button = screen.getByRole("button", { name: "Apply to all 2 channels in this stack" });
+    const button = screen.getByRole("button", { name: "Apply to every channel in this stack (2)" });
     await fireEvent.click(button);
     expect(onSet).toHaveBeenCalledWith(["chatchannel_local", "chatchannel_corp"], 104, 63);
   });
@@ -92,7 +92,7 @@ describe("ChatSplit", () => {
 
   test("the stack button is disabled when there is nothing to copy", () => {
     setup({ panel: panel(null, null), stack: stack(["chatchannel_local", "chatchannel_corp"]) });
-    const button = screen.getByRole("button", { name: /Apply to all/ }) as HTMLButtonElement;
+    const button = screen.getByRole("button", { name: /Apply to every channel/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });
 });

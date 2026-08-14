@@ -536,7 +536,7 @@
        projection here works in those units, and `local` already divides client
        pixels by the rendered width, so the scene simply scales. -->
   <svg bind:this={svgEl} viewBox="0 0 {SIZE} {SIZE}"
-       role="img" aria-label="the formation in 3D"
+       role="img" aria-label="Formation in 3D"
        onpointerdown={onBackgroundDown}
        onpointermove={onMove}
        onpointerup={onUp}
@@ -699,10 +699,11 @@
         <Button size="sm" onclick={fitScene}>Fit scene</Button>
       {/if}
     {/if}
-    <Field kind="checkbox" class="toggle" label="Vectors" bind:value={vectors} />
+    <!-- A toggle names what it turns ON. -->
+    <Field kind="checkbox" class="toggle" label="Show vectors" bind:value={vectors} />
     <span class="meta">
-      drag to orbit · right-drag to pan · wheel to zoom ·
-      double-click a probe or the centre to orbit it, empty space to flip view
+      Drag to orbit · Right-drag to pan · Wheel to zoom ·
+      Double-click a probe or the centre to orbit it, or empty space to flip the view
     </span>
   </div>
 </div>

@@ -1,11 +1,19 @@
 <script lang="ts">
-  // Jump to a character. Opened by the subject block's ▾ and by Ctrl+K, which
-  // are deliberately the SAME control — a palette that competes with a switcher
-  // is two answers to "where is my other character".
+  // Jump to a character, or run a command. Opened by the subject block's ▾ and
+  // by Ctrl+K, which are deliberately the SAME control — a palette that competes
+  // with a switcher is two answers to "where is my other character".
   //
-  // This is the seed of Phase 5's command palette: same list, same type-ahead,
-  // one extra section of commands. Building it twice would be the mistake, which
-  // is why the "Go to…" section is here already.
+  // Phase 2 called this "the seed of Phase 5's command palette: same list, same
+  // type-ahead, one extra section of commands", and that is exactly what this
+  // adds. Building a second component would have been the mistake it named.
+  //
+  // Commands are ranked rather than filtered, because a command list is the one
+  // section where the ORDER carries information: typing `overv` should put the
+  // Overview view above a character whose name happens to contain those letters.
+  // Characters and presets keep their substring filter and their alphabetical
+  // order, which is how a name is found.
+  import { COMMANDS, haystack, type Command, type Ctx } from "./commands";
+  import { rank, score } from "./fuzzy";
   import { subject, accountAliasOf } from "./subject.svelte";
   import { resolvedName } from "./filesort.svelte";
   import { allPresets, summarise } from "./presetLibrary.svelte";
@@ -23,12 +31,14 @@
     onOpen,
     onOpenPreset,
     onGoto,
+    ctx,
   }: {
     anchor: HTMLElement;
     onclose: () => void;
     onOpen: (path: string) => void;
     onOpenPreset: (p: PresetInfo) => void;
     onGoto: (v: View) => void;
+    ctx: Ctx;
   } = $props();
 
   let query = $state("");
@@ -57,18 +67,38 @@
 
   const views = $derived(VIEWS.filter((v) => q === "" || v.label.toLowerCase().includes(q)));
 
+  // Enabled first, then the disabled ones with their reason. They are SHOWN
+  // rather than hidden for the same reason the tabs are: a command that vanishes
+  // teaches nothing, and "Save — nothing has changed" is an answer to the
+  // question the user was asking.
+  const commands = $derived(
+    rank(COMMANDS, (c) => score(query, c.label, haystack(c))).sort(
+      (a, b) => Number(a.enabled() !== true) - Number(b.enabled() !== true),
+    ),
+  );
+
   function choose(fn: () => void) {
     onclose();
     fn();
+  }
+
+  /** Close FIRST, then run — the ordering ProbeFormationsView's picker already
+   *  documents, and for the same reason: a confirmation or an OS picker raised
+   *  by the action would otherwise stack on a panel that is no longer
+   *  reachable. */
+  function runCommand(c: Command) {
+    if (c.enabled() !== true) return;
+    onclose();
+    c.run(ctx);
   }
 </script>
 
 <Popover {anchor} placement="bottom-start" {onclose} ariaLabel="Find a character" class="switcher">
   <!-- eslint-disable-next-line -- autofocus is the point of a type-ahead -->
-  <SearchField verb="search" nouns="characters and views" bind:value={query} />
+  <SearchField verb="search" nouns="characters, presets and commands" bind:value={query} />
 
-  {#if rows.length === 0 && presets.length === 0 && views.length === 0}
-    <EmptyState title="Nothing matches “{query}”." />
+  {#if rows.length === 0 && presets.length === 0 && views.length === 0 && commands.length === 0}
+    <EmptyState title="No matches" description="Nothing matches “{query}”." />
   {/if}
 
   {#if rows.length}
@@ -101,6 +131,28 @@
             title={p.error ?? p.dir}>
             {p.name}
             {#snippet trailing()}<span class="file">{summarise(p)}</span>{/snippet}
+          </ListRow>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if commands.length}
+    <p class="section">Commands</p>
+    <ul>
+      {#each commands as c (c.id)}
+        {@const why = c.enabled()}
+        <li>
+          <ListRow
+            onclick={() => runCommand(c)}
+            disabled={why !== true}
+            disabledReason={why === true ? undefined : why}
+            title={why === true ? undefined : why}>
+            {c.label}
+            <Chip size="sm">{c.group}</Chip>
+            {#snippet trailing()}
+              {#if c.accel}<span class="file">{c.accel}</span>{/if}
+            {/snippet}
           </ListRow>
         </li>
       {/each}

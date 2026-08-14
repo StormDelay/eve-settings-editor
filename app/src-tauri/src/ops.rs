@@ -29,18 +29,43 @@ use settings_model::{
 };
 
 use crate::accounts;
+use crate::undo;
 
 /// Two open documents (char + user, for the two-file overview category) plus a
 /// transient guided-capture baseline. Each document keeps its own save chain.
+///
+/// # Lock order
+///
+/// **`user` → `char` → `history`. Always. No function takes a slot lock while
+/// holding the history lock.**
+///
+/// The file already had the first half of that rule and says so in three
+/// places: `window_layout` locks user before the requested slot, `hud_layout`
+/// notes that a consistent order "rules out lock-order-inversion deadlock
+/// between concurrently invoked commands", and `set_chat_splits` re-projects
+/// after its guard drops because `std::sync::Mutex` is not reentrant. Undo
+/// extends it by one level.
+///
+/// `history` goes last because it is the only lock a function might want AFTER
+/// discovering something about a document — and because putting it last means
+/// `edit_reshared`, `undo` and `redo`, the three functions that need all three,
+/// take them in one identical sequence with no case analysis. Skipping a level
+/// is safe; reordering is not.
 pub struct AppState {
     pub char: Mutex<Option<Document>>,
     pub user: Mutex<Option<Document>>,
     pub capture: Mutex<Option<accounts::Snapshot>>,
+    pub history: Mutex<crate::undo::History>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        AppState { char: Mutex::new(None), user: Mutex::new(None), capture: Mutex::new(None) }
+        AppState {
+            char: Mutex::new(None),
+            user: Mutex::new(None),
+            capture: Mutex::new(None),
+            history: Mutex::new(crate::undo::History::default()),
+        }
     }
     fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
         match slot {
@@ -103,22 +128,79 @@ fn no_document(slot: Slot) -> ErrDto {
 /// every mutating command in this file routes through this function or
 /// `edit_slot`, so a new one cannot ship without the guard. That is what the
 /// fifteen hand-copied preambles this replaces could not promise.
+/// It is also the ONLY place an undo entry is pushed, which is what makes the
+/// stack's coverage a closure proof rather than a promise: the same argument
+/// that says a new command cannot ship without the read-only guard says it
+/// cannot ship without being undoable.
 fn edit_reshared<T, E>(
     state: &AppState,
     slot: Slot,
     edit: impl FnOnce(&mut Value) -> Result<(T, bool), E>,
     err: impl FnOnce(E) -> ErrDto,
 ) -> Result<T, ErrDto> {
-    let mut guard = state.doc(slot).lock().unwrap();
-    let doc = guard.as_mut().ok_or_else(|| no_document(slot))?;
-    if let Fidelity::ReadOnly { reason } = &doc.fidelity {
-        return Err(ErrDto::new("read_only", reason.clone()));
+    // Lock order is user -> char -> history, everywhere.
+    let mut u = state.user.lock().unwrap();
+    let mut c = state.char.lock().unwrap();
+    let mut h = state.history.lock().unwrap();
+
+    // Guards FIRST: a no_document or read-only refusal must not pay for a
+    // clone. Both roll the open group back before returning, so a command that
+    // fails on its SECOND write leaves nothing behind — which is exactly how
+    // `overview_copy_columns` fails today, with its first write already applied.
+    {
+        let doc = match slot {
+            Slot::User => u.as_ref(),
+            Slot::Char => c.as_ref(),
+        };
+        let Some(doc) = doc else {
+            h.rollback_group(&mut u, &mut c);
+            return Err(no_document(slot));
+        };
+        if let Fidelity::ReadOnly { reason } = &doc.fidelity {
+            // Built BEFORE the rollback call so `doc`'s borrow has ended by the
+            // time the `&mut`s go in. NLL, not luck — keep the two statements.
+            let e = ErrDto::new("read_only", reason.clone());
+            h.rollback_group(&mut u, &mut c);
+            return Err(e);
+        }
     }
-    let (out, changed_shape) = edit(&mut doc.value).map_err(err)?;
-    if changed_shape {
-        doc.value = blue_marshal::reshare(&doc.value);
+
+    // `Some` = clone both open trees. `None` = this command already pushed its
+    // one entry, so the clone is skipped as well as the push. Deciding here and
+    // pushing below is not a TOCTOU: the history lock is held across the
+    // closure, so no other command can open or fill a group in between.
+    let before = h.capture_unless_grouped(&u, &c);
+
+    let doc = match slot {
+        Slot::User => u.as_mut(),
+        Slot::Char => c.as_mut(),
     }
-    Ok(out)
+    .expect("checked above");
+
+    // Holding the history lock across `edit` is safe: the closures are
+    // settings_model functions over a `&mut Value` with no access to AppState,
+    // so they cannot re-enter.
+    match edit(&mut doc.value) {
+        Ok((out, changed_shape)) => {
+            if changed_shape {
+                doc.value = blue_marshal::reshare(&doc.value);
+            }
+            h.push(before, slot);
+            Ok(out)
+        }
+        Err(e) => {
+            // Ungrouped: put back the tree cloned a moment ago, because
+            // `apply_mutations` can fail with half a batch applied. Grouped:
+            // `before` is None and there is nothing to put back HERE — the
+            // group's entry holds the state from before the whole command, and
+            // rolling that back subsumes this call's half-applied edit.
+            if let undo::Capture::Taken(b) = before {
+                b.restore_slot(doc, slot);
+            }
+            h.rollback_group(&mut u, &mut c);
+            Err(err(e))
+        }
+    }
 }
 
 /// `edit_reshared` for a structural edit — one that replaces list or dict
@@ -171,11 +253,19 @@ pub fn open_file(state: &AppState, slot: Slot, path: &str) -> Result<OpenOutcome
                 tree: project(&doc.value),
             };
             *state.doc(slot).lock().unwrap() = Some(doc);
+            // BOTH stacks, even though only one slot changed. An entry holds
+            // trees for both slots, so an older entry's char tree now belongs to
+            // a DIFFERENT pilot's settings file — restoring it would silently
+            // write one pilot's window geometry into another's document. That is
+            // data corruption rather than a stale view, which is why the rule is
+            // absolute.
+            state.history.lock().unwrap().clear_for(slot);
             Ok(outcome)
         }
         Err(LoadError::Decode { offset, message }) => {
             let bytes = fs::read(p).map_err(|e| ErrDto::new("io", e.to_string()))?;
             *state.doc(slot).lock().unwrap() = None;
+            state.history.lock().unwrap().clear_for(slot);
             Ok(OpenOutcome::ParseFailed {
                 path: path.to_string(),
                 offset,
@@ -189,6 +279,7 @@ pub fn open_file(state: &AppState, slot: Slot, path: &str) -> Result<OpenOutcome
 
 pub fn close_file(state: &AppState, slot: Slot) {
     *state.doc(slot).lock().unwrap() = None;
+    state.history.lock().unwrap().clear_for(slot);
 }
 
 /// A tree edit through the generic mutation path. Never reshares: `apply` edits
@@ -204,8 +295,15 @@ pub fn apply_mutation(state: &AppState, slot: Slot, mutation: &Mutation) -> Resu
 
 /// Batched sibling of `apply_mutation`: applies every mutation to the same
 /// locked doc, then projects the tree once instead of once per mutation.
-/// Non-atomic on a mid-batch failure, matching the caller's prior per-mutation
-/// loop — geometry set_scalars on valid paths don't fail.
+///
+/// Atomic: a mutation that fails part-way puts the document back as it was,
+/// from the snapshot `edit_reshared` took for the undo stack. Callers get all of
+/// the batch or none of it.
+///
+/// This comment used to say the opposite, and was rewritten in the same commit
+/// as the rollback rather than after it — a doc comment left saying "non-atomic"
+/// beside code that rolls back is worse than either behaviour on its own,
+/// because the next reader writes a caller against the comment.
 pub fn apply_mutations(state: &AppState, slot: Slot, mutations: &[Mutation]) -> Result<Node, ErrDto> {
     edit_reshared(
         state,
@@ -223,7 +321,7 @@ pub fn apply_mutations(state: &AppState, slot: Slot, mutations: &[Mutation]) -> 
 pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveReport, ErrDto> {
     let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
-    save(doc, force).map_err(|e| {
+    let report = save(doc, force).map_err(|e| {
         let v = serde_json::to_value(&e).unwrap_or_default();
         ErrDto::new(
             v.get("code").and_then(|c| c.as_str()).unwrap_or("save"),
@@ -232,7 +330,13 @@ pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveRe
                 None => format!("{e:?}"),
             },
         )
-    })
+    })?;
+    // On success only, and the stack is deliberately untouched: you can undo
+    // PAST a save, and the file is then correctly reported unsaved again,
+    // because memory now differs from disk. That falls out of the counters
+    // rather than needing a rule.
+    state.history.lock().unwrap().mark_saved(slot);
+    Ok(report)
 }
 
 pub fn list_file_backups(state: &AppState, slot: Slot) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
@@ -492,6 +596,10 @@ pub fn overview_copy_columns(
     visible: bool,
     widths: bool,
 ) -> Result<OverviewColumns, ErrDto> {
+    // Two writes, one action. Without the guard this costs TWO undo presses
+    // and the first would leave the copy half-reverted — order and visibility
+    // back, widths still copied.
+    let _group = undo::group(state);
     let overview_err = |e| ErrDto::new("overview", format!("{e:?}"));
     if order || visible {
         edit_slot(
@@ -540,6 +648,13 @@ pub fn tab_rename(state: &AppState, tab_idx: i64, name: String) -> Result<Overvi
 // cross-file op with its own backup chain (deliberately deferred; see the
 // 0.33 decision).
 pub fn tab_delete(state: &AppState, tab_idx: i64) -> Result<OverviewColumns, ErrDto> {
+    // Suppresses nothing today — `try_edit_char` does not push — and carried
+    // anyway, deliberately. It makes the guard the DECLARATION "this command
+    // writes more than once", which is what lets tripwire B be a general rule
+    // with no hand-maintained list; a list is exactly what failed in tripwire A.
+    // And it is the only thing standing between this command and a two-press
+    // regression if `try_edit_char` is ever changed.
+    let _group = undo::group(state);
     let surviving = edit_slot(
         state,
         Slot::User,
@@ -630,6 +745,7 @@ pub fn preset_fork(
 /// best-effort — skipped when no character is open or it is read-only; EVE
 /// self-heals the window at default geometry on that character's next login.
 pub fn overview_window_add(state: &AppState, name: String, from_tab: Option<i64>) -> Result<OverviewColumns, ErrDto> {
+    let _group = undo::group(state);
     let new_window_idx = edit_slot(
         state,
         Slot::User,
@@ -643,6 +759,7 @@ pub fn overview_window_add(state: &AppState, name: String, from_tab: Option<i64>
 /// Remove the last overview window: drop the grouping in the user file and the
 /// paired `overview_N` geometry in the char file (best-effort, as above).
 pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<OverviewColumns, ErrDto> {
+    let _group = undo::group(state);
     edit_slot(
         state,
         Slot::User,
@@ -658,12 +775,36 @@ pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<Ove
 /// pair a required user write with one of these, because EVE self-heals the
 /// window geometry at its default on that character's next login — a character
 /// that is not open is not a reason to fail the command.
+///
+/// # Undo invariant — read this before adding a caller
+///
+/// This function does NOT push an undo entry. Every call site MUST already have
+/// run an `edit_slot`/`edit_reshared` earlier in the SAME Tauri command, whose
+/// entry captured both slots, and that command MUST hold an `undo::group`
+/// guard. Today that is `tab_delete`, `overview_window_add` and
+/// `overview_window_remove`.
+///
+/// A caller that breaks this rule produces a char-side change no `Ctrl+Z` can
+/// reach. `undo::tests::try_edit_char_callers_are_snapshotted` fails if the set
+/// of callers changes; if you are reading this because that test failed, add
+/// your command to its list only after confirming it snapshots first.
+///
+/// It is not made a pusher even though the group flag would deduplicate one: it
+/// would have to take the `user` lock it does not need and run a capture it
+/// discards, and the push path would be dead at every shipped call site —
+/// correct only for a caller that does not exist. An untested branch nothing
+/// reaches is worse than a twelve-line test that fires when someone needs it.
 fn try_edit_char(state: &AppState, edit: impl FnOnce(&mut Value)) {
+    // char -> history: skips `user`, order preserved.
     let mut guard = state.char.lock().unwrap();
     if let Some(doc) = guard.as_mut() {
         if !matches!(doc.fidelity, Fidelity::ReadOnly { .. }) {
             edit(&mut doc.value);
             doc.value = blue_marshal::reshare(&doc.value);
+            // Bumps the counter and nothing else. This is why the two
+            // overview-window commands mark the character file unsaved
+            // correctly without pushing a second entry.
+            state.history.lock().unwrap().bump(Slot::Char);
         }
     }
 }
@@ -2017,5 +2158,389 @@ tabSetup:
         let err = pack_export(&state, out.to_str().unwrap()).unwrap_err();
         assert_eq!(err.code, "no_overview");
         assert!(!out.exists(), "export must not write a file on rejection");
+    }
+
+    // --- Undo ---------------------------------------------------------------
+    //
+    // The load-bearing claim is not "undo works" — it is ONE USER ACTION IS ONE
+    // PRESS. Every multi-write command therefore asserts `depth == 1` as well as
+    // full restoration, because without the depth assert these all pass with two
+    // entries on the stack and one press reverting half the action.
+
+    use crate::undo;
+
+    /// The byte-string key builder the fixtures above declare locally; the undo
+    /// tests share one.
+    fn bb(s: &str) -> Value {
+        Value::Bytes(s.as_bytes().to_vec())
+    }
+
+    /// A slot's whole tree, for before/after comparison.
+    fn tree_of(state: &AppState, slot: Slot) -> Value {
+        state.doc(slot).lock().unwrap().as_ref().unwrap().value.clone()
+    }
+
+    fn depth(state: &AppState) -> usize {
+        undo::undo_state(state).depth
+    }
+
+    /// A user file with one overview window [0] holding tab 0, plus a character
+    /// file. The two-slot commands need both.
+    fn two_slot_state() -> (AppState, PathBuf, PathBuf) {
+        let user = Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("tabsettings_new"), Value::Dict(vec![(
+                Value::Int(0),
+                Value::Dict(vec![
+                    (bb("bracket"), bb("_BracketFilterShowAll")),
+                    (bb("color"), Value::None),
+                    (Value::Str("name".into()), Value::Str("Main".into())),
+                    (bb("overview"), bb("P")),
+                ]),
+            )])),
+            (bb("tabsByWindowInstanceID"), Value::List(vec![Value::List(vec![Value::Int(0)])])),
+        ]))]);
+        let upath = temp_file("undo-user", &encode(&user).unwrap());
+        // The char side needs a real `windows` subdict carrying an `overview`
+        // entry, because `add_overview_window_geometry` CLONES that entry to
+        // seed the new window. A bare `{"windows": {}}` makes the two-slot
+        // commands write only one slot, which would quietly turn the two-file
+        // assertions below into tautologies.
+        let geom = Value::Tuple(vec![Value::Int(10), Value::Int(20), Value::Int(300), Value::Int(400)]);
+        let char_doc = Value::Dict(vec![(
+            bb("windows"),
+            Value::Dict(vec![(
+                bb("windowSizesAndPositions_1"),
+                Value::Tuple(vec![
+                    Value::Long(vec![0u8; 8]),
+                    Value::Dict(vec![(bb("overview"), geom)]),
+                ]),
+            )]),
+        )]);
+        let cpath = temp_file("undo-char", &encode(&char_doc).unwrap());
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        (state, upath, cpath)
+    }
+
+    #[test]
+    fn undo_reverts_a_single_slot_edit() {
+        let path = temp_file("undo-one", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        let before = overview_columns(&state).unwrap();
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        assert_eq!(depth(&state), 1);
+        assert_ne!(
+            overview_columns(&state).unwrap().tabs[0].columns.iter().filter(|c| c.visible).count(),
+            before.tabs[0].columns.iter().filter(|c| c.visible).count(),
+        );
+
+        assert!(undo::undo(&state).is_some());
+        let after = overview_columns(&state).unwrap();
+        assert_eq!(
+            after.tabs[0].columns.iter().filter(|c| c.visible).count(),
+            before.tabs[0].columns.iter().filter(|c| c.visible).count(),
+            "the edit is reversed",
+        );
+        assert_eq!(depth(&state), 0);
+    }
+
+    /// The core two-slot claim: `overview_window_add` writes the account file
+    /// and then the character file inside ONE command, and both come back on a
+    /// single press.
+    #[test]
+    fn undo_of_overview_window_add_reverts_both_files() {
+        let (state, _u, _c) = two_slot_state();
+        let char_before = state.char.lock().unwrap().as_ref().unwrap().value.clone();
+
+        overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        assert_eq!(overview_columns(&state).unwrap().windows.len(), 2);
+        let char_after = state.char.lock().unwrap().as_ref().unwrap().value.clone();
+        assert_ne!(char_after, char_before, "the char file gained its window geometry");
+        assert_eq!(depth(&state), 1, "two writes, ONE undo step");
+
+        assert!(undo::undo(&state).is_some());
+        assert_eq!(overview_columns(&state).unwrap().windows.len(), 1, "account file back");
+        assert_eq!(
+            tree_of(&state, Slot::Char),
+            char_before,
+            "character file back too",
+        );
+    }
+
+    #[test]
+    fn undo_of_overview_window_remove_reverts_both_files() {
+        let (state, _u, _c) = two_slot_state();
+        overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        let user_before = state.user.lock().unwrap().as_ref().unwrap().value.clone();
+        let char_before = state.char.lock().unwrap().as_ref().unwrap().value.clone();
+
+        overview_window_remove(&state, 1).unwrap();
+        assert_eq!(depth(&state), 2, "one entry per command, two commands");
+
+        assert!(undo::undo(&state).is_some());
+        assert_eq!(tree_of(&state, Slot::User), user_before);
+        assert_eq!(tree_of(&state, Slot::Char), char_before);
+    }
+
+    /// The third `try_edit_char` caller — the one nobody knew was there until
+    /// this spec counted them.
+    #[test]
+    fn undo_of_tab_delete_reverts_the_char_side_remap() {
+        let (state, _u, _c) = two_slot_state();
+        // Two tabs, so one can be deleted.
+        overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        let tabs_before = overview_columns(&state).unwrap().tabs.len();
+        let char_before = state.char.lock().unwrap().as_ref().unwrap().value.clone();
+        let d0 = depth(&state);
+
+        tab_delete(&state, 1).unwrap();
+        assert_eq!(overview_columns(&state).unwrap().tabs.len(), tabs_before - 1);
+        assert_eq!(depth(&state), d0 + 1, "one command, one entry");
+
+        assert!(undo::undo(&state).is_some());
+        assert_eq!(overview_columns(&state).unwrap().tabs.len(), tabs_before);
+        assert_eq!(tree_of(&state, Slot::Char), char_before);
+    }
+
+    /// The command the grouping decision was made for: two `edit_slot` calls,
+    /// both through `edit_reshared`, so both would push without the guard.
+    #[test]
+    fn undo_of_a_column_copy_with_widths_is_one_step() {
+        let (state, _u, _c) = two_slot_state();
+        overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        let d0 = depth(&state);
+
+        overview_copy_columns(&state, 0, vec![1], true, true, true).unwrap();
+        assert_eq!(depth(&state), d0 + 1, "two writes, ONE undo step — fails on the pre-decision design");
+    }
+
+    /// The RAII property, and the only test of it. `tab_delete` on a tab index
+    /// that does not exist returns `Err` mid-group; a leaked flag would make
+    /// every LATER command in the session push nothing.
+    #[test]
+    fn a_group_closes_on_an_early_return() {
+        let path = temp_file("undo-leak", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        assert!(tab_delete(&state, 999).is_err(), "no such tab");
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        assert_eq!(depth(&state), 1, "the next command still pushes — the flag did not leak");
+    }
+
+    #[test]
+    fn redo_replays_what_undo_reverted() {
+        let path = temp_file("undo-redo", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        let after_edit = overview_columns(&state).unwrap().tabs[0].columns.iter().filter(|c| c.visible).count();
+        undo::undo(&state).unwrap();
+        assert!(undo::undo_state(&state).can_redo);
+
+        assert!(undo::redo(&state).is_some());
+        assert_eq!(
+            overview_columns(&state).unwrap().tabs[0].columns.iter().filter(|c| c.visible).count(),
+            after_edit,
+        );
+    }
+
+    #[test]
+    fn a_new_edit_clears_the_redo_stack() {
+        let path = temp_file("undo-clearredo", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        undo::undo(&state).unwrap();
+        assert!(undo::undo_state(&state).can_redo);
+
+        set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+        assert!(!undo::undo_state(&state).can_redo, "a new edit forks the history");
+    }
+
+    #[test]
+    fn the_stack_is_bounded_and_drops_the_oldest() {
+        let path = temp_file("undo-cap", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        let original = overview_columns(&state).unwrap().tabs[0].columns[0].name.clone();
+
+        // CAP + 5 edits, alternating so each one really changes the document.
+        for i in 0..(undo::CAP + 5) {
+            let order: Vec<String> = if i % 2 == 0 {
+                vec!["TYPE".into(), "NAME".into()]
+            } else {
+                vec!["NAME".into(), "TYPE".into()]
+            };
+            set_overview_order(&state, 0, order).unwrap();
+        }
+        assert_eq!(depth(&state), undo::CAP, "flat at the cap, not growing");
+
+        for _ in 0..undo::CAP {
+            assert!(undo::undo(&state).is_some());
+        }
+        assert!(!undo::undo_state(&state).can_undo);
+        assert_ne!(
+            overview_columns(&state).unwrap().tabs[0].columns[0].name,
+            original,
+            "the oldest steps are gone, so the document is NOT back at its original state",
+        );
+    }
+
+    #[test]
+    fn opening_a_file_clears_the_stack() {
+        let path = temp_file("undo-open", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        assert_eq!(depth(&state), 1);
+
+        // The corruption guard: an older entry's tree belongs to the file that
+        // was open when it was taken.
+        let other = temp_file("undo-open2", &overview_user_bytes());
+        open_file(&state, Slot::User, other.to_str().unwrap()).unwrap();
+        assert_eq!(depth(&state), 0);
+    }
+
+    #[test]
+    fn closing_a_slot_clears_the_stack() {
+        let path = temp_file("undo-close", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        close_file(&state, Slot::User);
+        assert_eq!(depth(&state), 0);
+    }
+
+    /// The two rows of §7.2's worked example — the case a boolean-valued dirty
+    /// scheme gets wrong. These are the likeliest to rot silently, because
+    /// nothing else observes the counters.
+    #[test]
+    fn undo_back_to_the_save_point_reports_clean() {
+        let path = temp_file("undo-save", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap(); // edit A
+        save_document(&state, Slot::User, false).unwrap();
+        set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap(); // edit B
+
+        let r = undo::undo(&state).unwrap(); // back to post-A
+        assert!(!r.dirty.user, "memory matches disk again");
+    }
+
+    #[test]
+    fn undo_past_a_save_reports_dirty() {
+        let path = temp_file("undo-pastsave", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap(); // edit A
+        save_document(&state, Slot::User, false).unwrap();
+        set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap(); // edit B
+
+        undo::undo(&state).unwrap(); // post-A: clean
+        let r = undo::undo(&state).unwrap(); // pre-A: disk has A, memory does not
+        assert!(r.dirty.user, "undoing PAST the save point is unsaved again");
+    }
+
+    #[test]
+    fn a_failed_edit_pushes_nothing() {
+        let path = temp_file("undo-fail", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+
+        assert!(set_overview_visible(&state, 999, "TYPE", true).is_err());
+        assert!(!undo::undo_state(&state).can_undo, "a refused mutation leaves the stack alone");
+    }
+
+    #[test]
+    fn undo_with_only_one_slot_open() {
+        let path = temp_file("undo-solo", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+
+        let r = undo::undo(&state).unwrap();
+        assert!(r.char_tree.is_none(), "no character file, no character projection");
+        assert!(state.char.lock().unwrap().is_none(), "and the slot stays empty");
+    }
+
+    #[test]
+    fn nothing_to_undo_is_none_rather_than_an_error() {
+        let state = AppState::new();
+        assert!(undo::undo(&state).is_none());
+        assert!(undo::redo(&state).is_none());
+    }
+
+    // --- Atomicity (§3.7) ---------------------------------------------------
+
+    /// `apply_mutations` runs its whole batch against one locked doc, so a
+    /// failure at mutation `k` left `k-1` applied. The rollback makes it atomic,
+    /// and this is the test that pins the rewritten doc comment.
+    #[test]
+    fn a_failed_batch_leaves_the_document_untouched() {
+        // The same two-int fixture the batch round-trip test uses, so the paths
+        // are obvious and the failure is unambiguously the SECOND mutation.
+        let bytes = encode(&Value::Dict(vec![(
+            bb("k"),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        )]))
+        .unwrap();
+        let path = temp_file("undo-batch", &bytes);
+        let state = AppState::new();
+        open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
+        let before = tree_of(&state, Slot::Char);
+
+        let good = Mutation::SetScalar {
+            path: vec![Step::DictValue(0), Step::List(0)],
+            text: "10".into(),
+        };
+        let bad = Mutation::SetScalar {
+            path: vec![Step::DictValue(0), Step::List(99)],
+            text: "20".into(),
+        };
+        assert!(apply_mutations(&state, Slot::Char, &[good, bad]).is_err());
+
+        assert_eq!(
+            tree_of(&state, Slot::Char),
+            before,
+            "all of the batch or none of it — the first mutation is rolled back",
+        );
+        assert!(
+            !undo::undo_state(&state).can_undo,
+            "and no entry was minted for a batch that did nothing",
+        );
+    }
+
+    /// The §3.7 table as a test, and the one that fails loudest if the rollback
+    /// is put only in the closure's `Err` arm: the read-only guard returns
+    /// BEFORE the closure ever runs.
+    #[test]
+    fn a_failed_second_write_rolls_back_the_whole_group() {
+        let (state, _u, _c) = two_slot_state();
+        overview_window_add(&state, "Scan".into(), Some(0)).unwrap();
+        // Make the character document read-only, so the widths half is refused.
+        {
+            let mut g = state.char.lock().unwrap();
+            g.as_mut().unwrap().fidelity =
+                Fidelity::ReadOnly { reason: "test".into() };
+        }
+        let user_before = state.user.lock().unwrap().as_ref().unwrap().value.clone();
+        let d0 = depth(&state);
+
+        assert!(overview_copy_columns(&state, 0, vec![1], true, true, true).is_err());
+
+        assert_eq!(
+            tree_of(&state, Slot::User),
+            user_before,
+            "the first write is rolled back, so \"Copy failed\" is TRUE",
+        );
+        assert_eq!(depth(&state), d0, "and no entry is left behind for it");
     }
 }
