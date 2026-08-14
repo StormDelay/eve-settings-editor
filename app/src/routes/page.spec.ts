@@ -301,6 +301,71 @@ describe("saving", () => {
   });
 });
 
+/**
+ * Opening a file is several round trips long, and a tab click during it is the
+ * most recent thing the user asked for — not a stale value to overwrite.
+ *
+ * `openFile` used to snapshot the view BEFORE those awaits and assign it back
+ * afterwards, so clicking Probes while a character was still opening was
+ * silently undone a moment later and the view snapped back to Layout.
+ */
+test("a tab clicked while a file is still opening is not undone", async () => {
+  calls.stub("open_file", opened("core_char_950.dat"));
+  // Hold the load open on its first round trip, so the click lands mid-flight.
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  calls.stub("window_layout", async () => {
+    await held;
+    return { reference_w: 0, reference_h: 0, windows: [], stacks: [] };
+  });
+
+  await mount([profile(file("core_char_950.dat", "char", 950))]);
+  await openFile("core_char_950.dat");
+  await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+  // The user reaches for a tab before the open has finished.
+  await fireEvent.click(screen.getByRole("tab", { name: "Probes" }));
+  expect(screen.getByRole("tab", { name: "Probes" }).getAttribute("aria-selected")).toBe("true");
+
+  release();
+  // Let the rest of the open — the layout probe and the slot reconcile — run to
+  // completion, which is where the snap-back used to happen.
+  await waitFor(() => expect(calls.of("window_layout").length).toBeGreaterThan(0));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(
+    screen.getByRole("tab", { name: "Probes" }).getAttribute("aria-selected"),
+    "the open must not snap the view back",
+  ).toBe("true");
+});
+
+/** Ctrl+F must reach the window filter on Layout, which lives two components
+ *  down and is bound up through LayoutView. */
+test("Ctrl+F focuses the window filter on Layout", async () => {
+  calls.stub("open_file", opened("core_char_950.dat"));
+  calls.stub("window_layout", {
+    reference_w: 1920,
+    reference_h: 1080,
+    windows: [
+      {
+        id: "w1",
+        geom: null,
+        flags: [],
+        stack: null,
+        open: true,
+        resolution_matches: true,
+      },
+    ],
+    stacks: [],
+  });
+  await mount([profile(file("core_char_950.dat", "char", 950))]);
+  await openFile("core_char_950.dat");
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Layout" }).getAttribute("aria-selected")).toBe("true"));
+
+  const box = await screen.findByLabelText("Filter windows");
+  await fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+  await waitFor(() => expect(document.activeElement).toBe(box));
+});
+
 describe("the view tabs", () => {
   // REWRITTEN (§8.7). This asserted all six tabs were ABSENT for a file with no
   // character id — including Raw's own button, so the user was given no

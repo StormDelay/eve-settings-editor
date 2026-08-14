@@ -325,8 +325,8 @@
             <!-- preventDefault, or the click's default action on the ancestor
                  <summary> toggles the category shut as you bulk-select it. -->
             <summary>
-              <span class="cat-name">{cat.name}</span>
-              <span class="cat-bulk">
+              <span class="cat-row">
+                <span class="cat-name">{cat.name}</span>
                 <Button variant="ghost" size="sm"
                         onclick={(e) => { e.preventDefault(); setCategory(cat, true); }}
                         title="Select every group shown in {cat.name}">All</Button>
@@ -407,14 +407,43 @@
   .contents-title { font-weight: 600; }
   .section-heading { margin: var(--s1) 0 0; font-size: var(--t-body); }
   .group-cat > summary { cursor: pointer; padding: var(--s1) 0; }
-  .cat-bulk { margin-left: var(--s2); }
+  /* The bulk pair used to trail the category name inline, so it sat wherever
+     that name happened to end — "Ship" put them near the margin and "Planetary
+     Industry" put them far right, down a list of fifteen. A grid INSIDE the
+     summary rather than on it, so the disclosure marker survives. */
+  .cat-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .cat-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .group-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
     gap: 0 var(--s3);
     padding: var(--s1) 0 var(--s1) var(--s4);
   }
-  .exceptions-list { display: flex; flex-direction: column; gap: 0; padding: var(--s1) 0 var(--s1) var(--s4); }
-  .exception-row { display: flex; gap: var(--s3); align-items: center; }
-  .exception-label { min-width: 14rem; }
+  /* ONE grid for the whole list, with each row `display: contents`, so all
+     thirty-odd rows share four column tracks and the three radios line up down
+     the page.
+
+     Per-row flex could not do this. `.exception-label` carried a `min-width`,
+     so a label longer than it — "Pilot has a kill right on them that you can
+     activate" — pushed its own radios right while "Pilot is a criminal" left
+     them near the margin. Every row chose its own alignment, which is precisely
+     what a column of radios must not do: the eye reads down these, not across. */
+  .exceptions-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: 0 var(--s3);
+    padding: var(--s1) 0 var(--s1) var(--s4);
+  }
+  .exception-row { display: contents; }
+  .exception-label { min-width: 0; }
 </style>
