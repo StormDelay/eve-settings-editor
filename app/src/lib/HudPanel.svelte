@@ -222,8 +222,12 @@
                the control column — so the bool rows aligned with nothing. Every
                control now sits in the same track, which is the whole point of a
                properties panel. -->
-          <label class="row" title={title(e)}>
-            <span class="label">{row.label}</span>
+          <!-- `title` on the label TEXT, not on the row: the row is
+               `display: contents` so its cells can share the group's columns,
+               and an element with no box has nothing to hover. The text is
+               where a tooltip is reached for anyway. -->
+          <label class="row">
+            <span class="label" title={title(e)}>{row.label}</span>
             {#if e.kind === "bool"}
               <Field
                 kind="checkbox"
@@ -312,6 +316,14 @@
     padding: var(--s1) var(--s2);
   }
   .group {
+    display: grid;
+    /* Label, control, badges. The control track is the same 5.5rem every number
+       Field asks for, so the inputs form a true column; the badge track is
+       `auto`, sized once for the group by its widest chip cell, so the chips
+       share one right edge whether a row carries none, one or two. */
+    grid-template-columns: minmax(0, 1fr) 5.5rem auto;
+    align-items: center;
+    gap: var(--s1) var(--s2);
     margin-bottom: var(--s1);
     /* Transparent by default so selecting a group doesn't shift the layout. */
     border-left: 2px solid transparent;
@@ -342,21 +354,24 @@
   .group.selected :global(.group-title) {
     color: var(--warn);
   }
-  /* A grid, not a flex row, and the reason is the bug it fixes: `.label` used to
-     carry `min-width`, so any label wider than the minimum pushed its own
-     control right and every row's control landed at a different x. Nothing
-     lined up down the panel, in a panel that is almost entirely value columns.
+  /* The GROUP is the grid and each row is `display: contents`, so every row in
+     a group shares three column tracks.
 
-     Three explicit tracks — label, control, badges — mean a long label wraps or
-     ellipsises inside its own column instead of shoving the column after it.
-     The control track is the same 5.5rem every number Field asks for, so the
-     inputs form a true column and the trailing chips share one right edge. */
+     Putting the grid on the row instead — which is what this was first — does
+     not align anything: each row is then its own formatting context, so `auto`
+     and `1fr` resolve per row. A row with no chip, one chip, or two ("account"
+     AND "default") each sized its badge column differently, the `1fr` label
+     absorbed the difference, and the value boxes landed at three different x.
+     Alignment ACROSS rows needs tracks shared across rows. */
   .row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 5.5rem auto;
-    align-items: center;
-    gap: var(--s1) var(--s2);
-    padding: 0;
+    display: contents;
+  }
+  /* Anything that is not a row spans the whole width: the group heading, a
+     refused-edit message, and the neocom button list. */
+  .group > h4,
+  .group > :global(.msg),
+  .group > :global(.buttons) {
+    grid-column: 1 / -1;
   }
   .label {
     color: var(--text);
