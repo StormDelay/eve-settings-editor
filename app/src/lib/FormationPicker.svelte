@@ -53,7 +53,7 @@
 
   {#snippet footer()}
     <Button onclick={() => (picked = picked.map(() => !allOn))}>
-      {allOn ? "Select none" : "Select all"}
+      {allOn ? "None" : "All"}
     </Button>
     <span class="spacer"></span>
     <Button onclick={oncancel}>Cancel</Button>
