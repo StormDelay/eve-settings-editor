@@ -13,6 +13,23 @@ Workflow:
 
 ## Open
 
+- [ ] **Reordering two overview tabs swaps their per-tab column widths.** Widths
+  and the per-tab sort setting live in the *character* file keyed
+  `(overviewScroll2, tabIndex)`, while the order lives in the account file. A
+  reorder or cross-window move renumbers the tab table — the only way an order
+  reaches the game — so the widths stay on the *slot* rather than following the
+  tab (`crates/settings-model/src/overview_tabs.rs:262-268`, a `ponytail:`
+  comment naming the ceiling). The machinery already exists:
+  `remap_tab_scoped_settings` (`:779-802`) does exactly this remap and is wired
+  into the *delete* path. Reorder does not call it because an account's other
+  characters have their own char files the editor does not have open, so
+  remapping only the open one is half a fix — which is the decision this entry
+  needs. Phase 4 of the redesign made reorder much easier (every row draggable,
+  cross-window drag added) and therefore **surfaces** the ceiling rather than
+  fixing it: one sentence in the inspector's Widths helper text, and a toast
+  after a reorder when a character is open. _Added 2026-08-14 (UI redesign
+  Phase 4, §4.3.1)._
+
 - [ ] **Measure the drifter geometry properly, in-client.** The two shipped
   scenes (`app/src-tauri/scenes/`) carry numbers that are estimates, and their
   own comments say so. What IS measured is only the sign of the K-space
