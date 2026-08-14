@@ -144,6 +144,21 @@ describe("the character list", () => {
     expect(linkRow?.classList.contains("paired")).toBe(false);
   });
 
+  // A pairing is a pairing whether or not anyone has named the account. Reading
+  // the ALIAS and falling back to null made a paired character render exactly
+  // like an unpaired one, down to a `Link…` button offering to create the
+  // pairing it already had.
+  test("an account with no alias still draws a chip, not a Link button", async () => {
+    await mount([profile([file("core_char_950.dat", "char", 950)])], {
+      accounts: [{ user_id: 140, alias: null, characters: [950] }],
+      unassigned: [],
+    });
+    // The id alone: `core_user_` is on every account, so it distinguishes
+    // nothing and costs more than half the chip.
+    await waitFor(() => expect(screen.getByText("#140")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Link…" })).toBeNull();
+  });
+
   // The chip ellipsises before the character name does, so the account is also
   // on the row itself — that is what you hover once the chip is a stub, and it
   // is why the name is allowed to win the row.
