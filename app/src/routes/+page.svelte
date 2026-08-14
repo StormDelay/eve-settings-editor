@@ -13,8 +13,10 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import BatchView from "$lib/BatchView.svelte";
+  import ShortcutsSheet from "$lib/ShortcutsSheet.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Chip from "$lib/ui/Chip.svelte";
+  import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import EmptyState from "$lib/ui/EmptyState.svelte";
   import InlineMessage from "$lib/ui/InlineMessage.svelte";
   import ListRow from "$lib/ui/ListRow.svelte";
@@ -23,7 +25,7 @@
   import Sheet from "$lib/ui/Sheet.svelte";
   import Tabs from "$lib/ui/Tabs.svelte";
   import Toast from "$lib/ui/Toast.svelte";
-  import { api, errMessage, type OpenOutcome, type Slot } from "$lib/api";
+  import { api, errMessage, errText, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
   import { resolveNames } from "$lib/names.svelte";
@@ -31,19 +33,25 @@
   import { loadPrefs } from "$lib/prefs.svelte";
   import { resolvedName } from "$lib/filesort.svelte";
   import { accel } from "$lib/keys";
+  import type { Ctx } from "$lib/commands";
+  import { handleKey } from "$lib/keymap";
+  import { noteEdit } from "$lib/undo.svelte";
   import { resolveView, type View } from "$lib/views";
   import {
     subject,
     accountAliasOf,
     confirmDiscardIfDirty,
+    discardChanges,
     loadCharacter,
     noCharactersHint,
     reconcileCharSlot,
     reconcileUserSlot,
     rescanProfiles,
     saveFile,
+    shellErrors,
   } from "$lib/subject.svelte";
-  import { open as openDialog, message } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // One sheet at a time; `null` is the editor. Replaces `mainView`, which had no
@@ -70,6 +78,8 @@
   });
   let aboutOpen = $state(false);
   let switcherOpen = $state(false);
+  let historyOpen = $state(false);
+  let shortcutsOpen = $state(false);
   // Which file the Raw view shows; a Raw-local switch flips it to the account
   // file when one is loaded. Reset on every open.
   let treeFile = $state<Slot>("char");
@@ -151,7 +161,20 @@
   // Selected canvas window, lifted here so it survives Raw/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // One bindable the ACTIVE view sets, generalised from `layoutFocusFilter`.
-  let viewFocusSearch = $state<(() => void) | undefined>(undefined);
+  /**
+   * The active view's "focus your own search box", keyed BY VIEW.
+   *
+   * It used to be a single bindable. A bound value survives its component's
+   * unmount, so after the app's first visit to Layout the slot held LayoutView's
+   * callback for the rest of the session — and `Ctrl+F` on Raw then called it,
+   * focusing a detached input and never falling through to Raw's own box. Raw's
+   * search was unreachable by keyboard the moment you had been to Layout, which
+   * is always, because Layout is where the app opens.
+   *
+   * Keyed by view, a stale entry is simply never consulted: the lookup asks for
+   * the view you are actually on.
+   */
+  let viewFocusSearch = $state<Partial<Record<View, () => void>>>({});
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
   let reveal = $state<{ path: NodePath; n: number } | null>(null);
 
@@ -240,7 +263,6 @@
       subject.dirty[slot] = false;
       treeFile = slot;
       subject.savedAt += 1;
-      const priorView = view;
       sheet = null;
       selectedWindowId = null;
       reveal = null;
@@ -255,9 +277,19 @@
       // would misread.
       if (slot === "char") await reconcileUserSlot(outcome);
       else await reconcileCharSlot(outcome);
-      view = resolveView(priorView);
+      // `view`, read HERE rather than captured before the awaits above.
+      //
+      // It used to hold a `priorView` snapshot taken before two round trips, and
+      // then assign it back unconditionally — so clicking a tab while a file was
+      // still opening was silently undone a moment later, and the view snapped
+      // back to wherever you had been. A click during the load is the most
+      // recent thing the user asked for, not a stale value to overwrite.
+      //
+      // Reading it late is also a no-op in the common case: `resolveView`
+      // returns its argument when that view is reachable.
+      view = resolveView(view);
     } catch (e) {
-      await message(errMessage(e), { title: "Open failed", kind: "error" });
+      shellErrors.open = { text: `${name} wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -278,7 +310,6 @@
       subject.preset = p.name;
       treeFile = "char";
       subject.savedAt += 1;
-      const priorView = view;
       sheet = null;
       selectedWindowId = null;
       reveal = null;
@@ -287,25 +318,34 @@
       } catch {
         subject.layoutAvailable = false;
       }
-      view = resolveView(priorView);
+      // Read late, not captured before the await — see the note in `openFile`.
+      view = resolveView(view);
     } catch (e) {
-      await message(errMessage(e), { title: "Open failed", kind: "error" });
+      shellErrors.open = { text: `“${p.name}” wasn't opened — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
-  // `rethrow` is for callers with somewhere better to put the error than a
-  // dialog — the insert form shows it inline and stays open on failure.
+  // `rethrow` is for callers with somewhere better to put the error than the
+  // default slot — the insert form shows it inline and stays open on failure.
+  // A refused tree edit, above the tree. Not keyed to the node: `Mutation` is a
+  // union and only some arms carry a `path`, so keying would mean either a cast
+  // or a message that vanishes for insert. Above the tree it is always visible
+  // and always right.
+  let treeError = $state<{ text: string; detail: string } | null>(null);
+
   async function runMutation(m: Mutation, rethrow = false) {
     const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
+    treeError = null;
     try {
       const tree = await api.mutate(editSlot, m);
       // Reassign (not mutate-in-place) so the derived `current` refires.
       subject.slots[editSlot] = { ...doc, tree };
       subject.dirty[editSlot] = true;
+      noteEdit();
     } catch (e) {
       if (rethrow) throw e;
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -315,13 +355,15 @@
     const doc = subject.slots[editSlot];
     if (doc?.status !== "opened") return;
     if (ms.length === 0) return;
+    treeError = null;
     try {
       const tree = await api.mutateMany(editSlot, ms);
       subject.slots[editSlot] = { ...doc, tree };
       subject.dirty[editSlot] = true;
+      noteEdit();
     } catch (e) {
       if (rethrow) throw e;
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      treeError = { text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -368,6 +410,51 @@
   // can already derive, in a window where the full list fits.
   const launchRows = $derived(subject.characters.slice(0, 8));
   const launchMore = $derived(subject.characters.length - launchRows.length);
+
+  // The shell half of the registry: the actions a command can perform that this
+  // component owns. State comes from the stores, so this stays small enough to
+  // read in one glance.
+  const ctx: Ctx = {
+    goto: (v) => {
+      view = v;
+      sheet = null;
+    },
+    pickFile,
+    save: () => void saveFile(),
+    discard: () => void discardChanges(),
+    showHistory: () => (historyOpen = true),
+    showAccounts: () => (sheet = "accounts"),
+    showBatch: () => (sheet = "batch"),
+    showAbout: () => (aboutOpen = true),
+    showShortcuts: () => (shortcutsOpen = true),
+    openPalette: () => (switcherOpen = !switcherOpen),
+    // Suppressed while a sheet is open: every box it could focus is behind the
+    // scrim, and focusing an inert control would break the sheet's focus trap.
+    //
+    // Raw's box belongs to the shell; every other view registers its own. A view
+    // with neither — Overview, Probes — does nothing rather than reaching for
+    // somebody else's field.
+    //
+    // Layout's box lives in the INSPECTOR, so the column has to be open before
+    // there is anything to focus: `focus()` on a `display: none` element does
+    // nothing at all, silently. Ctrl+F then looked completely dead rather than
+    // merely scrolled away, which is how it was reported. Expanding first, then
+    // waiting a tick for the column to render, is what makes the shortcut work
+    // from a railed inspector.
+    findInView: () => {
+      if (sheet !== null) return;
+      if (view === "raw") {
+        openSearch();
+        return;
+      }
+      if (view === "layout" && !inspectorOpen) {
+        inspectorOpen = true;
+        void tick().then(() => viewFocusSearch[view]?.());
+        return;
+      }
+      viewFocusSearch[view]?.();
+    },
+  };
 </script>
 
 <!-- The webview's stock context menu (Back/Reload/…) means nothing here. Tree
@@ -375,30 +462,10 @@
 <svelte:window
   oncontextmenu={(e) => e.preventDefault()}
   onkeydown={(e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      saveFile();
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-      e.preventDefault();
-      switcherOpen = true;
-    }
-    // Take Ctrl+F off the webview: its find-on-page cannot see collapsed nodes.
-    // The active view focuses its OWN search box if it has one; otherwise this
-    // falls through to the Raw tree's.
-    //
-    // NOT `viewFocusSearch?.() ?? openSearch()` as §5.12 writes it — those
-    // callbacks return void, so the `??` would fire openSearch() every time,
-    // including right after the view had focused its own box.
-    //
-    // Suppressed entirely while a sheet is open: every box it could focus is
-    // behind the scrim, and focusing an inert control would break the trap.
-    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-      e.preventDefault();
-      if (sheet !== null) return;
-      if (viewFocusSearch) viewFocusSearch();
-      else openSearch();
-    }
+    // One map, in keymap.ts, dispatching through the command registry — so the
+    // shortcut a menu PRINTS and the shortcut this fires are the same `accel`
+    // field on the same command and cannot drift apart.
+    if (handleKey(e, ctx)) return;
     if (e.key === "Escape" && searching) closeSearch();
   }}
 />
@@ -410,16 +477,12 @@
   style="--shell-inset-top: {barHeight + tabsHeight}px">
   <ContextBar
     bind:switcherOpen
+    bind:historyOpen
     bind:height={barHeight}
     onOpen={openFile}
     onOpenPreset={openPresetPair}
-    onGoto={(v) => {
-      view = v;
-      sheet = null;
-    }}
-    onShowAccounts={() => (sheet = "accounts")}
-    onShowBatch={() => (sheet = "batch")}
-    onShowAbout={() => (aboutOpen = true)}
+    onGoto={ctx.goto}
+    {ctx}
     onRestored={(slot, outcome) => {
       subject.slots[slot] = outcome;
       subject.dirty[slot] = false;
@@ -514,9 +577,9 @@
       bind:selectedId={selectedWindowId}
       onCollapseInspector={() => (inspectorOpen = false)}
       onReveal={revealInTree}
-      onDirty={(slot) => (subject.dirty[slot] = true)}
+      onDirty={(slot) => { subject.dirty[slot] = true; noteEdit(); }}
       sharedNames={subject.sharedNames}
-      bind:focusSearch={viewFocusSearch} />
+      bind:focusSearch={viewFocusSearch.layout} />
   {:else if view === "overview"}
     <!-- Reaches across both columns by the same `display: contents` route
          LayoutView uses, but with ONE child rather than two: a tab's properties
@@ -529,8 +592,8 @@
       charId={subject.charId}
       charOpen={subject.slots.char?.status === "opened"}
       refreshToken={subject.savedAt}
-      onUserDirty={() => (subject.dirty.user = true)}
-      onCharDirty={() => (subject.dirty.char = true)}
+      onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
+      onCharDirty={() => { subject.dirty.char = true; noteEdit(); }}
       onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}
       onShowAccounts={() => (sheet = "accounts")} />
   {:else}
@@ -545,30 +608,33 @@
         <div class="scroll">
           <AutofillView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             charOpen={subject.slots.char?.status === "opened"}
             charName={subject.charName}
             onShowAccounts={() => (sheet = "accounts")}
-            onUserDirty={() => (subject.dirty.user = true)}
-            bind:focusSearch={viewFocusSearch} />
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
+            bind:focusSearch={viewFocusSearch.autofill} />
         </div>
       {:else if view === "keybinds"}
         <div class="scroll">
           <KeybindsView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
             onShowBatch={() => (sheet = "batch")}
-            onUserDirty={() => (subject.dirty.user = true)}
-            bind:focusSearch={viewFocusSearch} />
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
+            bind:focusSearch={viewFocusSearch.keybinds} />
         </div>
       {:else if view === "probes"}
         <div class="scroll">
           <ProbeFormationsView
             userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
             userId={subject.userId}
             onShowAccounts={() => (sheet = "accounts")}
-            onUserDirty={() => (subject.dirty.user = true)} />
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }} />
         </div>
       {:else}
         {#if subject.slots.user?.status === "opened"}
@@ -591,6 +657,12 @@
             count={searching ? (found?.count ?? 0) : undefined}
             onclear={closeSearch} />
         </div>
+        <!-- The node that refused the edit is several hundred rows down a
+             collapsed tree, so the message goes where the tree is rather than
+             hunting the row. -->
+        {#if treeError}
+          <InlineMessage variant="error" detail={treeError.detail}>{treeError.text}</InlineMessage>
+        {/if}
         <div class="scroll">
           {#if found?.tree}
             <TreeNode
@@ -681,10 +753,16 @@
 </main>
 
 {#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
+{#if shortcutsOpen}<ShortcutsSheet onClose={() => (shortcutsOpen = false)} />{/if}
 
 <!-- Mounted once, here. Every transient confirmation in the app renders through
      it, so it has to outlive whichever view raised it. -->
 <Toast />
+
+<!-- Same reasoning, and one degree stronger: a confirmation asks about an action
+     that may unmount the view that raised it, and a host unmounted mid-question
+     would resolve nothing and hang its caller's `await`. -->
+<ConfirmDialog />
 
 <style>
   .launch {

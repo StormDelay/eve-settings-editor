@@ -192,7 +192,7 @@ describe("the window menu", () => {
 describe("renaming in place", () => {
   async function startRename(nth: number) {
     await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rename tab…" }));
     return screen.getByLabelText("Tab name") as HTMLInputElement;
   }
 
@@ -328,7 +328,7 @@ describe("the footer", () => {
 
   test("the windowless message offers the set-up command", async () => {
     const { onSetUpWindowMapping } = mount({ data: windowless });
-    await fireEvent.click(screen.getByRole("button", { name: "Set up per-window tabs" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Assign tabs to windows" }));
     expect(onSetUpWindowMapping).toHaveBeenCalled();
   });
 });

@@ -2,12 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import NeocomButtons from "./NeocomButtons.svelte";
 import type { NeocomBar, NeocomButton } from "./api";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { toasts } from "./ui/toasts.svelte";
 
-// Reset is gated on the Tauri dialog's confirm, not the bare browser one (see
-// NeocomButtons.svelte's resetBar) — mock it so the confirmed/cancelled
-// branches are both reachable from a test.
-vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn() }));
+// No dialog mock, and that is the assertion: the reset stopped being a
+// confirmation. It is an in-memory edit that Discard reverses exactly, and the
+// button's own tooltip states the consequence before the click.
 
 const btn = (index: number, id: string, children = 0): NeocomButton =>
   ({ index, id, btn_type: 1, icon_path: `${id}.png`, children });
@@ -90,20 +89,23 @@ describe("NeocomButtons", () => {
     await waitFor(() => expect(select.value).toBe(""));
   });
 
-  test("confirming the reset dialog calls onReset", async () => {
-    vi.mocked(confirm).mockResolvedValueOnce(true);
+  test("reset happens on the click and reports itself in a toast", async () => {
+    toasts.length = 0;
     const p = props(bar([btn(0, "chat")], [btn(0, "wallet")]));
     render(NeocomButtons, p);
     screen.getByText("Reset to original").click();
     await waitFor(() => expect(p.onReset).toHaveBeenCalled());
+    expect(toasts.map((t) => t.message)).toContain(
+      "Neocom reset to the client's original buttons.",
+    );
   });
 
-  test("cancelling the reset dialog does not call onReset", async () => {
-    vi.mocked(confirm).mockResolvedValueOnce(false);
+  test("a refused neocom edit renders at the control, not in a dialog", () => {
     const p = props(bar([btn(0, "chat")], [btn(0, "wallet")]));
-    render(NeocomButtons, p);
-    screen.getByText("Reset to original").click();
-    await waitFor(() => expect(vi.mocked(confirm)).toHaveBeenCalled());
-    expect(p.onReset).not.toHaveBeenCalled();
+    render(NeocomButtons, {
+      ...p,
+      error: { text: "The neocom wasn't changed — the file is read-only.", detail: "[io] …" },
+    });
+    expect(screen.getByRole("alert").textContent).toContain("The neocom wasn't changed");
   });
 });
