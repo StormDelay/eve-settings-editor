@@ -5,7 +5,7 @@
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
   import ListRow from "./ui/ListRow.svelte";
-  import Panel from "./ui/Panel.svelte";
+  import Sheet from "./ui/Sheet.svelte";
 
   let { data, tabIndex, charOpen, onChanged, onUserDirty, onCharDirty }:
     { data: OverviewColumns | null; tabIndex: number | null; charOpen: boolean;
@@ -97,7 +97,17 @@
             title="Copy this tab's column settings onto other tabs">Copy columns…</Button>
   </div>
   {#if copyOpen}
-    <Panel class="copy-panel" as="div">
+    <!-- A Sheet rather than an inline block: the column list stays put instead
+         of being pushed down the page, and the panel gets a real dismiss —
+         Escape, the scrim, and focus returned to the button that opened it.
+         The comment this replaces said it was inline "because the app has no
+         modal"; Phase 1 gave it one. Ticking the targets by hand is still the
+         confirmation step, so no confirm is added. -->
+    <Sheet
+      title="Copy columns"
+      width="min(34rem, 92vw)"
+      class="copy-panel"
+      onclose={() => (copyOpen = false)}>
       <!-- What travels, then where it goes: the two questions are separate and
            the panel asks them in that order. -->
       <section>
@@ -130,7 +140,7 @@
           {/each}
         </div>
       </section>
-      <div class="copy-actions">
+      {#snippet footer()}
         <Button
           variant="primary"
           onclick={runCopy}
@@ -139,8 +149,8 @@
           Copy to {chosen.length} tab{chosen.length === 1 ? "" : "s"}
         </Button>
         <Button onclick={() => (copyOpen = false)}>Cancel</Button>
-      </div>
-    </Panel>
+      {/snippet}
+    </Sheet>
   {/if}
   <ul class="ov-cols">
     {#each tab.columns as col, i (col.name)}
@@ -189,10 +199,6 @@
   .ov-cols li { list-style: none; }
   .meta { color: var(--text-muted); font-size: var(--t-caption); }
   .col-actions { display: flex; gap: var(--s1); margin-bottom: var(--s1); }
-  :global(.copy-panel) {
-    display: flex; flex-direction: column; gap: var(--s2);
-    margin-bottom: var(--s2);
-  }
   /* A rule between the two questions — what to copy, and where to. */
   :global(.copy-panel) section + section { border-top: 1px solid var(--border); padding-top: var(--s2); }
   :global(.copy-panel) h4 { margin: 0 0 var(--s1); font-size: var(--t-body); }
