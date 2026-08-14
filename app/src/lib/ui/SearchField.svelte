@@ -32,9 +32,12 @@
     [key: string]: unknown;
   } = $props();
 
-  const placeholder = $derived(
-    (verb === "search" ? `Search ${nouns}` : `Filter ${nouns}…`) + (shortcut ? ` (${shortcut})` : ""),
-  );
+  // No trailing `…` on a filter — R2 reserves the ellipsis for "this will not
+  // finish without more input", and narrowing a list you can already see
+  // finishes as you type. And the accelerator is NOT baked into the string: it
+  // renders as a <kbd> below, so the five boxes stop advertising it three
+  // different ways and macOS stops being told to press Ctrl.
+  const placeholder = $derived(verb === "search" ? `Search ${nouns}` : `Filter ${nouns}`);
 
   const meta = $derived(
     count === undefined ? "" : total === undefined ? `${count}` : `${count} of ${total}`,
@@ -59,9 +62,13 @@
     }}
     {...rest} />
   {#if meta}<span class="meta">{meta}</span>{/if}
+  <!-- Discovery rule 3, at the control rather than in a menu: the shortcut is
+       shown where it is used, and it is hidden once the box has content because
+       by then the user is already here. -->
+  {#if shortcut && value === ""}<kbd>{shortcut}</kbd>{/if}
   <!-- Absent rather than dimmed when empty, matching today's {#if searching} guard. -->
   {#if value !== ""}
-    <Button variant="ghost" size="sm" iconOnly title="Clear (Esc)" onclick={clear}>×</Button>
+    <Button variant="ghost" size="sm" iconOnly title="Clear" onclick={clear}>×</Button>
   {/if}
 </div>
 
@@ -83,5 +90,14 @@
     color: var(--text-muted);
     font-size: var(--t-caption);
     white-space: nowrap;
+  }
+  kbd {
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--t-caption);
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 0 var(--s1);
   }
 </style>

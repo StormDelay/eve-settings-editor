@@ -16,7 +16,13 @@
       class="toast"
       class:fading={t.duration > 0}
       style={t.duration > 0 ? `animation-duration: ${t.duration}ms` : undefined}>
-      <InlineMessage variant={t.variant} dismissible ondismiss={() => dismiss(t.id)}>
+      <!-- `escalate={false}` is not a preference: a toast IS the escalation, and
+           one that raised another would not terminate. -->
+      <InlineMessage
+        variant={t.variant}
+        escalate={false}
+        dismissible
+        ondismiss={() => dismiss(t.id)}>
         {t.message}
         {#if t.action}
           <Button

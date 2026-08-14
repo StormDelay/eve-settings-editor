@@ -15,6 +15,7 @@
   import BatchView from "$lib/BatchView.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Chip from "$lib/ui/Chip.svelte";
+  import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import EmptyState from "$lib/ui/EmptyState.svelte";
   import InlineMessage from "$lib/ui/InlineMessage.svelte";
   import ListRow from "$lib/ui/ListRow.svelte";
@@ -685,6 +686,11 @@
 <!-- Mounted once, here. Every transient confirmation in the app renders through
      it, so it has to outlive whichever view raised it. -->
 <Toast />
+
+<!-- Same reasoning, and one degree stronger: a confirmation asks about an action
+     that may unmount the view that raised it, and a host unmounted mid-question
+     would resolve nothing and hang its caller's `await`. -->
+<ConfirmDialog />
 
 <style>
   .launch {

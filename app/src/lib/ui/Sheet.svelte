@@ -19,6 +19,7 @@
     placement = "center",
     width = "min(720px, 92vw)",
     titled = false,
+    role = "dialog",
     onclose,
     actions,
     footer,
@@ -38,6 +39,10 @@
         underneath the user. */
     placement?: "center" | "end" | "work";
     width?: string;
+    /** `alertdialog` for a confirmation: it tells a screen reader the content is
+        a consequence to weigh, not a form to fill in. One prop rather than a
+        second component — everything else about the two is identical. */
+    role?: "dialog" | "alertdialog";
     /** Renders a visible header — title, subtitle, `actions`, close button.
         Opt-in because the three Phase-1 callers each draw their own heading and
         would otherwise show two. */
@@ -103,7 +108,7 @@
       class="sheet {klass}"
       class:end={placement === "end"}
       class:work={placement === "work"}
-      role="dialog"
+      {role}
       aria-modal="true"
       aria-label={title}
       tabindex="-1"

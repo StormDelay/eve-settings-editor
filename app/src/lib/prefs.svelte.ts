@@ -5,11 +5,11 @@
 // this half's `$state` rune is compiler-only and `node --test` could not load
 // it. One vitest suite now runs both kinds of test, so the split — and the
 // re-export shim that held it together — is gone.
-import { api, errMessage } from "$lib/api";
+import { api, errText } from "$lib/api";
 import type { LayoutPrefs, Preferences } from "$lib/api";
 import type { ClutterOverrides } from "$lib/windowLabels";
 import { EFFECT_COUNT_DEFAULT, EFFECT_COUNT_MAX, TARGET_COUNT_DEFAULT } from "$lib/layout";
-import { message } from "@tauri-apps/plugin-dialog";
+import { toast } from "$lib/ui/toasts.svelte";
 
 /** Overrides naming a window the given document actually has. */
 export const countIn = (stored: LayoutPrefs, ids: ReadonlySet<string>): number =>
@@ -69,10 +69,15 @@ export const overrideCount = (ids: ReadonlySet<string>): number => countIn(prefs
  * alone" — with no rollback there is no stale value to diverge from. */
 let writeQueue: Promise<void> = Promise.resolve();
 
+// A toast, and the ONE failure in the app that legitimately gets one: every
+// other error lands inline at the control that failed, but these writes are
+// fire-and-forget from a queue with no rollback by design, so there is no single
+// control that owns the failure. A warning rather than an error, because nothing
+// the user was doing was refused — only its persistence.
 function persist(next: Preferences): void {
   writeQueue = writeQueue.then(() =>
-    api.setPreferences($state.snapshot(next)).catch(async (e) => {
-      await message(errMessage(e), { title: "Preferences not saved", kind: "error" });
+    api.setPreferences($state.snapshot(next)).catch((e) => {
+      toast(`Your view preferences weren't saved — ${errText(e)}`, { variant: "warn" });
     }),
   );
 }
