@@ -9,15 +9,13 @@ import { calls } from "$lib/test/setup";
 import { accountsStore } from "$lib/accounts.svelte";
 import { names } from "$lib/names.svelte";
 import { subject } from "$lib/subject.svelte";
+import { answer, pending } from "$lib/ui/confirm.svelte";
 import type { OpenOutcome, Slot } from "$lib/api";
 
-// Restore asks for confirmation before it overwrites; answer yes.
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  ask: () => Promise.resolve(true),
-  message: () => Promise.resolve(),
-  confirm: () => Promise.resolve(true),
-  open: () => Promise.resolve(null),
-}));
+// No dialog mock: restore's confirmation is in-app now, and answering it is
+// answering `confirm.svelte`'s queue. The mock is gone rather than kept
+// harmlessly, because its absence is what asserts nothing native is left here.
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => Promise.resolve(null) }));
 
 const opened = (file_name: string): OpenOutcome => ({
   status: "opened",
@@ -74,8 +72,8 @@ test("a slot with no backups keeps its heading and says so", async () => {
   calls.stub("list_file_backups", []);
   mount();
   await groups();
-  expect(screen.getByText(/no backups yet/i)).toBeTruthy();
-  expect(screen.getByText(/every save creates one/i)).toBeTruthy();
+  expect(screen.getByText(/no history yet/i)).toBeTruthy();
+  expect(screen.getByText(/every save leaves a restorable copy/i)).toBeTruthy();
 });
 
 /**
@@ -94,8 +92,16 @@ test("each group's Restore targets that group's slot", async () => {
   mount((slot) => (landed = slot));
 
   const box = await screen.findByRole("dialog", { name: "History" });
-  const restore = await within(box).findByRole("button", { name: "restore" });
+  const restore = await within(box).findByRole("button", { name: "Restore" });
   await fireEvent.click(restore);
+
+  // The confirmation is in-app now, so answering it is answering the queue
+  // rather than a mocked native call. Asserting the queue filled at all is the
+  // half that matters: a restore that stopped asking would still route right.
+  await waitFor(() => expect(pending).toHaveLength(1));
+  expect(pending[0].title).toMatch(/^Restore /);
+  answer(pending[0].id, true);
+
   await waitFor(() => expect(landed).toBe("user"));
   expect(calls.only("restore_backup").args).toMatchObject({ slot: "user" });
 });
