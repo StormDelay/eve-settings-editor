@@ -75,6 +75,19 @@ async function mount(profiles: Profile[], roster: AccountRoster = { accounts: []
   calls.stub("overview_columns", { tabs: [], columns: [] });
   // Both the app menu's proposal count and the Accounts view read this.
   calls.stub("launcher_proposals", []);
+  // This file now mounts the Layout and Probes views — Phase 2 made every tab
+  // reachable and defaulted the view away from Raw, so switching tabs actually
+  // renders them. Neither defends against `undefined`, and neither should: an
+  // unstubbed command resolving to `undefined` is not a shape the backend can
+  // return. Left unstubbed these throw ASYNCHRONOUSLY, which vitest reports as
+  // an unhandled error and exits 1 on — with every test still green, which is
+  // exactly how it got past a local run and was caught by CI.
+  //
+  // Guarded, so a test that stubbed its own layout before mounting keeps it.
+  if (!calls.stubbed("window_layout")) {
+    calls.stub("window_layout", { reference_w: 0, reference_h: 0, windows: [], stacks: [] });
+  }
+  calls.stub("probe_formations", { formations: [], selected: null });
   render(Page);
   await waitFor(() => {
     expect(calls.of("discover_profiles").length).toBeGreaterThan(0);
