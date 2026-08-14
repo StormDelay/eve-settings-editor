@@ -384,10 +384,9 @@
 
 <style>
   .overview-view { display: contents; }
-  /* Spans the work column AND the column an inspector would occupy. This view's
-     inspector is docked under the list that selects the tab, so there is no
-     third column and nothing for the shell to draw in it. */
-  .wide { grid-column: 2 / 4; }
+  /* `.work.wide` — spanning the column an inspector would occupy — is a shell
+     rule in app.css, because this view and the shell's own wrappers both set
+     it. Nothing about it is local to Overview. */
   .sub-row { display: flex; align-items: flex-end; gap: var(--s3); margin: var(--s2) var(--s3); }
   /* Bounded side column, unbounded centre — the same reasoning LayoutView's
      grid uses, and the reason the tab list cannot eat the content. Wider than
