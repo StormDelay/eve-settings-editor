@@ -191,6 +191,13 @@
   {#if tab.inherits}<p class="meta">This tab uses the account-default columns. EVE doesn't save an
     inheriting tab's exact column order, so the order shown here is the account default — editing
     gives the tab its own copy.</p>{/if}
+  <!-- Under the width boxes, which is the only thing on the page it is about.
+       The third sentence is the width-swap ceiling's standing disclosure: a
+       reorder renumbers the tab table and these widths are keyed by that number
+       in the CHARACTER file, so they stay with the position. The remap is its
+       own branch (docs/small-tasks.md). -->
+  <p class="meta">Column widths are stored per character. Everything else on this tab is shared by
+    the whole account. Reordering tabs moves widths with the position, not with the tab.</p>
 {/if}
 
 <style>

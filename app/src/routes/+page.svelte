@@ -521,9 +521,7 @@
       userId={subject.userId}
       charId={subject.charId}
       charOpen={subject.slots.char?.status === "opened"}
-      characters={subject.accountCharacters}
       refreshToken={subject.savedAt}
-      onLoadCharacter={loadCharacter}
       onUserDirty={() => (subject.dirty.user = true)}
       onCharDirty={() => (subject.dirty.char = true)}
       onWindowAdded={(id) => { if (subject.layoutAvailable) { selectedWindowId = id; view = "layout"; } }}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { MenuItem } from "./ContextMenu.svelte";
   import type { OverviewColumns, OverviewTab } from "./api";
-  import { parseTabName, plainTabName, cssColor } from "./tabName";
+  import { parseTabName, plainTabName, cssColor, EVE_PALETTE, type TabName } from "./tabName";
   import Button from "./ui/Button.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
@@ -9,6 +9,7 @@
   import ListRow from "./ui/ListRow.svelte";
   import MenuButton from "./ui/MenuButton.svelte";
   import PanelHeader from "./ui/PanelHeader.svelte";
+  import Popover from "./ui/Popover.svelte";
 
   // The ONE control that selects an overview tab. It replaces a grouped
   // <select>, a chip row that only appeared when the selected tab's window held
@@ -40,10 +41,10 @@
     onAddWindow: (name: string) => void;
     onRemoveWindow: (windowIdx: number) => void;
     onDeleteTab: (tabIdx: number) => void;
-    /** The READABLE text, not the stored markup: the view re-composes the
-        colour and bold around it. Spacing goes out verbatim — padding is how a
-        tab is widened in game. */
-    onRenameTab: (tabIdx: number, text: string) => void;
+    /** The whole decomposed name — text, colour and bold — because the row
+        editor edits all three and commits them as ONE rename. Spacing in `text`
+        goes out verbatim: padding is how a tab is widened in game. */
+    onRenameTab: (tabIdx: number, name: TabName) => void;
     onReorder: (windowIdx: number, order: number[]) => void;
     onMove: (tabIdx: number, from: number, to: number, pos: number) => void;
     onSetUpWindowMapping: () => void;
@@ -86,14 +87,29 @@
       .filter(Boolean).join(";");
   }
 
-  function rowMenu(t: OverviewTab): MenuItem[] {
-    return [
+  function rowMenu(t: OverviewTab, g: Group): MenuItem[] {
+    const items: MenuItem[] = [
       // Renaming happens ON the row. A rename started here and finished in a
       // panel below was two places for one gesture, and it left a Name field
       // sitting there permanently for the 99% of the time nobody is renaming.
       { label: "Rename", run: () => startRename(t) },
       { label: "Delete tab", run: () => onDeleteTab(t.index) },
     ];
+    // Cross-window drag is the fast route; this is the keyboard one, and the
+    // one that still works when the two windows are scrolled apart. Present and
+    // disabled for a tab in no window, because `move_tab` needs a source.
+    for (const w of data.windows) {
+      if (w.index === g.windowIdx) continue;
+      items.push({
+        label: `Move to Overview ${w.index + 1}`,
+        run: () => onMove(t.index, g.windowIdx as number, w.index, w.tab_indices.length),
+        disabled: g.windowIdx === null,
+        hint: g.windowIdx === null
+          ? "This tab isn't assigned to a window — EVE decides where it appears"
+          : undefined,
+      });
+    }
+    return items;
   }
 
   // Present-and-disabled, never absent: the reasons are the backend's own error
@@ -118,10 +134,38 @@
   }
 
   // One inline editor for all three name gestures: create a tab, name a new
-  // window's first tab, and rename an existing tab in place.
+  // window's first tab, and edit an existing tab's name in place. A rename
+  // carries the colour and bold as well — they ARE the name, stored as markup
+  // inside the same string (see tabName.ts), so editing them anywhere else was
+  // splitting one property across two panes.
   let pending = $state<
-    { kind: "tab" | "window" | "rename"; windowIdx: number | null; tabIdx?: number; value: string } | null
+    {
+      kind: "tab" | "window" | "rename";
+      windowIdx: number | null;
+      tabIdx?: number;
+      value: string;
+      color?: string | null;
+      bold?: boolean;
+    } | null
   >(null);
+  let swatchOpen = $state(false);
+  let swatchEl: HTMLDivElement | undefined = $state();
+  let editorEl: HTMLDivElement | undefined = $state();
+
+  /** Live preview: the box shows the name the way the tab will look. */
+  const draftStyle = $derived(
+    [pending?.color ? `color:${cssColor(pending.color)}` : "", pending?.bold ? "font-weight:700" : ""]
+      .filter(Boolean).join(";"),
+  );
+
+  // Leaving the editor commits, but the swatch, the palette and the B toggle are
+  // PART of the editor — moving focus onto one of them must not close it.
+  function editorFocusOut(e: FocusEvent) {
+    if (swatchOpen) return;
+    const next = e.relatedTarget as Node | null;
+    if (next && editorEl?.contains(next)) return;
+    submit();
+  }
   let nameInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
   $effect(() => {
     if (!nameInput) return;
@@ -135,7 +179,8 @@
   function startRename(t: OverviewTab) {
     onSelect(t.index);
     // The READABLE text, padding and all — never the stored markup.
-    pending = { kind: "rename", windowIdx: null, tabIdx: t.index, value: parseTabName(t.name).text };
+    const n = parseTabName(t.name);
+    pending = { kind: "rename", windowIdx: null, tabIdx: t.index, value: n.text, color: n.color, bold: n.bold };
   }
   function submit() {
     const p = pending;
@@ -145,7 +190,9 @@
       // `p.value`, not a trimmed copy: padding is how a tab is widened in game
       // ("  main  ", "  3  "). The trim only answers "did they type anything at
       // all", which is also how the pre-Phase-4 rename box read it.
-      if (p.value.trim() && p.tabIdx !== undefined) onRenameTab(p.tabIdx, p.value);
+      if (p.value.trim() && p.tabIdx !== undefined) {
+        onRenameTab(p.tabIdx, { text: p.value, color: p.color ?? null, bold: !!p.bold });
+      }
       return;
     }
     const name = p.value.trim();
@@ -203,21 +250,51 @@
         {#each g.tabs as t, i (t.index)}
           <li>
             {#if pending?.kind === "rename" && pending.tabIdx === t.index}
-              <!-- The row BECOMES the editor. Enter commits, Escape cancels,
-                   and leaving it commits — the same three keys the name box it
-                   replaces used. -->
-              <Field bind:value={pending.value} bind:element={nameInput}
-                     ariaLabel="Tab name" placeholder="Tab name"
-                     onblur={submit}
-                     onkeydown={(e: KeyboardEvent) => {
-                       if (e.key === "Enter") { e.preventDefault(); submit(); }
-                       else if (e.key === "Escape") pending = null;
-                     }} />
+              <!-- The row BECOMES the editor, and it carries every part of the
+                   name: the text, the colour and the weight. All three are one
+                   markup-bearing string in the file, so editing them in two
+                   places was splitting one property in half. Enter commits,
+                   Escape cancels, leaving commits. -->
+              <div class="rename" bind:this={editorEl} onfocusout={editorFocusOut}>
+                <Field bind:value={pending.value} bind:element={nameInput}
+                       ariaLabel="Tab name" placeholder="Tab name"
+                       style={draftStyle}
+                       onkeydown={(e: KeyboardEvent) => {
+                         if (e.key === "Enter") { e.preventDefault(); submit(); }
+                         else if (e.key === "Escape") pending = null;
+                       }} />
+                <div class="swatch-wrap" bind:this={swatchEl}>
+                  <!-- aria-label as well as title: the swatch's only content is
+                       a dash or nothing at all. -->
+                  <Button class="swatch" title="Tab name colour" aria-label="Tab name colour"
+                          style={pending.color ? `background:${cssColor(pending.color)}` : ""}
+                          onclick={() => (swatchOpen = !swatchOpen)}>{pending.color ? "" : "—"}</Button>
+                  {#if swatchOpen && swatchEl}
+                    <Popover
+                      anchor={swatchEl}
+                      placement="bottom-start"
+                      ariaLabel="Tab name colour"
+                      class="palette"
+                      onclose={() => (swatchOpen = false)}>
+                      <div class="palette-grid">
+                        {#each EVE_PALETTE as c (c)}
+                          <button style="background:#{c}" title="#{c}" aria-label="#{c}"
+                                  onclick={() => { if (pending) pending.color = `FF${c.toUpperCase()}`; swatchOpen = false; }}></button>
+                        {/each}
+                      </div>
+                      <Button variant="ghost" size="sm" class="palette-none"
+                              onclick={() => { if (pending) pending.color = null; swatchOpen = false; }}>No colour</Button>
+                    </Popover>
+                  {/if}
+                </div>
+                <Button class="bold-toggle" pressed={!!pending.bold} title="Bold tab name"
+                        onclick={() => { if (pending) pending.bold = !pending.bold; }}>B</Button>
+              </div>
             {:else}
             <ListRow
               selected={t.index === tabIndex}
               onclick={() => onSelect(t.index)}
-              actions={rowMenu(t)}
+              actions={rowMenu(t, g)}
               oncontextmenu={(e: MouseEvent) => e.preventDefault()}
               draggable={g.windowIdx !== null}
               ondragstart={(e: DragEvent) => {
@@ -290,7 +367,25 @@
     padding: var(--s2);
   }
   .groups { flex: 1; min-height: 0; overflow: auto; }
-  .group-head { display: flex; align-items: center; gap: var(--s1); }
+  /* The same side padding ListRow gives a row, so the group's "⋯" lands in the
+     same column as every row's "⋯" instead of one step further out. */
+  .group-head { display: flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); }
+  .rename { display: flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); }
+  .rename :global(.field) { flex: 1; min-width: 0; }
+  .rename :global(input) { width: 100%; }
+  .swatch-wrap { position: relative; display: inline-flex; }
+  .rename :global(.swatch) { width: 1.9rem; }
+  .rename :global(.bold-toggle) { font-weight: 700; }
+  :global(.palette) { display: block; }
+  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: var(--s1); }
+  /* --border-strong, not --border: this outline has to read against an
+     arbitrary user colour on either side of it. */
+  .palette-grid button {
+    width: 1.1rem; height: 1.1rem; border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm); padding: 0; cursor: pointer;
+  }
+  .palette-grid button:hover { outline: 1px solid var(--text); }
+  :global(.palette-none) { display: block; width: 100%; margin-top: var(--s1); }
   .group-label {
     flex: 1;
     color: var(--text-muted);

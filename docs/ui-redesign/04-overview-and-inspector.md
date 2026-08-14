@@ -1262,16 +1262,38 @@ cosmetic — which is the same lesson Phase 3 recorded.
 The visual pass ran on 2026-08-14 against the owner's own session. Four
 changes came out of it, and the first is a reversal of a decision in §5.
 
-1. **The inspector is docked under the tab list, not across the window from it,
-   and Overview has no right-hand column at all.** §5 puts the tab's Name,
-   Colour, Bold and In window in the shell's inspector; on a 2560px monitor that
-   put the list you click on the far left and the field you type in on the far
-   right. Owner's call: the properties join the list. `OverviewView` therefore
-   spans columns 2–4 with ONE child, and `+page.svelte` draws neither an aside
-   nor a rail for this view. §7's rule survives in substance — the properties
-   are still exactly the selection's, and nothing unrelated is beside them —
-   but Overview is no longer an example of it in the *right-hand pane* sense.
-   `OverviewInspector` did not change; only where it is rendered did.
+1. **Overview has no inspector at all. `OverviewInspector.svelte` is deleted,
+   and §5 with it.** This went in three steps over one session, each one the
+   owner looking at the previous one:
+
+   - §5 put Name, Colour, Bold, In window and Widths from in the shell's
+     right-hand inspector. On a 2560px monitor that put the list you click on
+     the far left and the field you type in on the far right, so the pane moved
+     to sit under the tab list.
+   - Then the *name* moved onto the row (see (5) below), which made the split
+     obvious: renaming happened on the row, but the colour and weight of that
+     same name — the same markup string in the file — were still in the pane.
+     They joined the row editor.
+   - What was left was `In window` and `Widths from`, and **both turned out to
+     be duplicates**. `Widths from` calls `loadCharacter`, which is what
+     clicking the character in the sidebar already does — and it was that
+     function's only caller in the app. `In window` calls `tabMove`, which
+     §4.3's cross-window drag already does. Neither is a property you *read*;
+     each is a second control for a job something else already owns, which is
+     the exact fault §1 says this phase exists to remove.
+
+   So the pane is gone. Nothing is lost: `In window` became **`Move to Overview
+   N` items in the row's `⋯`**, keeping the keyboard route the drag does not
+   provide, present-and-disabled with a reason for a tab in no window. The
+   Widths helper text — including §4.3.1's mandatory reordering sentence — moved
+   under the column list in `OverviewColumnsTab`, next to the width boxes it is
+   about, which is a better home than the pane ever was.
+
+   **§7's rule is therefore not demonstrated by Overview.** It still governs
+   Layout and Raw, and the honest statement of what this phase found is the
+   §7 sentence the spec already wrote and then under-applied: *a view is not
+   required to have an inspector*. Overview turns out to be a view that does not
+   want one, because every property of a tab fits on the tab.
 
 2. **The column and appearance lists are capped at a reading width.** `ListRow`
    pushes its trailing control to the container's right edge, which is correct

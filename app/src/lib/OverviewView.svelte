@@ -3,11 +3,10 @@
   import type { MenuItem } from "./ContextMenu.svelte";
   import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { documentDir } from "@tauri-apps/api/path";
-  import { plainTabName, parseTabName, formatTabName } from "./tabName";
+  import { plainTabName, formatTabName, type TabName } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
-  import OverviewInspector from "./OverviewInspector.svelte";
   import OverviewTabList from "./OverviewTabList.svelte";
   import Button from "./ui/Button.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
@@ -17,11 +16,11 @@
   import Tabs from "./ui/Tabs.svelte";
   import { toast } from "./ui/toasts.svelte";
 
-  let { userOpen, userId, charId, charOpen, characters, refreshToken, scopeLabel = "",
-        onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
-    { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
+  let { userOpen, userId, charId, charOpen, refreshToken, scopeLabel = "",
+        onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
+    { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; refreshToken: number;
       scopeLabel?: string;
-      onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
+      onUserDirty: () => void; onCharDirty: () => void;
       onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
@@ -104,14 +103,14 @@
     if (await edit(() => api.tabRename(idx, next))) onUserDirty();
   }
 
-  // The tab list edits the READABLE text on the row, so the colour and bold ride
-  // along here rather than being retyped as raw markup. A name that comes back
-  // unchanged is not an edit — and an unparseable one re-emits as itself, which
-  // is what keeps `parseTabName`'s give-up case from being rewritten by the mere
-  // act of opening the editor on it.
-  function renameTabText(idx: number, text: string) {
+  // The row editor edits the decomposed name — text, colour, weight — and hands
+  // back all three at once, because in the file they are one markup-bearing
+  // string. A name that comes back unchanged is not an edit, and an unparseable
+  // one re-emits as itself, which is what keeps `parseTabName`'s give-up case
+  // from being rewritten by the mere act of opening the editor on it.
+  function renameTabName(idx: number, name: TabName) {
     const current = data?.tabs.find((t) => t.index === idx)?.name ?? "";
-    const next = formatTabName({ ...parseTabName(current), text });
+    const next = formatTabName(name);
     if (next === current) return;
     void renameTab(idx, next);
   }
@@ -346,11 +345,11 @@
         <MenuButton items={viewMenu} title="Overview actions" variant="default" size="md" />
       </div>
       <div class="panes">
-        <!-- The list and the properties of what it selects, in one column.
-             Selecting a tab on the far left and renaming it on the far right
-             was a screen's width apart on a wide monitor — the same complaint,
-             in the same phase, as the width box that ended up a screen away
-             from its column. -->
+        <!-- Just the list. Everything a tab has — its text, its colour, its
+             weight, which window it is in, and deleting it — is on the row
+             itself, so the properties pane §5 specced has nothing left to hold.
+             See §13: the two fields that outlived the move both turned out to
+             be duplicates of controls elsewhere. -->
         <div class="side">
           <OverviewTabList
             {data}
@@ -360,27 +359,10 @@
             onAddWindow={addWindow}
             onRemoveWindow={removeWindow}
             onDeleteTab={deleteTab}
-            onRenameTab={renameTabText}
+            onRenameTab={renameTabName}
             onReorder={reorder}
             onMove={moveTab}
             onSetUpWindowMapping={setUpWindowMapping} />
-          <div class="props">
-            <OverviewInspector
-              {tab}
-              windows={data.windows}
-              {currentWindowIndex}
-              {charId}
-              {characters}
-              onRename={renameTab}
-              onMove={(to) => {
-                if (tab && currentWindowIndex !== null) {
-                  moveTab(tab.index, currentWindowIndex, to,
-                    data?.windows.find((w) => w.index === to)?.tab_indices.length ?? 0);
-                }
-              }}
-              {onLoadCharacter}
-              {onShowAccounts} />
-          </div>
         </div>
         <div class="scroll">
           {#if data.tabs.length > 0}
@@ -417,8 +399,6 @@
     display: grid;
     grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
   }
-  /* The list scrolls; the properties stay put beneath it. Sharing one scroller
-     would put the fields for the tab you just clicked forty rows below it. */
   .side {
     display: flex;
     flex-direction: column;
@@ -426,9 +406,4 @@
     border-right: 1px solid var(--border);
   }
   .side :global(.tablist) { flex: 1 1 auto; min-height: 4rem; }
-  .props {
-    flex: 0 1 auto;
-    overflow: auto;
-    border-top: 1px solid var(--border);
-  }
 </style>
