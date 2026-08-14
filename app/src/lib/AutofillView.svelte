@@ -11,8 +11,12 @@
   import { accel } from "./keys";
   import SearchField from "./ui/SearchField.svelte";
 
-  let { userOpen, userId = null, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, charOpen = false, charName = null, onShowAccounts = () => {}, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
       /** A character file is open. Separate from `charName`, which stays null
        * until the ESI name lookup resolves — offline, it never does. */
       charOpen?: boolean;
@@ -44,7 +48,12 @@
     try { lists = await api.autofillLists(); }
     catch (e) { error = errMessage(e); }
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // `refreshToken` as well as the two ids: neither `userOpen` nor `userId`
+  // changes across a Discard, a backup restore or an undo, so without it this
+  // view goes on showing pre-Discard data indefinitely. That is a bug in the
+  // shipped build, not something undo introduced — Layout and Overview already
+  // took the token and these three did not.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   // Sort by friendly label for findability; the raw path is shown per row.
   const sorted = $derived(
