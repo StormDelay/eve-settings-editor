@@ -217,7 +217,13 @@
           <!-- The row stays a wrapping <label> around a bare Field: the label
                names the control, and HudPanel.spec walks `.row input`. Passing
                Field a `label` here would nest one label inside another. -->
+          <!-- Label ALWAYS first, checkbox included. It used to lead with the
+               checkbox, which put a control in the label column and a label in
+               the control column — so the bool rows aligned with nothing. Every
+               control now sits in the same track, which is the whole point of a
+               properties panel. -->
           <label class="row" title={title(e)}>
+            <span class="label">{row.label}</span>
             {#if e.kind === "bool"}
               <Field
                 kind="checkbox"
@@ -225,9 +231,7 @@
                 disabled={disabled(e)}
                 disabledReason="Not present in this file"
                 onchange={(ev) => onSet(row.name, (ev.target as HTMLInputElement).checked ? "true" : "false")} />
-              <span class="label">{row.label}</span>
             {:else}
-              <span class="label">{row.label}</span>
               <Field
                 kind="number"
                 width="5.5rem"
@@ -237,10 +241,12 @@
                 disabledReason="Not present in this file"
                 onchange={numberEdit(row.name, e.kind)} />
             {/if}
-            {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
-            {#if e.value === null && e.set.how !== "unavailable"}
-              <Chip tone="neutral" size="sm">default</Chip>
-            {/if}
+            <span class="badges">
+              {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
+              {#if e.value === null && e.set.how !== "unavailable"}
+                <Chip tone="neutral" size="sm">default</Chip>
+              {/if}
+            </span>
           </label>
           {#if hudError?.name === row.name}
             <InlineMessage variant="error" detail={hudError.detail}>{hudError.text}</InlineMessage>
@@ -261,7 +267,7 @@
             step={1}
             value={effects}
             onchange={viewEdit(() => effects, onEffects)} />
-          <Chip tone="neutral" size="sm">view</Chip>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "target"}
@@ -277,7 +283,7 @@
             step={1}
             value={targets}
             onchange={viewEdit(() => targets, onTargets)} />
-          <Chip tone="neutral" size="sm">view</Chip>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "neocom" && neocom}
@@ -336,14 +342,34 @@
   .group.selected :global(.group-title) {
     color: var(--warn);
   }
+  /* A grid, not a flex row, and the reason is the bug it fixes: `.label` used to
+     carry `min-width`, so any label wider than the minimum pushed its own
+     control right and every row's control landed at a different x. Nothing
+     lined up down the panel, in a panel that is almost entirely value columns.
+
+     Three explicit tracks — label, control, badges — mean a long label wraps or
+     ellipsises inside its own column instead of shoving the column after it.
+     The control track is the same 5.5rem every number Field asks for, so the
+     inputs form a true column and the trailing chips share one right edge. */
   .row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 5.5rem auto;
     align-items: center;
-    gap: var(--s1);
+    gap: var(--s1) var(--s2);
     padding: 0;
   }
   .label {
     color: var(--text);
-    min-width: 8.5rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* One cell for zero, one or two chips, so a row with none does not let its
+     neighbours slide into the badge column. */
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    justify-self: end;
   }
 </style>

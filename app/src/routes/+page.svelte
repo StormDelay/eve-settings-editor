@@ -160,7 +160,20 @@
   // Selected canvas window, lifted here so it survives Raw/Layout switches.
   let selectedWindowId = $state<string | null>(null);
   // One bindable the ACTIVE view sets, generalised from `layoutFocusFilter`.
-  let viewFocusSearch = $state<(() => void) | undefined>(undefined);
+  /**
+   * The active view's "focus your own search box", keyed BY VIEW.
+   *
+   * It used to be a single bindable. A bound value survives its component's
+   * unmount, so after the app's first visit to Layout the slot held LayoutView's
+   * callback for the rest of the session — and `Ctrl+F` on Raw then called it,
+   * focusing a detached input and never falling through to Raw's own box. Raw's
+   * search was unreachable by keyboard the moment you had been to Layout, which
+   * is always, because Layout is where the app opens.
+   *
+   * Keyed by view, a stale entry is simply never consulted: the lookup asks for
+   * the view you are actually on.
+   */
+  let viewFocusSearch = $state<Partial<Record<View, () => void>>>({});
   // A request to reveal a node in the tree (bump `n` to re-fire on the same path).
   let reveal = $state<{ path: NodePath; n: number } | null>(null);
 
@@ -408,13 +421,13 @@
     // Suppressed while a sheet is open: every box it could focus is behind the
     // scrim, and focusing an inert control would break the sheet's focus trap.
     //
-    // NOT `viewFocusSearch?.() ?? openSearch()` — those callbacks return void,
-    // so the `??` would fire openSearch() every time, including right after the
-    // view had focused its own box.
+    // Raw's box belongs to the shell; every other view registers its own. A view
+    // with neither — Overview, Probes — does nothing rather than reaching for
+    // somebody else's field.
     findInView: () => {
       if (sheet !== null) return;
-      if (viewFocusSearch) viewFocusSearch();
-      else openSearch();
+      if (view === "raw") openSearch();
+      else viewFocusSearch[view]?.();
     },
   };
 </script>
@@ -541,7 +554,7 @@
       onReveal={revealInTree}
       onDirty={(slot) => { subject.dirty[slot] = true; noteEdit(); }}
       sharedNames={subject.sharedNames}
-      bind:focusSearch={viewFocusSearch} />
+      bind:focusSearch={viewFocusSearch.layout} />
   {:else if view === "overview"}
     <!-- Reaches across both columns by the same `display: contents` route
          LayoutView uses, but with ONE child rather than two: a tab's properties
@@ -576,7 +589,7 @@
             charName={subject.charName}
             onShowAccounts={() => (sheet = "accounts")}
             onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
-            bind:focusSearch={viewFocusSearch} />
+            bind:focusSearch={viewFocusSearch.autofill} />
         </div>
       {:else if view === "keybinds"}
         <div class="scroll">
@@ -587,7 +600,7 @@
             onShowAccounts={() => (sheet = "accounts")}
             onShowBatch={() => (sheet = "batch")}
             onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
-            bind:focusSearch={viewFocusSearch} />
+            bind:focusSearch={viewFocusSearch.keybinds} />
         </div>
       {:else if view === "probes"}
         <div class="scroll">
