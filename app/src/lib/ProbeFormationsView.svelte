@@ -5,6 +5,7 @@
            type Unit, type Vec3 } from "./probes";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { accel } from "./keys";
+  import { inAField } from "./keymap";
   import { toast } from "./ui/toasts.svelte";
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
@@ -15,8 +16,12 @@
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {} }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {} }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
       onShowAccounts?: () => void } = $props();
 
   /** The projection as loaded. `null` before the first load. */
@@ -159,7 +164,9 @@
     }
     draftUserId = userId;
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // See AutofillView: the token is what makes this view reload after a Discard,
+  // a backup restore or an undo, none of which change `userOpen` or `userId`.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   function select(f: Formation | null) {
     selectedId = f?.id ?? null;
@@ -448,14 +455,11 @@
     }
   }
 
-  /** True when the event came from somewhere the OS clipboard must keep
-   * behaving normally. A tab full of coordinate fields is exactly where Ctrl-C
-   * has to go on copying the digits the user just selected. */
-  function inAField(t: EventTarget | null): boolean {
-    const el = t as HTMLElement | null;
-    const tag = el?.tagName;
-    return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!el?.isContentEditable;
-  }
+  // `inAField` moved to keymap.ts, where the app's other global key handler
+  // needs the same answer. It was a rule about the whole app living in one
+  // component: a tab full of coordinate fields is exactly where Ctrl-C has to
+  // go on copying the digits the user just selected, and that is true of every
+  // accelerator, not only this view's.
 
   /** The picker is a CSS overlay, not a real modal, so window key events still
    * reach these handlers behind it. A paste while the Export picker is open
