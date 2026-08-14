@@ -10,6 +10,7 @@
   import { subject } from "./subject.svelte";
   import { accel } from "./keys";
   import type { OpenOutcome, PresetInfo, Slot } from "./api";
+  import type { Ctx } from "./commands";
   import type { View } from "./views";
   import AppMenu from "./AppMenu.svelte";
   import HistoryPopover from "./HistoryPopover.svelte";
@@ -20,25 +21,29 @@
 
   let {
     switcherOpen = $bindable(false),
+    /** Bindable so `file.history` can open it from the keyboard map and the app
+     *  menu. The popover is anchored to a button that lives here, so the state
+     *  stays here and only the handle goes up. */
+    historyOpen = $bindable(false),
     /** Measured, not tokenised: the bar's height is its content's, and a sheet
      *  inset by a guessed constant would either clip it or float below it. */
     height = $bindable(0),
     onOpen,
     onOpenPreset,
     onGoto,
-    onShowAccounts,
-    onShowBatch,
-    onShowAbout,
+    ctx,
     onRestored,
   }: {
     switcherOpen?: boolean;
+    historyOpen?: boolean;
     height?: number;
     onOpen: (path: string) => void;
     onOpenPreset: (p: PresetInfo) => void;
     onGoto: (v: View) => void;
-    onShowAccounts: () => void;
-    onShowBatch: () => void;
-    onShowAbout: () => void;
+    /** The registry's action half. The menu is built from the commands, so it
+     *  needs the same context anything else running one does — which replaced
+     *  three one-off `onShowX` props with the thing they were approximating. */
+    ctx: Ctx;
     onRestored: (slot: Slot, outcome: OpenOutcome) => void;
   } = $props();
 
@@ -46,7 +51,6 @@
   let subjectEl: HTMLElement | undefined = $state();
   let historyEl: HTMLElement | undefined = $state();
   let menuOpen = $state(false);
-  let historyOpen = $state(false);
 
   // Either open slot can be un-writable, so the chip reports the first that is
   // and names it. `editable` is deliberately NOT carried over as a chip: it is
@@ -128,12 +132,7 @@
 </header>
 
 {#if menuOpen && menuEl}
-  <AppMenu
-    anchor={menuEl}
-    onclose={() => (menuOpen = false)}
-    {onShowAccounts}
-    {onShowBatch}
-    {onShowAbout} />
+  <AppMenu anchor={menuEl} onclose={() => (menuOpen = false)} {ctx} />
 {/if}
 
 {#if switcherOpen && subjectEl}
@@ -142,7 +141,8 @@
     onclose={() => (switcherOpen = false)}
     {onOpen}
     {onOpenPreset}
-    {onGoto} />
+    {onGoto}
+    {ctx} />
 {/if}
 
 {#if historyOpen && historyEl}
