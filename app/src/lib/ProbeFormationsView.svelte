@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { api, errMessage, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
+  import { api, errMessage, errText, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
-  import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { accel } from "./keys";
+  import { toast } from "./ui/toasts.svelte";
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
   import FormationPicker from "./FormationPicker.svelte";
@@ -20,6 +22,13 @@
   /** The projection as loaded. `null` before the first load. */
   let loaded = $state<Formations | null>(null);
   let error = $state<string | null>(null);
+  // Four control groups own the failures this view can produce: the formation
+  // editor, the list-actions row, the Paste button, and the Import button.
+  type Msg = { text: string; detail: string; warn?: boolean };
+  let editorError = $state<Msg | null>(null);
+  let listError = $state<Msg | null>(null);
+  let pasteError = $state<Msg | null>(null);
+  let importError = $state<Msg | null>(null);
   let selectedId = $state<number | null>(null);
   let unit = $state<Unit>("au");
   /** The unit as it reads in a column header. */
@@ -173,7 +182,7 @@
       onUserDirty();
       if (id === null) select(loaded.formations.find((f) => !before.has(f.id)) ?? null);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not save the formation", kind: "error" });
+      editorError = { text: `That formation wasn't saved — ${errText(e)}`, detail: errMessage(e) };
       await reload();
       // `reload` only re-selects when `selectedId` vanished. On an id===null
       // failure (createNew/duplicate/copy) selectedId is still the pre-existing
@@ -278,7 +287,7 @@
       onUserDirty();
       select(loaded.formations[0] ?? null);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not delete the formation", kind: "error" });
+      listError = { text: `That formation wasn't deleted — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -296,50 +305,47 @@
     if (added.length) select(added[added.length - 1]);
   }
 
-  /** A copy leaves no trace on screen — the clipboard is invisible and nothing
-   * in the file changed — so say so.
-   *
-   * Deliberately NOT a toast, though §5.12 nominates this as one of the three
-   * `.flash` sites Toast replaces. The Toast host is mounted once in
-   * +page.svelte, and this view's spec mounts the view alone — so routing this
-   * through it makes the confirmation invisible to the test that checks it
-   * exists. Phase 1's acceptance gate is that all 37 spec files pass untouched,
-   * and that gate outranks the component-mapping table. It becomes a toast in
-   * Phase 5, which owns the dialog diet and can move the assertion with it. */
-  let flash = $state<string | null>(null);
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
-
   async function copyFormation() {
     if (visibleIndex < 0) return;
+    listError = null;
     try {
       await writeText(await api.probeYaml([visible[visibleIndex]]));
-      flash = `Copied “${visible[visibleIndex].name}”`;
-      clearTimeout(flashTimer);
-      flashTimer = setTimeout(() => (flash = null), 2000);
+      // The third hand-rolled `.flash`, and the last one to go. Phase 1 left it
+      // because the toast host is mounted once in the shell and this view's spec
+      // mounts the view alone — which is a fact about the spec, not about the
+      // component: `toasts` is module state, so the call is safe either way and
+      // the spec asserts the queue instead of the DOM.
+      toast(`Copied “${visible[visibleIndex].name}”`, { variant: "success" });
     } catch (e) {
-      await message(errMessage(e), { title: "Could not copy the formation", kind: "error" });
+      listError = { text: `That formation wasn't copied — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   async function pasteText(text: string) {
     if (!text.trim()) return;
+    listError = null;
     try {
       const specs = await api.probeParseYaml(text);
       // `addShared` returns silently on an empty set, and Import has its own
       // message for the same case — without one here a valid-but-empty paste is
       // indistinguishable from a button that does nothing.
+      //
+      // A toast rather than an inline message, and one of only two places that
+      // is right: the clipboard is invisible, so there is no control on screen
+      // that owns this failure.
       if (!specs.length) {
-        await message("That text contains no formations.", { title: "Paste formations" });
+        toast("That text contains no formations.", { variant: "warn" });
         return;
       }
       await addShared(specs);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not paste the formation", kind: "error" });
+      listError = { text: `That formation wasn't pasted — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   async function pasteFormation() {
     let text: string;
+    pasteError = null;
     try {
       text = await readText();
     } catch {
@@ -348,9 +354,12 @@
       // re-asks on every app launch — the wrong thing to put on a Paste button.
       // A read can still fail (no text on the clipboard, for one), and Ctrl-V
       // needs no permission on any path, so it stays the offer.
-      await message("Press Ctrl+V to paste a formation instead.", {
-        title: "The clipboard could not be read",
-      });
+      // The accelerator is rendered per platform, not written into the string:
+      // "Ctrl+V" is wrong on macOS, which this app also ships to.
+      pasteError = {
+        text: `The clipboard couldn't be read — press ${accel("V")} to paste a formation instead.`,
+        detail: "",
+      };
       return;
     }
     await pasteText(text);
@@ -383,7 +392,10 @@
         });
         if (!path) return;
         await api.probeExport(path, chosen);
-        await message(`Exported ${chosen.length} formation(s).`, { title: "Export formations" });
+        toast(
+          `Exported ${chosen.length} formation${chosen.length === 1 ? "" : "s"} to ${path.split(/[\\/]/).pop()}.`,
+          { variant: "success" },
+        );
       },
     };
   }
@@ -395,14 +407,15 @@
     });
     if (typeof picked !== "string") return;
     let items: FormationSpec[];
+    importError = null;
     try {
       items = await api.probeImport(picked);
     } catch (e) {
-      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      importError = { text: `Those formations weren't imported — ${errText(e)}`, detail: errMessage(e) };
       return;
     }
     if (!items.length) {
-      await message("That file contains no formations.", { title: "Import formations" });
+      importError = { text: "That file contains no formations.", detail: picked, warn: true };
       return;
     }
     picker = {
@@ -411,9 +424,9 @@
       label: "Import",
       confirm: async (chosen) => {
         await addShared(chosen);
-        await message(
-          `Imported ${chosen.length} formation(s). Save to write them to the account file.`,
-          { title: "Import formations" },
+        toast(
+          `Imported ${chosen.length} formation${chosen.length === 1 ? "" : "s"}. Save to write them to the account file.`,
+          { variant: "success" },
         );
       },
     };
@@ -425,10 +438,13 @@
     const p = picker;
     picker = null;
     if (!p) return;
+    listError = null;
     try {
       await p.confirm(indices.map((i) => p.items[i]));
     } catch (e) {
-      await message(errMessage(e), { title: p.title, kind: "error" });
+      // `picker.title` stops being an error title and goes back to being only
+      // the picker's heading.
+      listError = { text: `That didn't finish — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -476,11 +492,9 @@
 {#if !userOpen}
   <!-- Kept as a paragraph rather than an EmptyState: the sentence wraps a
        button mid-clause, which EmptyState's plain-string title cannot hold. -->
-  <p class="hint">
-    Probe formations live in the account file.
-    <Button variant="ghost" onclick={onShowAccounts}>Pair this character with its account</Button>
-    to edit them.
-  </p>
+  <EmptyState title="No account paired" description="Probe formations live in the account file.">
+    {#snippet action()}<Button onclick={onShowAccounts}>Pair this character…</Button>{/snippet}
+  </EmptyState>
 {:else if error}
   <InlineMessage variant="error">{error}</InlineMessage>
 {:else if loaded}
@@ -497,31 +511,49 @@
         {/each}
       </ul>
       <div class="list-actions">
-        <Button onclick={createNew}>New</Button>
+        <Button onclick={createNew}>New formation</Button>
         <Button onclick={duplicate} disabled={!current} disabledReason="Pick a formation first">
-          Duplicate
+          Duplicate formation
         </Button>
         <Button variant="danger" onclick={remove} disabled={!current} disabledReason="Pick a formation first">
-          Delete
+          Delete formation
         </Button>
       </div>
       <!-- The sharing group, kept together in its own row. Copy and Paste are a
            pair, and a user hunting for one looks where the other is — Copy sat
            beside the AU/km toggle at first and was simply not found. -->
       <div class="list-actions">
+        <!-- The accelerator is a <kbd> beside the label, not text baked into the
+             tooltip: "Ctrl+C" is wrong on macOS, which this app also ships to. -->
         <Button onclick={copyFormation} disabled={!current} disabledReason="Pick a formation first"
-                title="Copy this formation to the clipboard (Ctrl+C)">Copy</Button>
-        <Button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</Button>
+                title="Copy this formation to the clipboard">Copy <kbd>{accel("C")}</kbd></Button>
+        <Button onclick={pasteFormation} title="Add a formation from the clipboard">
+          Paste <kbd>{accel("V")}</kbd>
+        </Button>
         <Button onclick={exportFormations} disabled={!visible.length}
                 disabledReason="There are no formations to export"
-                title="Write formations out as a shareable file">Export…</Button>
-        <Button onclick={importFormations} title="Add formations from a shared file">Import…</Button>
+                title="Write formations out as a shareable file">Export formations…</Button>
+        <Button onclick={importFormations} title="Add formations from a shared file">Import formations…</Button>
       </div>
-      {#if flash}<InlineMessage variant="success">{flash}</InlineMessage>{/if}
+      <!-- Each at the control it belongs to, in the row those controls live in. -->
+      {#if listError}
+        <InlineMessage variant="error" detail={listError.detail}>{listError.text}</InlineMessage>
+      {/if}
+      {#if pasteError}
+        <InlineMessage variant="error">{pasteError.text}</InlineMessage>
+      {/if}
+      {#if importError}
+        <InlineMessage variant={importError.warn ? "warn" : "error"} detail={importError.detail}>
+          {importError.text}
+        </InlineMessage>
+      {/if}
     </aside>
 
     {#if current}
       <section class="formation">
+        {#if editorError}
+          <InlineMessage variant="error" detail={editorError.detail}>{editorError.text}</InlineMessage>
+        {/if}
         <div class="row">
           <Field
             label="Name"
@@ -534,14 +566,14 @@
                makes a non-positive range unwritable by construction. -->
           <Field
             kind="select"
-            label="Range (all probes)"
+            label="Range (every probe)"
             layout="column"
             aria-label="range for every probe"
             value={uniformRange}
             onchange={(e) => setAllRanges(Number((e.currentTarget as HTMLSelectElement).value))}
             options={RANGE_STEPS_M.map((m, i) => ({ value: m, label: `${RANGE_STEPS_AU[i]} AU` }))} />
           <span class="units">
-            <span class="meta">probe positions in</span>
+            <span class="meta">Probe positions in</span>
             <Button size="sm" pressed={unit === "au"} onclick={() => (unit = "au")}>AU</Button>
             <Button size="sm" pressed={unit === "km"} onclick={() => (unit = "km")}>km</Button>
           </span>
@@ -552,7 +584,7 @@
             <tr>
               <th>#</th>
               <th>X</th><th>Y</th><th>Z</th>
-              <th>distance</th><th>azimuth</th><th>elevation</th>
+              <th>Distance</th><th>Azimuth</th><th>Elevation</th>
               <th>range</th>
               <th></th>
             </tr>
@@ -631,7 +663,7 @@
           <Button onclick={() => { addProbe(); commit(); }}
                   disabled={draftProbes.length >= MAX_PROBES}
                   disabledReason="A formation holds at most {MAX_PROBES} probes">
-            + probe
+            Add probe
           </Button>
           <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
         </div>
@@ -647,7 +679,11 @@
         {/each}
       </section>
     {:else}
-      <EmptyState title="This account has no custom probe formations yet." />
+      <EmptyState
+        title="No custom formations"
+        description="EVE's built-in formations aren't stored in this file. Create one to get started.">
+        {#snippet action()}<Button onclick={createNew}>New formation</Button>{/snippet}
+      </EmptyState>
     {/if}
   </div>
   </div>
@@ -711,5 +747,4 @@
   td.u :global(input) { padding-right: var(--s6); }
   td.u[data-unit="°"] :global(input) { padding-right: var(--s5); }
   .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
-  .hint { color: var(--text-muted); padding: var(--s3); }
 </style>
