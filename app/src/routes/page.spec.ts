@@ -72,7 +72,14 @@ async function mount(profiles: Profile[], roster: AccountRoster = { accounts: []
   // backend can return — stub the ones the shell and its views fire on mount
   // rather than teaching them to defend against an impossible reply.
   calls.stub("list_file_backups", []);
-  calls.stub("overview_columns", { tabs: [], columns: [] });
+  // `columns` was never a field of OverviewColumns and `windows` was missing —
+  // the tab list reads the latter, so the lie surfaced as an unhandled throw.
+  calls.stub("overview_columns", {
+    tabs: [],
+    windows: [],
+    presets: [],
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+  });
   // Both the app menu's proposal count and the Accounts view read this.
   calls.stub("launcher_proposals", []);
   // This file now mounts the Layout and Probes views — Phase 2 made every tab
