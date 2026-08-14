@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { api, errMessage, type Profile, type Proposal, type Rejected } from "./api";
+  import { api, errMessage, type Profile, type Rejected } from "./api";
   import { names, resolveNames } from "./names.svelte";
   import { resolvedName } from "./filesort.svelte";
   import {
     accountsStore,
+    captureState,
+    endCapture,
+    launcherState,
     loadRoster,
     setAlias,
     confirmPairing,
@@ -18,9 +21,12 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import Panel from "./ui/Panel.svelte";
-  import PanelHeader from "./ui/PanelHeader.svelte";
+  import Sheet from "./ui/Sheet.svelte";
 
-  let { openPath }: { openPath: string | null } = $props();
+  // The view frames ITSELF rather than letting the shell do it. The alternative
+  // means plumbing Refresh and Calibrate up through `+page.svelte`, which owns
+  // neither `loadRoster()` nor the capture flow.
+  let { openPath, onClose }: { openPath: string | null; onClose: () => void } = $props();
 
   const MAX = 3;
   const roster = $derived(accountsStore.roster);
@@ -64,40 +70,57 @@
     }),
   );
 
-  // Guided capture state (see Task 11 for the flow body).
-  let capturing = $state(false);
-  let captureNote: string | null = $state(null);
-
   const nameOf = (id: number) => names[id]?.name ?? `char ${id}`;
 
-  // Launcher-log proposals. Loaded once on mount: unlike the roster, this does
-  // not change when the user edits an alias, and re-reading the logs on every
-  // roster refresh would be waste.
-  let proposals = $state<Proposal[]>([]);
-  let proposalsLoaded = $state(false);
-  // The cards the logs ever said anything about. Recorded at load and never
-  // pruned, because `proposals` empties as they are accepted and "your logs say
-  // nothing" is a lie once they have been acted on.
-  let foundCards = $state<number[]>([]);
-  // Session-only, like the M3b suggestion dismissals: a "keep mine" is a
-  // judgement about this sitting, not something to persist.
-  let dismissed = $state<number[]>([]);
-  const dismissedSet = $derived(new Set(dismissed));
-  const byCard = $derived(proposalsByCard(proposals, dismissedSet));
+  // Capture progress and the launcher's proposals both live in
+  // `accounts.svelte.ts` now, because this panel is a DISMISSABLE sheet: the
+  // capture flow requires a trip out to the EVE client, and a dismissal is not
+  // the end of the session. See that module for the full reasoning.
+  const dismissedSet = $derived(new Set(launcherState.dismissed));
+  const byCard = $derived(proposalsByCard(launcherState.proposals, dismissedSet));
   // Exactly the cards on screen, and nothing else. `accounts` is scoped to the
   // profile folder the open file lives in; an unscoped accept would write
   // pairings for accounts the user has no card for, never saw a ghost for, and
   // had no way to dismiss — the one thing this feature may never do.
   const onScreen = $derived(new Set(accounts.map((a) => a.user_id)));
   const allPairs = $derived(
-    acceptAllPairs(proposals, dismissedSet).filter(([, userId]) => onScreen.has(userId)),
+    acceptAllPairs(launcherState.proposals, dismissedSet).filter(([, userId]) =>
+      onScreen.has(userId),
+    ),
   );
   // Scoped for the same reason: proposals for accounts outside this profile
   // folder render no card and no Accept all, so counting them would suppress the
   // hint and leave a blank state that explains nothing.
-  const everFound = $derived(foundCards.some((u) => onScreen.has(u)));
+  const everFound = $derived(launcherState.foundCards.some((u) => onScreen.has(u)));
 
   const accountLabel = (userId: number) => aliasFor(userId) ?? `core_user_${userId}`;
+
+  /**
+   * The sentence that names what `Accept all` will pair.
+   *
+   * A count is not an answer to "which characters am I about to assign?", and
+   * this is the panel's most consequential control — one click writes up to nine
+   * pairings. It names characters, not accounts: each ghost already shows which
+   * account it lands on, on the card one line below.
+   *
+   * It reads the same scoped `allPairs` the click sends, so it can never name a
+   * character the click would not pair, nor miss one it would.
+   */
+  const acceptAllSentence = $derived.by(() => {
+    const n = allPairs.map(([charId]) => nameOf(charId));
+    if (n.length === 0) return "";
+    // Scoped to one profile folder with MAX = 3, nine is the ceiling and every
+    // name fits. The "and N more" cap exists only for the unscoped fallback, and
+    // that trailing number is the one place a count is allowed — by then the
+    // sentence has already named eight.
+    const list =
+      n.length > 8
+        ? `${n.slice(0, 8).join(", ")} and ${n.length - 8} more`
+        : n.length === 1
+          ? n[0]
+          : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+    return `Your launcher log pairs ${list}.`;
+  });
 
   // Name the character and the account rather than echoing a bare cap message —
   // "Account already has 3 characters" does not say WHICH account, and the user
@@ -123,7 +146,7 @@
       // ghost is the affordance for retrying after an unpair.
       const failed = new Set(rejected.map((r) => r.char_id));
       const accepted = new Set(pairs.map(([charId]) => charId).filter((c) => !failed.has(c)));
-      proposals = proposals.filter((p) => !accepted.has(p.char_id));
+      launcherState.proposals = launcherState.proposals.filter((p) => !accepted.has(p.char_id));
       if (rejected.length > 0) error = rejected.map(rejectionText).join(" ");
     } catch (e) {
       error = errMessage(e);
@@ -134,7 +157,7 @@
     error = null;
     try {
       await confirmPairing(charId, userId);
-      proposals = proposals.filter((p) => p.char_id !== charId);
+      launcherState.proposals = launcherState.proposals.filter((p) => p.char_id !== charId);
     } catch (e) {
       error = errMessage(e);
     }
@@ -145,9 +168,13 @@
   }
 
   async function startCapture() {
-    captureNote = null;
+    // A second press must never re-baseline a capture already in flight: it
+    // would snapshot the files as they are NOW — after EVE's write — and the
+    // detection would then be guaranteed to find nothing.
+    if (captureState.active) return;
+    captureState.note = null;
     await api.beginCapture();
-    capturing = true;
+    captureState.active = true;
   }
 
   async function finishCapture() {
@@ -158,64 +185,88 @@
         await confirmPairing(charId, userId); // already refreshes the roster
         // Same pruning `onConfirm` does: a character the launcher also proposed
         // would otherwise stay a ghost on the very card it now fills, and still
-        // count towards Accept all.
-        proposals = proposals.filter((p) => p.char_id !== charId);
-        captureNote = `Paired ${nameOf(charId)} ↔ account ${userId}.`;
-        capturing = false;
+        // count towards Accept all. It has to run BEFORE the note is set.
+        launcherState.proposals = launcherState.proposals.filter((p) => p.char_id !== charId);
+        // An ending, so the baseline is spent and gets discarded. The note names
+        // the account by alias rather than by its bare id, for the reason
+        // `rejectionText` already gives: a raw `core_user` number does not tell
+        // the user which account they just paired.
+        await endCapture(`Paired ${nameOf(charId)} ↔ account ${accountLabel(userId)}.`);
       } catch (e) {
-        captureNote = errMessage(e);
+        // NOT an ending: the cap was hit, the wizard stays open, and the next
+        // press must diff against the same baseline.
+        captureState.note = errMessage(e);
       }
       return;
     }
+    // Every branch below is a RETRY, and each retry diffs against the baseline
+    // that is still sitting in the backend. None of them ends the capture.
     if (r.changed_users.length === 0) {
-      captureNote =
+      captureState.note =
         "The account file didn't change. Make an account-wide change (so core_user is written), fully log out, then click Done again.";
     } else if (r.changed_users.length > 1) {
-      captureNote = `Several account files changed (${r.changed_users.join(", ")}). Log out of just one account and retry.`;
+      captureState.note = `Several account files changed (${r.changed_users.join(", ")}). Log out of just one account and retry.`;
     } else if (r.changed_chars.length > 1) {
-      captureNote =
+      captureState.note =
         "Several character files changed — log in as just one character, change something, log out, and retry.";
     } else {
-      captureNote = "No matching character file changed — log in as one character, change something, log out, and retry.";
+      captureState.note = "No matching character file changed — log in as one character, change something, log out, and retry.";
     }
     await loadRoster();
   }
 
   loadRoster();
-  api
-    .launcherProposals()
-    .then(async (p) => {
-      proposals = p;
-      // A disputed proposal shows on the card that holds the chip today, not on
-      // the one the launcher names — same routing as `proposalsByCard`.
-      foundCards = p.map((x) => x.conflict ?? x.user_id);
-      await resolveNames(p.map((x) => x.char_id));
-    })
-    .catch(() => {})
-    .finally(() => (proposalsLoaded = true));
+  // Once per SESSION, not once per mount. The sheet is dismissable, so
+  // re-mounting must not undo a "Keep mine", must not re-parse every launcher
+  // log, and must not recompute `foundCards` from a list the accepted proposals
+  // have already left — which is what makes the panel call its own logs liars.
+  if (!launcherState.loaded) {
+    api
+      .launcherProposals()
+      .then(async (p) => {
+        launcherState.proposals = p;
+        // A disputed proposal shows on the card that holds the chip today, not
+        // on the one the launcher names — same routing as `proposalsByCard`.
+        launcherState.foundCards = p.map((x) => x.conflict ?? x.user_id);
+        await resolveNames(p.map((x) => x.char_id));
+      })
+      .catch(() => {})
+      .finally(() => (launcherState.loaded = true));
+  }
 </script>
 
-<section class="accounts">
-  <PanelHeader class="accounts-head" title="Accounts" level={2}>
-    {#snippet actions()}
-      {#if allPairs.length > 0}
-        <Button variant="primary" onclick={acceptAll}>
-          Accept all — {allPairs.length} character{allPairs.length === 1 ? "" : "s"}
-        </Button>
-      {/if}
-      <Button onclick={() => loadRoster()}>Refresh</Button>
-      <Button onclick={startCapture}>Calibrate an account…</Button>
-    {/snippet}
-  </PanelHeader>
+<Sheet
+  title="Accounts"
+  titled
+  placement="work"
+  onclose={onClose}
+  class="accounts-sheet"
+  data-testid="accounts-backdrop">
+  <!-- Refresh and Calibrate belong to the frame; `Accept all` deliberately does
+       NOT, because a count is not an answer to "which characters am I about to
+       assign?" — it moves into the body with the names (§4.8). -->
+  {#snippet actions()}
+    <Button onclick={() => loadRoster()}>Refresh</Button>
+    <Button onclick={startCapture} disabled={captureState.active}
+            disabledReason="A calibration is already in progress">Calibrate an account…</Button>
+  {/snippet}
 
-  {#if capturing}
-    <Panel class="capture" as="div" role="dialog" aria-label="Calibrate an account">
+  <!-- One wrapper so this file's scoped rules still have an element of its own
+       to hang off: everything below used to sit inside `<section class="accounts">`,
+       and the Sheet's own root belongs to the Sheet's scope, not this one. -->
+  <div class="accounts">
+  {#if captureState.active}
+    <!-- A plain Panel, not `role="dialog"`: inside a sheet that would be a
+         dialog within a dialog. -->
+    <Panel class="capture" as="div">
+      <h3>Calibrate an account</h3>
       <p>1. Launch EVE and log in as the character whose account you want to identify.</p>
       <p>2. Change an account-wide setting (e.g. toggle Camera Shake under Settings → Display &amp; Graphics) so the account file is written.</p>
       <p>3. Fully log out / close the client, then click Done.</p>
+      <p class="capture-note">You can close this panel and come back — the calibration keeps running.</p>
       <div class="capture-actions">
         <Button variant="primary" onclick={finishCapture}>Done</Button>
-        <Button onclick={() => (capturing = false)}>Cancel</Button>
+        <Button onclick={() => endCapture()}>Cancel</Button>
       </div>
     </Panel>
   {/if}
@@ -226,10 +277,21 @@
        class — and it explains what to do next about the calibration panel
        directly above it. Moving it to a corner, or giving it a timer, would be
        a behaviour change. -->
-  {#if captureNote}<InlineMessage>{captureNote}</InlineMessage>{/if}
+  {#if captureState.note}<InlineMessage>{captureState.note}</InlineMessage>{/if}
+
+  <!-- Directly above the cards the names appear on, so the sentence and the
+       ghosts are one glance apart. This is the sheet's only primary button. -->
+  {#if allPairs.length > 0}
+    <InlineMessage variant="info" class="accept-all">
+      {acceptAllSentence}
+      <Button variant="primary" onclick={acceptAll}>
+        {allPairs.length === 1 ? "Accept" : "Accept all"}
+      </Button>
+    </InlineMessage>
+  {/if}
 
   <!-- InlineMessage, not EmptyState: the account cards follow it. -->
-  {#if proposalsLoaded && !everFound}
+  {#if launcherState.loaded && !everFound}
     <InlineMessage>
       Your EVE launcher logs say nothing about these accounts — use “Calibrate an account…”
       to pair a character by hand.
@@ -282,10 +344,17 @@
                 <Chip state="proposed" title="From your launcher log">
                   {nameOf(gid)}
                   {#snippet actions()}
-                    <Button variant="ghost" size="sm" iconOnly title="Accept {nameOf(gid)}"
-                            onclick={() => onConfirm(gid, acct.user_id)}>✓</Button>
+                    <!-- Not symmetric, and they should stop looking it: Accept
+                         writes to the store, Dismiss is session-only and undone
+                         by reopening the app. A bare ✓ beside a bare ✕ at equal
+                         weight is part of why the ghost read as decoration
+                         rather than as a question. The accessible name is
+                         unchanged, and the visible text is a prefix of it. -->
+                    <Button variant="primary" size="sm" title="Accept {nameOf(gid)}"
+                            aria-label="Accept {nameOf(gid)}"
+                            onclick={() => onConfirm(gid, acct.user_id)}>Accept</Button>
                     <Button variant="ghost" size="sm" iconOnly title="Dismiss {nameOf(gid)}"
-                            onclick={() => (dismissed = [...dismissed, gid])}>✕</Button>
+                            onclick={() => (launcherState.dismissed = [...launcherState.dismissed, gid])}>✕</Button>
                   {/snippet}
                 </Chip>
               {:else}
@@ -326,7 +395,7 @@
             <Button size="sm" aria-label="Move {nameOf(c.charId)}"
                     onclick={() => onConfirm(c.charId, c.target)}>Move it</Button>
             <Button size="sm" aria-label="Keep {nameOf(c.charId)}"
-                    onclick={() => (dismissed = [...dismissed, c.charId])}>Keep mine</Button>
+                    onclick={() => (launcherState.dismissed = [...launcherState.dismissed, c.charId])}>Keep mine</Button>
           </InlineMessage>
         {/each}
       </li>
@@ -343,14 +412,17 @@
       </ul>
     </div>
   {/if}
-</section>
+  </div>
+</Sheet>
 
 <style>
   /* `--line` and `--panel` are gone. They were referenced four times in this
      file and declared in no stylesheet in the repo, so every card, chip and
      panel border here fell back to #3333 — a colour no other view used. The
      no-undefined-tokens guard is what would have caught it. */
-  .accounts { padding: var(--s4); overflow: auto; }
+  /* `.accounts`'s own padding and overflow are gone with it: the Sheet owns
+     both now, and a scroller inside a scroller is how a sheet ends up with two
+     scrollbars. */
   .cards { list-style: none; padding: 0; display: grid; gap: var(--s3); }
   .card { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s2); }
   .accounts :global(.alias input) { font-weight: 600; width: 100%; }

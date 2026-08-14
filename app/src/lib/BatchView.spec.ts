@@ -73,7 +73,7 @@ async function mount(openPath: string | null = `${DIR}/core_char_90000001.dat`) 
   calls.stub("resolve_character_names", {});
   // Only the default: a test that stubbed its own plan before mounting keeps it.
   if (!calls.stubbed("setup_preview")) calls.stub("setup_preview", PLAN);
-  render(BatchView, { openPath });
+  render(BatchView, { props: { openCharPath: openPath, openUserPath: null, onClose: () => {} } });
   // The component discovers profiles and the roster on mount; nothing renders
   // a target row until both land.
   await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
@@ -231,7 +231,9 @@ test("a stale preview response cannot overwrite a newer one", async () => {
     "setup_preview",
     () => new Promise<SetupPlan>((resolve) => pending.push(resolve)),
   );
-  render(BatchView, { openPath: `${DIR}/core_char_90000001.dat` });
+  render(BatchView, {
+    props: { openCharPath: `${DIR}/core_char_90000001.dat`, openUserPath: null, onClose: () => {} },
+  });
   await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
 
   await fireEvent.click(targetBox(90000002));
@@ -303,12 +305,116 @@ test("warns when a target is the file currently open", async () => {
   await fireEvent.click(targetBox(90000001));
   await fireEvent.click(aspect("Window layout"));
 
-  expect(await screen.findByText(/open in the editor/i)).toBeTruthy();
+  // REWRITTEN: the warning names the document rather than saying "one target".
+  // With the editor standing behind the sheet, the file it is talking about is
+  // right there on screen.
+  const warning = await screen.findByText(/open in the editor behind this sheet/i);
+  // Named — by resolved name where there is one, else by the id the row itself
+  // shows. What matters is that it identifies a document rather than counting.
+  expect(warning.textContent).toMatch(/90000001/);
+  expect(warning.textContent).not.toMatch(/One target/i);
 
   // And it is about the open file specifically, not about any target.
   await fireEvent.click(targetBox(90000001));
   await fireEvent.click(targetBox(90000003));
   await waitFor(() => expect(screen.queryByText(/open in the editor/i)).toBeNull());
+});
+
+/**
+ * The half `targetsOpenFile` could not see at all: account writes are computed
+ * by the backend and returned in `plan.account_writes[]`, and a copy of an
+ * account-scoped aspect onto a paired sibling writes the account file — which
+ * may be the very one open in the user slot.
+ */
+test("warns when the plan writes the open account file", async () => {
+  const USER = `${DIR}/core_user_80000001.dat`;
+  calls.stub("setup_preview", {
+    char_writes: [{ path: `${DIR}/core_char_90000002.dat` } as never],
+    account_writes: [
+      { user_id: 80000001, path: USER, full_copy: false, collateral_char_ids: [] },
+    ],
+    excluded: [],
+    source_error: null,
+  });
+  calls.stub("discover_profiles", PROFILES);
+  calls.stub("account_roster", ROSTER);
+  calls.stub("setup_apply", []);
+  calls.stub("resolve_character_names", {});
+  render(BatchView, {
+    props: {
+      openCharPath: `${DIR}/core_char_90000001.dat`,
+      openUserPath: USER,
+      onClose: () => {},
+    },
+  });
+  await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
+
+  // No target is the open CHARACTER file — only the planned account write
+  // touches an open document.
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+
+  const warning = await screen.findByText(/open in the editor behind this sheet/i);
+  expect(warning.textContent).toMatch(/account file/i);
+});
+
+test("apply reports exactly the paths it wrote, and reports nothing when it throws", async () => {
+  const written: string[][] = [];
+  calls.stub("discover_profiles", PROFILES);
+  calls.stub("account_roster", ROSTER);
+  calls.stub("resolve_character_names", {});
+  calls.stub("setup_preview", PLAN);
+  calls.stub("setup_apply", [
+    { path: `${DIR}/core_char_90000002.dat`, ok: true, backup_path: "b", error: null },
+    { path: `${DIR}/core_char_90000003.dat`, ok: false, backup_path: null, error: "read-only" },
+  ]);
+  render(BatchView, {
+    props: {
+      openCharPath: `${DIR}/core_char_90000001.dat`,
+      openUserPath: null,
+      onClose: () => {},
+      onApplied: (w: string[]) => written.push(w),
+    },
+  });
+  await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+  const copy = screen.getByRole("button", { name: "Copy" });
+  await waitFor(() => expect(copy.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(copy);
+
+  // Only the ones that landed: a failed target was not written, so re-reading a
+  // slot for it would be a lie.
+  await waitFor(() => expect(written).toEqual([[`${DIR}/core_char_90000002.dat`]]));
+});
+
+test("the sheet stays open after a successful apply, showing the results", async () => {
+  let closed = 0;
+  calls.stub("discover_profiles", PROFILES);
+  calls.stub("account_roster", ROSTER);
+  calls.stub("resolve_character_names", {});
+  calls.stub("setup_preview", PLAN);
+  calls.stub("setup_apply", [
+    { path: `${DIR}/core_char_90000002.dat`, ok: true, backup_path: "b", error: null },
+  ]);
+  render(BatchView, {
+    props: {
+      openCharPath: `${DIR}/core_char_90000001.dat`,
+      openUserPath: null,
+      onClose: () => (closed += 1),
+    },
+  });
+  await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Window layout"));
+  const copy = screen.getByRole("button", { name: "Copy" });
+  await waitFor(() => expect(copy.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(copy);
+
+  // Closing automatically would discard the results the user just asked for.
+  await waitFor(() => expect(calls.of("setup_apply").length).toBe(1));
+  expect(screen.getByRole("dialog", { name: "Copy settings" })).toBeTruthy();
+  expect(closed).toBe(0);
 });
 
 describe("the file mode", () => {
