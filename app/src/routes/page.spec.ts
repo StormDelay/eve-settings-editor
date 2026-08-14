@@ -13,6 +13,9 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import Page from "./+page.svelte";
 import { calls } from "$lib/test/setup";
 import { subject } from "$lib/subject.svelte";
+import { names } from "$lib/names.svelte";
+import { accountsStore } from "$lib/accounts.svelte";
+import { toasts } from "$lib/ui/toasts.svelte";
 import type { AccountRoster, OpenOutcome, Profile, TreeNodeData } from "$lib/api";
 
 // The shell sets the OS window title from the SUBJECT. `vi.hoisted` so the spy
@@ -228,6 +231,61 @@ describe("saving", () => {
 
     expect(save().disabled).toBe(false);
     expect(screen.getByText(/1 unsaved/)).toBeTruthy();
+  });
+
+  /**
+   * §2.9's bug, pinned.
+   *
+   * Saving a character whose overview was edited marks BOTH slots dirty, so one
+   * Save writes two files — and it used to `message()` inside the loop, stacking
+   * two native modals, each naming a raw filename and a backup path, each
+   * needing its own dismissal. One click, two modals, to report success.
+   *
+   * One toast now, naming people rather than files.
+   */
+  test("one Save that writes both slots produces exactly one toast", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("save_document", { bytes_written: 1024, backup_path: "/eve/backups/x.bak" });
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    // Both slots resolved, so the toast can name people. The filename fallback
+    // is correct when a name is unknown; what is under test is that a KNOWN name
+    // is used, which is what the old message never did.
+    names[950] = { name: "Baguette Commander", category: "character" };
+    accountsStore.roster = { accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950] }], unassigned: [] };
+    subject.slots.user = opened("core_user_140.dat");
+    subject.dirty.char = true;
+    subject.dirty.user = true;
+    toasts.length = 0;
+
+    await fireEvent.click(save());
+
+    // Both files written...
+    await waitFor(() => expect(calls.of("save_document").length).toBe(2));
+    // ...and reported once.
+    await waitFor(() => expect(toasts).toHaveLength(1));
+    expect(toasts[0].message).toBe("Saved Baguette Commander and stormdelay2.");
+    // The two facts nobody reads at save time are NOT in it; they live in
+    // History, where they are wanted.
+    expect(toasts[0].message).not.toMatch(/bytes|backup|\.dat/i);
+  });
+
+  test("a single-slot save names the one file it wrote", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("save_document", { bytes_written: 1024, backup_path: "/eve/backups/x.bak" });
+    await mount([profile(file("core_char_950.dat", "char", 950))]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    subject.dirty.char = true;
+    toasts.length = 0;
+    await fireEvent.click(save());
+
+    await waitFor(() => expect(calls.of("save_document").length).toBe(1));
+    await waitFor(() => expect(toasts).toHaveLength(1));
+    expect(toasts[0].message).not.toContain(" and ");
   });
 
   // §5.10's one free line: a tab click leaves the takeover, so Accounts and
@@ -545,7 +603,7 @@ describe("the launch empty state", () => {
 // at the far right of the bar opened a popup at the far left. One door now, and
 // the shortcut is written on it.
 describe("opening the subject switcher", () => {
-  const panel = () => screen.queryByPlaceholderText(/search characters and views/i);
+  const panel = () => screen.queryByPlaceholderText(/search characters, presets and commands/i);
 
   test("the subject button opens it, and it is the only button that does", async () => {
     await mount([profile(file("core_char_950.dat", "char", 950))]);

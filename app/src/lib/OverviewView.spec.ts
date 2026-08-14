@@ -435,3 +435,72 @@ test("+ Window dirties both slots and hands the new window up", async () => {
   expect(onUserDirty).toHaveBeenCalled();
   expect(onCharDirty).toHaveBeenCalled();
 });
+
+/**
+ * §2.8's bug, pinned by its own string.
+ *
+ * The confirm this replaces said "This can't be undone." It could: the delete
+ * mutates the in-memory document and Discard re-reads both files from disk. The
+ * genuinely comparable mutation thirty lines away in LayoutView said the
+ * opposite and said it correctly — two dialogs, opposite claims, identical
+ * mechanism, which teaches a user that the app's warnings are decoration.
+ *
+ * There is no dialog mock in this file, and that absence is half the assertion.
+ */
+describe("deleting a tab", () => {
+  const twoTabs = () => columns(tab(0, "PvP"), tab(1, "Mining"));
+
+  async function deleteFirstTab() {
+    calls.stub("overview_columns", twoTabs());
+    calls.stub("tab_delete", columns(tab(0, "Mining")));
+    const spies = mount();
+    await findRow("PvP");
+    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete tab" }));
+    return spies;
+  }
+
+  test("it happens on the click, with no confirmation in the way", async () => {
+    toasts.length = 0;
+    await deleteFirstTab();
+    await waitFor(() => expect(calls.of("tab_delete")).toHaveLength(1));
+  });
+
+  test("the toast names the tab and does NOT claim it cannot be undone", async () => {
+    toasts.length = 0;
+    await deleteFirstTab();
+    await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
+    const m = toasts[toasts.length - 1].message;
+    expect(m).toContain("PvP");
+    expect(m).toMatch(/save to write it to disk/i);
+    expect(m).not.toMatch(/can'?t be undone/i);
+  });
+
+  /** Both slots, because the backend carries the surviving tabs' per-tab column
+   *  widths onto their new indices — miss the char flag and that half is
+   *  silently dropped at the next save. */
+  test("it marks both slots unsaved", async () => {
+    const { onUserDirty, onCharDirty } = await deleteFirstTab();
+    await waitFor(() => expect(onUserDirty).toHaveBeenCalled());
+    expect(onCharDirty).toHaveBeenCalled();
+  });
+
+  /** A refused delete lands at the tab actions, not in a modal — and says which
+   *  thing failed, which "Edit failed" never could. */
+  test("a refused delete reports at the control and raises no dialog", async () => {
+    calls.stub("overview_columns", twoTabs());
+    calls.stub("tab_delete", () => {
+      throw { code: "read_only", message: "The account file is read-only." };
+    });
+    mount();
+    await findRow("PvP");
+    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete tab" }));
+
+    const msg = await screen.findByRole("alert");
+    expect(msg.textContent).toContain("That tab wasn't deleted");
+    expect(msg.textContent).toContain("The account file is read-only.");
+    // The bracketed machine code is relegated to `title=`, never the sentence.
+    expect(msg.textContent).not.toContain("read_only");
+  });
+});
