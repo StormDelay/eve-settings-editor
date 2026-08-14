@@ -42,6 +42,23 @@
    *  user picks a backup BY, so it is what the confirmation names. */
   const stampOf = (b: BackupInfo) => b.file_name.split(".").slice(-2, -1)[0] ?? b.file_name;
 
+  /**
+   * Show the five most recent, and the rest behind a toggle.
+   *
+   * Not tidiness — it is what keeps the SECOND file's group reachable. History
+   * renders one group per open slot, character first, and a character with
+   * thirteen backups filled the popover and pushed the account's group below the
+   * fold. Saving from Probes writes only the account file, so the group that had
+   * just changed was the one you could not see, and the panel read as if the
+   * save had not happened.
+   *
+   * Five, because the restore you actually want is nearly always the last save.
+   */
+  const CAP = 5;
+  let showAll = $state(false);
+  const shown = $derived(showAll ? backups : backups.slice(0, CAP));
+  const hidden = $derived(Math.max(0, backups.length - CAP));
+
   // Refetch on save (savedAt bumps) and on mount. Closing the popover unmounts
   // this, so a stale list cannot survive a save.
   $effect(() => {
@@ -90,7 +107,7 @@
     <EmptyState title="No history yet" description="Every save leaves a restorable copy here." />
   {/if}
   <ul>
-    {#each backups as b (b.path)}
+    {#each shown as b (b.path)}
       <li>
         <ListRow>
           <span class="stamp">{stampOf(b)}</span>
@@ -102,6 +119,11 @@
       </li>
     {/each}
   </ul>
+  {#if hidden > 0}
+    <Button variant="ghost" size="sm" onclick={() => (showAll = !showAll)}>
+      {showAll ? "Show fewer" : `${hidden} older`}
+    </Button>
+  {/if}
 </section>
 
 <style>
