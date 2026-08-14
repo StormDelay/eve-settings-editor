@@ -7,6 +7,7 @@ mod prefs;
 mod presets;
 mod scenes;
 mod setup;
+mod undo;
 
 #[cfg(test)]
 mod testkit;
@@ -76,6 +77,21 @@ fn apply_mutations(
     mutations: Vec<settings_model::Mutation>,
 ) -> Result<settings_model::Node, ErrDto> {
     ops::apply_mutations(&state, slot, &mutations)
+}
+
+#[tauri::command]
+fn undo(state: tauri::State<'_, AppState>) -> Option<undo::UndoOutcome> {
+    undo::undo(&state)
+}
+
+#[tauri::command]
+fn redo(state: tauri::State<'_, AppState>) -> Option<undo::UndoOutcome> {
+    undo::redo(&state)
+}
+
+#[tauri::command]
+fn undo_state(state: tauri::State<'_, AppState>) -> undo::UndoState {
+    undo::undo_state(&state)
 }
 
 #[tauri::command]
@@ -641,6 +657,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
+            undo, redo, undo_state,
             window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
             launcher_proposals,
