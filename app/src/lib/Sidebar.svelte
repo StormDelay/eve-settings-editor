@@ -15,7 +15,7 @@
   // time, and is stated at both moments it bites — the save disclosure names the
   // siblings at the moment of writing, and `ScopeBanner` says so on every
   // account-scoped view before the edit.
-  import { subject, accountAliasOf, noCharactersHint } from "./subject.svelte";
+  import { subject, accountAliasOf, noCharactersHint, shellErrors } from "./subject.svelte";
   import { resolvedName } from "./filesort.svelte";
   import { profileLabels, primaryProfileDir, profileNote } from "./profiles";
   import PresetGroup from "./PresetGroup.svelte";
@@ -91,6 +91,10 @@
   {/if}
 
   {#if subject.profilesError}<InlineMessage variant="error">{subject.profilesError}</InlineMessage>{/if}
+  <!-- A file that would not open, reported above the list that offered it. -->
+  {#if shellErrors.open}
+    <InlineMessage variant="error" detail={shellErrors.open.detail}>{shellErrors.open.text}</InlineMessage>
+  {/if}
   <!-- InlineMessage rather than EmptyState, though §4.5 files these under
        "there is nothing here". Two reasons: content follows them (the preset
        group and any character rows), so EmptyState's centred 32px block would

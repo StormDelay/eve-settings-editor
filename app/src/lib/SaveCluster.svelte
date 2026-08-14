@@ -9,8 +9,9 @@
   // one placement is the whole of the fix for fault (a): entering Accounts or
   // Copy settings with unsaved edits used to take Save and both unsaved badges
   // off the screen, with no way back except opening another file.
-  import { subject, discardChanges, saveFile } from "./subject.svelte";
+  import { subject, discardChanges, saveFile, shellErrors } from "./subject.svelte";
   import Button from "./ui/Button.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import Popover from "./ui/Popover.svelte";
   import ScopeBanner from "./ui/ScopeBanner.svelte";
 
@@ -59,6 +60,14 @@
     disabled={!subject.canSave}
     disabledReason={saveReason}
     onclick={() => saveFile()}>Save</Button>
+  <!-- Both Save and Discard report here, because this is the control the user
+       operated. A two-slot save can half-fail, so the sentence names WHICH half
+       rather than saying "Save failed". -->
+  {#if shellErrors.save}
+    <InlineMessage variant="error" detail={shellErrors.save.detail}>
+      {shellErrors.save.text}
+    </InlineMessage>
+  {/if}
 </div>
 
 {#if open && trigger}
