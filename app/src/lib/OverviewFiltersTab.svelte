@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns } from "./api";
+  import { api, errMessage, errText, type OverviewColumns } from "./api";
   import defaultPresetNames from "./data/default-preset-names.json";
   import defaultPresetsBundle from "./data/default-presets.json";
   import overviewGroups from "./data/overview-groups.json";
@@ -9,13 +9,24 @@
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
-  import { message, confirm } from "@tauri-apps/plugin-dialog";
+  import { toast } from "./ui/toasts.svelte";
+  import { undoAction } from "./undo.svelte";
 
   let { data, tabIndex, onChanged, onUserDirty }:
     { data: OverviewColumns | null; tabIndex: number | null;
       onChanged: (next: OverviewColumns) => void; onUserDirty: () => void } = $props();
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
+
+  /** Which control a failure belongs to. Seven call sites, six controls — one
+   *  live message each, replaced rather than stacked. */
+  type Where = "groups" | "exception" | "rename" | "preset" | "duplicate" | "delete";
+  let error = $state<{ where: Where; text: string; detail: string } | null>(null);
+
+  function fail(where: Where, text: string, e: unknown): void {
+    error = { where, text, detail: errMessage(e) };
+  }
+  const at = (where: Where) => (error?.where === where ? error : null);
 
   // The preset dropdown's default-profile options: EVE's built-in bundle for
   // this account's on-disk regime (modern DefaultPreset_<id> vs legacy
@@ -99,6 +110,7 @@
   // checkbox or a category's All/None. `presetSetGroups` has always taken the
   // complete list, so ticking Entity's ~400 groups is one round trip, not 400.
   async function applyGroups(next: number[]) {
+    error = null;
     if (!tab) return;
     const t = tab;
     try {
@@ -110,7 +122,7 @@
         onChanged(await api.presetSetGroups(t.preset, next));
       }
       onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    } catch (e) { fail("groups", `Those groups weren't changed — ${errText(e)}`, e); }
   }
 
   const setPresetGroup = (id: number, on: boolean) => applyGroups(toggleGroup(presetGroups, id, on));
@@ -123,6 +135,7 @@
     applyGroups(toggleGroups(presetGroups, cat.groups.map((g) => g.id), on));
 
   async function setException(id: number, choice: Exception) {
+    error = null;
     if (!tab) return;
     const t = tab;
     const next = applyException(presetFiltered, presetAlwaysShown, id, choice);
@@ -134,7 +147,7 @@
         onChanged(await api.presetSetStates(t.preset, next.filtered, next.alwaysShown));
       }
       onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    } catch (e) { fail("exception", `That exception wasn't changed — ${errText(e)}`, e); }
   }
 
   // Display label for a preset. EVE's built-in presets are keyed
@@ -166,26 +179,37 @@
     pending = { value: labelFor(tab.preset), old: tab.preset };
   }
   async function submitPending() {
+    error = null;
     if (!pending) return;
     const p = pending;
     const name = p.value.trim();
-    pending = null;
-    if (!name) return;
+    if (!name) {
+      pending = null;
+      return;
+    }
     try {
       // Compare against the shown label: the rename box is prefilled with
       // labelFor(old), so an unedited submit on a DefaultPreset_<id> (label
       // "Carriers") must be a no-op, not a rename of the raw key to "Carriers".
-      if (name === labelFor(p.old)) return;
-      onChanged(await api.presetRename(p.old, name));
-      onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+      if (name !== labelFor(p.old)) {
+        onChanged(await api.presetRename(p.old, name));
+        onUserDirty();
+      }
+      // The field closes on SUCCESS only. It used to close first and report the
+      // failure in a modal, so a refused rename threw away what the user typed
+      // and made them start again — which is the retry cost that made the modal
+      // feel like a punishment rather than a report.
+      pending = null;
+    } catch (e) { fail("rename", `The preset wasn't renamed — ${errText(e)}`, e); }
   }
   async function setTabPreset(preset: string) {
+    error = null;
     if (!tab || preset === tab.preset) return;
     try { onChanged(await api.tabSetPreset(tab.index, preset)); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) { fail("preset", `The tab's preset wasn't changed — ${errText(e)}`, e); }
   }
   async function duplicatePreset() {
+    error = null;
     if (!tab) return;
     const t = tab;
     const name = forkName(labelFor(t.preset), storedNames);
@@ -198,22 +222,33 @@
         onChanged(await api.tabSetPreset(t.index, name));
       }
       onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    } catch (e) { fail("duplicate", `The preset wasn't duplicated — ${errText(e)}`, e); }
   }
   async function deletePreset() {
+    error = null;
     if (!tab || !data) return;
     const name = tab.preset;
     const list = data.presets.map((p) => p.name);
     const pos = list.indexOf(name);
     if (pos < 0 || list.length <= 1) return;
     const neighbour = pos > 0 ? list[pos - 1] : list[pos + 1];
-    const ok = await confirm(
-      `Delete preset "${labelFor(name)}"? Tabs using it will move to "${labelFor(neighbour)}".`,
-      { title: "Delete preset", kind: "warning" },
-    );
-    if (!ok) return;
-    try { onChanged(await api.presetDelete(name)); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    // No confirmation: this is an OVERVIEW preset, stored inside the account
+    // document, and Discard reverses it exactly. (The other thing called a
+    // preset — a settings-preset folder on disk — keeps its confirm, because
+    // deleting one is `remove_dir_all`. Two unrelated things, one word, opposite
+    // sides of the reversibility line.)
+    //
+    // The toast is strictly MORE informative than the dialog it replaces: it can
+    // count the tabs that moved, and the dialog could only name the neighbour.
+    const moved = data.tabs.filter((t) => t.preset === name).length;
+    try {
+      onChanged(await api.presetDelete(name));
+      onUserDirty();
+      toast(
+        `Deleted “${labelFor(name)}”. ${moved} tab${moved === 1 ? "" : "s"} now use${moved === 1 ? "s" : ""} “${labelFor(neighbour)}”.`,
+        { action: undoAction() },
+      );
+    } catch (e) { fail("delete", `The preset wasn't deleted — ${errText(e)}`, e); }
   }
 </script>
 
@@ -231,13 +266,16 @@
         ...grouped.defaults.map((k) => ({ value: k, label: labelFor(k), group: "Default profiles" })),
         ...grouped.user.map((k) => ({ value: k, label: labelFor(k), group: "Your profiles" })),
       ]} />
+    {#if at("preset")}
+      <InlineMessage variant="error" detail={error!.detail}>{error!.text}</InlineMessage>
+    {/if}
     <div class="preset-actions">
       <Button onclick={duplicatePreset} disabled={!editable}
               disabledReason="This preset cannot be duplicated"
               title="Duplicate this preset">Duplicate preset</Button>
       <Button onclick={startRenamePreset} disabled={!storedPreset || isDefaultKey(tab.preset)}
               disabledReason="A built-in profile cannot be renamed"
-              title="Rename this preset">Rename preset</Button>
+              title="Rename this preset">Rename preset…</Button>
       <Button variant="danger" onclick={deletePreset}
               disabled={!storedPreset || isDefaultKey(tab.preset) || (data?.presets.length ?? 0) <= 1}
               disabledReason={isDefaultKey(tab.preset)
@@ -245,6 +283,10 @@
                 : "The last preset cannot be deleted"}
               title="Delete this preset">Delete preset</Button>
     </div>
+    <!-- At the three buttons, which is where the click was. -->
+    {#if at("duplicate") || at("delete")}
+      <InlineMessage variant="error" detail={error!.detail}>{error!.text}</InlineMessage>
+    {/if}
     {#if editable}
       <div class="preset-contents">
         <div class="contents-head">
@@ -254,15 +296,21 @@
           <Field
             controlClass="group-filter"
             ariaLabel="Filter groups"
-            placeholder="Filter groups…"
+            placeholder="Filter groups"
             bind:value={typedFilter} />
         </div>
 
-        <h4 class="section-heading">Types Shown</h4>
+        <h4 class="section-heading">Types shown</h4>
+
+        <!-- Above the group grid: a group toggle can fail from anywhere in a
+             four-hundred-row list, and the list is what it is about. -->
+        {#if at("groups")}
+          <InlineMessage variant="error" detail={error!.detail}>{error!.text}</InlineMessage>
+        {/if}
 
         {#if unknownIds.length}
           <InlineMessage variant="warn" class="unknown-groups">
-            Unrecognized groups (not in the catalog):
+            Unrecognised groups — not in the catalogue
             {#each unknownIds as id}
               <Field kind="checkbox" label="#{id}" value={true} onchange={() => setPresetGroup(id, false)} />
             {/each}
@@ -303,6 +351,9 @@
         {/each}
 
         <h4 class="section-heading">Exceptions</h4>
+        {#if at("exception")}
+          <InlineMessage variant="error" detail={error!.detail}>{error!.text}</InlineMessage>
+        {/if}
         <div class="exceptions-list">
           {#each exceptionRows as row (row.id)}
             {@const choice = exceptionOf(presetFiltered, presetAlwaysShown, row.id)}
@@ -332,6 +383,9 @@
         <Button variant="primary" onclick={submitPending}>Rename preset</Button>
         <Button onclick={() => (pending = null)}>Cancel</Button>
       </div>
+      {#if at("rename")}
+        <InlineMessage variant="error" detail={error!.detail}>{error!.text}</InlineMessage>
+      {/if}
     {/if}
   </div>
 {/if}
