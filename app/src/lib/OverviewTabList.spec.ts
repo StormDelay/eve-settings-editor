@@ -216,7 +216,34 @@ describe("renaming in place", () => {
 
     await fireEvent.input(box, { target: { value: "  fleet  " } });
     await fireEvent.keyDown(box, { key: "Enter" });
-    expect(onRenameTab).toHaveBeenCalledWith(0, "  fleet  ");
+    // The whole decomposed name, because the editor owns all three parts.
+    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "  fleet  ", color: null, bold: false });
+  });
+
+  // Colour and bold are edited beside the text and ride out on the same commit:
+  // in the file they are one markup-bearing string, so splitting them across
+  // two panes was splitting one property in half.
+  test("the colour and the weight commit with the text, as one rename", async () => {
+    const { onRenameTab } = mount({
+      data: { ...data, tabs: [t(0, "main"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
+    });
+    const box = await startRename(0);
+
+    await fireEvent.click(screen.getByLabelText("Tab name colour"));
+    await fireEvent.click(screen.getByLabelText("#40ff40"));
+    await fireEvent.click(screen.getByTitle("Bold tab name"));
+    await fireEvent.keyDown(box, { key: "Enter" });
+
+    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "main", color: "FF40FF40", bold: true });
+  });
+
+  test("the editor opens carrying the tab's existing colour and weight", async () => {
+    const { onRenameTab } = mount({
+      data: { ...data, tabs: [t(0, "<color=0xFFFF6F75><b>main</b></color>"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
+    });
+    const box = await startRename(0);
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "main", color: "FFFF6F75", bold: true });
   });
 
   // It is seeded from the READABLE text, never the stored markup — the view
@@ -241,8 +268,8 @@ describe("renaming in place", () => {
     const { onRenameTab } = mount();
     const box = await startRename(1);
     await fireEvent.input(box, { target: { value: "Ore" } });
-    await fireEvent.blur(box);
-    expect(onRenameTab).toHaveBeenCalledWith(1, "Ore");
+    await fireEvent.focusOut(box, { relatedTarget: null });
+    expect(onRenameTab).toHaveBeenCalledWith(1, { text: "Ore", color: null, bold: false });
   });
 
   test("an empty name is not a rename", async () => {
