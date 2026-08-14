@@ -10,6 +10,7 @@
   import InlineMessage from "./ui/InlineMessage.svelte";
   import MenuButton from "./ui/MenuButton.svelte";
   import SearchField from "./ui/SearchField.svelte";
+  import { revealAndFocus } from "$lib/keymap";
 
   let {
     windows,
@@ -91,11 +92,9 @@
   // pick is acted on so each control returns to its prompt.
   let addPick: Record<string, string> = $state({});
   let withPick: Record<string, string> = $state({});
-  focusFilter = () => {
-    filterInput?.focus();
-    // Field's `element` is typed for either control; only an input can select.
-    if (filterInput instanceof HTMLInputElement) filterInput.select();
-  };
+  // Scrolls the box into view as well as focusing it: this one sits at the top
+  // of a tall inspector, so Ctrl+F used to focus something off screen.
+  focusFilter = () => revealAndFocus(filterInput);
 
   // Counted from the same predicate the filter uses, so the offer can never
   // name a number the `Hide clutter` toggle disagrees with.
