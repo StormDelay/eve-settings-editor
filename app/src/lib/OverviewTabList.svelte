@@ -31,6 +31,7 @@
     onReorder,
     onMove,
     onSetUpWindowMapping,
+    editError = null,
   }: {
     data: OverviewColumns;
     tabIndex: number | null;
@@ -48,6 +49,10 @@
     onReorder: (windowIdx: number, order: number[]) => void;
     onMove: (tabIdx: number, from: number, to: number, pos: number) => void;
     onSetUpWindowMapping: () => void;
+    /** A refused edit, owned by OverviewView (which runs the commands) and
+     *  rendered here (which owns the controls). `where` picks the slot: the
+     *  windowless band, the name-entry row, the tab strip, or the row actions. */
+    editError?: { where: string; text: string; detail: string } | null;
   } = $props();
 
   type Group = {
@@ -92,7 +97,7 @@
       // Renaming happens ON the row. A rename started here and finished in a
       // panel below was two places for one gesture, and it left a Name field
       // sitting there permanently for the 99% of the time nobody is renaming.
-      { label: "Rename", run: () => startRename(t) },
+      { label: "Rename tab…", run: () => startRename(t) },
       { label: "Delete tab", run: () => onDeleteTab(t.index) },
     ];
     // Cross-window drag is the fast route; this is the keyboard one, and the
@@ -230,12 +235,29 @@
       Tabs aren't assigned to specific overview windows on this account — EVE spreads them
       across your windows itself. That's normal: importing an overview pack through the
       client removes the assignment.
-      <Button size="sm" onclick={onSetUpWindowMapping}>Set up per-window tabs</Button>
+      <!-- The sentence the deleted confirm used to carry, moved to where it is
+           read BEFORE the click rather than after it. It is the one place in
+           this app where "can't undo" is nearly true, and it earns its keep by
+           saying why: the editor has no command that removes the last overview
+           window. -->
+      Assigning them replaces that with an explicit list, and the editor can't
+      undo it — it can't remove the last overview window. Importing an overview
+      pack through the client removes the list again.
+      <Button size="sm" onclick={onSetUpWindowMapping}>Assign tabs to windows</Button>
     </InlineMessage>
+  {/if}
+  {#if editError?.where === "windows"}
+    <InlineMessage variant="error" detail={editError.detail}>{editError.text}</InlineMessage>
   {/if}
 
   {#if data.tabs.length === 0}
-    <EmptyState title="This account file has no overview tabs." />
+    <EmptyState
+      title="No overview tabs"
+      description="This account file holds none. Importing an overview pack adds some." />
+  {/if}
+  <!-- The strip's own failures, above the strip. -->
+  {#if editError && ["strip", "actions", "move"].includes(editError.where)}
+    <InlineMessage variant="error" detail={editError.detail}>{editError.text}</InlineMessage>
   {/if}
 
   <div class="groups">
@@ -336,6 +358,11 @@
              }} />
     {/if}
   </div>
+  <!-- Under the name-entry row, which stays open on a refusal so the name the
+       user typed is still there to retry with. -->
+  {#if editError?.where === "entry"}
+    <InlineMessage variant="error" detail={editError.detail}>{editError.text}</InlineMessage>
+  {/if}
 
   <div class="foot">
     <!-- No footer buttons while renaming: that editor commits on blur, so a
