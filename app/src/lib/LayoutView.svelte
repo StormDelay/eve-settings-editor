@@ -28,6 +28,7 @@
     readOnly,
     accountReadOnly = false,
     refreshToken,
+    onCollapseInspector,
     userOpen,
     selectedId = $bindable(null),
     onReveal,
@@ -42,6 +43,10 @@
      * rows write that file, so it is theirs alone to honour. */
     accountReadOnly?: boolean;
     refreshToken: number;
+    /** A view that supplies its own inspector supplies its own hide control
+        too — otherwise the column can be reopened from here but only closed
+        from a view that has the shell's aside. */
+    onCollapseInspector?: () => void;
     userOpen: boolean;
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
@@ -973,6 +978,10 @@
       </div>
     </div>
     <aside class="inspector">
+      <div class="inspector-head">
+        <Button variant="ghost" size="sm" iconOnly title="Hide properties"
+          onclick={() => onCollapseInspector?.()}>&raquo;</Button>
+      </div>
       <!-- "What can I do here", where the pane has to say something anyway.
            The canvas's gestures were explained in a status line, in an
            instruction wedged between two facts; none of it is true on a

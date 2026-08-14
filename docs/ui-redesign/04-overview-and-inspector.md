@@ -1155,3 +1155,115 @@ nothing written to disk differently.
 - [ ] `git diff --stat app/src-tauri crates` is empty.
 
 _Added 2026-08-13 (UI/UX redesign proposal, Phase 4)._
+
+---
+
+## 13. What actually shipped, and where it differs
+
+**Read this before trusting any `file:line` or any claim in §§1–12.** Phase 4 was
+built on 2026-08-14 on `feat/ui-redesign-phase-4`, in the three commits §11
+plans. Written against v0.34; Phases 1–3 have moved things since, and the spec
+was wrong about several of them.
+
+**Baseline.** §§ throughout cite "37 test files / 1064 tests". That was v0.34.
+The real pre-phase baseline was **55 files / 1259 tests** and the phase ends at
+**59 files / 1334 tests**. `npm run check` clean over 500 files, `npm run build`
+clean, and `git diff origin/master -- app/src-tauri crates` empty.
+
+**Phase 1 had already done more than §2 says.** The `<style>` blocks §2.5 counts
+nine button rules in were already tokenised and mostly gone; `.pack-actions` was
+already out of the tablist (Phase 1 moved it beside, with a comment naming this
+phase); the shared-account banner was already the shell's; and every control was
+already a `Button`/`Field`. What was left for Phase 4 was structural, not
+cosmetic — which is the same lesson Phase 3 recorded.
+
+### Load-bearing divergences
+
+1. **§7.6's slot contract does not exist, so Overview took Layout's route.**
+   Phase 2 shipped an always-present `<aside class="inspector">` holding a
+   placeholder, and no snippet or slot API. `OverviewView`'s root is
+   `display: contents` with exactly two children, exactly as `LayoutView` does
+   it — no portal, no prop hoisting. Consequences: `scopeLabel` became a prop
+   (Overview renders the shell's banner itself), `+page.svelte` grew a
+   `viewOwnsInspector` derived, and Overview is now pinned by the same
+   shell-grid-contract test LayoutView has. §7.6's local-grid fallback was not
+   needed and was not built.
+
+2. **The DoD's "Autofill, Keybinds and Probes … get the full width" is NOT met,
+   deliberately.** Phase 2 shipped the inspector column on *every* tab with a
+   written rationale — a column present on one tab and gone on the next is the
+   same fault as a tab strip that changes membership — and §7's rule contradicts
+   it. Two merged positions, one owner decision; the shipped one was left
+   standing rather than re-litigated in a phase that does not own it. Everything
+   else in §7 holds: Layout, Overview and Raw have real inspectors, and the
+   other three still show the shell's placeholder.
+
+3. **The inspector's hide control was missing on Layout and would have gone
+   missing on Overview too.** The shell's `»` lives in the aside those two views
+   replace, so the column could be reopened from every tab but closed only from
+   the four that have the shell's own. Both views render it now and
+   `.inspector-head` moved to `app.css`, where the three components that draw
+   into that column can all reach it. Not in the spec; it is a regression this
+   phase would otherwise have doubled.
+
+4. **Cross-window drag can move a tab that is not the selected one, which
+   `moveTab` never could.** `keepSelection` itself moved verbatim, as §4.3 and
+   §11 demand. What changed is its *call*: both handlers now compute the
+   selection's position in the affected strip **before** the call and re-point
+   from the returned data after it, instead of assuming the moved tab is the
+   selected one. This is sound because `renumber_to_strip_order` redistributes
+   only the renumbered window's own index slots
+   (`overview_tabs.rs:249-251`) — a selection in any other window is untouched.
+
+5. **A drop in place is no longer an edit.** Today's `dropTab` called the backend
+   even when the order was unchanged. §4.3.1 asks for a toast after a reorder
+   "that actually changed the order", so the guard had to exist; it also stops a
+   no-op drag dirtying the file.
+
+6. **`.stack-head` and `.fam-head` get no `⋯`.** §8.2 asks for one. They are
+   *group* heads with no `WindowRect` behind them and no right-click menu today,
+   so there is nothing to reveal — a menu there would mean inventing commands,
+   which this phase does not do. All three `.row-head` sites do have one.
+
+7. **The row `⋯` lives inside `rowHead`, not at the end of each `.row-head`.**
+   Three call sites render `rowHead`, and two of them append their own trailing
+   controls (a count chip, the stack buttons). Inside the snippet the `⋯` sits
+   in the same place relative to the name it acts on in all three.
+
+8. **A row's "Rename" also selects the row.** §4.2 says only "moves focus to the
+   inspector's Name field", but the inspector shows the *selected* tab — so
+   renaming from a non-selected row's menu had to select it first.
+
+### Smaller ones
+
+- **`MenuButton` is a new `lib/ui/` primitive**, not in §9's file list. Five call
+  sites needed "a visible ⋯ opening a flat menu, positioned from the button's own
+  rect": the tab row, the window-group header, the Overview view header and
+  WindowPanel's three row heads. `ListRow`'s inlined copy became a use of it.
+- **`ContextMenu`'s `MenuItem` gained `disabled` and `hint`**, as §4.2's fallback
+  anticipated — Phase 1's `ListRow` menu did not supply them.
+- **`+ Window` is present-and-disabled on a windowless account** rather than
+  hidden, which is today's rule (`{#if data.windows.length >= 1}`). Same
+  "hiding becomes disabling with a reason" rule as `Remove this window`; the
+  spec did not say either way.
+- **`page.spec.ts` stubbed `overview_columns` as `{ tabs: [], columns: [] }`.**
+  `columns` was never a field of `OverviewColumns` and `windows` was missing.
+  The tab list reads `windows`, so the lie surfaced as an unhandled throw — and
+  an unhandled throw exits `npm test` non-zero with every test passing, which is
+  the trap Phase 2 recorded. The fixture was fixed rather than the component
+  taught to defend against an impossible reply.
+- **The palette grid's 24 swatches are still bare `<button>`s** with a local
+  style rule, moved verbatim from `OverviewView`. A 1.1rem colour square is not
+  a `Button`; Phase 1 shipped it this way and this phase did not change it. It
+  is the one exception to §12's "no `<style>` block declares a button".
+
+### Not verified
+
+**"All 63 controls in §3 are reachable in the running app" is the one
+definition-of-done item not checked.** Port 1420 was held by another session's
+dev server from the previous evening, so launching would either fail or open a
+window pointed at someone else's code; the foreground window was a game, so
+driving the UI would have stolen focus mid-session. Everything else in §12 is
+covered by a test. Overview's half of the shell-grid contract — the part that
+breaks silently, because jsdom computes no layout — is pinned by the same
+structural test Phase 2 wrote for Layout. **Run the visual pass before merging.**
