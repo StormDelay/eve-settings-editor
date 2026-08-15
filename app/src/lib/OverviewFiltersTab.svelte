@@ -6,15 +6,23 @@
   import { mergeCatalog, filterCatalog, toggleGroup, toggleGroups, unknownGroups, type Category, type CatalogBundle } from "./groups";
   import { isDefaultKey, accountFormat, defaultsForFormat, mergePresetOptions, forkName, findDefault, LEGACY_NAMES, type DefaultsBundle, type DefaultProfile } from "./presets";
   import { stateLabel, EXCEPTION_STATES, exceptionOf, applyException, type Exception } from "./states";
+  import { revealAndFocus } from "./keymap";
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import { toast } from "./ui/toasts.svelte";
   import { undoAction } from "./undo.svelte";
 
-  let { data, tabIndex, onChanged, onUserDirty }:
+  let { data, tabIndex, onChanged, onUserDirty, focusSearch = $bindable(undefined) }:
     { data: OverviewColumns | null; tabIndex: number | null;
-      onChanged: (next: OverviewColumns) => void; onUserDirty: () => void } = $props();
+      onChanged: (next: OverviewColumns) => void; onUserDirty: () => void;
+      /** Set so the shell's Ctrl+F reaches THIS box — the group filter, over a
+       *  list of 649 rows, which is the size that most wants a shortcut.
+       *  OverviewView owns the sub-tab switch that has to happen first. */
+      focusSearch?: () => void } = $props();
+
+  let filterBox: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  focusSearch = () => revealAndFocus(filterBox);
 
   const tab = $derived(data?.tabs.find((t) => t.index === tabIndex) ?? null);
 
@@ -297,6 +305,7 @@
             controlClass="group-filter"
             ariaLabel="Filter groups"
             placeholder="Filter groups"
+            bind:element={filterBox}
             bind:value={typedFilter} />
         </div>
 
@@ -406,6 +415,11 @@
   /* Full-width so the box below can size a real column grid — it's a flex item
      inside the wrapping .filters-controls row otherwise. */
   .preset-contents { flex-basis: 100%; margin-top: var(--s2); display: flex; flex-direction: column; gap: var(--s1); }
+  /* Same reason, same fix: the two error messages in this row are bare flex
+     children with auto basis, so they wrapped in BESIDE the control they belong
+     to instead of onto their own line under it. `.preset-contents` got this and
+     they did not. */
+  .filters-controls > :global(.msg) { flex-basis: 100%; }
   .contents-head { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
   .contents-title { font-weight: 600; }
   .section-heading { margin: var(--s1) 0 0; font-size: var(--t-body); }
@@ -460,8 +474,16 @@
      activate" — pushed its own radios right while "Pilot is a criminal" left
      them near the margin. Every row chose its own alignment, which is precisely
      what a column of radios must not do: the eye reads down these, not across. */
+  /* A reading width, for the same reason `.ov-cols` and `.state-list` have one:
+     the first column is `1fr` in a work area that is a wide pane rather than a
+     20rem panel, so without a cap the three radios sit against the far right
+     edge of the screen and the eye has to travel the whole way from the label.
+     Sized to the widest row this list can produce rather than to the 26rem the
+     other two use — that label really is "Pilot has a kill right on them that
+     you can activate" (~26rem), and Show / Hide / Always show add ~17rem. */
   .exceptions-list {
     display: grid;
+    max-width: 44rem;
     grid-template-columns: minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 0 var(--s3);

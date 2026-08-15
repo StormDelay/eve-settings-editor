@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NeocomBar } from "$lib/api";
   import { addableButtons, type CatalogButton } from "$lib/neocom";
+  import { neocomLabel } from "$lib/windowLabels";
   import CATALOG from "$lib/data/neocom-buttons.json";
   import { toast } from "./ui/toasts.svelte";
   import { undoAction } from "./undo.svelte";
@@ -73,8 +74,11 @@
     <InlineMessage variant="error" detail={error.detail}>{error.text}</InlineMessage>
   {/if}
   {#each bar.buttons as b (b.index)}
+    {@const label = neocomLabel(b.id)}
     <ListRow class="row">
-      <span class="id" title={b.icon_path}>{b.id}</span>
+      <!-- The raw id stays in the tooltip: it is what the file says, so it is
+           what a reader checks the friendly name against. -->
+      <span class="id" title="{b.id} — {b.icon_path}">{label}</span>
       {#snippet trailing()}
         {#if b.children > 0}<Chip tone="neutral" size="sm">{b.children}</Chip>{/if}
         <Button
@@ -83,7 +87,7 @@
           iconOnly
           disabled={disabled || b.index === 0}
           disabledReason={b.index === 0 ? "Already first" : "The bar is read-only"}
-          title="Move {b.id} up"
+          title="Move {label} up"
           onclick={() => move(b.index, -1)}>↑</Button>
         <Button
           variant="ghost"
@@ -91,7 +95,7 @@
           iconOnly
           disabled={disabled || b.index === bar.buttons.length - 1}
           disabledReason={b.index === bar.buttons.length - 1 ? "Already last" : "The bar is read-only"}
-          title="Move {b.id} down"
+          title="Move {label} down"
           onclick={() => move(b.index, 1)}>↓</Button>
         <Button
           variant="ghost"
@@ -99,7 +103,7 @@
           iconOnly
           {disabled}
           disabledReason="The bar is read-only"
-          title="Remove {b.id}"
+          title="Remove {label}"
           onclick={() => onRemove(b.index)}>✕</Button>
       {/snippet}
     </ListRow>
@@ -114,7 +118,7 @@
         disabledReason="The bar is read-only"
         ariaLabel="Add a neocom button"
         class="add-pick"
-        options={[{ value: "", label: "Add…" }, ...addable.map((a) => ({ value: a.id, label: a.id }))]} />
+        options={[{ value: "", label: "Add…" }, ...addable.map((a) => ({ value: a.id, label: neocomLabel(a.id) }))]} />
       <Button
         disabled={disabled || addChoice === ""}
         disabledReason={addChoice === "" ? "Pick a button first" : "The bar is read-only"}
