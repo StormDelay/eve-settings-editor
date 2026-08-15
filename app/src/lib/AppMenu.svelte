@@ -12,7 +12,7 @@
   //
   // "Open file…" is NOT here. It is a file-list operation and the only route to
   // an account file directly, so it stays in the sidebar, at the bottom.
-  import { api, type Proposal } from "./api";
+  import { api, type LauncherReport } from "./api";
   import { rescanProfiles, allCharIds } from "./subject.svelte";
   import { refreshNames } from "./names.svelte";
   import { COMMANDS, type Command, type Ctx } from "./commands";
@@ -39,7 +39,7 @@
   let waiting = $state<number | null>(null);
   api
     .launcherProposals()
-    .then((ps: Proposal[]) => (waiting = ps.filter((p) => p.conflict === null).length))
+    .then((r: LauncherReport) => (waiting = r.proposals.filter((p) => p.conflict === null).length))
     .catch(() => (waiting = null));
 
   let namesBusy = $state(false);

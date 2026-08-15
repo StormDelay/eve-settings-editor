@@ -7,11 +7,12 @@
   // everything drawn goes through one depth sort.
   import {
     cameraBasis, projectPoint, silhouette, fitDistance, worldPerPixel,
-    axisScreen, dragPosition, cardinals, horizonRing, scenePos,
+    axisScreen, dragPosition, cardinals, horizonRing, scenePos, rangeTo, toUnit,
     PITCH_LIMIT, SIDE_VIEW, TOP_VIEW, type Camera, type HandleDrag, type Vec3,
   } from "./probes";
   import type { Scene } from "./api";
   import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
   import Field from "./ui/Field.svelte";
 
   let { probes, ranges, formationId, selected, scenes = [], onselect, onmove, oncommit }: {
@@ -250,6 +251,32 @@
       })
       .filter((o) => o !== null),
   );
+
+  /** The one object the range readout measures to.
+   *
+   * THE FORK: a scene may name several, and a column per object would be a
+   * table rather than a readout. The first with a volume wins, because "is
+   * probe 3 inside the jump sphere" is the question this exists for and only a
+   * volume has an inside. Failing that, the last object — a scene lists its
+   * origin first, and an object AT the formation centre would only repeat the
+   * table's own Distance column. */
+  const rangeTarget = $derived(
+    sceneWorld.find((o) => o.radius > 0) ?? sceneWorld[sceneWorld.length - 1] ?? null,
+  );
+
+  /** Every probe's separation from that object. Named for the target and not
+   * `ranges`, which is this component's prop for the probes' SCAN ranges. */
+  const targetRanges = $derived(
+    rangeTarget === null ? [] : probes.map((p) => rangeTo(p, rangeTarget.p, rangeTarget.radius)),
+  );
+
+  /** Kilometres, with a decimal place only near the site. A jump sphere is
+   * ~16 km across, so whole kilometres cannot answer "inside" at its edge —
+   * and a probe 37 million km away has no use for a metre. */
+  function km(m: number): string {
+    const v = toUnit(m, "km");
+    return v.toFixed(v < 1000 ? 1 : 0);
+  }
 
   /** Frame the scene rather than the probes. `fitDistance` already takes
    * positions and a matching radius each, which is exactly a scene. */
@@ -706,6 +733,26 @@
       Double-click a probe or the centre to orbit it, or empty space to flip the view
     </span>
   </div>
+
+  <!-- The picture only approximates "is probe 3 inside the jump sphere"; this
+       is the number. Only while a scene is showing — there is nothing to
+       measure against otherwise.
+
+       The caveat is a label and not an essay: the shipped scenes' distance,
+       bearing and sphere radius are all estimates, so exact arithmetic over
+       them is still no better than they are. -->
+  {#if rangeTarget}
+    <div class="scene-ranges">
+      <span class="range-label">
+        Range to {rangeTarget.label} — no better than the scene's own figures
+      </span>
+      {#each targetRanges as r, i (i)}
+        <Chip size="sm" tone={r.inside ? "ok" : undefined}>
+          {i + 1} · {km(r.m)} km{r.inside ? " · inside" : ""}
+        </Chip>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -785,6 +832,9 @@
      The numeric table remains the keyboard path. */
   .probe-face:focus, .probe-grab:focus, .centre-grab:focus, .grab:focus { outline: none; }
   .viewer-actions { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+  .scene-ranges { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+  /* `.meta` but without its leading indent: this one starts its own row. */
+  .range-label { color: var(--text-muted); font-size: var(--t-caption); }
   .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
   .vec { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
   .vec-head { fill: var(--accent); stroke: none; }

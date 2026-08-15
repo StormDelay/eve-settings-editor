@@ -717,8 +717,8 @@ pub fn overview_set_states(state: &AppState, which: String, ids: Vec<i64>) -> Re
     edit_user_tabs(state, |v| settings_model::set_state_list(v, list, &ids))
 }
 
-pub fn overview_set_state_color(state: &AppState, id: i64, rgba: Option<[f64; 4]>) -> Result<OverviewColumns, ErrDto> {
-    edit_user_tabs(state, |v| settings_model::set_state_color(v, id, rgba))
+pub fn overview_set_state_color(state: &AppState, surface: String, id: i64, rgba: Option<[f64; 4]>) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, |v| settings_model::set_state_color(v, &surface, id, rgba))
 }
 
 pub fn overview_set_bool(state: &AppState, key: String, on: bool) -> Result<OverviewColumns, ErrDto> {
