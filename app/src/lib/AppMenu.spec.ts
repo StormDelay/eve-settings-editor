@@ -43,7 +43,7 @@ function mount(over: Partial<Ctx> = {}) {
 }
 
 test("all five migrated actions are here", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   mount();
   for (const name of [/accounts/i, /copy settings/i, /refresh character names/i, /rescan profiles/i, /about/i]) {
     expect(await screen.findByRole("menuitem", { name })).toBeTruthy();
@@ -51,7 +51,7 @@ test("all five migrated actions are here", async () => {
 });
 
 test("each navigation item reports its choice", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   let hit: string | null = null;
   mount({
     showAccounts: () => (hit = "accounts"),
@@ -68,7 +68,7 @@ test("each navigation item reports its choice", async () => {
  * slow path, and only if the slow path shows it.
  */
 test("a row with an accelerator prints it", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   mount();
   const save = await screen.findByRole("menuitem", { name: /save/i });
   expect(save.textContent).toContain(accel("S"));
@@ -79,7 +79,7 @@ test("a row with an accelerator prints it", async () => {
  * would refuse it teaches nothing and moves the rows under the cursor.
  */
 test("Save is present and disabled with its reason when nothing has changed", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   resetSubject();
   mount();
   const save = (await screen.findByRole("menuitem", { name: /save/i })) as HTMLButtonElement;
@@ -97,20 +97,23 @@ test("Save is present and disabled with its reason when nothing has changed", as
  * §5.7.2 rule 6 stands: no list gains an account chip from a `Proposal`.
  */
 test("Accounts carries a count of the pairings the launcher proposes", async () => {
-  calls.stub("launcher_proposals", [
-    { char_id: 951, user_id: 140, conflict: null },
-    { char_id: 952, user_id: 140, conflict: null },
-    // Disputed, so it is not part of the count: a dispute is a different
-    // question from "nobody has answered this yet".
-    { char_id: 953, user_id: 141, conflict: 140 },
-  ]);
+  calls.stub("launcher_proposals", {
+    proposals: [
+      { char_id: 951, user_id: 140, conflict: null },
+      { char_id: 952, user_id: 140, conflict: null },
+      // Disputed, so it is not part of the count: a dispute is a different
+      // question from "nobody has answered this yet".
+      { char_id: 953, user_id: 141, conflict: 140 },
+    ],
+    known: 3,
+  });
   mount();
   const item = await screen.findByRole("menuitem", { name: /accounts/i });
   await waitFor(() => expect(item.textContent).toMatch(/2/));
 });
 
 test("no count is drawn when nothing is proposed", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   mount();
   const item = await screen.findByRole("menuitem", { name: /accounts/i });
   await waitFor(() => expect(calls.of("launcher_proposals").length).toBe(1));
@@ -120,7 +123,7 @@ test("no count is drawn when nothing is proposed", async () => {
 /** The scan is paid for on demand — opening the menu — and never at app start.
  *  It reads and UTF-8-decodes every `.log` in the launcher's directory. */
 test("the launcher log is read when the menu opens, once", async () => {
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   mount();
   await waitFor(() => expect(calls.of("launcher_proposals").length).toBe(1));
 });

@@ -1,6 +1,10 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
-import { countIn, withoutIn } from "./prefs.svelte.ts";
+import { expect, test } from "vitest";
 
+import { countIn, detailOn, setDetail, withoutIn } from "./prefs.svelte.ts";
+import type { Preferences } from "./api.ts";
+
+import { calls } from "$lib/test/setup";
 import { check } from "./test/check.ts";
 
 // Counting is about the document you are looking at, not the preferences file.
@@ -38,4 +42,37 @@ import { check } from "./test/check.ts";
   check("withoutIn preserves the target count", out.targets === 7);
   check("withoutIn preserves the effect count", out.effects === 5);
 }
+
+// The ordering guarantee `persist` exists for, and the one thing no backend test
+// can cover: `set_preferences` takes a whole snapshot with no sequence number,
+// so the file holds whatever write COMPLETES last. Two rapid toggles fired
+// independently would race, and a slower first command would leave the file one
+// step behind the UI. `writeQueue` chaining each write after the previous
+// settles is all that stops it.
+test("two rapid toggles leave the file matching the UI, even when the first write is the slower one", async () => {
+  // Stands in for the preferences file: last write to COMPLETE wins.
+  let file: Preferences | undefined;
+  // Call #1 finishes after call #2 would have. Unchained, the file ends up
+  // holding the first toggle's state while the screen shows the second's.
+  const delays = [30, 0];
+  let n = 0;
+  calls.stub("set_preferences", (args: Record<string, unknown> | undefined) => {
+    const ms = delays[n++] ?? 0;
+    return new Promise<void>((resolve) =>
+      setTimeout(() => {
+        file = args?.prefs as Preferences;
+        resolve();
+      }, ms),
+    );
+  });
+
+  setDetail(true);
+  setDetail(false);
+  await new Promise((r) => setTimeout(r, 100));
+
+  const sent = calls.of("set_preferences").map((c) => (c.args?.prefs as Preferences).layout.detail);
+  expect(sent).toEqual([true, false]);
+  expect(detailOn()).toBe(false);
+  expect(file?.layout.detail).toBe(detailOn());
+});
 

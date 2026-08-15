@@ -20,31 +20,42 @@ const props = (b: NeocomBar, readOnly = false) => ({
 });
 
 describe("NeocomButtons", () => {
-  test("lists the buttons in bar order", () => {
+  test("lists the buttons in bar order, under friendly labels", () => {
     render(NeocomButtons, props(bar([btn(0, "chat"), btn(1, "mail"), btn(2, "wallet")])));
-    const ids = screen.getAllByTitle(/\.png$/).map((e) => e.textContent);
-    expect(ids).toEqual(["chat", "mail", "wallet"]);
+    const rows = screen.getAllByTitle(/\.png$/);
+    expect(rows.map((e) => e.textContent)).toEqual(["Chat", "EVE Mail", "Wallet"]);
+    // The raw id stays reachable, because it is what the file actually says.
+    expect(rows.map((e) => e.getAttribute("title"))).toEqual(
+      ["chat — chat.png", "mail — mail.png", "wallet — wallet.png"],
+    );
+  });
+
+  test("a button nobody has curated shows its raw id", () => {
+    // The safe failure direction: an unknown id is ugly but checkable against
+    // the file, where a plausible-looking wrong label would not be.
+    render(NeocomButtons, props(bar([btn(0, "someFutureBtn")])));
+    expect(screen.getAllByTitle(/\.png$/).map((e) => e.textContent)).toEqual(["someFutureBtn"]);
   });
 
   test("the end rows cannot move past the ends", () => {
     render(NeocomButtons, props(bar([btn(0, "chat"), btn(1, "mail")])));
-    expect((screen.getByLabelText("Move chat up") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText("Move mail down") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText("Move chat down") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText("Move Chat up") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move EVE Mail down") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move Chat down") as HTMLButtonElement).disabled).toBe(false);
   });
 
   test("moving a button sends the whole permutation", async () => {
     const p = props(bar([btn(0, "chat"), btn(1, "mail"), btn(2, "wallet")]));
     render(NeocomButtons, p);
-    screen.getByLabelText("Move wallet up").click();
+    screen.getByLabelText("Move Wallet up").click();
     expect(p.onReorder).toHaveBeenCalledWith([0, 2, 1]);
   });
 
   test("the add list excludes what is already on the bar", () => {
     render(NeocomButtons, props(bar([btn(0, "chat")], [btn(0, "chat"), btn(1, "mail")])));
     const options = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(options).toContain("mail");
-    expect(options).not.toContain("chat");
+    expect(options).toContain("EVE Mail");
+    expect(options).not.toContain("Chat");
   });
 
   test("reset is disabled when the character has no original", () => {
@@ -57,9 +68,9 @@ describe("NeocomButtons", () => {
     // reaches the backend and comes back as a dialog instead of being visibly
     // unavailable.
     render(NeocomButtons, props(bar([btn(0, "chat"), btn(1, "mail")], [btn(0, "wallet")]), true));
-    expect((screen.getByLabelText("Move mail up") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText("Move chat down") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText("Remove chat") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move EVE Mail up") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move Chat down") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Remove Chat") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Add a neocom button") as HTMLSelectElement).disabled).toBe(true);
     expect((screen.getByText("Add") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Reset to original") as HTMLButtonElement).disabled).toBe(true);

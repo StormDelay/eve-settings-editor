@@ -84,7 +84,7 @@ async function mount(profiles: Profile[], roster: AccountRoster = { accounts: []
     appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
   });
   // Both the app menu's proposal count and the Accounts view read this.
-  calls.stub("launcher_proposals", []);
+  calls.stub("launcher_proposals", { proposals: [], known: 0 });
   // This file now mounts the Layout and Probes views — Phase 2 made every tab
   // reachable and defaulted the view away from Raw, so switching tabs actually
   // renders them. Neither defends against `undefined`, and neither should: an
@@ -380,6 +380,47 @@ test("Ctrl+F focuses the window filter on Layout", async () => {
 
   const box = await screen.findByLabelText("Filter windows");
   await fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+  await waitFor(() => expect(document.activeElement).toBe(box));
+});
+
+/** Overview's only search box is the group filter, over a 649-row checklist —
+ *  and it sits on the FILTERS sub-tab, which the view opens away from.
+ *
+ *  The sub-tabs are `hidden`, not unmounted, so the box exists in the DOM from
+ *  the moment Overview renders and a naive binding would focus something the
+ *  user cannot see — the same silent failure Layout's railed inspector had.
+ *  Hence the sub-tab assertion: jsdom lays nothing out, so a focus assertion
+ *  ALONE would pass against a box behind the Columns tab. */
+test("Ctrl+F on Overview switches to Filters and focuses the group filter", async () => {
+  calls.stub("open_file", (args: Record<string, unknown> | undefined) =>
+    opened(String(args?.path).split("/").pop()!),
+  );
+  calls.stub("sync_group_catalog", []);
+  await mount(
+    [profile(file("core_char_950.dat", "char", 950), file("core_user_140.dat", "user", 140))],
+    { accounts: [{ user_id: 140, alias: "stormdelay2", characters: [950] }], unassigned: [] },
+  );
+  // After `mount`, which stubs an empty overview of its own: one tab whose
+  // preset is stored, which is what makes the Filters checklist editable and
+  // gives it a filter box at all.
+  calls.stub("overview_columns", {
+    tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, columns: [] }],
+    windows: [{ index: 0, tab_indices: [0] }],
+    presets: [{ name: "Mine", groups: [], filtered_states: [], always_shown_states: [] }],
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+  });
+  await openFile("core_char_950.dat");
+  await waitFor(() => expect(subject.slots.user?.status).toBe("opened"));
+  await fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+
+  // The view opens on Columns — so the shortcut has real work to do.
+  const filters = await screen.findByRole("tab", { name: "Filters" });
+  expect(screen.getByRole("tab", { name: "Columns" }).getAttribute("aria-selected")).toBe("true");
+  expect(filters.getAttribute("aria-selected")).toBe("false");
+
+  const box = await screen.findByLabelText("Filter groups");
+  await fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+  await waitFor(() => expect(filters.getAttribute("aria-selected")).toBe("true"));
   await waitFor(() => expect(document.activeElement).toBe(box));
 });
 

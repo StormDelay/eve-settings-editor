@@ -506,14 +506,26 @@
     return snapLines(rects, layout?.reference_w ?? 0, layout?.reference_h ?? 0);
   }
 
+  /** Furniture whose handle is its anchor MARKER rather than its whole box —
+   * today, only the target list. In game the anchor is the only thing you can
+   * grab; grabbing the box instead leaves the cursor at an arbitrary offset
+   * from the anchor, and that offset changes SIGN the moment the box flips to
+   * the other side of the anchor at the middle of the screen. The box stays
+   * selectable, it just doesn't start a drag. */
+  const dragsByMarker = (f: FurnitureRect) => f.kind === "target";
+
   // Selecting furniture and dragging it are separate: the neocom can't be
   // dragged (its width is a field, not a rect) but must still be selectable, or
   // clicking it looks broken. Selection is exclusive with the window selection,
   // so exactly one thing on the canvas ever reads as selected.
-  function startFurniture(f: FurnitureRect, e: PointerEvent) {
+  //
+  // `onMarker` is the anchor-dot press; the dot stops propagation, so the box's
+  // own handler never doubles it.
+  function startFurniture(f: FurnitureRect, e: PointerEvent, onMarker = false) {
     selectFurniture(f.kind);
     e.stopPropagation();
     if (readOnly || f.drag === "none") return;
+    if (dragsByMarker(f) && !onMarker) return;
     const r = fRectOf(f);
     // The anchor comes from the stored value, not from the rect: inverting a
     // rect back to an anchor is ambiguous in the band around the middle where
@@ -897,7 +909,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="furniture"
-            class:draggable={f.drag !== "none" && !readOnly}
+            class:draggable={f.drag !== "none" && !readOnly && !dragsByMarker(f)}
             class:selected={selectedFurniture === f.kind}
             class:spills={f.kind === "shipui"}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
@@ -908,11 +920,13 @@
             {/if}
             <!-- The anchor is what the file stores and what a drag writes; the
                  box is just what the list covers from there. In game the anchor
-                 is also the only thing you can grab, and this canvas lets you
-                 drag the whole box — so mark the corner rather than leave the
-                 user to infer it from which way the box grew. -->
+                 is also the only thing you can grab, so it is the handle here
+                 too: the marker drags, the rest of the box only selects. -->
             {#if f.kind === "target" && targetMarkerCorner}
-              <span class="anchor-dot {targetMarkerCorner}" title="The stored anchor. The list grows from here toward the middle of the screen."></span>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span class="anchor-dot {targetMarkerCorner}"
+                title="The stored anchor — drag the list by this. The list grows from here toward the middle of the screen."
+                onpointerdown={(e) => startFurniture(f, e, true)}></span>
             {/if}
             <span class="furniture-label">{f.label}</span>
           </div>
@@ -1160,7 +1174,20 @@
     margin: -5px;
     background: var(--warn);
     border: 1px solid var(--bg);
-    pointer-events: none;
+    /* The handle, not decoration — see startFurniture. It is the ONE child of a
+       furniture box that takes a pointer; the detail layer stays inert. */
+    pointer-events: auto;
+    cursor: move;
+    touch-action: none;
+  }
+  /* The dot straddles the corner and `.furniture`'s overflow clips the outer
+     half away, leaving ~6px of grab. This transparent skirt puts the hit area
+     back up near the 12px resize handles without moving the mark; its own outer
+     half is clipped by the same rule. */
+  .anchor-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
   }
   .anchor-dot.tl { top: 0; left: 0; }
   .anchor-dot.tr { top: 0; right: 0; }

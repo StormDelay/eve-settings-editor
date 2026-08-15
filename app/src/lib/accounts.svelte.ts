@@ -85,9 +85,10 @@ export const captureState = $state<{ active: boolean; note: string | null }>({
 export const launcherState = $state<{
   proposals: Proposal[];
   loaded: boolean;
+  known: number;
   foundCards: number[];
   dismissed: number[];
-}>({ proposals: [], loaded: false, foundCards: [], dismissed: [] });
+}>({ proposals: [], loaded: false, known: 0, foundCards: [], dismissed: [] });
 
 /**
  * The only place the backend baseline is discarded.
@@ -114,6 +115,7 @@ export function resetAccountsSession(): void {
   captureState.note = null;
   launcherState.proposals = [];
   launcherState.loaded = false;
+  launcherState.known = 0;
   launcherState.foundCards = [];
   launcherState.dismissed = [];
 }

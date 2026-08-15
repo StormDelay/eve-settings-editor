@@ -275,6 +275,15 @@ export interface Proposal {
   conflict: number | null;
 }
 
+/** The launcher's whole answer, not just its unresolved half. */
+export interface LauncherReport {
+  proposals: Proposal[];
+  /** Every character the logs named, the already-paired ones included. An empty
+   *  `proposals` is two facts without it — the logs named nobody, and everything
+   *  they named is already paired. */
+  known: number;
+}
+
 export interface OverviewColumn {
   name: string;
   label: string;
@@ -302,10 +311,17 @@ export interface StateSurface {
   enabled: number[];
   order: number[];
 }
+export type Rgba = [number, number, number, number];
 export interface Appearance {
   background: StateSurface;
   flag: StateSurface;
-  colors: [number, [number, number, number, number]][];
+  colors: [number, Rgba][];
+  /** Colortag-surface colours. The backend always sends these two; they are
+   *  optional here so the fixtures that predate them still typecheck. */
+  flag_colors?: [number, Rgba][];
+  /** EVE's palette, `[name, rgba]` — the only colours a pack export can name.
+   *  INCOMPLETE: 6 of EVE's 8 names, `green` and `purple` not yet captured. */
+  palette?: [string, Rgba][];
   bools: [string, boolean][];
   defaulted: boolean;
 }
@@ -477,7 +493,7 @@ export const api = {
     invoke<AccountRoster>("unpair_character", { charId }),
   confirmPairings: (pairs: [number, number][]) =>
     invoke<BatchConfirm>("confirm_pairings", { pairs }),
-  launcherProposals: () => invoke<Proposal[]>("launcher_proposals"),
+  launcherProposals: () => invoke<LauncherReport>("launcher_proposals"),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
   /// Discard the guided-capture baseline. Only an ENDING calls this — cancelled,
@@ -526,8 +542,8 @@ export const api = {
     invoke<OverviewColumns>("preset_fork", { tabIdx, name, groups, filteredStates, alwaysShownStates }),
   overviewSetStates: (which: "background" | "backgroundOrder" | "flag" | "flagOrder", ids: number[]) =>
     invoke<OverviewColumns>("overview_set_states", { which, ids }),
-  overviewSetStateColor: (id: number, rgba: [number, number, number, number] | null) =>
-    invoke<OverviewColumns>("overview_set_state_color", { id, rgba }),
+  overviewSetStateColor: (surface: "background" | "flag", id: number, rgba: Rgba | null) =>
+    invoke<OverviewColumns>("overview_set_state_color", { surface, id, rgba }),
   overviewSetBool: (key: string, on: boolean) =>
     invoke<OverviewColumns>("overview_set_bool", { key, on }),
   presetSetStates: (name: string, filtered: number[], alwaysShown: number[]) =>
