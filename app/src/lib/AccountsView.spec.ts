@@ -29,13 +29,21 @@ function mount(
     profiles?: Profile[];
     openPath?: string | null;
     onClose?: () => void;
+    /** Characters the launcher named at all. Defaults to one per proposal,
+     *  which is the shape of an install where nothing is paired yet. */
+    known?: number;
+    /** Make the log read reject instead of answering. */
+    launcherFails?: boolean;
   } = {},
 ) {
   const roster = opts.roster ?? ROSTER;
   calls.stub("account_roster", roster);
   calls.stub("discover_profiles", opts.profiles ?? []);
   calls.stub("resolve_character_names", NAMES);
-  calls.stub("launcher_proposals", proposals);
+  calls.stub("launcher_proposals", () => {
+    if (opts.launcherFails) throw { code: "io", message: "the launcher log folder is unreadable" };
+    return { proposals, known: opts.known ?? proposals.length };
+  });
   calls.stub("confirm_pairing", roster);
   calls.stub("confirm_pairings", { roster, rejected: opts.rejected ?? [] });
   render(AccountsView, { props: { openPath: opts.openPath ?? null, onClose: opts.onClose ?? (() => {}) } });
@@ -176,6 +184,47 @@ describe("launcher proposals", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /accept Alpha/i })).toBeNull(),
     );
+  });
+});
+
+/**
+ * The empty state fires for four different reasons and used to have one
+ * sentence. `.catch(() => {})` with `.finally(loaded = true)` made the worst
+ * pair indistinguishable: a THROWN read and a successful read that found
+ * nothing both arrived with `proposals` empty and `loaded` true, so a failure
+ * was reported as "your logs say nothing".
+ */
+describe("the empty state says which kind of empty it is", () => {
+  test("a failed log read is reported as a failure, not as silent logs", async () => {
+    mount([], { launcherFails: true });
+    await waitFor(() => screen.getByText(/launcher log folder is unreadable/i));
+    expect(screen.queryByText(/launcher logs say nothing/i)).toBeNull();
+  });
+
+  test("a failed log read is retried when the sheet is reopened", async () => {
+    // The read is once per SESSION only once it has succeeded. Marking a throw
+    // as loaded is what left the panel with no read, no error and a sentence
+    // that spoke for neither.
+    mount([], { launcherFails: true });
+    await waitFor(() => screen.getByText(/launcher log folder is unreadable/i));
+    cleanup();
+    mount([{ char_id: 90000001, user_id: 80000001, conflict: null }]);
+    await waitFor(() => screen.getByRole("button", { name: /accept Alpha/i }));
+    expect(calls.of("launcher_proposals").length).toBe(2);
+  });
+
+  test("logs whose every character is already paired say so, and name the count", async () => {
+    // The live case, 2026-08-14: 30 characters named, all 30 already paired, 0
+    // proposals. "Your logs say nothing" was the opposite of the truth.
+    mount([], { known: 30 });
+    const message = await waitFor(() => screen.getByText(/already paired/i));
+    expect(message.textContent).toMatch(/30/);
+    expect(screen.queryByText(/launcher logs say nothing/i)).toBeNull();
+  });
+
+  test("one known character is not 'all 1 characters'", async () => {
+    mount([], { known: 1 });
+    await waitFor(() => screen.getByText(/The one character your EVE launcher names is already paired\./));
   });
 });
 

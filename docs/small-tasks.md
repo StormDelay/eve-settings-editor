@@ -13,7 +13,7 @@ Workflow:
 
 ## Open
 
-- [ ] **A failed launcher-log read is reported as "your logs say nothing".**
+- [x] **A failed launcher-log read is reported as "your logs say nothing".**
   `AccountsView.svelte:233` swallows the launcher read with `.catch(() => {})`
   and the `.finally` on the next line sets `launcherState.loaded = true`
   regardless, so a *throw* and a *successful read that found nothing* arrive at
@@ -30,9 +30,36 @@ Workflow:
   the already-paired case needs. `launcher.rs` and `launcher.ts` were untouched
   by the redesign, so the backend half is conflict-free. Seen and deliberately
   not blocked on during the 0.35.0 live pass. _Added 2026-08-14 (UI redesign
-  live pass)._
+  live pass); done 2026-08-15._
 
-- [ ] **Overview → Filters has a search box that `Ctrl+F` does not reach.** The
+  **The swallowed error needed no new state to distinguish it.** The obvious fix
+  is a third flag meaning "the read failed"; the actual fix is smaller and better.
+  `loaded = true` moved out of `.finally` and into `.then`, so a failed read
+  simply stays **not loaded** — the empty-state sentence never speaks for it (only
+  the error renders), and as a free consequence **reopening the sheet retries the
+  read**, which the swallowing version could never do because it had already
+  declared itself loaded. The rejection is kept and surfaced through the existing
+  error `InlineMessage`.
+
+  Backend now returns `LauncherReport { proposals, known }` (`launcher.rs:379-400`),
+  where `known` sums the launcher roster's character lists — a distinct count,
+  because pass 3 makes those lists disjoint. That turns the four reasons into
+  three honest outcomes: `known == 0` says the logs say nothing (true for reasons
+  1 and 2), `known > 0` with nothing left to propose says **"All 30 characters your
+  EVE launcher names are already paired"** (reason 3, the success case that used to
+  say the opposite of the truth), and a throw says only the error (reason 4).
+  Singular casing is pinned by a test, so `known == 1` never reads "all 1
+  characters". Off-screen-only proposals deliberately keep the original wording —
+  they are not "already paired", and "the logs say nothing about *these* accounts"
+  is literally true there.
+
+  **Worth knowing before touching `launcher_proposals` again: it has a second
+  consumer.** `AppMenu.svelte`'s proposal-count badge reads the same command, so
+  the return-shape change reached `api.ts` and four spec files. A second command
+  returning the same data was rejected as leaving two ways to ask one question
+  forever.
+
+- [x] **Overview → Filters has a search box that `Ctrl+F` does not reach.** The
   box exists — `OverviewFiltersTab.svelte:296-300`, labelled "Filter groups",
   over a list that runs to ~400 rows, which is exactly the size that wants a
   shortcut. But `+page.svelte:177`'s `viewFocusSearch` is bound for `layout`,
@@ -52,7 +79,25 @@ Workflow:
   `inspectorOpen` dance at `+page.svelte:450-453`. And jsdom computes no layout,
   so a `findByLabelText` plus a focus assertion will pass against an element the
   user cannot see: the test has to assert the tab was switched, not just that
-  something got focus. _Added 2026-08-14 (UI redesign live pass)._
+  something got focus. _Added 2026-08-14 (UI redesign live pass); done
+  2026-08-15._
+
+  **Both traps were real, and the second one was measured rather than trusted.**
+  `findInView` needed no logic change — `overview` already fell through to
+  `viewFocusSearch[view]?.()`, and only its comment was wrong. The switch-then-
+  `tick()` lives in `OverviewView.svelte:44-52` rather than in the shell, because
+  `sub` is OverviewView's own state and `+page` cannot reach it. Then the test was
+  checked by deleting the `sub = "Filters"` line: it fails on the tab assertion —
+  **and the focus assertion passes anyway**. So the naive test really would have
+  been green against a box the user cannot see, exactly as this entry predicted.
+  That negative result is the reason to keep the tab assertion first.
+
+  Not done, deliberately: the group filter's `Field` was not swapped for
+  `ui/SearchField` to gain a `Ctrl+F` hint. `WindowPanel`'s box — the Layout
+  target — passes no `shortcut` either, so the hint is not the established
+  pattern, and the swap would have changed the box's behaviour (Escape-to-clear,
+  clear button) beyond the ask. Worth doing for all five boxes at once if it is
+  worth doing at all.
 
 - [ ] **Reordering two overview tabs swaps their per-tab column widths.** Widths
   and the per-tab sort setting live in the *character* file keyed
@@ -67,9 +112,84 @@ Workflow:
   remapping only the open one is half a fix — which is the decision this entry
   needs. Phase 4 of the redesign made reorder much easier (every row draggable,
   cross-window drag added) and therefore **surfaces** the ceiling rather than
-  fixing it: one sentence in the inspector's Widths helper text, and a toast
-  after a reorder when a character is open. _Added 2026-08-14 (UI redesign
-  Phase 4, §4.3.1)._
+  fixing it.
+
+  **The surfacing this entry asked for had already shipped by the time the entry
+  was written** (verified 2026-08-15). The sentence sits directly under the width
+  boxes — `OverviewColumnsTab.svelte:246-247`, *"Reordering tabs moves widths with
+  the position, not with the tab."* — and `warnWidthSwap()`
+  (`OverviewView.svelte:225-228`) toasts after **both** `reorder` and `moveTab`,
+  gated on a character being open, with reorder's "a drop in place is not an edit"
+  guard in front of it. Both landed in `6de2bef` (Phase 4 step 1); tested at
+  `OverviewView.spec.ts:317-345`. The ceiling is visible and honest today.
+
+  **What remains is ONLY the decision, unchanged:** should reorder call
+  `remap_tab_scoped_settings` for the character that happens to be open — knowing
+  an account's other characters have char files the editor does not have open, so
+  it is half a fix — or keep leaving widths on the slot? Nothing more should be
+  built here until that is answered. _Added 2026-08-14 (UI redesign Phase 4,
+  §4.3.1); narrowed to the open decision 2026-08-15._
+
+- [ ] **Overview tab-management roughness, re-filed after the fresh look.** The
+  old entry (item (7) of the 2026-07-19 bundle, below) deferred "the UI/UX is
+  rough" behind three slices, all of which shipped, and then Phase 4 of the
+  redesign rewrote this view outright. The fresh look it asked for is done, and
+  **Phase 4 genuinely killed the 2026-07-27 complaints** — the duplicate
+  `<select>`, the eight-button toolbar with two members that came and went, the
+  chip row that only appeared at ≥2 tabs, the pack buttons wedged inside a
+  `role="tablist"`, and `Character (for widths)` are all gone. Three further
+  findings were fixed on the spot 2026-08-15 (Filters' exception list had no
+  reading width, so its radios sat against the far right edge of a wide pane; two
+  of its error messages wrapped in *beside* their control instead of under it; and
+  a `:global(.subtabs)` rule declared in `OverviewAppearanceTab` was supplying the
+  margin for `OverviewView`'s strip, working only because sub-tabs are hidden
+  rather than unmounted). **What genuinely remains:**
+
+  1. **No drop feedback on any of the three draggable lists.** `ListRow` sets
+     `dropEffect` and nothing else — no drag-over class, no insertion line
+     (`ListRow.svelte:54-67`). Consumers: `OverviewTabList.svelte:322-331`,
+     `OverviewColumnsTab.svelte:200-208`, `OverviewAppearanceTab.svelte:164-172`.
+     Phase 4 deliberately multiplied drag exposure (§4.3.1); the feedback never
+     followed.
+  2. **An empty overview window is not a drop target.** `drop()` is wired only to
+     rows (`OverviewTabList.svelte:330`), and a group with no tabs renders a
+     header and nothing else. Reachable by dragging a window's last tab out, and
+     real accounts ship empty windows (`format-notes.md:838-841`). The only way
+     back in is the row `⋯`.
+  3. **Cross-window drag cannot drop at the END of the target window.** `pos` is
+     the index of the row dropped *on*, so the last position is unreachable —
+     while the `⋯` `Move to Overview N` route does the exact opposite and only
+     ever appends. Neither route covers the whole strip, and position is
+     load-bearing, because the backend renumbers to strip order.
+  4. **Reordering within a window is mouse-only.** `rowMenu` offers Rename, Delete
+     and Move-to-window (`OverviewTabList.svelte:95-118`) but no up/down. Cross-
+     window has a keyboard route; the operation that actually renumbers the tab
+     table does not.
+  5. **The "Other" group's menu says "New tab in this window" when there is no
+     window** (`OverviewTabList.svelte:124`). The name-entry row then opens under
+     *Other* while the tab lands in Overview 1 — deliberate and documented, but
+     the label and the landing place disagree.
+  6. **`+ Tab` is disabled on a zero-tab account although the backend supports
+     it.** `create_tab` has an explicit no-sibling branch
+     (`overview_tabs.rs:426-430`) documented as "only reachable when the account
+     has no tabs" — currently unreachable from the UI, where importing a pack is
+     the only way in.
+  7. **`role="option"` rows with no `listbox` ancestor.** `ListRow.svelte:59-60`
+     emits it whenever `selected` is passed, and `grep -rn listbox app/src`
+     returns nothing. This hits **every** `selected` ListRow app-wide, so it is
+     really an app-wide a11y item that happens to show up here.
+  8. **Nothing in the work pane names the tab being edited, and Appearance ignores
+     the selection silently.** `OverviewColumnsTab.svelte:127-132` has no header
+     though the spec's own mock shows `Columns · main`
+     (`04-overview-and-inspector.md:352`), and `OverviewAppearanceTab` takes no
+     `tabIndex` at all — yet the tab list beside it keeps a row highlighted, and
+     nothing says Appearance is account-wide. The inspector's account/character
+     scope chips went out with the inspector and were never replaced.
+
+  **Where these cluster is the point:** Filters and Appearance were never walked
+  during the 0.35.0 live pass — the Phase 4 memo says so outright — and that is
+  exactly where the survivors are. _Added 2026-08-15, replacing item (7) of the
+  2026-07-19 bundle._
 
 - [ ] **Measure the drifter geometry properly, in-client.** The two shipped
   scenes (`app/src-tauri/scenes/`) carry numbers that are estimates, and their
@@ -81,11 +201,36 @@ Workflow:
   drifter beacon and reading the overlay with a known camera pitch settles all
   of them. _Added 2026-08-05 (probe viewer scenes)._
 
-- [ ] **A distance readout from each probe to a named scene object.** "Is probe
+- [x] **A distance readout from each probe to a named scene object.** "Is probe
   3 inside the jump sphere" is a number, and the picture only approximates it.
   Deliberately left out of the scenes slice to keep it to drawing; needs no
   change to the scene file format when it arrives. _Added 2026-08-05 (probe
-  viewer scenes)._
+  viewer scenes); done 2026-08-15 — and the format was indeed untouched._
+
+  Both shipped scenes carry exactly two objects: an origin marker with no radius,
+  and `Wormhole` at 87.5 km with `radius_km: 16` — so **the only object with a
+  volume is the jump sphere the entry asks about**, which settles "which object"
+  without a picker. `rangeTo()` (`probes.ts:99`) picks the first object with a
+  volume and falls back to the last; only a volume has an "inside", and measuring
+  to the beacon would just repeat the table's existing Distance column. It is
+  plain `Math.hypot` over two points already in one frame — `scenePos()` normalizes
+  the scene side and probe positions are metres in the same frame — so no bearing
+  or elevation maths was copied. The readout lives in `ProbeViewer` rather than in
+  the probe table, so it appears and disappears with the scene it depends on.
+
+  **It carries a caveat label, because the sibling entry above is why it must.**
+  The arithmetic is exact and its inputs are not: the 87.5 km, the westward
+  bearing, the elevations and both 16 km spheres are all unverified. The UI says
+  once, next to the numbers, *"Range to Wormhole — no better than the scene's own
+  figures"* — worded to stay true of a user-authored scene too, rather than
+  asserting "these are estimates" about a scene the app cannot know anything
+  about. (The YAML comments that do say so are stripped by the parser and are not
+  part of the format.)
+
+  One test trap worth keeping: the exact-boundary case first measured from the
+  trig-derived hole position, so `(87500ish + 9600) - 87500ish` came out
+  femtometres over the radius — float noise reading as "outside". It measures from
+  the origin now, where 16000 is exact.
 
 - [ ] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
   `ops.rs`'s `scoped_files` returns `HashMap<u64, PathBuf>` maps keyed by id
@@ -111,13 +256,6 @@ Workflow:
   4-probe formation, reopen the client, and check it appears in the scanner's
   formation menu intact. If it does not, restrict the editor to exactly 8 and
   amend §2.4 of the design. _Added 2026-08-03 (probe formation editor)._
-
-- [ ] **The `.mini` button is invisible outside a `.row`.** `app.css` gives
-  `.mini { opacity: 0 }`, revealed only by `.row:hover .mini`. Any `.mini`
-  button not inside something classed `row` is therefore permanently invisible
-  though still clickable — the probe editor's per-probe delete button sits in a
-  `<tr>` and hits this, and `AutofillView.svelte` has the same shape. Repo-wide
-  cascade trap, not one view's bug. _Added 2026-08-03 (probe formation editor)._
 
 - [ ] **Draggable splits and column edges on the canvas.** The chat splits are
   now editable as numeric fields on the selected window (2026-07-30), but not by
@@ -166,7 +304,7 @@ Workflow:
   it means finding an account whose file omits a width, measuring that column
   on screen, and trusting the pairing; filed as its own entry when someone wants
   it. _Added 2026-07-30; closed 2026-08-01._
-- [ ] **Drag the target list by its anchor, not by the whole rectangle.** The
+- [x] **Drag the target list by its anchor, not by the whole rectangle.** The
   canvas makes the entire box the grab target, so the cursor sits at an
   arbitrary offset from the anchor — and when the list flips to the other side
   of the anchor at the middle of the screen, that offset changes sign under the
@@ -178,7 +316,38 @@ Workflow:
   but not draggable. Everything needed is
   already there — `targetRect` places the box from the anchor and the drop
   writes the anchor — so this is a hit-target change, not a geometry one.
-  _Added 2026-07-31._
+  _Added 2026-07-31; done 2026-08-15._
+
+  **The entry's own prediction held exactly: `layout.ts` and `layout.test.ts` have
+  no diff.** The geometry chain was already anchor-based end to end — `startFurniture`
+  captures the stored anchor, the move moves the *anchor* and re-places the box
+  through `targetRect`, the drop passes the anchor to `furnitureWrites` — so only
+  the entry point changed. The gate reuses the `f.drag === "none"` path (the
+  neocom: selectable, not draggable) rather than inventing a second way to say it,
+  and `class:draggable` now excludes marker-dragged furniture so the box body stops
+  showing a `cursor: move` it no longer honours. `DetailParts.svelte` was NOT
+  touched and did not need to be: the anchor marker is a direct child of
+  `.furniture` and a *sibling* of `<DetailParts>`, whose `pointer-events: none`
+  wrapper stays inert. Safe by construction, too — `hudRects` only emits a `target`
+  rect when the anchor is actually stored, so the marker exists whenever the box is
+  drawn and gating on it can never leave the list undraggable.
+
+  One CSS subtlety: the dot straddles the corner on `margin: -5px` and
+  `.furniture`'s `overflow: hidden` clips its outer half, leaving ~6px of grab for
+  what is now the **only** way to move the list. A transparent `::after { inset:
+  -4px }` skirt brings that to ~10px, near the 12px resize handles, without moving
+  the mark. Un-clipping `overflow` was rejected — it would risk the target list's
+  detail parts spilling.
+
+  **A jsdom trap worth remembering for any future canvas-drag test:** jsdom reports
+  `clientWidth` 0, so the canvas scale is 0, so *every* drag delta rounds to 0 data
+  px — a drag and a non-drag are indistinguishable and the test passes either way.
+  Svelte 5's `bind_element_size` reads `clientWidth` once directly in a mount effect
+  (not only through the ResizeObserver the setup stubs out), so a scoped
+  `HTMLElement.prototype.clientWidth` getter of 2560 against a 2560 reference gives
+  scale 1 and real deltas. Both new assertions were then mutation-checked: removing
+  the gate makes "a press on the box moves nothing" fail, and removing the marker's
+  `onpointerdown` makes "a press on the anchor drags" fail.
 
 - [ ] **A minted target anchor has to guess the neocom margin, and an old
   Layout preset deletes the target's list.** Two loose ends from making the
@@ -242,7 +411,7 @@ Workflow:
   the default state lists and orders, so the shape is derivable, but it is a
   design call, not a bug fix. _Added 2026-07-27._
 
-- [ ] **Colortag-surface colours are invisible to the editor.** The model reads
+- [x] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
   `BACKGROUND_SURFACE` deliberately (its test is `projects_only_the_background_
   surface`), so `appearance.colors` never holds a flag colour, and
@@ -252,7 +421,45 @@ Workflow:
   sets `flag_48: black`, which is exactly the entry that produced the unknown-
   colour warning — so importing a pack writes colours the user can then neither
   see, review, nor undo. Needs the surface carried through the projection and
-  the swatch ungated. _Added 2026-07-27._
+  the swatch ungated. _Added 2026-07-27; done 2026-08-15._
+
+  `BACKGROUND_SURFACE` became `COLOR_SURFACES = ["background", "flag"]`,
+  `background_color_id` became `color_id(k, sh, want)`, and `state_colors` /
+  `set_state_color` take the surface (`overview_states.rs:103-167`), threaded
+  through `ops.rs` and the command to `api.ts`. The write side validates the
+  surface against the allow-list rather than trusting the string across IPC,
+  mirroring `set_overview_bool` — so `bracket` is still never written.
+
+  **A background edit writes byte-identical output to before**: the surface
+  literal is the only thing that moved and the key it mints is still
+  `Value::Bytes(b"background")`. Two tests bound that, including the nasty case —
+  **clearing background 48 must not clear flag 48**, which is exactly the
+  collision the old single-surface code could not have.
+
+  **The old test was replaced, not deleted, and the replacement is the honest
+  one:** `projects_only_the_background_surface` encoded the deliberate old
+  behaviour, so it is now `projects_one_surface_at_a_time` in the same place,
+  with a doc comment saying what it replaced and why. It asserts background and
+  flag project *separately* and that `bracket` still never appears. Note the
+  premise was verified against the corpus first: `settings-field-reference.md`
+  §9.3 records `(flag, 48)` in 2 of 175 accounts, so the client itself writes
+  this surface — this was never a hypothetical.
+
+  One thing worth a live look: the Colortag rows reuse `defaultColor(id)`, whose
+  fallback swatches were sampled off EVE's **Background** list. Display-only and
+  never written, but if EVE tints a colortag differently from its row, those
+  fallbacks are wrong.
+
+- [ ] **`Appearance.flag_colors` and `Appearance.palette` are optional in TS but
+  never absent in Rust.** Declared optional at `api.ts:321,324` purely so six
+  existing appearance fixtures (`OverviewView.spec.ts`, `OverviewFiltersTab.spec.ts`,
+  `OverviewColumnsTab.spec.ts`, `OverviewTabList.spec.ts`, `detail.test.ts`,
+  `page.spec.ts`) kept typechecking while several agents worked the same tree at
+  once. Rust always emits both, so the optionality is a small lie that costs a
+  compile-time check. Making them required and adding them to the six fixtures is
+  a clean, mechanical follow-up. The tidier shape it also declined — folding the
+  colours into `StateSurface` instead of leaving `Appearance.colors` beside them
+  — is a bigger change and a separate call. _Added 2026-08-15 (colortag surface)._
 
 - [ ] **The state colour swatch is a free colour picker, not EVE's palette.**
   `OverviewAppearanceTab.svelte:154` is a bare `<input type="color">`, so any of
@@ -265,7 +472,37 @@ Workflow:
   `PALETTE` has 6 of the 8 names, missing `green` and `purple` (`black` was
   harvested 2026-07-28); see the live verification plan item 26b and
   `overview_pack.rs:274`, which records why a sampled hex cannot be inverted into
-  the exact floats `color_name` needs. _Added 2026-07-27._
+  the exact floats `color_name` needs. _Added 2026-07-27; the unblocked half done
+  2026-08-15._
+
+  **The unblocked half shipped, and it turned out to contain a real silent bug.**
+  A stored colour `color_name` cannot match now carries an `off-palette` marker
+  saying the export will drop it, with a tooltip that names the gap itself — EVE
+  has eight names to this build's `{palette.length}` — so a genuine green or
+  purple reads the same way as a hand-picked colour. The count is interpolated
+  from data, so it self-corrects the day the palette is completed, and it renders
+  only when `palette.length > 0`: **"we cannot tell" must not render as "this will
+  be dropped"**.
+
+  The bug: **picking a colour that WAS a palette colour still wrote off-palette
+  floats.** `#bf0000` out of the picker wrote `0.74901960…` — indistinguishable
+  from `red`'s `0.75` on screen, silently dropped at export. `setColor` now writes
+  the palette's exact floats when the picked hex *is* a palette colour's hex. That
+  changes what gets written, deliberately, and only in the case where the user
+  picked a palette colour and got a near-miss. No nearest-colour guessing, and the
+  rendered `#rrggbb` is unchanged either way.
+
+  Swatches were deliberately NOT built as a grid — 22 rows × 6 buttons wants a
+  popover redesign, and copy asserting completeness is the one thing this entry
+  forbids. The native rung was taken instead: one `<datalist>` fed from the DTO,
+  which Chromium (so WebView2) surfaces as suggestions inside the colour picker,
+  and a suggestion list claims nothing about being the whole palette. **One caveat
+  no test can close:** the spec asserts the datalist and the `list` attribute
+  exist; it cannot assert WebView2's picker renders them. If a live pass shows it
+  does not, the fallback is a real swatch row and a bigger diff.
+
+  **What remains blocked is only the capture.** `green` and `purple` are still
+  absent and nothing was fabricated — see live verification item 26b.
 
 - [x] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,
@@ -297,7 +534,7 @@ Workflow:
   the panel's own menu already has those, and the pick lands there.
   See `docs/superpowers/specs/2026-07-30-canvas-overlap-pick-design.md`.
 
-- [ ] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
+- [x] **Neocom button editor follow-ups (whole-branch review, all ship-as-debt).**
   Non-blocking minors from the layout-depth milestone's final slice (the neocom
   button editor): (1) `reorder` reassembles the bar via `clone()` rather than a
   true move — bars are ≤24 tiny entries, so this buys nothing measurable; (2)
@@ -331,16 +568,40 @@ Workflow:
   the bar with `clone()` is what the entry itself says it is — a bar is ≤24 tiny
   entries, so a true move buys nothing measurable and costs the clarity of the
   current version. The icon-path casing is the client's own; normalising it would
-  make our catalog disagree with the files it describes. **(7) is the only item
-  left:** raw ids instead of friendly labels, which wants solving once alongside
-  the open `container_label` item rather than twice.
+  make our catalog disagree with the files it describes. **(7) — raw ids instead of
+  friendly labels — was the last one open. It is now closed too; see the note at
+  the end of this entry.**
   **(2) is now RESOLVED — closed by the 2026-07-29 backend debt sweep:** the
   Tuple-payload branch is gone and `_ => Err(NoBar)` handles the shape. Worth
   recording *why* it was unreachable, since the comment defending it read as a
   reason to keep it: the corpus stores the live bar as a `List`, and `reset`
   writes a `List` whatever Original was stored as — so the arm only ever fired
-  on a file we do not understand, and its answer was to rewrite it. The rest
-  remain open.
+  on a file we do not understand, and its answer was to rewrite it.
+
+  **(7) is now CLOSED (2026-08-15), which closes all eight — and the item it was
+  waiting to be solved "once, alongside" had already been solved without it.**
+  The `container_label` entry this pointed at is `[x]`, done 2026-07-26: its
+  mechanism is `stackLabel()` (`windowLabels.ts:412`), and all three call sites
+  already honour it (`LayoutView.svelte:273`, `WindowPanel.svelte:356` and
+  `:444`), so no window-stack label has shown a raw id for weeks. Only the neocom
+  half was ever left. It joins the same module rather than growing a second
+  scheme: a `NEOCOM` map plus `neocomLabel(id)` resolving
+  `NEOCOM[id] ?? CURATED[id] ?? id`. **The fall-through is the point** —
+  `market`, `mail`, `assets`, `contracts`, `corporation`, `help` and `notepad`
+  are deliberately ABSENT from `NEOCOM`, so a neocom button and the window it
+  opens cannot drift into two different names. An uncurated id returns raw, which
+  is the designed failure direction: a raw id is checkable against the file and a
+  wrong friendly label is not.
+
+  Two traps worth recording. **Labels must not go in `neocom-buttons.json`** — it
+  is generated from the corpus by `crates/settings-model/src/bin/neocom_catalog.rs`,
+  so a regeneration would wipe them. And **`pretty()` is not a safe fallback for a
+  neocom id**: its `BOILERPLATE` strip eats `New|View|Panel|Window|Wnd|Dlg`, which
+  is tuned for window ids and mauls an unseen neocom one. A third thing fell out
+  of the fix rather than out of the entry — `addableButtons` sorted by *id*, which
+  nobody could see once labels were showing, so the dropdown read as unsorted
+  ("EVE Mail" between "Log" and "Map"). It sorts by label now, pinned by a test
+  whose expected order differs from the by-id order so it cannot pass vacuously.
 
 - [x] **Run the settings-presets live in-game smoke.** Nothing in the feature
   has been verified against a running EVE client. From the spec's §12: (1)
@@ -382,11 +643,39 @@ Workflow:
      checkbox, and its `span.detail` is a bare flex child with no `nowrap` — judge
      whether a long label like "Character: Information" should sit after the name
      instead.
-  4. Preferences round trip: `preferences.json` appears only after the first
-     override, survives a restart, and hand-corrupting it yields
-     `preferences.json.bad`. The copy-vs-rename fallback has **no CI coverage at
-     all** — CI is Linux-only and the test that exercises it is `#[cfg(windows)]`.
-  5. Two rapid override toggles on one window: the file must end up matching the UI.
+  4. ~~Preferences round trip.~~ **DONE 2026-08-15 — as tests, not as a manual
+     pass. Neither 4 nor 5 ever needed a client, which is why they went first.**
+     The `#[cfg(windows)]` copy-vs-rename test that CI has never once executed
+     **passes** on Windows (`prefs.rs:239`) — but it was one lock-behaviour change
+     away from passing vacuously: it asserted only that `preferences.json.bad`
+     held the original bytes, which is true whether the rename succeeded **or**
+     the copy fallback ran. It now also asserts the rename genuinely failed
+     (`prefs.rs:267`), so the copy branch is proven reached rather than assumed.
+     Two of the three round-trip properties were already covered, and were
+     STRENGTHENED rather than duplicated: the round-trip asserted 2 of 5 fields,
+     so a load falling through to `Default` would have passed; the corrupt-file
+     test asserted `exists()` rather than bytes, so move-then-truncate would have
+     passed. Genuinely new is `the_first_override_creates_the_file_and_its_directory`
+     (`prefs.rs:152`), which also covers `save_to`'s `create_dir_all` — on a fresh
+     install that folder does not exist yet and nothing tested it.
+  5. ~~Two rapid override toggles on one window: the file must end up matching the
+     UI.~~ **DONE 2026-08-15 — two tests, because the guarantee is split across
+     two halves and neither half can prove it alone.** Backend (`prefs.rs:174`):
+     the toggle-OFF payload is shorter than the toggle-ON one, so the test catches
+     a writer that stops truncating — mutation-verified, removing the truncation
+     fails it and nothing else in the suite notices. **But the ordering guarantee
+     is not testable from `prefs.rs` at all**: `set_preferences` ships a whole
+     snapshot with no sequence number, so the backend is pure last-write-wins and
+     the file keeps whichever command *completes* last. The guarantee lives in
+     `writeQueue` (`prefs.svelte.ts:77-83`), which chains each write onto the
+     previous so completion order equals submission order by construction — and it
+     had no test at all. Now at `prefs.test.ts:52-77`, with the first write
+     deliberately made the slower one. **The trap worth remembering: the call log
+     cannot prove this.** With the queue removed both `invoke`s are still logged in
+     submission order and the log looks identical; only completion order diverges.
+     The test had to model the file rather than the calls, and mutation-checking
+     shows it failing on exactly that assertion while the call-order one still
+     passes.
   6. ~~`overrideCount()` counts overrides across every character~~ — **done
      2026-07-28**: the counter and its `clear` are scoped to the windows the open
      document has, so the line beside "showing N of M windows" describes that
@@ -561,7 +850,7 @@ Workflow:
   add window-reorder first so a middle window can be moved to the end before removal.
   _Added 2026-07-20 (Phase B design)._
 
-- [ ] **Overview tab-management Phase B follow-ups (whole-branch review, all
+- [x] **Overview tab-management Phase B follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the Phase B (add/remove overview
   window) final review: (1) `remove_overview_window` reassigns tabs via
   `groups.get_mut(0).and_then(list_inner_mut)` — if window 0's value is somehow a
@@ -587,11 +876,24 @@ Workflow:
   take the removed window's tabs is refused rather than silently dropping them (a
   tab present in `tabsettings_new` but in no window is invisible in-game), and an
   account with no mapping at all now gets `NoWindowMapping` instead of "keep at
-  least one window", which described a different situation. **Only (4) remains,**
-  and it is still conditional on a third cross-file op appearing. _Added
-  2026-07-20; partially done 2026-07-26 (layout names-and-noise) and 2026-07-29._
+  least one window", which described a different situation.
 
-- [ ] **Overview tab-management follow-ups (deferred from the milestone's final
+  **(4) is now RESOLVED too, which closes this bundle — but nobody acted on the
+  entry.** Audited 2026-08-15: the helper exists, as `try_edit_char`
+  (`app/src-tauri/src/ops.rs:797-810`), and it landed in `5de6b8b` (2026-08-06)
+  as part of a dedupe sweep rather than in response to this item. Exactly **one**
+  site now carries the lock / `if let Some(doc)` / read-only check / reshare
+  boilerplate the entry counted twice. The condition it was made conditional on
+  also fired: there are **three** call sites, not two — `tab_delete`
+  (`ops.rs:664`), `overview_window_add` (`:755`) and `overview_window_remove`
+  (`:769`). Worth knowing that the third one arriving unnoticed is itself already
+  recorded, at `undo.rs:516-518` — *"the proposal said `try_edit_char` had two
+  call sites; it has three, and the third arrived with a later PR without anyone
+  noticing that a rule existed"* — with a tripwire test at `:519-534` that fails
+  if the caller set changes again. _Added 2026-07-20; partially done 2026-07-26
+  (layout names-and-noise) and 2026-07-29; closed 2026-08-15._
+
+- [x] **Overview tab-management follow-ups (deferred from the milestone's final
   review, all ship-as-debt).** Non-blocking minors from the whole-branch review:
   (1) `overview_tabs::move_tab` has no `UnknownTab` guard — moving a nonexistent
   tab index inserts a phantom entry into the target window strip (UI-guarded, same
@@ -636,12 +938,42 @@ Workflow:
   bundle is a fresh look at the tab-management UI, which is no longer waiting on
   the slices it was deferred behind.
 
-- [ ] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
+  **(7) is now done too, which closes the bundle: the fresh look happened on
+  2026-08-15 and the result is re-filed as its own entry near the top.** The short
+  version is that Phase 4 of the redesign rewrote this view and genuinely killed
+  the roughness the 2026-07-27 live smoke was looking at, so the survivors are a
+  different and much more specific list than "the UI/UX is rough" — and they
+  cluster in Filters and Appearance, the two tabs the 0.35.0 live pass never
+  opened.
+
+- [x] **Overview windowless-account + no-fabricate follow-ups (tab-fix branch
   review).** (a) **Per-window placement on a windowless account:** creating a tab
   when the account has no `tabsByWindowInstanceID` now adds it to `tabsettings_new`
   and leaves the window mapping to EVE's default (the tab shows, verified in-game);
-  placing it in a SPECIFIC overview window needs the char-side window↔tab mapping,
-  deferred to the Phase B overview-window capture.
+  placing it in a SPECIFIC overview window was said to need the char-side
+  window↔tab mapping, deferred to the Phase B overview-window capture.
+
+  **(a) is CLOSED 2026-08-15 — not implementable as written, because its premise
+  is wrong. There is no char-side window↔tab mapping and there never was.** Which
+  window shows which tabs is **account-scoped** and positional
+  (`tabsByWindowInstanceID[i]` ↔ window id `overview`/`overview_<i>`), per
+  `settings-field-reference.md:786-792`. The character file's only tab-index-keyed
+  containers are the column widths and the sort setting — measured across the whole
+  corpus and recorded as such at `overview_tabs.rs:746-752`. So the thing this item
+  was waiting for does not exist to be captured, and the Phase B capture it was
+  deferred to could not have produced it: what Phase B landed is the **geometry**
+  half only (`add_overview_window_geometry` / `remove_overview_window_geometry`),
+  no tab membership anywhere. `create_tab` still says why it skips the mapping at
+  `overview_tabs.rs:408-413` — the per-window distribution is the client's runtime
+  state, persisted in neither file. Writing a partial mapping is ruled out on
+  measured grounds anyway (`format-notes.md:1462-1468`: a mapping that omits a tab
+  hides that tab in game, so only `create_window_mapping` may ever create the key).
+
+  **The user-facing need is already met by a route that shipped in the meantime:**
+  `create_window_mapping` writes a *complete* mapping and is offered as **"Assign
+  tabs to windows"** in the tab list's info band (`OverviewTabList.svelte:234-247`)
+  and the view `⋯` (`OverviewView.svelte:261-262`). Assign first, then `+ Tab`
+  places into a named window.
   (b) ~~Align `reorder_tabs_in_window` / `move_tab` to the no-fabricate read
   pattern~~ — **done 2026-07-28**: both now refuse with `NoWindowMapping` before
   reaching `groups_mut`, so a refused edit no longer leaves an empty mapping
@@ -686,6 +1018,26 @@ these items went.
 ## Shipped
 
 ### Unreleased (on master)
+
+- [x] **The `.mini` button is invisible outside a `.row`.** `app.css` gave
+  `.mini { opacity: 0 }`, revealed only by `.row:hover .mini`, so any `.mini`
+  button not inside something classed `row` was permanently invisible though
+  still clickable — the probe editor's per-probe delete button in a `<tr>`, and
+  `AutofillView.svelte`'s. _Added 2026-08-03 (probe formation editor); closed by
+  **Phase 1 of the UI redesign**, released in **v0.35.0**._
+
+  Nobody set out to fix this entry — the cascade trap simply could not survive
+  the token pass. `.mini` is gone from `app.css` entirely (`:81` now names it
+  only in the comment listing what was removed) and `lib/ui/Button.svelte`
+  replaced it, with `Button.spec.ts:15` describing itself as existing *for* this
+  regression. Worth noting how thoroughly it is pinned, because the shape is
+  easy to reintroduce: the four call sites that were invisible each carry a
+  comment saying so at the point of use (`AutofillView.svelte:177` and `:212`,
+  `KeybindsView.svelte:179`, `ProbeFormationsView.svelte:653` — the last of
+  which had grown a `.mini-visible` workaround written twice), and the two
+  places that legitimately want a receding control (`Sidebar.svelte:215`,
+  `TreeNode.svelte:181`) now say **recede by colour, never by hiding**, which is
+  the rule that keeps the trap from coming back.
 
 - [x] **`cargo clippy` fails on `settings-model` under Rust 1.97.** _Done
   2026-08-05, PR #68 (`clippy-clean` → master, `00f82ee`)._ The four errors were

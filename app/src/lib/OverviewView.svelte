@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { api, errMessage, errText, type OverviewColumns } from "./api";
   import type { MenuItem } from "./ContextMenu.svelte";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -19,11 +20,14 @@
   import { toast } from "./ui/toasts.svelte";
 
   let { userOpen, userId, charId, charOpen, refreshToken, scopeLabel = "",
-        onUserDirty, onCharDirty, onWindowAdded, onShowAccounts }:
+        onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; refreshToken: number;
       scopeLabel?: string;
       onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void } = $props();
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void;
+      /** The shell's Ctrl+F. Overview's only search box is the group filter on
+       *  the Filters sub-tab. */
+      focusSearch?: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -32,6 +36,16 @@
   // stays mounted (hidden via the `hidden` attribute, not `{#if}`) so switching
   // sub-tabs doesn't re-run a child's effects or reset its local state.
   let sub = $state("Columns");
+
+  // Ctrl+F. The box lives on the Filters sub-tab, and the sub-tabs stay MOUNTED
+  // and merely `hidden` (above) — so focusing it from Columns would do nothing
+  // at all, silently, exactly the way Layout's box failed from a railed
+  // inspector. Switch first, wait a tick for `hidden` to come off, then focus.
+  let focusFilters = $state<(() => void) | undefined>(undefined);
+  focusSearch = () => {
+    sub = "Filters";
+    void tick().then(() => focusFilters?.());
+  };
 
   async function reload() {
     if (!userOpen) { data = null; return; }
@@ -426,7 +440,8 @@
               <OverviewColumnsTab {data} {tabIndex} {charOpen} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
             </div>
             <div hidden={sub !== "Filters"}>
-              <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
+              <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty}
+                bind:focusSearch={focusFilters} />
             </div>
             <div hidden={sub !== "Appearance"}>
               <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
@@ -444,6 +459,12 @@
      rule in app.css, because this view and the shell's own wrappers both set
      it. Nothing about it is local to Overview. */
   .sub-row { display: flex; align-items: flex-end; gap: var(--s3); margin: var(--s2) var(--s3); }
+  /* `:global` because the class rides into <Tabs>. This rule used to live in
+     OverviewAppearanceTab, which styles a DIFFERENT strip under the same name —
+     so this strip's margin came from a child component, and only worked because
+     the sub-tabs are hidden rather than unmounted. Declared here now, where the
+     strip actually is; same value, no visual change. */
+  :global(.subtabs) { margin: var(--s1) 0 var(--s2); }
   /* Bounded side column, unbounded centre — the same reasoning LayoutView's
      grid uses, and the reason the tab list cannot eat the content. Wider than
      a bare list needs, because the side now carries the selected tab's fields

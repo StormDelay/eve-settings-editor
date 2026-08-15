@@ -9,12 +9,12 @@
 // The nudge is the part worth pinning. Key auto-repeat fires dozens of keydowns
 // and exactly one keyup, so "preview on keydown, commit on keyup" is what keeps
 // a held arrow from being dozens of writes. Nothing else checks that.
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import LayoutView from "$lib/LayoutView.svelte";
 import { calls } from "$lib/test/setup";
 import { setClutterOverride, clearClutterOverrides } from "$lib/prefs.svelte";
-import type { WindowLayout, WindowRect } from "$lib/api";
+import type { Hud, HudEntry, WindowLayout, WindowRect } from "$lib/api";
 
 const path = (n: string) => [{ s: "d", i: 1 }, { s: "k", i: 0 }, { s: n }];
 
@@ -248,6 +248,114 @@ describe("the status bar", () => {
     mount({ selectedId: null, readOnly: true });
     await waitFor(() => expect(calls.of("window_layout").length).toBe(1));
     expect(screen.queryByText(/Shift-drag onto another window to stack/)).toBeNull();
+  });
+});
+
+/**
+ * The target list is dragged by its ANCHOR, not by its box.
+ *
+ * The box hangs off whichever side of the anchor faces the middle of the
+ * screen, so a whole-box grab holds the cursor at an offset that changes SIGN
+ * the moment the anchor crosses the middle — the box jumps out from under the
+ * hand. In game the handle IS the anchor. So is the marker here.
+ *
+ * jsdom lays nothing out, so "the dot exists" and "the dot got an event" would
+ * both pass against something no cursor can reach. What is asserted instead is
+ * the difference the change is FOR: same gesture, two origins, and only one of
+ * them moves the box or writes anything. The other still selects.
+ */
+describe("the target list's grab handle", () => {
+  // `bind:clientWidth` reports 0 in jsdom, which makes the canvas scale 0 and
+  // every drag delta round to zero data px — so a drag would look identical to
+  // no drag. Svelte's size binding also reads `element.clientWidth` once,
+  // directly, in a mount effect (not just from the ResizeObserver it installs),
+  // so a prototype getter is enough to give the canvas a real scale. 2560 for a
+  // 2560-wide reference: scale 1, and client px are data px.
+  let clientWidth: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 2560 });
+  });
+  afterEach(() => {
+    if (clientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidth);
+  });
+
+  // The values Holy Storm's account file held at the 2026-07-31 capture, which
+  // put the anchor at 1426, 752 on a 2560x1440 client — past the middle on both
+  // axes, so the box hangs up and to the left and the marker is on `br`.
+  const hudEntry = (name: string, value: string): HudEntry =>
+    ({ name, kind: "float", value, default: "0", scope: "account", set: { how: "set", path: [] } }) as HudEntry;
+  const targetHud: Hud = {
+    entries: [
+      hudEntry("target_x", "0.5442122186495176"),
+      hudEntry("target_y", "0.5222222222222223"),
+    ],
+  };
+
+  /** The one furniture rect this hud draws, and its anchor marker. */
+  async function canvas() {
+    calls.stub("window_layout", layout(win("overview")));
+    calls.stub("hud_layout", targetHud);
+    calls.stub("set_hud_value", targetHud);
+    mount();
+    const box = await waitFor(() => {
+      const el = document.querySelector(".furniture");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    return { box, dot: box.querySelector(".anchor-dot") as HTMLElement, surface: document.querySelector(".canvas") as HTMLElement };
+  }
+
+  /** Press on `from`, travel 100x40 across the canvas, release. */
+  async function drag(from: HTMLElement, surface: HTMLElement) {
+    await fireEvent.pointerDown(from, { pointerId: 1, clientX: 400, clientY: 400 });
+    await fireEvent.pointerMove(surface, { pointerId: 1, clientX: 500, clientY: 440 });
+  }
+
+  test("a press on the box selects it and moves nothing", async () => {
+    const { box, surface } = await canvas();
+    const before = box.style.left;
+
+    await drag(box, surface);
+    expect(box.style.left).toBe(before);
+
+    await fireEvent.pointerUp(surface, { pointerId: 1, clientX: 500, clientY: 440 });
+    calls.never("set_hud_value");
+    // Selectable, just not draggable — the whole point of not simply making the
+    // box inert.
+    expect(box.classList.contains("selected")).toBe(true);
+  });
+
+  test("a press on the anchor marker drags", async () => {
+    const { box, dot, surface } = await canvas();
+    const before = box.style.left;
+
+    await drag(dot, surface);
+    // The box is placed from the anchor, so moving the anchor moves the box.
+    expect(box.style.left).not.toBe(before);
+
+    await fireEvent.pointerUp(surface, { pointerId: 1, clientX: 500, clientY: 440 });
+    await waitFor(() => expect(calls.of("set_hud_value").length).toBeGreaterThan(0));
+    expect(calls.of("set_hud_value").map((c) => c.args?.name).sort()).toEqual(["target_x", "target_y"]);
+    // Still selected: the marker press selects exactly as the box press does.
+    expect(box.classList.contains("selected")).toBe(true);
+  });
+
+  test("a read-only file drags by neither", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    calls.stub("hud_layout", targetHud);
+    mount({ readOnly: true });
+    const box = await waitFor(() => {
+      const el = document.querySelector(".furniture");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    const surface = document.querySelector(".canvas") as HTMLElement;
+    const before = box.style.left;
+    await drag(box.querySelector(".anchor-dot") as HTMLElement, surface);
+    await fireEvent.pointerUp(surface, { pointerId: 1, clientX: 500, clientY: 440 });
+    expect(box.style.left).toBe(before);
+    calls.never("set_hud_value");
   });
 });
 
