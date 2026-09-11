@@ -264,10 +264,8 @@ impl<'a> Decoder<'a> {
             op::UNICODE1 | op::UNICODE => {
                 let units = if code == op::UNICODE1 { 1 } else { r.read_len()? };
                 let bytes = r.read_bytes(units * 2)?;
-                let u16s: Vec<u16> = bytes
-                    .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .collect();
+                let u16s: Vec<u16> =
+                    bytes.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
                 String::from_utf16(&u16s)
                     .map(Value::StrUcs2)
                     .map_err(|_| DecodeError { offset: at, kind: ErrorKind::BadUtf8 })?
