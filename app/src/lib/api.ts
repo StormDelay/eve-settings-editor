@@ -65,6 +65,28 @@ export interface SaveReport {
   bytes_written: number;
 }
 
+export interface UndoState {
+  can_undo: boolean;
+  can_redo: boolean;
+  /** Nothing renders this. It is what the "one command, one step" tests assert
+   *  on, and no other observation can see it. */
+  depth: number;
+}
+
+export interface UndoOutcome {
+  /** A fresh projection per open slot. The Raw view reads `slots[x].tree`
+   *  directly and no refresh token reaches it, so the trees come back rather
+   *  than being re-fetched. */
+  char_tree: TreeNodeData | null;
+  user_tree: TreeNodeData | null;
+  /** Authoritative, and the reason the frontend keeps no opinion of its own:
+   *  after edit → save → edit → undo the file is clean, and after one more undo
+   *  it is dirty again. Only something that knows where the save point sits can
+   *  tell those two apart. */
+  dirty: { char: boolean; user: boolean };
+  state: UndoState;
+}
+
 export interface BackupInfo {
   path: string;
   file_name: string;
@@ -253,6 +275,15 @@ export interface Proposal {
   conflict: number | null;
 }
 
+/** The launcher's whole answer, not just its unresolved half. */
+export interface LauncherReport {
+  proposals: Proposal[];
+  /** Every character the logs named, the already-paired ones included. An empty
+   *  `proposals` is two facts without it — the logs named nobody, and everything
+   *  they named is already paired. */
+  known: number;
+}
+
 export interface OverviewColumn {
   name: string;
   label: string;
@@ -280,10 +311,17 @@ export interface StateSurface {
   enabled: number[];
   order: number[];
 }
+export type Rgba = [number, number, number, number];
 export interface Appearance {
   background: StateSurface;
   flag: StateSurface;
-  colors: [number, [number, number, number, number]][];
+  colors: [number, Rgba][];
+  /** Colortag-surface colours. The backend always sends these two; they are
+   *  optional here so the fixtures that predate them still typecheck. */
+  flag_colors?: [number, Rgba][];
+  /** EVE's palette, `[name, rgba]` — the only colours a pack export can name.
+   *  INCOMPLETE: 6 of EVE's 8 names, `green` and `purple` not yet captured. */
+  palette?: [string, Rgba][];
   bools: [string, boolean][];
   defaulted: boolean;
 }
@@ -425,6 +463,12 @@ export const api = {
   mutateMany: (slot: Slot, mutations: Mutation[]) =>
     invoke<TreeNodeData>("apply_mutations", { slot, mutations }),
   save: (slot: Slot, force: boolean) => invoke<SaveReport>("save_document", { slot, force }),
+  /** `null` means "nothing to undo" — NOT an error, and it must not reach an
+   *  error surface. Undo takes no arguments, touches no disk, and restores
+   *  trees the backend produced itself, so there is no other failure mode. */
+  undo: () => invoke<UndoOutcome | null>("undo"),
+  redo: () => invoke<UndoOutcome | null>("redo"),
+  undoState: () => invoke<UndoState>("undo_state"),
   listBackups: (slot: Slot) => invoke<BackupInfo[]>("list_file_backups", { slot }),
   restoreBackup: (slot: Slot, backupPath: string) =>
     invoke<OpenOutcome>("restore_backup", { slot, backupPath }),
@@ -449,9 +493,15 @@ export const api = {
     invoke<AccountRoster>("unpair_character", { charId }),
   confirmPairings: (pairs: [number, number][]) =>
     invoke<BatchConfirm>("confirm_pairings", { pairs }),
-  launcherProposals: () => invoke<Proposal[]>("launcher_proposals"),
+  launcherProposals: () => invoke<LauncherReport>("launcher_proposals"),
   beginCapture: () => invoke<void>("begin_capture"),
   resolveCapture: () => invoke<CaptureResult>("resolve_capture"),
+  /// Discard the guided-capture baseline. Only an ENDING calls this — cancelled,
+  /// or resolved into a confirmed pairing. Dismissing the Accounts sheet is not
+  /// an ending: the baseline costs the user a launch of EVE, a settings change
+  /// and a logout to recreate, and they are usually on their way to do exactly
+  /// that. See `03-sheets.md` §4.4.4.
+  clearCapture: () => invoke<void>("clear_capture"),
   overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
   setOverviewVisible: (tabIndex: number, column: string, visible: boolean) =>
     invoke<OverviewColumns>("set_overview_visible", { tabIndex, column, visible }),
@@ -492,8 +542,8 @@ export const api = {
     invoke<OverviewColumns>("preset_fork", { tabIdx, name, groups, filteredStates, alwaysShownStates }),
   overviewSetStates: (which: "background" | "backgroundOrder" | "flag" | "flagOrder", ids: number[]) =>
     invoke<OverviewColumns>("overview_set_states", { which, ids }),
-  overviewSetStateColor: (id: number, rgba: [number, number, number, number] | null) =>
-    invoke<OverviewColumns>("overview_set_state_color", { id, rgba }),
+  overviewSetStateColor: (surface: "background" | "flag", id: number, rgba: Rgba | null) =>
+    invoke<OverviewColumns>("overview_set_state_color", { surface, id, rgba }),
   overviewSetBool: (key: string, on: boolean) =>
     invoke<OverviewColumns>("overview_set_bool", { key, on }),
   presetSetStates: (name: string, filtered: number[], alwaysShown: number[]) =>
@@ -570,6 +620,24 @@ export const api = {
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
 };
 
+/**
+ * The backend's prose, and nothing else. This is what a user reads.
+ *
+ * Split out of `errMessage` because every one of the app's error surfaces was
+ * showing a bracketed machine code — `[conflict] …`, `[io] …` — inside a
+ * user-facing sentence. That is why the error grammar looked cosmetic: the SHAPE
+ * of the message was never the app's to control.
+ */
+export function errText(e: unknown): string {
+  const err = e as ErrDto;
+  return err && err.code ? err.message : String(e);
+}
+
+/**
+ * The diagnostic form, code included. For where a human is DIAGNOSING rather
+ * than reading: the `title=` of an inline message, so the code is one hover
+ * away, and the History detail line. Never the sentence itself.
+ */
 export function errMessage(e: unknown): string {
   const err = e as ErrDto;
   return err && err.code ? `[${err.code}] ${err.message}` : String(e);

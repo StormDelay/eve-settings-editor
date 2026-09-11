@@ -2,14 +2,25 @@
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
   import { EFFECT_COUNT_MAX, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
+  import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
     targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
+    hudError = null, neocomError = null,
   }: {
     hud: Hud;
     readOnly: boolean;
+    /** Refused edits, owned by LayoutView (which runs the commands) and rendered
+     *  here (which owns the controls). `hudError` carries the field's `name` so
+     *  it lands under the row that failed rather than at the top of a panel with
+     *  twenty rows in it. */
+    hudError?: { name: string; text: string; detail: string } | null;
+    neocomError?: { text: string; detail: string } | null;
     /** The ACCOUNT document's read-only flag, which only the account-scoped
      * rows care about. False when no account file is open — those rows are
      * already `unavailable` then. */
@@ -61,7 +72,7 @@
       { name: "ship_offset", label: "Offset from centre" },
       { name: "ship_top", label: "Align to top" },
     ] },
-    { title: "Fighter UI", kind: "fighter", rows: [
+    { title: "Fighter panel", kind: "fighter", rows: [
       { name: "fighter_x", label: "x" },
       { name: "fighter_y", label: "y" },
       { name: "fighter_detached", label: "Detached" },
@@ -184,38 +195,66 @@
 
 <div class="hud-panel">
   {#if anyAccountRow}
-    <p class="account-legend">
-      <span class="badge">account</span> rows are stored once for the whole account{sharedNames.length
+    <!-- InlineMessage directly rather than ScopeBanner: this legend's text is
+         not a string — it opens with a live `account` chip — and ScopeBanner
+         takes a `label`. It is the same treatment either way, since ScopeBanner
+         IS an info InlineMessage with a fixed shape. The class stays because
+         HudPanel.spec finds the legend by it. -->
+    <InlineMessage class="account-legend">
+      <Chip tone="neutral" size="sm">account</Chip> rows are stored once for the whole account{sharedNames.length
         ? ` — editing one also changes ${sharedNames.join(", ")}`
         : " — every character on it"}.
-    </p>
+    </InlineMessage>
   {/if}
   {#each GROUPS as g (g.title)}
     <div class="group" class:selected={selectedKind === g.kind}>
-      <h4><button class="group-title" onclick={() => onSelectKind(g.kind)}>{g.title}</button></h4>
+      <h4>
+        <Button variant="ghost" class="group-title" onclick={() => onSelectKind(g.kind)}>{g.title}</Button>
+      </h4>
       {#each g.rows as row (row.name)}
         {@const e = find(row.name)}
         {#if e}
-          <label class="row" title={title(e)}>
+          <!-- The row stays a wrapping <label> around a bare Field: the label
+               names the control, and HudPanel.spec walks `.row input`. Passing
+               Field a `label` here would nest one label inside another. -->
+          <!-- Label ALWAYS first, checkbox included. It used to lead with the
+               checkbox, which put a control in the label column and a label in
+               the control column — so the bool rows aligned with nothing. Every
+               control now sits in the same track, which is the whole point of a
+               properties panel. -->
+          <!-- `title` on the label TEXT, not on the row: the row is
+               `display: contents` so its cells can share the group's columns,
+               and an element with no box has nothing to hover. The text is
+               where a tooltip is reached for anyway. -->
+          <label class="row">
+            <span class="label" title={title(e)}>{row.label}</span>
             {#if e.kind === "bool"}
-              <input
-                type="checkbox"
-                checked={shown(row.name) === "true"}
+              <Field
+                kind="checkbox"
+                value={shown(row.name) === "true"}
                 disabled={disabled(e)}
+                disabledReason="Not present in this file"
                 onchange={(ev) => onSet(row.name, (ev.target as HTMLInputElement).checked ? "true" : "false")} />
-              <span class="label">{row.label}</span>
             {:else}
-              <span class="label">{row.label}</span>
-              <input
-                type="number"
-                step={e.kind === "float" && !AXIS[row.name] ? undefined : "1"}
+              <Field
+                kind="number"
+                width="5.5rem"
+                step={e.kind === "float" && !AXIS[row.name] ? undefined : 1}
                 value={shown(row.name)}
                 disabled={disabled(e)}
+                disabledReason="Not present in this file"
                 onchange={numberEdit(row.name, e.kind)} />
             {/if}
-            {#if e.scope === "account"}<span class="badge">account</span>{/if}
-            {#if e.value === null && e.set.how !== "unavailable"}<span class="badge">default</span>{/if}
+            <span class="badges">
+              {#if e.scope === "account"}<Chip tone="neutral" size="sm">account</Chip>{/if}
+              {#if e.value === null && e.set.how !== "unavailable"}
+                <Chip tone="neutral" size="sm">default</Chip>
+              {/if}
+            </span>
           </label>
+          {#if hudError?.name === row.name}
+            <InlineMessage variant="error" detail={hudError.detail}>{hudError.text}</InlineMessage>
+          {/if}
         {/if}
       {/each}
       {#if g.kind === "shipui"}
@@ -224,14 +263,15 @@
              to be told, and telling it writes nothing. -->
         <label class="row view" title="How many effect icons the canvas draws under the ship HUD. A view setting — it writes nothing.">
           <span class="label">Effects drawn</span>
-          <input
-            type="number"
-            min="0"
+          <Field
+            kind="number"
+            width="5.5rem"
+            min={0}
             max={EFFECT_COUNT_MAX}
-            step="1"
+            step={1}
             value={effects}
             onchange={viewEdit(() => effects, onEffects)} />
-          <span class="badge">view</span>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "target"}
@@ -239,14 +279,15 @@
              because changing it writes nothing. HudPanel.spec pins that. -->
         <label class="row view" title="How many locked targets the canvas draws. A view setting — it writes nothing.">
           <span class="label">Targets drawn</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            step="1"
+          <Field
+            kind="number"
+            width="5.5rem"
+            min={1}
+            max={10}
+            step={1}
             value={targets}
             onchange={viewEdit(() => targets, onTargets)} />
-          <span class="badge">view</span>
+          <span class="badges"><Chip tone="neutral" size="sm">view</Chip></span>
         </label>
       {/if}
       {#if g.kind === "neocom" && neocom}
@@ -257,7 +298,8 @@
           onReorder={onNeocomReorder}
           onRemove={onNeocomRemove}
           onAdd={onNeocomAdd}
-          onReset={onNeocomReset} />
+          onReset={onNeocomReset}
+          error={neocomError} />
       {/if}
     </div>
   {/each}
@@ -266,77 +308,83 @@
 <style>
   .hud-panel {
     border-bottom: 1px solid var(--border);
-    padding: 0.4rem 0.5rem;
-    font-size: 12px;
+    padding: var(--s1) var(--s2);
+    font-size: var(--t-caption);
   }
-  .account-legend {
-    margin: 0 0 0.5rem;
-    padding: 0.25rem 0.4rem;
-    color: var(--fg-dim);
-    background: var(--bg-panel);
-    border-left: 2px solid var(--accent);
-    font-size: 11px;
+  .hud-panel :global(.account-legend) {
+    margin: 0 0 var(--s2);
+    padding: var(--s1) var(--s2);
   }
   .group {
-    margin-bottom: 0.4rem;
+    display: grid;
+    /* Label, control, badges. The control track is the same 5.5rem every number
+       Field asks for, so the inputs form a true column; the badge track is
+       `auto`, sized once for the group by its widest chip cell, so the chips
+       share one right edge whether a row carries none, one or two. */
+    grid-template-columns: minmax(0, 1fr) 5.5rem auto;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-bottom: var(--s1);
     /* Transparent by default so selecting a group doesn't shift the layout. */
     border-left: 2px solid transparent;
-    padding-left: 0.3rem;
+    padding-left: var(--s1);
   }
-  /* The two ambers below are deliberately NOT app.css variables: they match
-     the canvas's selected-furniture colour (LayoutView's own #f59e0b/#fde68a),
-     and the pair has to move together or the panel stops agreeing with the
-     rectangle it describes. Everything else here now follows the palette. */
+  /* The selected-group treatment shares --warn with the canvas's selected
+     rectangle (LayoutView's .win.selected / .furniture.selected). The panel and
+     the rectangle it describes must agree; the token is what makes them.
+     This used to be a hardcoded pair of ambers in two files with a comment
+     asking two humans to remember — the weakest possible way to couple two
+     things. The no-hardcoded-hex guard now enforces it. */
   .group.selected {
-    border-left-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.08);
+    border-left-color: var(--warn);
+    background: var(--warn-dim);
   }
   h4 {
-    margin: 0.2rem 0;
+    margin: var(--s1) 0;
   }
   /* A button so it's keyboard-reachable, styled as the heading it replaces
      (same pattern as WindowPanel's window-name button). */
-  .group-title {
+  .hud-panel :global(.group-title) {
     padding: 0;
-    background: none;
-    border: none;
-    color: var(--fg-dim);
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: var(--t-caption);
     font-weight: 600;
     text-transform: uppercase;
-    cursor: pointer;
   }
-  .group.selected .group-title {
-    color: #fde68a;
+  .group.selected :global(.group-title) {
+    color: var(--warn);
   }
+  /* The GROUP is the grid and each row is `display: contents`, so every row in
+     a group shares three column tracks.
+
+     Putting the grid on the row instead — which is what this was first — does
+     not align anything: each row is then its own formatting context, so `auto`
+     and `1fr` resolve per row. A row with no chip, one chip, or two ("account"
+     AND "default") each sized its badge column differently, the `1fr` label
+     absorbed the difference, and the value boxes landed at three different x.
+     Alignment ACROSS rows needs tracks shared across rows. */
   .row {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 1px 0;
+    display: contents;
+  }
+  /* Anything that is not a row spans the whole width: the group heading, a
+     refused-edit message, and the neocom button list. */
+  .group > h4,
+  .group > :global(.msg),
+  .group > :global(.buttons) {
+    grid-column: 1 / -1;
   }
   .label {
-    color: var(--fg);
-    min-width: 8.5rem;
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  /* Native controls render light in WebView2 unless told otherwise. */
-  input[type="number"] {
-    width: 5.5rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-  }
-  input[type="number"]:disabled {
-    color: var(--fg-dim);
-  }
-  input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
-  .badge {
-    color: var(--fg-dim);
-    background: var(--bg-panel);
-    border-radius: 3px;
-    padding: 0 4px;
-    font-size: 10px;
+  /* One cell for zero, one or two chips, so a row with none does not let its
+     neighbours slide into the badge column. */
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    justify-self: end;
   }
 </style>

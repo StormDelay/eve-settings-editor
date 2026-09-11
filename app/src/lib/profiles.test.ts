@@ -1,5 +1,5 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
-import { primaryProfileDir, profileLabels, profileNote } from "./profiles.ts";
+import { primaryProfileDir, profileLabels } from "./profiles.ts";
 import type { Profile, SettingsFile } from "./api.ts";
 
 import { check } from "./test/check.ts";
@@ -136,11 +136,7 @@ const withFiles = (dir: string, files: SettingsFile[]): Profile => ({
   );
 }
 
-{
-  check("the live profile is named as in use", profileNote(true) === "in use by EVE");
-  check(
-    "every other profile is called out as not",
-    profileNote(false) === "not in use — EVE has not written here",
-  );
-}
+// `profileNote`'s two tests went with it. What they pinned was the wording of a
+// chip that has been deleted; the ranking they sat beside is still covered
+// above, and that is the part anything depends on.
 
