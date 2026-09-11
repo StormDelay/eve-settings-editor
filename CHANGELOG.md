@@ -9,6 +9,56 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - **Launcher-suggested account pairings now work on Linux.** The editor looks for the launcher's logs inside the Steam Proton prefix — in every Steam library, including Flatpak and Snap installs — and in `$WINEPREFIX`, instead of only where a native Linux launcher would write them.
 
+## [0.35.0] - 2026-08-14
+
+The whole app, redrawn — and Ctrl+Z.
+
+### Changed
+- The whole app has been repainted on one colour palette, chosen so every piece of text is actually readable — the small grey text everywhere was well below what is legible, and the status badges were the worst of it.
+- Buttons, fields, tabs and messages now look and behave the same in every view.
+- **The app is now about a character, not about two files.** The character's name sits at the top left, and the account it belongs to is shown beside it.
+- **One Save button, always in the same place**, with a list of exactly which files it is about to write and whose settings they share.
+- **All six view tabs are always there**, greyed out with a reason when they don't apply, instead of appearing and disappearing as files load.
+- Backups moved from a permanent column into a History button, which lists both open files at once.
+- The file list is now one alphabetical list of the characters in the profile you pick, with each character's account shown on its row.
+- Accounts, Copy settings, About, Refresh names and Rescan moved into the menu button at the top left.
+- Opening a character now lands you on Layout or Overview rather than on the raw data tree, which is renamed "Raw" and sits last.
+- Press Ctrl+K to jump to any character by typing part of its name or its account's.
+- **Accounts and Copy settings open over the editor instead of replacing it**, and close with Escape, a close button, or a click outside. Everything you had open — your tab, your selection, your search, even your scroll position — is exactly where you left it.
+- **The Accounts panel now names the characters it is about to pair** instead of counting them, and offering one says "Accept" rather than "Accept all".
+- A calibration keeps running if you close the Accounts panel to go and use EVE, and pressing Calibrate again won't restart it behind your back.
+- "Keep mine" and the pairings your launcher offers are remembered for the whole session, not just until you close the panel.
+- **Overview is one list of tabs**, and everything a tab has — its name, its colour, its weight, which window it is in, and deleting it — is on the tab's own row.
+- Layout gained a status bar under the canvas, and its rows a visible ⋯ menu instead of right-click only.
+- The Raw tree gained a selection and a properties panel, and the properties column is now drawn only on the tabs that have something to show.
+- **Seventy-three blocking pop-ups are down to six.** Anything the app can undo just happens and tells you in a passing message; the six that survive are the ones that write or delete something no backup can bring back.
+- **A failure now appears next to the control that failed**, in plain words, instead of in a dialog that names none of them. The diagnostic code moved to the tooltip.
+- **One Save writes both your files and says so once**, naming the character and the account rather than two file names. The byte count and backup path moved to History.
+- **Undo.** Ctrl+Z takes back the last change, Ctrl+Shift+Z or Ctrl+Y puts it back, and one press undoes one action even when that action changed both files.
+- Press Ctrl+K to search characters, presets and commands; the menu and every search box now show their own shortcut, and Ctrl+/ lists them all.
+- History lists the five most recent backups per file, with the rest one click away.
+
+### Fixed
+- **Four buttons that were invisible but still clickable are now visible.** Clearing an autofill list, removing an autofill entry, resetting a keybinding to EVE's default, and clearing the tree search.
+- **A pairing offered by your launcher log now stands out instead of fading into the card.** It was drawn fainter than the pairings you had already accepted.
+- The Accounts view's cards, chips and panels were falling back to a stray colour no other view used.
+- **Save no longer disappears when you open Accounts or Copy settings** with unsaved changes.
+- **The backups list no longer silently switches to a different file** when you change tab, and the window title no longer changes with it either.
+- **"Accept all" in the Accounts view no longer depends on which tab you were on** when you opened it.
+- **Ctrl+F now reaches whichever search box the tab you are on has.** It used to do nothing at all on most of them, and nothing on Raw once you had visited Layout.
+- The character list no longer repeats a character once per profile folder.
+- **Copy settings now names the file it is about to rewrite behind you**, and catches the case it never could before: an account file being written by a copy onto one of its other characters.
+- **After a copy, an affected file you have open is reloaded** — unless you have unsaved edits in it, in which case it says so instead of quietly discarding them.
+- **Cancelling a calibration now actually discards it.** It used to leave the measurement behind, where the next calibration would silently compare against it.
+- **"Delete tab" no longer claims it cannot be undone.** It always could — Discard put it back, and now Ctrl+Z does too.
+- **Discarding your changes, or restoring a backup, now updates the Autofill, Keybinds and Probes tabs.** They kept showing the old values until you switched tabs and back.
+- **A copy that fails part-way no longer leaves half of itself applied.** Copying columns onto a read-only character used to write the order and then report failure.
+- **Clicking a tab while a file is still opening is no longer undone** a moment later.
+- Confirming a backup restore no longer closes the History panel out from under you.
+- The window filter on Layout was squeezed to nothing and could not be seen at all.
+- Columns in the HUD, window and overview-filter panels now line up instead of each row choosing its own position.
+- The profile list no longer labels a folder "in use by EVE" or not. It was never about a running client, and its other half was usually untrue.
+
 ## [0.34.0] - 2026-08-13
 
 Your accounts, named by the EVE launcher instead of guessed at.

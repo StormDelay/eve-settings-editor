@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errMessage } from "$lib/api";
+  import { api, errMessage, errText } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
@@ -11,12 +11,18 @@
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
+  import Button from "./ui/Button.svelte";
+  import Chip from "./ui/Chip.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
   import DetailParts from "$lib/DetailParts.svelte";
   import { shipHudParts, fighterParts, neocomParts, targetParts, windowDetail } from "$lib/detail";
-  import { confirm, message } from "@tauri-apps/plugin-dialog";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import { toast } from "./ui/toasts.svelte";
+  import { undoAction } from "./undo.svelte";
 
   let {
     slot,
@@ -24,12 +30,13 @@
     readOnly,
     accountReadOnly = false,
     refreshToken,
+    onCollapseInspector,
     userOpen,
     selectedId = $bindable(null),
     onReveal,
     onDirty,
     sharedNames = [],
-    focusFilter = $bindable(undefined),
+    focusSearch = $bindable(undefined),
   }: {
     slot: Slot;
     runMutations: (ms: Mutation[], rethrow?: boolean) => Promise<void>;
@@ -38,6 +45,10 @@
      * rows write that file, so it is theirs alone to honour. */
     accountReadOnly?: boolean;
     refreshToken: number;
+    /** A view that supplies its own inspector supplies its own hide control
+        too — otherwise the column can be reopened from here but only closed
+        from a view that has the shell's aside. */
+    onCollapseInspector?: () => void;
     userOpen: boolean;
     selectedId?: string | null;
     onReveal: (path: NodePath) => void;
@@ -47,10 +58,14 @@
      * fields are account-wide, so the warning belongs on those rows, not
      * above the whole view. */
     sharedNames?: string[];
-    /** Exposed so +page.svelte's global Ctrl+F handler can focus the window
-     * filter input when this view is active. Forwarded from WindowPanel,
-     * where the input actually lives — see its own focusFilter doc. */
-    focusFilter?: () => void;
+    /** Exposed so the shell's global Ctrl+F handler can focus the window filter
+     * input when this view is active. Forwarded from WindowPanel, where the
+     * input actually lives — see its own focusFilter doc.
+     *
+     * Renamed from `focusFilter`: it is now ONE bindable that whichever view is
+     * active sets, so Ctrl+F stops being a suppressed no-op on the tabs that
+     * have their own search box. */
+    focusSearch?: () => void;
   } = $props();
 
   let layout = $state<WindowLayout | null>(null);
@@ -107,19 +122,34 @@
     stackUnits(layout ?? { reference_w: 0, reference_h: 0, windows: [], stacks: [] }, null),
   );
   const shownCount = $derived(drawnWindowCount(units));
+  // One live message per owning control (§3.1). Five slots because this view
+  // drives five separate control groups, and "Edit failed" in a modal named none
+  // of them — which is the whole complaint.
+  type Msg = { text: string; detail: string };
+  let loadError = $state<string | null>(null);
+  let barError = $state<Msg | null>(null);
+  let stackError = $state<Msg | null>(null);
+  let hudError = $state<(Msg & { name: string }) | null>(null);
+  let chatError = $state<Msg | null>(null);
+  let neocomError = $state<Msg | null>(null);
+
   const totalCount = $derived(drawnWindowCount(allUnits));
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
   // Every window this document has — NOT the filtered set. See overrideCount.
   const documentWindowIds = $derived(new Set((layout?.windows ?? []).map((w) => w.id)));
 
   async function load() {
+    loadError = null;
     try {
       layout = await api.windowLayout(slot);
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) {
         selectedId = null;
       }
     } catch (e) {
-      await message(errMessage(e), { title: "Layout unavailable", kind: "error" });
+      // Replaces the canvas rather than covering it. A dismissed modal used to
+      // leave an empty canvas with no explanation, which is the worst of both:
+      // the error was blocking AND unrecoverable.
+      loadError = `The window layout couldn't be read — ${errText(e)}`;
     }
     // Furniture is a bonus view: an account file open on its own, or a document
     // with no HUD keys, must not take the canvas down with it.
@@ -201,10 +231,11 @@
 
   async function commit(ms: Mutation[]) {
     if (ms.length === 0) return;
+    barError = null;
     try {
       await runMutations(ms, true);
     } catch (e) {
-      await message(errMessage(e), { title: "Edit failed", kind: "error" });
+      barError = { text: `That window wasn't moved — ${errText(e)}`, detail: errMessage(e) };
     }
     await load(); // refresh paths/values from the authoritative document
   }
@@ -276,13 +307,14 @@
   // --- Stack membership ------------------------------------------------------
 
   async function runStack(p: Promise<WindowLayout>): Promise<boolean> {
+    stackError = null;
     try {
       layout = await p;
       onDirty("char"); // stack ops edit the character document in the backend
       if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
       return true;
     } catch (e) {
-      await message(errMessage(e), { title: "Stack edit failed", kind: "error" });
+      stackError = { text: `The stack wasn't changed — ${errText(e)}`, detail: errMessage(e) };
       return false;
     }
   }
@@ -291,39 +323,44 @@
   const onAddToStack = (member: string, container: string) => runStack(api.stackAdd(member, container));
   const onCreateStack = (m1: string, m2: string) => runStack(api.stackCreate(m1, m2));
 
-  // Deleting window state is not something to get wrong, so it asks first and
-  // names the count. Safe to offer at all only because the client was verified
-  // not to re-create these (2026-07-28) — see docs/format-notes.md.
+  // It no longer asks. The mutation is in-memory and Discard reverses it
+  // exactly, and the WindowPanel band above the button already explains what an
+  // empty frame is BEFORE the click — so the dialog was a second telling of
+  // something already on screen, charging a modal for it.
+  //
+  // Safe to offer at all only because the client was verified not to re-create
+  // these (2026-07-28) — see docs/format-notes.md.
   async function onDeleteOrphans() {
     const n = layout?.windows.filter(isOrphanFrame).length ?? 0;
-    const ok = await confirm(
-      `Delete ${n} empty stack frame${n === 1 ? "" : "s"}? Each is a leftover container whose ` +
-        `windows were unstacked. EVE does not re-create them. The change is applied to the open ` +
-        `file — save to write it to disk.`,
-      { title: "Delete empty stack frames", kind: "warning" },
-    );
-    if (ok) await runStack(api.stackDeleteOrphans());
+    if (n === 0) return;
+    if (await runStack(api.stackDeleteOrphans())) {
+      toast(`Deleted ${n} empty stack frame${n === 1 ? "" : "s"}. Save to write it to disk.`, {
+        action: undoAction(),
+      });
+    }
   }
 
   /** Write one HUD field and refresh the projection. */
   async function setHud(name: string, text: string) {
+    hudError = null;
     try {
       hud = await api.setHudValue(name, text);
       const e = hud.entries.find((x) => x.name === name);
       onDirty(e?.scope === "account" ? "user" : "char");
     } catch (e) {
-      await message(errMessage(e), { title: "HUD edit failed", kind: "error" });
+      hudError = { name, text: `That value wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   /** Write one or more channels' splits and take the refreshed projection. The
    * splits live in the account document, so that is the slot that goes dirty. */
   async function setChatSplits(ids: string[], userlistWidth: number | null, inputHeight: number | null) {
+    chatError = null;
     try {
       chats = await api.setChatSplits(ids, userlistWidth, inputHeight);
       onDirty("user");
     } catch (e) {
-      await message(errMessage(e), { title: "Chat layout edit failed", kind: "error" });
+      chatError = { text: `That chat panel wasn't changed — ${errText(e)}`, detail: errMessage(e) };
       // A refused value (a typed negative, the reachable case) must not stay
       // on screen as if it had been stored — re-read what is actually there.
       chats = await api.chatPanels().catch(() => chats);
@@ -340,11 +377,12 @@
   let neocomBusy = $state(false);
   async function runNeocom(p: Promise<NeocomBar>) {
     neocomBusy = true;
+    neocomError = null;
     try {
       neocom = await p;
       onDirty("char");
     } catch (e) {
-      await message(errMessage(e), { title: "Neocom edit failed", kind: "error" });
+      neocomError = { text: `The neocom wasn't changed — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       neocomBusy = false;
     }
@@ -468,14 +506,26 @@
     return snapLines(rects, layout?.reference_w ?? 0, layout?.reference_h ?? 0);
   }
 
+  /** Furniture whose handle is its anchor MARKER rather than its whole box —
+   * today, only the target list. In game the anchor is the only thing you can
+   * grab; grabbing the box instead leaves the cursor at an arbitrary offset
+   * from the anchor, and that offset changes SIGN the moment the box flips to
+   * the other side of the anchor at the middle of the screen. The box stays
+   * selectable, it just doesn't start a drag. */
+  const dragsByMarker = (f: FurnitureRect) => f.kind === "target";
+
   // Selecting furniture and dragging it are separate: the neocom can't be
   // dragged (its width is a field, not a rect) but must still be selectable, or
   // clicking it looks broken. Selection is exclusive with the window selection,
   // so exactly one thing on the canvas ever reads as selected.
-  function startFurniture(f: FurnitureRect, e: PointerEvent) {
+  //
+  // `onMarker` is the anchor-dot press; the dot stops propagation, so the box's
+  // own handler never doubles it.
+  function startFurniture(f: FurnitureRect, e: PointerEvent, onMarker = false) {
     selectFurniture(f.kind);
     e.stopPropagation();
     if (readOnly || f.drag === "none") return;
+    if (dragsByMarker(f) && !onMarker) return;
     const r = fRectOf(f);
     // The anchor comes from the stored value, not from the rect: inverting a
     // rect back to an anchor is ambiguous in the band around the middle where
@@ -823,11 +873,15 @@
      input losing focus to another inner element won't trip it) — see endNudge. -->
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} onblur={endNudge} />
 
-{#if layout === null}
-  <p class="hint">Loading layout…</p>
+{#if loadError !== null}
+  <div class="work">
+    <EmptyState variant="error" title="This layout can't be shown" description={loadError} />
+  </div>
+{:else if layout === null}
+  <div class="work"><EmptyState title="Loading layout…" /></div>
 {:else}
   <div class="layout-view">
-    <div class="canvas-wrap" bind:clientWidth={containerWidth}>
+    <div class="canvas-wrap work" bind:clientWidth={containerWidth}>
       <!-- The capture-phase blur is what gives the canvas the keyboard:
            startMove/startResize/startFurniture all preventDefault their
            pointerdown, which suppresses the browser's focus transfer, so a
@@ -855,7 +909,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="furniture"
-            class:draggable={f.drag !== "none" && !readOnly}
+            class:draggable={f.drag !== "none" && !readOnly && !dragsByMarker(f)}
             class:selected={selectedFurniture === f.kind}
             class:spills={f.kind === "shipui"}
             style="left: {toCanvas(r.x, scale)}px; top: {toCanvas(r.y, scale)}px;
@@ -866,11 +920,13 @@
             {/if}
             <!-- The anchor is what the file stores and what a drag writes; the
                  box is just what the list covers from there. In game the anchor
-                 is also the only thing you can grab, and this canvas lets you
-                 drag the whole box — so mark the corner rather than leave the
-                 user to infer it from which way the box grew. -->
+                 is also the only thing you can grab, so it is the handle here
+                 too: the marker drags, the rest of the box only selects. -->
             {#if f.kind === "target" && targetMarkerCorner}
-              <span class="anchor-dot {targetMarkerCorner}" title="The stored anchor. The list grows from here toward the middle of the screen."></span>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span class="anchor-dot {targetMarkerCorner}"
+                title="The stored anchor — drag the list by this. The list grows from here toward the middle of the screen."
+                onpointerdown={(e) => startFurniture(f, e, true)}></span>
             {/if}
             <span class="furniture-label">{f.label}</span>
           </div>
@@ -921,34 +977,68 @@
           </div>
         {/each}
       </div>
-      <p class="ref">
-        reference {layout.reference_w}×{layout.reference_h}
-        <label class="det">
-          <input type="checkbox" checked={detailOn()} onchange={(e) => setDetail(e.currentTarget.checked)} />
-          Detail
-        </label>
-        {#if !readOnly}
-          <span class="hintish">· Shift-drag onto another window to stack · drag a tab to reorder or pull out</span>
-        {/if}
-        {#if filterIsActive(filter)}
-          <span class="showing">
-            · showing {shownCount} of {totalCount} windows
-            <!-- Back to the DEFAULT, not to nothing: `reset` undoes what the
-                 user narrowed, and hiding clutter is the view they started
-                 from rather than something they chose. Showing every window is
-                 one click away on the toggle itself. -->
-            <button class="linkish" onclick={() => (filter = { ...DEFAULT_FILTER })}>reset</button>
-          </span>
-        {/if}
-        {#if overrideCount(documentWindowIds) > 0}
-          <span class="showing">
-            · {overrideCount(documentWindowIds)} overridden
-            <button class="linkish" onclick={() => clearClutterOverrides(documentWindowIds)}>clear</button>
-          </span>
-        {/if}
-      </p>
+      <!-- A status BAR, not a sentence: one line used to carry a fact, a view
+           setting, an instruction and two counters with links, in five tones.
+           Left is what is true and what you are looking at, and neither half
+           ever appears or disappears. Right is what is currently NARROWING the
+           view — chips, because both are exceptional states with an escape and
+           both vanish when there is nothing to say. The drag hint was
+           instruction rather than status and moved to the inspector. -->
+      <!-- The canvas's own failures land here, under the canvas they are about
+           and above nothing that could be pushed out from under the cursor. -->
+      {#if barError}
+        <InlineMessage variant="error" detail={barError.detail}>{barError.text}</InlineMessage>
+      {/if}
+      <div class="statusbar">
+        <span class="facts">
+          <span class="ref">reference {layout.reference_w}×{layout.reference_h}</span>
+          <Field
+            kind="checkbox"
+            class="det"
+            label="Detail"
+            value={detailOn()}
+            onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
+        </span>
+        <span class="narrowing">
+          {#if filterIsActive(filter)}
+            <Chip tone="warn" size="sm">
+              {shownCount} of {totalCount} windows
+              <!-- Back to the DEFAULT, not to nothing: dismissing undoes what
+                   the user narrowed, and hiding clutter is the view they
+                   started from rather than something they chose. Showing every
+                   window is one click away on the toggle itself. -->
+              {#snippet actions()}
+                <Button variant="ghost" size="sm" iconOnly title="Show every window again"
+                  onclick={() => (filter = { ...DEFAULT_FILTER })}>✕</Button>
+              {/snippet}
+            </Chip>
+          {/if}
+          {#if overrideCount(documentWindowIds) > 0}
+            <Chip tone="warn" size="sm">
+              {overrideCount(documentWindowIds)} overridden
+              {#snippet actions()}
+                <Button variant="ghost" size="sm" iconOnly title="Clear the clutter overrides"
+                  onclick={() => clearClutterOverrides(documentWindowIds)}>✕</Button>
+              {/snippet}
+            </Chip>
+          {/if}
+        </span>
+      </div>
     </div>
-    <div class="side">
+    <aside class="inspector">
+      <div class="inspector-head">
+        <Button variant="ghost" size="sm" iconOnly title="Hide properties"
+          onclick={() => onCollapseInspector?.()}>&raquo;</Button>
+      </div>
+      <!-- "What can I do here", where the pane has to say something anyway.
+           The canvas's gestures were explained in a status line, in an
+           instruction wedged between two facts; none of it is true on a
+           read-only file, which is the gate the old line already carried. -->
+      {#if selectedId === null && !readOnly}
+        <EmptyState
+          title="Nothing selected"
+          description="Click a window on the canvas to edit it. Shift-drag onto another window to stack · drag a tab to reorder or pull out." />
+      {/if}
       {#if hud}
         <HudPanel
           {hud}
@@ -969,11 +1059,15 @@
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}
           onNeocomRemove={(i) => runNeocom(api.neocomRemove(i))}
           onNeocomAdd={(id, t, icon) => runNeocom(api.neocomAdd(id, t, icon))}
-          onNeocomReset={() => runNeocom(api.neocomReset())} />
+          onNeocomReset={() => runNeocom(api.neocomReset())}
+          {hudError}
+          {neocomError} />
       {/if}
       <WindowPanel
         windows={layout.windows}
         stacks={layout.stacks}
+        {stackError}
+        {chatError}
         {selectedId}
         {readOnly}
         {onSelect}
@@ -994,8 +1088,8 @@
         {sharedNames}
         onSetChatSplits={setChatSplits}
         bind:filter
-        bind:focusFilter />
-    </div>
+        bind:focusFilter={focusSearch} />
+    </aside>
   </div>
 {/if}
 
@@ -1004,38 +1098,43 @@
 {/if}
 
 <style>
+  /* This view no longer runs its own two-column grid. It was the ONE view with
+     a right-hand region, which is why the right edge of the app meant "backups"
+     on five tabs and "window properties" on one. The inspector is a column of
+     the SHELL now, and `display: contents` is how a view reaches it without a
+     portal: this root stops participating in layout, and its two children become
+     grid items of `.shell` in columns 2 and 3.
+
+     The old `height: 100%; overflow: hidden` here is exactly what
+     `display: contents` makes redundant — `.canvas-wrap` and `.inspector`
+     already owned their own scrolling. */
   .layout-view {
-    display: grid;
-    /* minmax(0,1fr) lets the canvas take the remaining space without being
-       pushed to zero by a wide window list; the panel is bounded. */
-    grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
-    height: 100%;
-    overflow: hidden;
+    display: contents;
   }
   .canvas-wrap {
     overflow: auto;
-    padding: 0.5rem;
-  }
-  .side {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: auto;
+    padding: var(--s2);
   }
   .canvas {
     position: relative;
-    background: #1b1f27;
-    background-image: linear-gradient(#2a2f3a 1px, transparent 1px),
-      linear-gradient(90deg, #2a2f3a 1px, transparent 1px);
+    /* --surface, so the canvas stays a step lighter than the app ground the way
+       it always was — the relationship survives, the second palette does not. */
+    background: var(--surface);
+    background-image: linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
     background-size: 40px 40px;
-    border: 1px solid #444;
+    border: 1px solid var(--border-strong);
   }
   .furniture {
     position: absolute;
     box-sizing: border-box;
-    background: rgba(148, 163, 184, 0.12);
-    border: 1px dashed #64748b;
-    color: #94a3b8;
+    background: var(--muted-veil);
+    border: 1px dashed var(--border-strong);
+    /* --text-secondary, not --text-muted: composited over the furniture veil
+       this is Lc 80 where #94a3b8 was Lc 47. It stays quieter than a window
+       label, which is the distinction that was worth keeping. */
+    color: var(--text-secondary);
+    /* Canvas-scale type. */
     font-size: 11px;
     overflow: hidden;
     /* Clickable so it can be selected, but furniture is drawn BEFORE the window
@@ -1060,9 +1159,9 @@
   /* The same amber as .win.selected, so a selection reads identically whether
      it's a window or furniture; the dashed border still says "not a window". */
   .furniture.selected {
-    border-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.25);
-    color: #fde68a;
+    border-color: var(--warn);
+    background: var(--warn-veil);
+    color: var(--text);
     z-index: 1;
   }
   .anchor-dot {
@@ -1073,9 +1172,22 @@
     /* Straddles the corner, so it reads as ON the point rather than inside the
        box — the point is what moves, and it is often outside the drawn list. */
     margin: -5px;
-    background: #f59e0b;
-    border: 1px solid #1c1917;
-    pointer-events: none;
+    background: var(--warn);
+    border: 1px solid var(--bg);
+    /* The handle, not decoration — see startFurniture. It is the ONE child of a
+       furniture box that takes a pointer; the detail layer stays inert. */
+    pointer-events: auto;
+    cursor: move;
+    touch-action: none;
+  }
+  /* The dot straddles the corner and `.furniture`'s overflow clips the outer
+     half away, leaving ~6px of grab. This transparent skirt puts the hit area
+     back up near the 12px resize handles without moving the mark; its own outer
+     half is clipped by the same rule. */
+  .anchor-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
   }
   .anchor-dot.tl { top: 0; left: 0; }
   .anchor-dot.tr { top: 0; right: 0; }
@@ -1091,17 +1203,18 @@
   .win {
     position: absolute;
     box-sizing: border-box;
-    background: rgba(96, 165, 250, 0.25);
-    border: 1px solid #60a5fa;
-    color: #dbeafe;
+    background: var(--accent-veil);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    /* Canvas-scale type. */
     font-size: 11px;
     overflow: hidden;
     cursor: move;
     touch-action: none;
   }
   .win.selected {
-    border-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.25);
+    border-color: var(--warn);
+    background: var(--warn-veil);
     z-index: 1;
   }
   /* A stack rectangle gets a heavier border so it reads as a group of windows,
@@ -1112,16 +1225,16 @@
   /* The unit a Shift-drag would stack onto. Deliberately NOT the amber of a
      selection — this is a transient "drop here", not a state. */
   .win.droptarget {
-    border-color: #34d399;
-    background: rgba(52, 211, 153, 0.3);
-    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.5);
+    border-color: var(--ok);
+    background: var(--ok-veil);
+    box-shadow: 0 0 0 2px var(--ok);
     z-index: 1;
   }
   /* Snap feedback: the edge the dragged rect locked onto. Same amber as a
      selection, above every rect, never in the way of the pointer. */
   .guide {
     position: absolute;
-    background: #f59e0b;
+    background: var(--warn);
     pointer-events: none;
     z-index: 2;
   }
@@ -1150,24 +1263,26 @@
   .tabs {
     display: flex;
     gap: 1px;
-    background: #11141a;
+    background: var(--bg);
     overflow: hidden;
     /* Above the detail layer, which is an absolutely-positioned sibling. */
     position: relative;
     z-index: 1;
   }
   .tab {
-    padding: 1px 4px;
-    background: #2a2f3a;
-    color: #dbeafe;
+    padding: 1px var(--s1);
+    background: var(--surface-raised);
+    color: var(--text-secondary);
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* A light tone on its own dim ground, not dark text on a saturated fill:
+     that pattern measured Lc 59.6 here, and this measures 69.2. */
   .tab.active {
-    background: #f59e0b;
-    color: #1b1f27;
+    background: var(--warn-dim);
+    color: var(--warn);
   }
   /* The tab being dragged. No floating ghost rect: the target highlight and
      this are enough to read the gesture, and a ghost would need its own
@@ -1187,39 +1302,33 @@
   .resize.tr { right: 0; top: 0; cursor: nesw-resize; }
   .resize.bl { left: 0; bottom: 0; cursor: nesw-resize; }
   .resize.br { right: 0; bottom: 0; cursor: nwse-resize; }
-  .ref {
-    color: #888;
-    font-size: 11px;
-    margin: 0.3rem 0 0;
+  /* Not canvas-scale: this is a status bar BELOW the canvas, so it takes the
+     type scale like the rest of the chrome. */
+  .statusbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    font-size: var(--t-caption);
+    margin-top: var(--s1);
   }
-  .showing {
-    color: var(--warn);
+  .facts {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
   }
-  .hintish {
-    color: #666;
+  .ref { color: var(--text-muted); }
+  /* Right-aligned: the two halves say different kinds of thing, and the gap is
+     what separates "this is true" from "this is hiding something from you". */
+  .narrowing {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
   }
-  /* Explicit colours per the dark-native-controls note: an unstyled checkbox
-     renders light-on-light in this theme. */
-  .det {
-    color: #888;
+  /* The dark-native-control rule is gone — Field owns it. */
+  .statusbar :global(.det) {
+    color: var(--text-secondary);
     cursor: pointer;
-    margin-left: 0.4rem;
-  }
-  .det input {
-    accent-color: var(--accent);
-    vertical-align: -1px;
-  }
-  .linkish {
-    background: none;
-    border: none;
-    color: var(--accent);
-    cursor: pointer;
-    font: inherit;
-    padding: 0;
-    text-decoration: underline;
-  }
-  .hint {
-    color: #888;
-    padding: 1rem;
   }
 </style>

@@ -1,20 +1,39 @@
 <script lang="ts">
-  import { api, errMessage, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
+  import { api, errMessage, errText, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
   import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
-  import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { accel } from "./keys";
+  import { inAField } from "./keymap";
+  import { toast } from "./ui/toasts.svelte";
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import ProbeViewer from "./ProbeViewer.svelte";
   import FormationPicker from "./FormationPicker.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import ListRow from "./ui/ListRow.svelte";
 
-  let { userOpen, userId = null, onUserDirty, onShowAccounts = () => {}, sharedLabel = "" }:
+  let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {} }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
-      onShowAccounts?: () => void; sharedLabel?: string } = $props();
+    /** Bumped by every save, open, discard, backup restore and undo. Without it
+     *  this view reloads only when the ACCOUNT changes, and neither Discard nor
+     *  a restore changes that — so it would go on showing pre-Discard data. */
+    refreshToken?: number;
+      onShowAccounts?: () => void } = $props();
 
   /** The projection as loaded. `null` before the first load. */
   let loaded = $state<Formations | null>(null);
   let error = $state<string | null>(null);
+  // Four control groups own the failures this view can produce: the formation
+  // editor, the list-actions row, the Paste button, and the Import button.
+  type Msg = { text: string; detail: string; warn?: boolean };
+  let editorError = $state<Msg | null>(null);
+  let listError = $state<Msg | null>(null);
+  let pasteError = $state<Msg | null>(null);
+  let importError = $state<Msg | null>(null);
   let selectedId = $state<number | null>(null);
   let unit = $state<Unit>("au");
   /** The unit as it reads in a column header. */
@@ -145,7 +164,9 @@
     }
     draftUserId = userId;
   }
-  $effect(() => { void userOpen; void userId; reload(); });
+  // See AutofillView: the token is what makes this view reload after a Discard,
+  // a backup restore or an undo, none of which change `userOpen` or `userId`.
+  $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
   function select(f: Formation | null) {
     selectedId = f?.id ?? null;
@@ -168,7 +189,7 @@
       onUserDirty();
       if (id === null) select(loaded.formations.find((f) => !before.has(f.id)) ?? null);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not save the formation", kind: "error" });
+      editorError = { text: `That formation wasn't saved — ${errText(e)}`, detail: errMessage(e) };
       await reload();
       // `reload` only re-selects when `selectedId` vanished. On an id===null
       // failure (createNew/duplicate/copy) selectedId is still the pre-existing
@@ -273,7 +294,7 @@
       onUserDirty();
       select(loaded.formations[0] ?? null);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not delete the formation", kind: "error" });
+      listError = { text: `That formation wasn't deleted — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -291,43 +312,47 @@
     if (added.length) select(added[added.length - 1]);
   }
 
-  /** A copy leaves no trace on screen — the clipboard is invisible and nothing
-   * in the file changed — so say so. Same flash the sidebar uses for its own
-   * silent action. */
-  let flash = $state<string | null>(null);
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
-
   async function copyFormation() {
     if (visibleIndex < 0) return;
+    listError = null;
     try {
       await writeText(await api.probeYaml([visible[visibleIndex]]));
-      flash = `Copied “${visible[visibleIndex].name}”`;
-      clearTimeout(flashTimer);
-      flashTimer = setTimeout(() => (flash = null), 2000);
+      // The third hand-rolled `.flash`, and the last one to go. Phase 1 left it
+      // because the toast host is mounted once in the shell and this view's spec
+      // mounts the view alone — which is a fact about the spec, not about the
+      // component: `toasts` is module state, so the call is safe either way and
+      // the spec asserts the queue instead of the DOM.
+      toast(`Copied “${visible[visibleIndex].name}”`, { variant: "success" });
     } catch (e) {
-      await message(errMessage(e), { title: "Could not copy the formation", kind: "error" });
+      listError = { text: `That formation wasn't copied — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   async function pasteText(text: string) {
     if (!text.trim()) return;
+    listError = null;
     try {
       const specs = await api.probeParseYaml(text);
       // `addShared` returns silently on an empty set, and Import has its own
       // message for the same case — without one here a valid-but-empty paste is
       // indistinguishable from a button that does nothing.
+      //
+      // A toast rather than an inline message, and one of only two places that
+      // is right: the clipboard is invisible, so there is no control on screen
+      // that owns this failure.
       if (!specs.length) {
-        await message("That text contains no formations.", { title: "Paste formations" });
+        toast("That text contains no formations.", { variant: "warn" });
         return;
       }
       await addShared(specs);
     } catch (e) {
-      await message(errMessage(e), { title: "Could not paste the formation", kind: "error" });
+      listError = { text: `That formation wasn't pasted — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
   async function pasteFormation() {
     let text: string;
+    pasteError = null;
     try {
       text = await readText();
     } catch {
@@ -336,9 +361,12 @@
       // re-asks on every app launch — the wrong thing to put on a Paste button.
       // A read can still fail (no text on the clipboard, for one), and Ctrl-V
       // needs no permission on any path, so it stays the offer.
-      await message("Press Ctrl+V to paste a formation instead.", {
-        title: "The clipboard could not be read",
-      });
+      // The accelerator is rendered per platform, not written into the string:
+      // "Ctrl+V" is wrong on macOS, which this app also ships to.
+      pasteError = {
+        text: `The clipboard couldn't be read — press ${accel("V")} to paste a formation instead.`,
+        detail: "",
+      };
       return;
     }
     await pasteText(text);
@@ -371,7 +399,10 @@
         });
         if (!path) return;
         await api.probeExport(path, chosen);
-        await message(`Exported ${chosen.length} formation(s).`, { title: "Export formations" });
+        toast(
+          `Exported ${chosen.length} formation${chosen.length === 1 ? "" : "s"} to ${path.split(/[\\/]/).pop()}.`,
+          { variant: "success" },
+        );
       },
     };
   }
@@ -383,14 +414,15 @@
     });
     if (typeof picked !== "string") return;
     let items: FormationSpec[];
+    importError = null;
     try {
       items = await api.probeImport(picked);
     } catch (e) {
-      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      importError = { text: `Those formations weren't imported — ${errText(e)}`, detail: errMessage(e) };
       return;
     }
     if (!items.length) {
-      await message("That file contains no formations.", { title: "Import formations" });
+      importError = { text: "That file contains no formations.", detail: picked, warn: true };
       return;
     }
     picker = {
@@ -399,9 +431,9 @@
       label: "Import",
       confirm: async (chosen) => {
         await addShared(chosen);
-        await message(
-          `Imported ${chosen.length} formation(s). Save to write them to the account file.`,
-          { title: "Import formations" },
+        toast(
+          `Imported ${chosen.length} formation${chosen.length === 1 ? "" : "s"}. Save to write them to the account file.`,
+          { variant: "success" },
         );
       },
     };
@@ -413,21 +445,21 @@
     const p = picker;
     picker = null;
     if (!p) return;
+    listError = null;
     try {
       await p.confirm(indices.map((i) => p.items[i]));
     } catch (e) {
-      await message(errMessage(e), { title: p.title, kind: "error" });
+      // `picker.title` stops being an error title and goes back to being only
+      // the picker's heading.
+      listError = { text: `That didn't finish — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
-  /** True when the event came from somewhere the OS clipboard must keep
-   * behaving normally. A tab full of coordinate fields is exactly where Ctrl-C
-   * has to go on copying the digits the user just selected. */
-  function inAField(t: EventTarget | null): boolean {
-    const el = t as HTMLElement | null;
-    const tag = el?.tagName;
-    return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!el?.isContentEditable;
-  }
+  // `inAField` moved to keymap.ts, where the app's other global key handler
+  // needs the same answer. It was a rule about the whole app living in one
+  // component: a tab full of coordinate fields is exactly where Ctrl-C has to
+  // go on copying the digits the user just selected, and that is true of every
+  // accelerator, not only this view's.
 
   /** The picker is a CSS overlay, not a real modal, so window key events still
    * reach these handlers behind it. A paste while the Export picker is open
@@ -462,73 +494,92 @@
 <svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 {#if !userOpen}
-  <p class="hint">
-    Probe formations live in the account file.
-    <button class="link" onclick={onShowAccounts}>Pair this character with its account</button>
-    to edit them.
-  </p>
+  <!-- Kept as a paragraph rather than an EmptyState: the sentence wraps a
+       button mid-clause, which EmptyState's plain-string title cannot hold. -->
+  <EmptyState title="No account paired" description="Probe formations live in the account file.">
+    {#snippet action()}<Button onclick={onShowAccounts}>Pair this character…</Button>{/snippet}
+  </EmptyState>
 {:else if error}
-  <p class="error">{error}</p>
+  <InlineMessage variant="error">{error}</InlineMessage>
 {:else if loaded}
-  <!-- One column filling the tab, so the banner takes its own height off the
-       top instead of the editor below assuming it has the whole tab and
-       running that much past the bottom. -->
+  <!-- One column filling the tab. The scope banner it used to carry is the
+       shell's now, rendered once for all four account-scoped views. -->
   <div class="probes-tab">
-  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
   <div class="probes">
     <aside class="formation-list">
       <ul>
         {#each loaded.formations as f (f.id)}
           <li>
-            <button class:active={f.id === selectedId} onclick={() => select(f)}>{f.name}</button>
+            <ListRow selected={f.id === selectedId} onclick={() => select(f)}>{f.name}</ListRow>
           </li>
         {/each}
       </ul>
       <div class="list-actions">
-        <button onclick={createNew}>New</button>
-        <button onclick={duplicate} disabled={!current}>Duplicate</button>
-        <button class="danger" onclick={remove} disabled={!current}>Delete</button>
+        <Button onclick={createNew}>New formation</Button>
+        <Button onclick={duplicate} disabled={!current} disabledReason="Pick a formation first">
+          Duplicate formation
+        </Button>
+        <Button variant="danger" onclick={remove} disabled={!current} disabledReason="Pick a formation first">
+          Delete formation
+        </Button>
       </div>
       <!-- The sharing group, kept together in its own row. Copy and Paste are a
            pair, and a user hunting for one looks where the other is — Copy sat
            beside the AU/km toggle at first and was simply not found. -->
       <div class="list-actions">
-        <button onclick={copyFormation} disabled={!current}
-                title="Copy this formation to the clipboard (Ctrl+C)">Copy</button>
-        <button onclick={pasteFormation} title="Add a formation from the clipboard (Ctrl+V)">Paste</button>
-        <button onclick={exportFormations} disabled={!visible.length}
-                title="Write formations out as a shareable file">Export…</button>
-        <button onclick={importFormations} title="Add formations from a shared file">Import…</button>
+        <!-- The accelerator is a <kbd> beside the label, not text baked into the
+             tooltip: "Ctrl+C" is wrong on macOS, which this app also ships to. -->
+        <Button onclick={copyFormation} disabled={!current} disabledReason="Pick a formation first"
+                title="Copy this formation to the clipboard">Copy <kbd>{accel("C")}</kbd></Button>
+        <Button onclick={pasteFormation} title="Add a formation from the clipboard">
+          Paste <kbd>{accel("V")}</kbd>
+        </Button>
+        <Button onclick={exportFormations} disabled={!visible.length}
+                disabledReason="There are no formations to export"
+                title="Write formations out as a shareable file">Export formations…</Button>
+        <Button onclick={importFormations} title="Add formations from a shared file">Import formations…</Button>
       </div>
-      {#if flash}<p class="flash" aria-live="polite">{flash}</p>{/if}
+      <!-- Each at the control it belongs to, in the row those controls live in. -->
+      {#if listError}
+        <InlineMessage variant="error" detail={listError.detail}>{listError.text}</InlineMessage>
+      {/if}
+      {#if pasteError}
+        <InlineMessage variant="error">{pasteError.text}</InlineMessage>
+      {/if}
+      {#if importError}
+        <InlineMessage variant={importError.warn ? "warn" : "error"} detail={importError.detail}>
+          {importError.text}
+        </InlineMessage>
+      {/if}
     </aside>
 
     {#if current}
       <section class="formation">
+        {#if editorError}
+          <InlineMessage variant="error" detail={editorError.detail}>{editorError.text}</InlineMessage>
+        {/if}
         <div class="row">
-          <label>
-            Name
-            <input value={draftName}
-                   oninput={(e) => (draftName = e.currentTarget.value)}
-                   onblur={blurField} />
-          </label>
-          <label>
-            Range (all probes)
-            <!-- Always AU, and always one of EVE's slider stops: the in-game
-                 control has no free value, so neither does this. A picker also
-                 makes a non-positive range unwritable by construction. -->
-            <select aria-label="range for every probe"
-                    value={uniformRange}
-                    onchange={(e) => setAllRanges(Number(e.currentTarget.value))}>
-              {#each RANGE_STEPS_M as m, i}
-                <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
-              {/each}
-            </select>
-          </label>
+          <Field
+            label="Name"
+            layout="column"
+            value={draftName}
+            oninput={(e) => (draftName = (e.currentTarget as HTMLInputElement).value)}
+            onblur={blurField} />
+          <!-- Always AU, and always one of EVE's slider stops: the in-game
+               control has no free value, so neither does this. A picker also
+               makes a non-positive range unwritable by construction. -->
+          <Field
+            kind="select"
+            label="Range (every probe)"
+            layout="column"
+            aria-label="range for every probe"
+            value={uniformRange}
+            onchange={(e) => setAllRanges(Number((e.currentTarget as HTMLSelectElement).value))}
+            options={RANGE_STEPS_M.map((m, i) => ({ value: m, label: `${RANGE_STEPS_AU[i]} AU` }))} />
           <span class="units">
-            <span class="meta">probe positions in</span>
-            <button class:active={unit === "au"} onclick={() => (unit = "au")}>AU</button>
-            <button class:active={unit === "km"} onclick={() => (unit = "km")}>km</button>
+            <span class="meta">Probe positions in</span>
+            <Button size="sm" pressed={unit === "au"} onclick={() => (unit = "au")}>AU</Button>
+            <Button size="sm" pressed={unit === "km"} onclick={() => (unit = "km")}>km</Button>
           </span>
         </div>
 
@@ -537,7 +588,7 @@
             <tr>
               <th>#</th>
               <th>X</th><th>Y</th><th>Z</th>
-              <th>distance</th><th>azimuth</th><th>elevation</th>
+              <th>Distance</th><th>Azimuth</th><th>Elevation</th>
               <th>range</th>
               <th></th>
             </tr>
@@ -549,59 +600,63 @@
                 <td>{n + 1}</td>
                 {#each [0, 1, 2] as axis}
                   <td class="u" data-unit={unitLabel}>
-                    <input aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
+                    <Field aria-label={`probe ${n + 1} ${"XYZ"[axis]}`}
                            value={shown(`${n}:${axis}`, formatUnit(p[axis], unit))}
-                           oninput={(e) => { typeField(`${n}:${axis}`, e.currentTarget.value);
-                             setAxis(n, axis as 0 | 1 | 2, e.currentTarget.value); }}
+                           oninput={(e) => { typeField(`${n}:${axis}`, (e.currentTarget as HTMLInputElement).value);
+                             setAxis(n, axis as 0 | 1 | 2, (e.currentTarget as HTMLInputElement).value); }}
                            onfocus={() => focusField(`${n}:${axis}`, formatUnit(p[axis], unit))}
                            onblur={blurField} />
                   </td>
                 {/each}
                 <td class="u" data-unit={unitLabel}>
-                  <input aria-label={`probe ${n + 1} distance`}
+                  <Field aria-label={`probe ${n + 1} distance`}
                          value={shown(`${n}:dist`, formatUnit(s.r, unit))}
-                         oninput={(e) => { typeField(`${n}:dist`, e.currentTarget.value);
-                           setDistance(n, e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:dist`, (e.currentTarget as HTMLInputElement).value);
+                           setDistance(n, (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:dist`, formatUnit(s.r, unit))}
                          onblur={blurField} />
                 </td>
                 <td class="u" data-unit="°">
-                  <input aria-label={`probe ${n + 1} azimuth`}
+                  <Field aria-label={`probe ${n + 1} azimuth`}
                          value={shown(`${n}:az`, s.az.toFixed(1))}
-                         oninput={(e) => { typeField(`${n}:az`, e.currentTarget.value);
-                           setAngle(n, "az", e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:az`, (e.currentTarget as HTMLInputElement).value);
+                           setAngle(n, "az", (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:az`, s.az.toFixed(1))}
                          onblur={blurField} />
                 </td>
                 <td class="u" data-unit="°">
-                  <input aria-label={`probe ${n + 1} elevation`}
+                  <Field aria-label={`probe ${n + 1} elevation`}
                          value={shown(`${n}:el`, s.el.toFixed(1))}
-                         oninput={(e) => { typeField(`${n}:el`, e.currentTarget.value);
-                           setAngle(n, "el", e.currentTarget.value); }}
+                         oninput={(e) => { typeField(`${n}:el`, (e.currentTarget as HTMLInputElement).value);
+                           setAngle(n, "el", (e.currentTarget as HTMLInputElement).value); }}
                          onfocus={() => focusField(`${n}:el`, s.el.toFixed(1))}
                          onblur={blurField} />
                 </td>
                 <td>
-                  <select aria-label={`probe ${n + 1} range`}
-                          value={draftRanges[n]}
-                          onchange={(e) => setRange(n, Number(e.currentTarget.value))}>
-                    {#each RANGE_STEPS_M as m, i}
-                      <option value={m}>{RANGE_STEPS_AU[i]} AU</option>
-                    {/each}
-                    {#if !RANGE_STEPS_M.includes(draftRanges[n])}
-                      <!-- A range this file holds that EVE's slider cannot
-                           produce. Offered so the value is shown rather than
-                           silently snapped to a neighbour. -->
-                      <option value={draftRanges[n]}>
-                        {formatUnit(draftRanges[n], "au")} AU (not a slider stop)
-                      </option>
-                    {/if}
-                  </select>
+                  <!-- A range this file holds that EVE's slider cannot produce
+                       is offered as an extra option, so the value is shown
+                       rather than silently snapped to a neighbour. -->
+                  <Field
+                    kind="select"
+                    aria-label={`probe ${n + 1} range`}
+                    value={draftRanges[n]}
+                    onchange={(e) => setRange(n, Number((e.currentTarget as HTMLSelectElement).value))}
+                    options={[
+                      ...RANGE_STEPS_M.map((m, i) => ({ value: m, label: `${RANGE_STEPS_AU[i]} AU` })),
+                      ...(RANGE_STEPS_M.includes(draftRanges[n])
+                        ? []
+                        : [{ value: draftRanges[n],
+                             label: `${formatUnit(draftRanges[n], "au")} AU (not a slider stop)` }]),
+                    ]} />
                 </td>
                 <td>
-                  <button class="mini-visible" title="Remove this probe"
+                  <!-- Was `.mini-visible`, the workaround written twice because
+                       `.mini` was invisible outside a `.row`. The trap is gone,
+                       so the workaround goes with it. -->
+                  <Button variant="ghost" size="sm" iconOnly title="Remove this probe"
                           disabled={draftProbes.length <= 1}
-                          onclick={() => { removeProbe(n); commit(); }}>×</button>
+                          disabledReason="A formation needs at least one probe"
+                          onclick={() => { removeProbe(n); commit(); }}>×</Button>
                 </td>
               </tr>
             {/each}
@@ -609,10 +664,11 @@
         </table>
         <!-- Wrapped, so the column layout below keeps these two on one line. -->
         <div class="probe-actions">
-          <button onclick={() => { addProbe(); commit(); }}
-                  disabled={draftProbes.length >= MAX_PROBES}>
-            + probe
-          </button>
+          <Button onclick={() => { addProbe(); commit(); }}
+                  disabled={draftProbes.length >= MAX_PROBES}
+                  disabledReason="A formation holds at most {MAX_PROBES} probes">
+            Add probe
+          </Button>
           <span class="meta">{draftProbes.length} of {MAX_PROBES}</span>
         </div>
 
@@ -623,11 +679,15 @@
                      onmove={moveProbe}
                      oncommit={() => { if (draftChanged()) commit(); }} />
         {#each sceneProblems as p (p)}
-          <p class="hint">Scene not loaded — {p}</p>
+          <InlineMessage variant="warn">Scene not loaded — {p}</InlineMessage>
         {/each}
       </section>
     {:else}
-      <p class="hint">This account has no custom probe formations yet.</p>
+      <EmptyState
+        title="No custom formations"
+        description="EVE's built-in formations aren't stored in this file. Create one to get started.">
+        {#snippet action()}<Button onclick={createNew}>New formation</Button>{/snippet}
+      </EmptyState>
     {/if}
   </div>
   </div>
@@ -639,23 +699,19 @@
 {/if}
 
 <style>
-  /* Native controls render light in the dark WebView2 shell unless told
-     otherwise — see the dark-native-controls note in the repo memory. */
-  input, select {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit;
-  }
+  /* The dark-native-control rule is gone: Field is the only place in the app
+     that styles an input or a select now. */
   .probes-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-  .probes { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
+  .probes { display: flex; gap: var(--s4); align-items: flex-start; flex: 1; min-height: 0; }
   .formation-list {
-    flex: 0 0 14rem; display: flex; flex-direction: column; gap: 0.5rem;
-    border-right: 1px solid var(--border); padding-right: 1rem;
+    flex: 0 0 14rem; display: flex; flex-direction: column; gap: var(--s2);
+    border-right: 1px solid var(--border); padding-right: var(--s4);
   }
-  .formation-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .formation-list li button { width: 100%; text-align: left; border: none; background: none; padding: 3px 6px; }
-  .formation-list li button.active { background: var(--accent); color: var(--bg); border-radius: 3px; }
-  .list-actions { display: flex; flex-wrap: wrap; gap: 4px; }
-  .list-actions .danger { border-color: #a33; }
+  .formation-list ul {
+    list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0;
+  }
+  .formation-list li { list-style: none; }
+  .list-actions { display: flex; flex-wrap: wrap; gap: var(--s1); }
   /* A column, so the viewer can take exactly the height the table leaves it
      rather than a fixed box that runs off the bottom of the window. Everything
      above it keeps its natural height; only the viewer flexes. */
@@ -669,21 +725,19 @@
   }
   .formation > :not(:last-child) { flex: none; }
   .probe-actions { display: flex; align-items: center; }
-  .formation .row { display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 0.5rem; }
-  .formation label { display: flex; flex-direction: column; gap: 2px; font-size: 0.85em; color: var(--fg-dim); }
-  .units { display: flex; gap: 2px; }
-  .units button { padding: 1px 8px; font-size: 0.85em; }
-  .units button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .formation .row { display: flex; align-items: flex-end; gap: var(--s4); margin-bottom: var(--s2); }
+  .formation :global(.field label) { font-size: var(--t-caption); color: var(--text-muted); }
+  .units { display: flex; align-items: center; gap: var(--s1); }
   /* `width: auto` and not 100%: a full-width table spreads the leftover space
      between the columns, which put the X/Y/Z fields an inch apart. Let the
      columns hug their inputs instead. */
-  table { border-collapse: collapse; width: auto; margin: 0.5rem 0; }
-  th, td { padding: 2px 4px; text-align: left; }
-  th { color: var(--fg-dim); font-weight: 400; font-size: 0.85em; white-space: nowrap; }
-  tr.selected td { background: rgba(79, 156, 240, 0.12); }
-  td input { width: 7rem; }
+  table { border-collapse: collapse; width: auto; margin: var(--s2) 0; }
+  th, td { padding: 0 var(--s1); text-align: left; }
+  th { color: var(--text-muted); font-weight: 400; font-size: var(--t-caption); white-space: nowrap; }
+  tr.selected td { background: var(--accent-dim); }
+  td :global(input) { width: 7rem; }
   /* The angle columns hold at most "-180.0". */
-  td:nth-child(6) input, td:nth-child(7) input { width: 5.5rem; }
+  td:nth-child(6) :global(input), td:nth-child(7) :global(input) { width: 5.5rem; }
   /* The unit rides inside the field, dimmed, as a pseudo-element: it cannot be
      selected or clicked, so it never lands in a copied value or steals focus
      from the input it labels. `padding-right` keeps the digits clear of it. */
@@ -691,18 +745,10 @@
   td.u::after {
     content: attr(data-unit);
     position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-    color: var(--fg-dim); font-size: 0.85em;
+    color: var(--text-muted); font-size: var(--t-caption);
     pointer-events: none; user-select: none;
   }
-  td.u input { padding-right: 2.1rem; }
-  td.u[data-unit="°"] input { padding-right: 1.3rem; }
-  /* `.mini` is opacity 0 unless it sits inside a `.node .row`, which only the
-     tree view has — so the remove button was invisible here. `.mini-visible`
-     is the codebase's own always-shown variant; it just lacks the danger tint. */
-  td .mini-visible:hover { border-color: var(--danger); color: var(--danger); }
-  .meta { opacity: 0.7; font-size: 0.85em; margin-left: 0.5rem; }
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
-  }
+  td.u :global(input) { padding-right: var(--s6); }
+  td.u[data-unit="°"] :global(input) { padding-right: var(--s5); }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); margin-left: var(--s2); }
 </style>

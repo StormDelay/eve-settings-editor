@@ -616,7 +616,7 @@ export function hudRects(
   const fx = hudNum(hud, "fighter_x");
   const fy = hudNum(hud, "fighter_y");
   if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
-    out.push({ kind: "fighter", label: "Fighter UI", x: fx, y: fy, ...HUD_NOMINAL.fighter, drag: "xy" });
+    out.push({ kind: "fighter", label: "Fighter panel", x: fx, y: fy, ...HUD_NOMINAL.fighter, drag: "xy" });
   }
 
   const bx = hudNum(hud, "badge_x");
