@@ -298,19 +298,29 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
 }
 
 /// The launcher's log directory — Electron's `userData`/logs, per OS. Windows is
-/// verified against a real install; the macOS and Linux paths follow Electron's
-/// standard `userData` mapping and are not measured. `None` when it is absent,
-/// which is an ordinary state (no launcher, or a fresh machine), not an error.
+/// verified against a real install; macOS follows Electron's standard `userData`
+/// mapping and is not measured. On Linux the launcher runs under Proton/Wine, so
+/// the Windows path lives inside the prefix (`AppData/Roaming/EVE Online/logs`
+/// under each `wine_user_dirs()` entry); the native `~/.config` path is kept for
+/// a launcher that is not a Wine one. `None` when nothing exists, which is an
+/// ordinary state (no launcher, or a fresh machine), not an error.
 pub fn log_dir() -> Option<PathBuf> {
-    let dir = if cfg!(target_os = "windows") {
-        PathBuf::from(std::env::var("APPDATA").ok()?).join("EVE Online").join("logs")
+    let mut candidates = Vec::new();
+    if cfg!(target_os = "windows") {
+        candidates.push(PathBuf::from(std::env::var("APPDATA").ok()?).join("EVE Online").join("logs"));
     } else if cfg!(target_os = "macos") {
-        PathBuf::from(std::env::var("HOME").ok()?)
-            .join("Library/Application Support/EVE Online/logs")
+        candidates.push(
+            PathBuf::from(std::env::var("HOME").ok()?).join("Library/Application Support/EVE Online/logs"),
+        );
     } else {
-        PathBuf::from(std::env::var("HOME").ok()?).join(".config/EVE Online/logs")
-    };
-    dir.is_dir().then_some(dir)
+        candidates.push(PathBuf::from(std::env::var("HOME").ok()?).join(".config/EVE Online/logs"));
+        candidates.extend(
+            settings_model::wine_user_dirs().into_iter().map(|u| u.join("AppData/Roaming/EVE Online/logs")),
+        );
+    }
+    // ponytail: first existing directory wins; merge rosters if a machine with
+    // two launcher installs (say native Steam and Flatpak Steam) ever turns up.
+    candidates.into_iter().find(|d| d.is_dir())
 }
 
 /// Every `.log` in `dir`, oldest-first, fed through `parse_logs`. Split out from

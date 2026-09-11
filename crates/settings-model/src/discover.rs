@@ -60,22 +60,62 @@ pub fn default_roots() -> Vec<PathBuf> {
             );
         }
     } else {
-        if let Ok(home) = std::env::var("HOME") {
-            // Steam Proton prefix (EVE app id 8500).
-            roots.push(PathBuf::from(&home).join(
-                ".steam/steam/steamapps/compatdata/8500/pfx/drive_c/users/steamuser/AppData/Local/CCP/EVE",
-            ));
-        }
-        if let Ok(prefix) = std::env::var("WINEPREFIX") {
-            roots.push(
-                PathBuf::from(prefix).join("drive_c/users").join(
-                    std::env::var("USER").unwrap_or_else(|_| "steamuser".into()),
-                ).join("AppData/Local/CCP/EVE"),
-            );
-        }
+        roots.extend(wine_user_dirs().into_iter().map(|u| u.join("AppData/Local/CCP/EVE")));
     }
     roots.retain(|r| r.is_dir());
     roots
+}
+
+/// Every `drive_c/users/<name>` directory of a Wine prefix EVE may run in, on
+/// Linux: the Proton prefix (EVE app id 8500) in each Steam library — native,
+/// Flatpak and Snap Steam, plus the extra libraries `libraryfolders.vdf` lists —
+/// and `$WINEPREFIX`. Windows paths inside a prefix hang off these, so both the
+/// settings root (`AppData/Local/CCP/EVE`) and the launcher's log directory
+/// (`AppData/Roaming/EVE Online/logs`) resolve through here. Canonicalised and
+/// deduplicated: `~/.steam/steam` is normally a symlink to `~/.local/share/Steam`.
+/// Measured 2026-09-11 against one report: a prefix under `~/.local/share/Steam`.
+pub fn wine_user_dirs() -> Vec<PathBuf> {
+    let home = std::env::var("HOME").map(PathBuf::from).ok();
+    let mut prefixes: Vec<PathBuf> = std::env::var("WINEPREFIX").map(PathBuf::from).into_iter().collect();
+    if let Some(home) = home {
+        let steam_roots = [
+            ".local/share/Steam",
+            ".steam/steam",
+            ".steam/root",
+            ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+            "snap/steam/common/.local/share/Steam",
+        ];
+        for root in steam_roots.iter().map(|r| home.join(r)).filter(|r| r.is_dir()) {
+            let mut libraries = vec![root.clone()];
+            for vdf in ["steamapps/libraryfolders.vdf", "config/libraryfolders.vdf"] {
+                if let Ok(text) = fs::read_to_string(root.join(vdf)) {
+                    libraries.extend(steam_library_paths(&text));
+                }
+            }
+            prefixes.extend(libraries.into_iter().map(|l| l.join("steamapps/compatdata/8500/pfx")));
+        }
+    }
+    let mut users: Vec<PathBuf> = prefixes
+        .iter()
+        .filter_map(|p| fs::read_dir(p.join("drive_c/users")).ok())
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter_map(|p| fs::canonicalize(p).ok())
+        .collect();
+    users.sort();
+    users.dedup();
+    users
+}
+
+/// The `"path"` values of a Steam `libraryfolders.vdf`. A line grep, not a VDF
+/// parser: the file is machine-written, one key per line, tab-separated.
+fn steam_library_paths(vdf: &str) -> Vec<PathBuf> {
+    vdf.lines()
+        .filter_map(|l| l.trim().strip_prefix("\"path\""))
+        .map(|rest| PathBuf::from(rest.trim().trim_matches('"')))
+        .collect()
 }
 
 pub fn discover(roots: &[PathBuf]) -> Vec<Profile> {
@@ -311,5 +351,21 @@ mod tests {
         assert_eq!(claiming.len(), 1, "exactly one file answers to an id");
 
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod wine_tests {
+    use super::*;
+
+    #[test]
+    fn steam_library_paths_reads_every_path_entry() {
+        // Shape of steamapps/libraryfolders.vdf as Steam writes it on Linux.
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"/home/u/.local/share/Steam\"\n\t\t\"label\"\t\t\"\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"/mnt/games/SteamLibrary\"\n\t}\n}\n";
+        assert_eq!(
+            steam_library_paths(vdf),
+            vec![PathBuf::from("/home/u/.local/share/Steam"), PathBuf::from("/mnt/games/SteamLibrary")]
+        );
+        assert!(steam_library_paths("").is_empty());
     }
 }
