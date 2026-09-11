@@ -36,7 +36,7 @@ pub(crate) fn collect_shared<'a>(v: &'a Value, out: &mut SharedTable<'a>) {
             collect_shared(class, out);
             collect_shared(state, out);
         }
-        Value::Reduce { ctor, items, pairs } => {
+        Value::Reduce { ctor, items, pairs, .. } => {
             collect_shared(ctor, out);
             items.iter().for_each(|i| collect_shared(i, out));
             pairs.iter().for_each(|(k, val)| {

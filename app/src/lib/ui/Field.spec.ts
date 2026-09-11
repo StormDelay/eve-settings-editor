@@ -35,6 +35,23 @@ describe("Field", () => {
     expect(document.querySelector("optgroup")).toBeNull();
   });
 
+  // A real account file had `AgencyWnd` and `AgencyWndNew`, which both derive
+  // the display name "Agency". Options used to be keyed by label, so those two
+  // threw each_key_duplicate and took the whole layout tab down with them.
+  test("two options sharing a label both render", () => {
+    render(Field, {
+      kind: "select",
+      ariaLabel: "Stack with",
+      value: "",
+      options: [
+        { value: "AgencyWnd", label: "Agency" },
+        { value: "AgencyWndNew", label: "Agency" },
+      ],
+    });
+
+    expect(document.querySelectorAll("option").length).toBe(2);
+  });
+
   // The generated id is what makes <label for> pair without every one of ~40
   // call sites inventing one.
   test("a label pairs with the control through a generated id", () => {

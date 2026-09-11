@@ -598,7 +598,7 @@ mod tests {
                     }
                     Stream(b) | Shared { value: b, .. } => heap(b),
                     Instance { class, state } => heap(class) + heap(state),
-                    Reduce { ctor, items, pairs } => {
+                    Reduce { ctor, items, pairs, .. } => {
                         heap(ctor)
                             + items.iter().map(heap).sum::<usize>()
                             + pairs.iter().map(|(k, x)| heap(k) + heap(x)).sum::<usize>()

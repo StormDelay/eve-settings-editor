@@ -54,7 +54,7 @@ fn collect(v: &Value, out: &mut HashMap<u32, Value>) {
             collect(class, out);
             collect(state, out);
         }
-        Value::Reduce { ctor, items, pairs } => {
+        Value::Reduce { ctor, items, pairs, .. } => {
             collect(ctor, out);
             items.iter().for_each(|c| collect(c, out));
             pairs.iter().for_each(|(k, val)| {
@@ -118,7 +118,8 @@ fn resolve_in(v: &Value, table: &HashMap<u32, Value>, open: &mut Vec<u32>) -> Va
             class: Box::new(resolve_in(class, table, open)),
             state: Box::new(resolve_in(state, table, open)),
         },
-        Value::Reduce { ctor, items, pairs } => Value::Reduce {
+        Value::Reduce { ctor, items, pairs, newobj } => Value::Reduce {
+            newobj: *newobj,
             ctor: Box::new(resolve_in(ctor, table, open)),
             items: items.iter().map(|c| resolve_in(c, table, open)).collect(),
             pairs: pairs
@@ -173,7 +174,7 @@ fn tally(v: &Value, counts: &mut HashMap<Vec<u8>, usize>) {
             tally(class, counts);
             tally(state, counts);
         }
-        Value::Reduce { ctor, items, pairs } => {
+        Value::Reduce { ctor, items, pairs, .. } => {
             tally(ctor, counts);
             items.iter().for_each(|c| tally(c, counts));
             pairs.iter().for_each(|(k, val)| {
@@ -228,7 +229,8 @@ fn rebuild(
             class: Box::new(rebuild(class, counts, slots, next)),
             state: Box::new(rebuild(state, counts, slots, next)),
         },
-        Value::Reduce { ctor, items, pairs } => Value::Reduce {
+        Value::Reduce { ctor, items, pairs, newobj } => Value::Reduce {
+            newobj: *newobj,
             ctor: Box::new(rebuild(ctor, counts, slots, next)),
             items: items.iter().map(|c| rebuild(c, counts, slots, next)).collect(),
             pairs: pairs
