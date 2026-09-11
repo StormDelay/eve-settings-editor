@@ -18,7 +18,7 @@ pub fn subtree_contains_shared(v: &Value) -> bool {
         Value::Instance { class, state } => {
             subtree_contains_shared(class) || subtree_contains_shared(state)
         }
-        Value::Reduce { ctor, items, pairs } => {
+        Value::Reduce { ctor, items, pairs, .. } => {
             subtree_contains_shared(ctor)
                 || items.iter().any(subtree_contains_shared)
                 || pairs
