@@ -117,9 +117,8 @@ struct Decoder<'a> {
 /// it lands in the same `shared_count`/`shared_map` sequence at the same
 /// encounter-order position, so folding them into this same "reserve before
 /// children, store after" path (see `load` below) reproduces it exactly.
-/// DBROW/NEWOBJ are also eligible in the reference but are Unsupported in
-/// this task (absent from the corpus), so they error before any store
-/// matters.
+/// DBROW is also eligible in the reference but is Unsupported here (absent
+/// from the corpus), so it errors before any store matters.
 fn stores_shared(code: u8) -> bool {
     matches!(
         code,
@@ -137,6 +136,7 @@ fn stores_shared(code: u8) -> bool {
             | op::GLOBAL
             | op::INSTANCE
             | op::REDUCE
+            | op::NEWOBJ
     )
 }
 
@@ -367,7 +367,10 @@ impl<'a> Decoder<'a> {
             // below handles a non-empty one losslessly: appended objects land
             // in `items`, and each (key, value) pair lands in `pairs`, both
             // in wire order, alongside the ctor tuple itself (`ctor`).
-            op::REDUCE => {
+            // NEWOBJ (marshal.c:947-982) is the identical framing with a
+            // `(args[, state])` ctor tuple — first seen in the wild 2026-09
+            // as a `uuid.UUID` — so the one loop serves both opcodes.
+            op::REDUCE | op::NEWOBJ => {
                 let ctor = self.load(r)?;
                 let mut items = Vec::new();
                 loop {
@@ -389,7 +392,7 @@ impl<'a> Decoder<'a> {
                     let value = self.load(r)?;
                     pairs.push((key, value));
                 }
-                Value::Reduce { ctor: Box::new(ctor), items, pairs }
+                Value::Reduce { ctor: Box::new(ctor), items, pairs, newobj: code == op::NEWOBJ }
             }
             // Complex / deferred types (see docs/format-notes.md); not
             // exercised by any file in the corpus. BLUE/CALLBACK/PICKLER
@@ -398,7 +401,6 @@ impl<'a> Decoder<'a> {
             op::CALLBACK => return Err(unsupported(at, "CALLBACK")),
             op::CHECKSUM => return Err(unsupported(at, "CHECKSUM")),
             op::PICKLER => return Err(unsupported(at, "PICKLER")),
-            op::NEWOBJ => return Err(unsupported(at, "NEWOBJ")),
             op::DBROW => return Err(unsupported(at, "DBROW")),
             op::MARK => return Err(unsupported(at, "MARK")),
             other => {
@@ -666,7 +668,7 @@ mod tests {
         ]);
         assert_eq!(
             decode(&stream(&data)).unwrap(),
-            Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![] }
+            Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![], newobj: false }
         );
     }
 
@@ -693,7 +695,33 @@ mod tests {
                 ctor: Box::new(ctor),
                 items: vec![Value::Int(1)],
                 pairs: vec![(Value::Int(0), Value::Int(1))],
+                newobj: false,
             }
+        );
+    }
+
+    #[test]
+    fn decodes_newobj_uuid_from_a_live_character_file() {
+        // Verbatim bytes from a 2026-09 character file (offset 0x1aa41): a
+        // `uuid.UUID` rebuilt as NEWOBJ((cls,), {"int": <128-bit LONG>}),
+        // then the same empty MARK MARK iterator tail REDUCE carries. First
+        // NEWOBJ ever seen in the wild — the corpus never had one.
+        let mut data = vec![0x23, 0x2C, 0x25]; // NEWOBJ, TUPLE2, TUPLE1
+        data.push(0x02);
+        data.push(9);
+        data.extend_from_slice(b"uuid.UUID");
+        data.extend_from_slice(&[0x16, 0x01, 0x2F, 0x10]); // DICT(1): LONG len 16
+        let uuid = [0x0F, 0xD1, 0xE7, 0x77, 0xA3, 0x7D, 0x81, 0x9A, 0xA8, 0x43, 0x55, 0xE8, 0x82, 0x0B, 0x8F, 0x44];
+        data.extend_from_slice(&uuid);
+        data.extend_from_slice(&[0x13, 0x03, b'i', b'n', b't']); // key BUFFER "int"
+        data.extend_from_slice(&[0x2D, 0x2D]);
+        let ctor = Value::Tuple(vec![
+            Value::Tuple(vec![Value::Global(b"uuid.UUID".to_vec())]),
+            Value::Dict(vec![(Value::Bytes(b"int".to_vec()), Value::Long(uuid.to_vec()))]),
+        ]);
+        assert_eq!(
+            decode(&stream(&data)).unwrap(),
+            Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![], newobj: true }
         );
     }
 
@@ -772,7 +800,7 @@ mod tests {
         let ctor = Value::Tuple(vec![Value::Global(b"M.f".to_vec()), Value::Tuple(vec![])]);
         let red = Value::Shared {
             slot: 1,
-            value: Box::new(Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![] }),
+            value: Box::new(Value::Reduce { ctor: Box::new(ctor), items: vec![], pairs: vec![], newobj: false }),
         };
         assert_eq!(decode(&data).unwrap(), Value::Tuple(vec![red, Value::Ref(1)]));
     }

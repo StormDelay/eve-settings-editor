@@ -144,15 +144,19 @@
         {onchange}
         {...shared}
         {...rest}>
-        {#each groups as g (g.name ?? g.items[0].label)}
+        <!-- Unkeyed on purpose: labels repeat (`AgencyWnd` and `AgencyWndNew`
+             both read "Agency") and a keyed each throws on a duplicate, which
+             took the whole layout tab down for one account file. An <option>
+             carries no state worth preserving, so index reuse is exact. -->
+        {#each groups as g}
           {#if g.name}
             <optgroup label={g.name}>
-              {#each g.items as o (o.label)}
+              {#each g.items as o}
               <option value={o.value} disabled={o.disabled}>{o.label}</option>
             {/each}
             </optgroup>
           {:else}
-            {#each g.items as o (o.label)}
+            {#each g.items as o}
               <option value={o.value} disabled={o.disabled}>{o.label}</option>
             {/each}
           {/if}

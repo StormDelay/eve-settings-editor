@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Character files that hold a `uuid.UUID` open again** instead of failing with "Unsupported(NEWOBJ)" — the client started writing one under `trackedSkillPlanID`.
+- **The Layout tab loads for characters with both the old and the new Agency window** — two windows sharing a display name used to crash the window list before it drew anything.
 - **Launcher-suggested account pairings now work on Linux.** The editor looks for the launcher's logs inside the Steam Proton prefix — in every Steam library, including Flatpak and Snap installs — and in `$WINEPREFIX`, instead of only where a native Linux launcher would write them.
 
 ## [0.35.0] - 2026-08-14

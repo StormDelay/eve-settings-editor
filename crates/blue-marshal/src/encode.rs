@@ -220,8 +220,8 @@ impl Encoder {
                 self.emit(class)?;
                 self.emit(state)?;
             }
-            Value::Reduce { ctor, items, pairs } => {
-                self.out.push(op::REDUCE | flag);
+            Value::Reduce { ctor, items, pairs, newobj } => {
+                self.out.push(if *newobj { op::NEWOBJ } else { op::REDUCE } | flag);
                 self.emit(ctor)?;
                 for item in items {
                     self.emit(item)?;
@@ -472,7 +472,16 @@ mod tests {
             0x1B, 0x01, // REF -> slot 1
             0x01, 0x00, 0x00, 0x00,
         ];
-        for data in [shared_buffer, nonidentity_map, shared_instance, shared_reduce] {
+        let shared_newobj: Vec<u8> = vec![
+            0x7E, 0x01, 0x00, 0x00, 0x00,
+            0x2C, // TUPLE2
+            0x63, // NEWOBJ|SHARED
+            0x25, 0x02, 3, b'M', b'.', b'C', // ctor ((GLOBAL "M.C",))
+            0x2D, 0x2D, // empty iterator tail
+            0x1B, 0x01, // REF -> slot 1
+            0x01, 0x00, 0x00, 0x00,
+        ];
+        for data in [shared_buffer, nonidentity_map, shared_instance, shared_reduce, shared_newobj] {
             let v = decode(&data).unwrap();
             assert_eq!(encode(&v).unwrap(), data);
         }
