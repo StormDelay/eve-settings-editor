@@ -77,6 +77,7 @@ fn gen_value(rng: &mut Rng, depth: u32) -> Value {
                 pairs: (0..rng.below(2))
                     .map(|_| (gen_value(rng, depth + 1), gen_value(rng, depth + 1)))
                     .collect(),
+                newobj: rng.below(2) == 0,
             },
         },
     }
