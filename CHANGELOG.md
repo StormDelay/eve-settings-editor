@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-09-11
+
+The editor now tells you when a newer version is out.
+
 ### Added
 - **The editor tells you when a newer version is out.** A message at launch names the new version, with a Download button that opens the right file for your system.
 
