@@ -475,6 +475,9 @@ export const api = {
   windowLayout: (slot: Slot) => invoke<WindowLayout>("window_layout", { slot }),
   preferences: () => invoke<Preferences>("preferences"),
   setPreferences: (prefs: Preferences) => invoke<void>("set_preferences", { prefs }),
+  /// `null` when this build is the latest release; rejects when the check
+  /// itself fails (offline, rate-limited), which callers must treat as "no news".
+  checkForUpdate: () => invoke<{ version: string; url: string } | null>("check_for_update"),
   hud: () => invoke<Hud>("hud_layout"),
   setHudValue: (name: string, text: string) =>
     invoke<Hud>("set_hud_value", { name, text }),
