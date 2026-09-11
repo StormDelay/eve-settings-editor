@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Launcher-suggested account pairings now work on Linux.** The editor looks for the launcher's logs inside the Steam Proton prefix — in every Steam library, including Flatpak and Snap installs — and in `$WINEPREFIX`, instead of only where a native Linux launcher would write them.
+
 ## [0.34.0] - 2026-08-13
 
 Your accounts, named by the EVE launcher instead of guessed at.
