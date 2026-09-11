@@ -1,7 +1,7 @@
 // Component test: run with `npm run test:ui` (vitest + jsdom).
 //
-// PresetGroup's "New from open character…" form is the only place a preset
-// gets created, and the checkboxes it offers must reflect which file(s) the
+// PresetGroup's "New preset from this character…" form is the only place a
+// preset gets created, and the checkboxes it offers must reflect which file(s) the
 // backend will actually write. This spec covers the one rule with a real
 // consequence if wrong: an aspect that needs the account file open must be
 // disabled while it isn't, same as BatchView disables an unpaired target for
@@ -20,7 +20,7 @@ async function renderPresets(props: { charOpen?: boolean; userOpen?: boolean } =
     openPresetName: null,
     ...props,
   });
-  await fireEvent.click(screen.getByRole("button", { name: /new from open character/i }));
+  await fireEvent.click(screen.getByRole("button", { name: /new preset from this character/i }));
   return {
     aspect: (label: string) =>
       [...screen.getAllByRole("checkbox")].find((c) => c.closest("label")?.textContent?.includes(label))! as HTMLInputElement,

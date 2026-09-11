@@ -123,16 +123,67 @@ mod tests {
         assert!(prefs.layout.detail, "the fields it DOES carry still load");
     }
 
+    /// "Survives a restart": a restart is, at this layer, a fresh reader over
+    /// the same path. Every field carries a NON-default value on purpose — a
+    /// load that quietly fell through to `Default` would otherwise pass this.
     #[test]
     fn it_round_trips() {
         let p = temp_dir("roundtrip").join("preferences.json");
         let mut prefs = Preferences::default();
         prefs.layout.clutter.push("market".into());
         prefs.layout.visible.push("chatchannel_private_x".into());
+        prefs.layout.detail = true;
+        prefs.layout.targets = 7;
+        prefs.layout.effects = 5;
         save_to(&p, &prefs).unwrap();
         let back = load_from(&p);
         assert_eq!(back.layout.clutter, vec!["market".to_string()]);
         assert_eq!(back.layout.visible, vec!["chatchannel_private_x".to_string()]);
+        assert!(back.layout.detail);
+        assert_eq!(back.layout.targets, 7);
+        assert_eq!(back.layout.effects, 5);
+    }
+
+    /// The other half of `a_missing_file_loads_defaults`: nothing exists until
+    /// the first override, and then the first override has to create it —
+    /// including the `EVE Settings Editor` folder `path()` points into, which
+    /// on a fresh install is not there yet.
+    #[test]
+    fn the_first_override_creates_the_file_and_its_directory() {
+        let dir = temp_dir("first-write").join("EVE Settings Editor");
+        let p = dir.join("preferences.json");
+        load_from(&p);
+        assert!(!dir.exists(), "reading preferences must create nothing at all");
+
+        let mut prefs = Preferences::default();
+        prefs.layout.clutter.push("market".into());
+        save_to(&p, &prefs).unwrap();
+        assert!(p.exists(), "the first override creates the file");
+        assert_eq!(load_from(&p).layout.clutter, vec!["market".to_string()]);
+    }
+
+    /// Two rapid toggles on one window: force it into the clutter set, then
+    /// straight back out. The second payload is deliberately SHORTER than the
+    /// first — two sequential saves prove nothing on their own, but the size
+    /// asymmetry catches a writer that stopped truncating, where the tail of
+    /// the longer first write survives and the file no longer agrees with the
+    /// UI. Ordering itself is not enforceable here (this layer takes whole
+    /// snapshots and has no sequence number); the frontend's `writeQueue` in
+    /// `prefs.svelte.ts` chains the writes so they arrive in order.
+    #[test]
+    fn a_second_rapid_toggle_fully_replaces_the_first() {
+        let p = temp_dir("rapid-toggle").join("preferences.json");
+        let mut on = Preferences::default();
+        on.layout.clutter.push("chatchannel_a_deliberately_long_window_id".into());
+        save_to(&p, &on).unwrap();
+        save_to(&p, &Preferences::default()).unwrap();
+
+        let back = load_from(&p);
+        assert!(back.layout.clutter.is_empty(), "the file must match the FINAL toggle, not the first");
+        assert!(
+            !p.with_extension("json.bad").exists(),
+            "a torn write would have left unparseable JSON for load_from to move aside"
+        );
     }
 
     #[test]
@@ -142,7 +193,14 @@ mod tests {
         std::fs::write(&p, b"{ this is not json").unwrap();
         let prefs = load_from(&p);
         assert!(prefs.layout.clutter.is_empty(), "a corrupt file must fall back to defaults");
-        assert!(dir.join("preferences.json.bad").exists(), "the user's bad file must be recoverable");
+        // Existence is not the contract — the BYTES are. Moving the file aside
+        // and then truncating it would pass an exists() check while losing
+        // exactly the hand-edit the user needs back.
+        assert_eq!(
+            std::fs::read(dir.join("preferences.json.bad")).unwrap(),
+            b"{ this is not json",
+            "the user's bad file must be recoverable, not just present"
+        );
     }
 
     #[test]
@@ -200,6 +258,13 @@ mod tests {
         // The rename failed (that's the point of the lock), so the fallback
         // is a copy, not a move: the original is left in place too. Either
         // way the user's bytes are recoverable, which is the actual contract.
+        //
+        // This assertion is what makes the test about the FALLBACK rather than
+        // about corruption in general: without it, a lock that stopped working
+        // (a Windows version that permits the rename anyway, an OpenOptions
+        // change) would leave the test passing green on the plain rename path
+        // and the copy branch back to zero coverage, unnoticed.
+        assert!(p.exists(), "the rename must have failed, or the copy fallback was never reached");
         assert_eq!(
             std::fs::read(dir.join("preferences.json.bad")).unwrap(),
             b"{ this is not json",

@@ -39,8 +39,10 @@
   .part {
     position: absolute;
     box-sizing: border-box;
-    border: 1px solid rgba(148, 163, 184, 0.45);
-    color: #94a3b8;
+    border: 1px solid var(--muted-line);
+    color: var(--text-muted);
+    /* Canvas-scale type: --t-caption's 12px would overflow the rectangles these
+       labels name. */
     font-size: 9px;
     line-height: 1;
     overflow: hidden;
@@ -61,21 +63,21 @@
      cannot take a percentage and this has to scale with the canvas. */
   .arc {
     border-style: solid;
-    border-color: rgba(148, 163, 184, 0.5);
+    border-color: var(--muted-line);
     border-radius: 50%;
     clip-path: inset(0 0 50% 0);
   }
   /* The capacitor core reads as the one lit thing on the element, which is what
      the eye finds first on the real HUD. */
   .core {
-    background: rgba(245, 158, 11, 0.45);
-    border-color: rgba(245, 158, 11, 0.7);
+    background: var(--warn-veil);
+    border-color: var(--warn);
   }
   /* The two data-driven bands read as panels, not outlines — they are the parts
      whose SIZE is the information. */
   .band,
   .column {
-    background: rgba(148, 163, 184, 0.14);
+    background: var(--muted-veil);
   }
   .part span {
     padding: 0 2px;

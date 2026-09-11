@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns } from "./api";
-  import { message } from "@tauri-apps/plugin-dialog";
+  import { api, errMessage, errText, type OverviewColumns, type Rgba } from "./api";
+  import InlineMessage from "./ui/InlineMessage.svelte";
   import {
     stateLabel, rgbaToHex, hexToRgba, moveInOrder, defaultColor,
     DEFAULT_BACKGROUND_ORDER, DEFAULT_BACKGROUND_STATES,
     DEFAULT_FLAG_ORDER, DEFAULT_FLAG_STATES,
   } from "./states";
+  import Button from "./ui/Button.svelte";
+  import Field from "./ui/Field.svelte";
+  import ListRow from "./ui/ListRow.svelte";
+  import Tabs from "./ui/Tabs.svelte";
 
   let { data, onChanged, onUserDirty }:
     { data: OverviewColumns | null;
@@ -50,12 +54,38 @@
   // invisible and impossible to untick.
   const rows = $derived([...order, ...enabled.filter((id) => !order.includes(id))]);
   const enabledSet = $derived(new Set(enabled));
-  const colors = $derived(new Map(appearance?.colors ?? []));
+  // Colours are per surface in the file — `(background, id)` and `(flag, id)`
+  // are different entries — so they follow the sub-tab. Reading only the
+  // background list is what left a pack's colortag colours (Z-S sets `flag_48`)
+  // in the file with nothing on screen able to show, review or undo them.
+  const colors = $derived(new Map((isBg ? appearance?.colors : appearance?.flag_colors) ?? []));
   const bools = $derived(new Map(appearance?.bools ?? []));
 
+  // EVE's palette, from the model. A pack stores colours by NAME, and
+  // `overview_pack::color_name` matches the floats EXACTLY, so a colour that is
+  // not one of these is silently dropped from a pack export — which the row
+  // below says out loud. INCOMPLETE: two of EVE's eight names (green, purple)
+  // have no captured floats yet, so a colour of either reads as unnameable here.
+  const palette = $derived(appearance?.palette ?? []);
+  const paletteName = (c: Rgba): string | undefined =>
+    palette.find(([, p]) => p.every((n, i) => n === c[i]))?.[0];
+
+  // At the top of the sub-tab, which is the control group that owns every failure
+  // this function can report. This tab is mounted-but-hidden when another
+  // sub-tab is showing, so `escalate` matters here more than anywhere: an error
+  // rendered into a panel nobody is looking at is a silent failure, and a modal
+  // never was one.
+  let error = $state<{ text: string; detail: string } | null>(null);
+
   async function edit(fn: () => Promise<OverviewColumns>) {
+    error = null;
     try { onChanged(await fn()); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    catch (e) {
+      error = {
+        text: `That appearance setting wasn't changed — ${errText(e)}`,
+        detail: errMessage(e),
+      };
+    }
   }
 
   // Enabled and order are independent lists: a toggle writes only *States2, a
@@ -91,41 +121,67 @@
   // Alpha isn't exposed; carry the stored one through so a non-1.0 entry keeps it.
   function setColor(id: number, hex: string) {
     const alpha = colors.get(id)?.[3] ?? 1;
-    return edit(() => api.overviewSetStateColor(id, hexToRgba(hex, alpha)));
+    // A hex inverts to n/255 — #bf0000 gives 0.74901…, not the 0.75 EVE stores
+    // for `red` — so picking a palette colour off the swatch would still write
+    // something no pack export could name. When the hex IS a known palette
+    // colour's hex, write that palette entry's exact floats instead. Nothing
+    // visible changes: both render as the same #rrggbb.
+    const exact = palette.find(([, p]) => rgbaToHex(p) === hex)?.[1];
+    const rgba: Rgba = exact ? [exact[0], exact[1], exact[2], alpha] : hexToRgba(hex, alpha);
+    return edit(() => api.overviewSetStateColor(isBg ? "background" : "flag", id, rgba));
   }
   // Removing the entry is what restores EVE's default — writing a default-looking
   // colour is not the same thing.
   function resetColor(id: number) {
-    return edit(() => api.overviewSetStateColor(id, null));
+    return edit(() => api.overviewSetStateColor(isBg ? "background" : "flag", id, null));
   }
 </script>
 
 {#if appearance}
+  {#if error}
+    <InlineMessage variant="error" detail={error.detail}>{error.text}</InlineMessage>
+  {/if}
   <div class="bools">
     {#each BOOL_LABELS as [key, label] (key)}
       {#if key === "applyToStructures"}
         <p class="apply-note">The Colortag and Background settings apply to ships and drones by default.</p>
       {/if}
-      <label class="bool-row">
-        <input type="checkbox" checked={bools.get(key) ?? false}
-               onchange={(e) => edit(() => api.overviewSetBool(key, (e.currentTarget as HTMLInputElement).checked))} />
+      <Field
+        kind="checkbox"
+        class="bool-row"
         {label}
-      </label>
+        value={bools.get(key) ?? false}
+        onchange={(e) => edit(() => api.overviewSetBool(key, (e.currentTarget as HTMLInputElement).checked))} />
     {/each}
   </div>
 
-  <div class="subtabs" role="tablist">
-    <!-- EVE's own Appearance tab lists Colortag first, Background second. -->
-    {#each ["Colortag", "Background"] as name}
-      <button role="tab" aria-selected={surface === name} class:active={surface === name}
-              onclick={() => (surface = name as "Background" | "Colortag")}>{name}</button>
-    {/each}
-  </div>
+  <!-- EVE's own Appearance tab lists Colortag first, Background second.
+       Tabs brings the roving tabindex and arrow-key movement this strip never
+       had: it set role="tab" and aria-selected and stopped there. -->
+  <Tabs
+    variant="underline"
+    class="surfaces"
+    ariaLabel="Appearance surface"
+    tabs={[
+      { id: "Colortag", label: "Colortag" },
+      { id: "Background", label: "Background" },
+    ]}
+    bind:value={surface} />
 
   {#if surfaceUnset}
     <p class="meta">This account has never customised its {surface} states, so these are EVE's
       defaults and aren't saved yet. Your first change here writes them to the file.</p>
   {/if}
+
+  <!-- The palette as suggestions in the native colour picker. It is a hint, not
+       a constraint: free-form stays available, and a picked palette colour is
+       snapped to EVE's exact floats by `setColor` so it survives a pack export.
+       Two of EVE's eight names have no captured floats, so this list is short
+       by two — which is why it is offered as suggestions rather than as the
+       only choices. -->
+  <datalist id="eve-palette">
+    {#each palette as [name, c] (name)}<option value={rgbaToHex(c)}></option>{/each}
+  </datalist>
 
   <ul class="state-list">
     {#each rows as id, i (id)}
@@ -133,7 +189,9 @@
            Appearance list has no row for it, so neither do we. It stays in
            `rows`, keeping its slot through every reorder. -->
       {#if stateLabel(id)}
-      <li draggable="true"
+      <li>
+        <ListRow
+          draggable
           ondragstart={(e) => { dragFrom = i;
             // WebView2/Chromium won't fire `drop` unless dragstart sets data.
             e.dataTransfer?.setData("text/plain", String(i));
@@ -142,29 +200,45 @@
             if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
           ondrop={(e) => { e.preventDefault(); drop(i); }}
           ondragend={() => (dragFrom = null)}>
-        <span class="grip" title="Drag to reorder (priority — first match wins)">⠿</span>
-        <label class="state-label">
-          <input type="checkbox" checked={enabledSet.has(id)}
-                 onchange={(e) => toggleState(id, (e.currentTarget as HTMLInputElement).checked)} />
-          {stateLabel(id)}
-        </label>
-        {#if isBg}
-          {@const c = colors.get(id)}
-          {@const fallback = defaultColor(id)}
-          <input class="swatch" class:unset={!c && !fallback} type="color"
-                 value={c ? rgbaToHex(c) : (fallback ?? UNSET_HEX)}
-                 aria-label="Background colour"
-                 onchange={(e) => setColor(id, (e.currentTarget as HTMLInputElement).value)} />
-          {#if c}
-            <button class="reset" onclick={() => resetColor(id)}
-                    title="Remove the stored colour, restoring EVE's default">Reset</button>
-          {:else}
-            <span class="default-note"
-                  title={fallback
-                    ? "No stored colour — this is EVE's built-in default for this state"
-                    : "No stored colour, and EVE's built-in default for this state is unknown"}>default</span>
-          {/if}
-        {/if}
+          <Field
+            kind="checkbox"
+            class="state-label"
+            label={stateLabel(id) ?? undefined}
+            value={enabledSet.has(id)}
+            onchange={(e) => toggleState(id, (e.currentTarget as HTMLInputElement).checked)} />
+          {#snippet trailing()}
+            {@const c = colors.get(id)}
+            <!-- The bundled defaults were sampled off EVE's *Background* list and
+                 are reused for Colortag, which is an assumption (EVE tints a
+                 state's tag and its row alike) rather than a measurement. They
+                 are display only and never written, so if it is wrong it costs a
+                 swatch, not a file. -->
+            {@const fallback = defaultColor(id)}
+            <Field
+              kind="color"
+              list="eve-palette"
+              controlClass={!c && !fallback ? "unset" : ""}
+              value={c ? rgbaToHex(c) : (fallback ?? UNSET_HEX)}
+              ariaLabel={isBg ? "Background colour" : "Colortag colour"}
+              onchange={(e) => setColor(id, (e.currentTarget as HTMLInputElement).value)} />
+            <!-- `palette.length` guards the empty case: no palette means we
+                 cannot tell, and "we cannot tell" must not be shown as "this
+                 will be dropped". -->
+            {#if c && palette.length > 0 && !paletteName(c)}
+              <span class="off-palette"
+                    title="This exact colour is not one of the palette names a pack can carry, so exporting a pack will leave this state out. EVE's palette has eight names and this build has captured {palette.length} of them — a colour that is really green or purple reads as off-palette here too.">off-palette</span>
+            {/if}
+            {#if c}
+              <Button size="sm" class="reset" onclick={() => resetColor(id)}
+                      title="Remove the stored colour, restoring EVE's default">Reset</Button>
+            {:else}
+              <span class="default-note"
+                    title={fallback
+                      ? "No stored colour — this is EVE's built-in default for this state"
+                      : "No stored colour, and EVE's built-in default for this state is unknown"}>default</span>
+            {/if}
+          {/snippet}
+        </ListRow>
       </li>
       {/if}
     {/each}
@@ -172,34 +246,29 @@
 {/if}
 
 <style>
-  .bools { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.6rem; }
-  .bool-row { display: flex; gap: 0.35rem; align-items: center; }
-  .apply-note { color: var(--fg-dim); font-size: 0.85em; margin: 0.4rem 0 0.15rem; }
-  .meta { color: var(--fg-dim); font-size: 0.85em; }
-  /* Same tab strip the parent view uses, scoped locally for Background/Colortag. */
-  .subtabs { display: flex; gap: 0.3rem; margin: 0.2rem 0 0.5rem; border-bottom: 1px solid var(--border); }
-  .subtabs button {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    color: var(--fg-dim); padding: 0.3rem 0.7rem; font: inherit; cursor: pointer;
-  }
-  .subtabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
-  .state-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.1rem; }
-  .state-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0; }
-  .state-label { display: flex; gap: 0.35rem; align-items: center; flex: 1; }
-  .grip { cursor: grab; opacity: 0.6; }
-  /* Dark native controls: the app runs in a dark WebView2, which renders bare
-     checkboxes and colour inputs light (see the dark-native-controls memo). */
-  input[type="checkbox"] { accent-color: var(--accent); }
-  .swatch {
-    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 3px;
-    width: 2.2rem; height: 1.3rem; padding: 1px; cursor: pointer;
-  }
-  /* An unset row shows a placeholder colour, so dim it to keep "unset" and
-     "explicitly set" visually distinct. */
-  .swatch.unset { opacity: 0.4; }
-  .default-note { color: var(--fg-dim); font-size: 0.85em; width: 3.4rem; }
-  .reset {
-    background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border);
-    border-radius: 3px; padding: 1px 6px; font: inherit; font-size: 0.85em; cursor: pointer; width: 3.4rem;
-  }
+  /* The checkbox and colour-input dark-control rules are gone — Field owns
+     both, and the local surface strip is Tabs.
+
+     This strip was `.subtabs` until 2026-08-15, the same class OverviewView uses
+     for the view-level strip — and since only this file declared the rule, and
+     `:global` is required to reach into a child component, the PARENT's margin
+     was being supplied by a child that merely happens to always be mounted
+     (the sub-tabs render with `hidden`, never unmounted). Distinct names now, one
+     rule each, same computed margin. */
+  .bools { display: flex; flex-direction: column; gap: 0; margin-bottom: var(--s2); }
+  .apply-note { color: var(--text-muted); font-size: var(--t-caption); margin: var(--s1) 0 0; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); }
+  :global(.surfaces) { margin: var(--s1) 0 var(--s2); }
+  /* A reading width, for the same reason `.ov-cols` has one: ListRow pushes the
+     swatch and its Reset button to the container's right edge, and the
+     container is a wide work area rather than a 20rem panel. */
+  .state-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0; max-width: 26rem; }
+  .state-list li { list-style: none; }
+  .state-list :global(.state-label) { flex: 1; }
+  /* An unset row shows a placeholder colour, so it takes the one disabled
+     treatment to keep "unset" and "explicitly set" visually distinct. */
+  .state-list :global(.unset) { opacity: var(--o-disabled); }
+  .default-note { color: var(--text-muted); font-size: var(--t-caption); width: 3.4rem; }
+  .off-palette { color: var(--warn); font-size: var(--t-caption); white-space: nowrap; }
+  .state-list :global(.reset) { width: 3.4rem; }
 </style>

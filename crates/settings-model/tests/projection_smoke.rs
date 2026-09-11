@@ -44,7 +44,8 @@ fn no_projection_panics_on_any_corpus_file() {
         let _ = project_overview(&doc, None);
         let _ = project_overview(&doc, Some(&doc));
         let _ = overview_bools(&doc);
-        let _ = state_colors(&doc);
+        let _ = state_colors(&doc, "background");
+        let _ = state_colors(&doc, "flag");
         let _ = extract_categories(
             &doc,
             &[Category::Layout, Category::Autofill, Category::Overview, Category::OverviewWidths],
@@ -188,7 +189,7 @@ fn modern_account_projects_its_whole_overview() {
     assert!(!ov.appearance.defaulted, "the account has customised its states");
     assert!(!ov.appearance.colors.is_empty(), "state colours should project");
     assert_eq!(overview_bools(&doc).len(), 6, "the six exposed appearance booleans");
-    assert!(!state_colors(&doc).is_empty());
+    assert!(!state_colors(&doc, "background").is_empty());
 
     let history = project_edit_history(&doc);
     assert_eq!(history.len(), 2, "two remembered-text widgets");

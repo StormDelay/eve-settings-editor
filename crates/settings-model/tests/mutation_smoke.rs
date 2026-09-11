@@ -429,10 +429,11 @@ fn state_edits_survive_the_save_chain() {
     let mut v = fixture(MODERN_USER);
     set_state_list(&mut v, StateList::Background, &[9, 13, 44]).expect("set enabled states");
     set_state_list(&mut v, StateList::BackgroundOrder, &[44, 13, 9, 68]).expect("set order");
-    set_state_color(&mut v, 13, Some([0.1, 0.2, 0.3, 1.0])).expect("set colour");
+    set_state_color(&mut v, "background", 13, Some([0.1, 0.2, 0.3, 1.0])).expect("set colour");
     // `None` means "remove the override and fall back to EVE's default" — it
     // must not be conflated with writing black.
-    set_state_color(&mut v, 44, None).expect("reset colour");
+    set_state_color(&mut v, "background", 44, None).expect("reset colour");
+    set_state_color(&mut v, "flag", 13, Some([0.0, 0.0, 0.0, 1.0])).expect("set colortag colour");
     set_overview_bool(&mut v, "hideCorpTicker", true).expect("set bool");
 
     let back = saved(&v);
@@ -447,6 +448,9 @@ fn state_edits_survive_the_save_chain() {
         !colors.iter().any(|(id, _)| *id == 44),
         "resetting a colour must remove the entry, not write one"
     );
+    // The colortag surface survives the round trip on its own key, and the
+    // background entry for the same state id is untouched by it.
+    assert_eq!(ov.appearance.flag_colors, vec![(13, [0.0, 0.0, 0.0, 1.0])]);
 
     assert!(overview_bools(&back).iter().any(|(k, v)| k == "hideCorpTicker" && *v));
 }

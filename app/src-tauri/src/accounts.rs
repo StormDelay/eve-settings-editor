@@ -154,7 +154,10 @@ pub fn build_roster(files: &[FileMeta], store: &AccountsStore) -> AccountRoster 
 /// A point-in-time view of discovered char/user files keyed by path.
 pub type Snapshot = HashMap<PathBuf, FileMeta>;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// `Default` is what `resolve_capture` returns when there is no baseline at
+/// all. The three fields' defaults are precisely the right answer — nothing
+/// changed, because there was nothing to compare against.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct CaptureResult {
     pub changed_chars: Vec<u64>,
     pub changed_users: Vec<u64>,

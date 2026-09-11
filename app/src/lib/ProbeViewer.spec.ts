@@ -251,9 +251,9 @@ const SCENE = {
   ],
 };
 
-function mountWithScene() {
+function mountWithScene(probes = PROBES) {
   const { container } = render(ProbeViewer, {
-    probes: PROBES,
+    probes,
     ranges: RANGES,
     selected: null,
     formationId: 0,
@@ -343,6 +343,47 @@ describe("scenes", () => {
     // The existing mount() passes no `scenes`, which is the empty case and the
     // reason the prop has to default.
     expect(mount().querySelector(".scene-pick")).toBeNull();
+  });
+});
+
+describe("range to a scene object", () => {
+  // The arithmetic is pinned in probes.test.ts against hand-computed distances.
+  // What is checked here is only the wiring: which object gets measured, that
+  // every probe is, and that "inside" reaches the markup.
+  const chips = (c: Element) =>
+    [...c.querySelectorAll(".scene-ranges .chip")].map((e) =>
+      e.textContent!.replace(/\s+/g, " ").trim(),
+    );
+
+  test("nothing to measure against until a scene is picked", () => {
+    expect(mountWithScene().querySelector(".scene-ranges")).toBeNull();
+  });
+
+  test("every probe is measured, against the object that has a volume", async () => {
+    const c = mountWithScene();
+    await pick(c, 1);
+    // The Wormhole, not the Beacon: a marker has no inside, and "is probe 3
+    // inside the jump sphere" is the question the readout exists for.
+    const label = c.querySelector(".range-label")!.textContent!;
+    expect(label).toContain("Wormhole");
+    expect(label).not.toContain("Beacon");
+    // And the number is not passed off as measured truth.
+    expect(label).toContain("no better than the scene's own figures");
+
+    expect(chips(c).length).toBe(PROBES.length);
+    expect(chips(c)[0]).toMatch(/^1 · [\d.]+ km$/); // neither probe is inside
+  });
+
+  test("a probe inside the volume says so", async () => {
+    // Probe 1 sits on the Wormhole itself, well within its 1e9 m volume; probe
+    // 2 is 2e10 m up and nowhere near it.
+    const c = mountWithScene([[8e9, 2e9, 0], [0, 2e10, 0]]);
+    await pick(c, 1);
+    expect(chips(c)[0]).toBe("1 · 0.0 km · inside");
+    expect(chips(c)[1]).not.toContain("inside");
+    // The chip carries the state as a tone as well as a word.
+    expect([...c.querySelectorAll(".scene-ranges .chip")].map((e) => e.classList.contains("ok")))
+      .toEqual([true, false]);
   });
 });
 

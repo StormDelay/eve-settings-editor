@@ -168,3 +168,36 @@ describe("selection", () => {
     expect(within(row("market")).queryAllByRole("spinbutton")).toHaveLength(0);
   });
 });
+
+// Four commands — including the per-window clutter escape hatch, which no
+// built-in table can ever cover — were reachable only by right-clicking a row
+// that advertised nothing. The row carries a visible "⋯" now, and right-click
+// still works: this ADDS a route rather than replacing one.
+describe("the row's actions are visible", () => {
+  const ITEMS = ["Show geometry in tree", "Copy window id", "Select on canvas", "Treat as clutter"];
+
+  test("right-clicking the name offers the row's commands", async () => {
+    mount([win("overview")]);
+    await fireEvent.contextMenu(screen.getByTitle("overview"));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual(ITEMS);
+  });
+
+  test("the ⋯ offers exactly the same list", async () => {
+    mount([win("overview")]);
+    await fireEvent.click(within(row("overview")).getByRole("button", { name: "Window actions" }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual(ITEMS);
+  });
+
+  test("every row has one, not just the selected one", () => {
+    mount([win("overview"), win("market")]);
+    expect(within(row("overview")).getByRole("button", { name: "Window actions" })).toBeTruthy();
+    expect(within(row("market")).getByRole("button", { name: "Window actions" })).toBeTruthy();
+  });
+
+  test("picking a clutter override through the ⋯ reports it", async () => {
+    const { onClutterOverride } = mount([win("overview")]);
+    await fireEvent.click(within(row("overview")).getByRole("button", { name: "Window actions" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Treat as clutter" }));
+    expect(onClutterOverride).toHaveBeenCalledWith("overview", "clutter");
+  });
+});

@@ -55,6 +55,16 @@ pub struct Appearance {
     /// Sparse background-surface colour overrides. A state absent here uses
     /// EVE's built-in default colour.
     pub colors: Vec<(i64, [f64; 4])>,
+    /// The same for the colortag surface. Rare but real — the client writes
+    /// `(flag, id)` entries of its own and published packs set them — and
+    /// invisible to the editor until now.
+    pub flag_colors: Vec<(i64, [f64; 4])>,
+    /// EVE's colour palette, `(name, rgba)`: the only colours a pack export can
+    /// name, since `overview_pack::color_name` matches exactly. Build data
+    /// rather than account data, carried on the payload the appearance editor
+    /// already loads so it can mark a colour a pack export would drop.
+    /// INCOMPLETE — 6 of EVE's 8 names; see `overview_pack::PALETTE`.
+    pub palette: Vec<(&'static str, [f64; 4])>,
     pub bools: Vec<(String, bool)>,
     /// True when the file carried none of the four state keys — the account has
     /// never customised its overview states, so the UI shows bundled defaults
@@ -129,7 +139,9 @@ fn appearance(overview: &Entries, user: &Value, sh: &SharedTable) -> Appearance 
             enabled: state_ids(overview, b"flagStates2", sh),
             order: state_ids(overview, b"flagOrder2", sh),
         },
-        colors: crate::overview_states::state_colors(user),
+        colors: crate::overview_states::state_colors(user, "background"),
+        flag_colors: crate::overview_states::state_colors(user, "flag"),
+        palette: crate::overview_pack::PALETTE.to_vec(),
         bools: crate::overview_states::overview_bools(user),
         defaulted: KEYS.iter().all(|k| find_child(overview, k, sh).is_none()),
     }

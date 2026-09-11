@@ -25,7 +25,9 @@ const btn = (id: string, btn_type = 1, icon_path = `${id}.png`): NeocomButton =>
   check("what is already on the bar is not addable", !ids.includes("chat") && !ids.includes("wallet"));
   check("the catalog contributes buttons Original never had", ids.includes("fleet"));
   check("Original contributes buttons the catalog never had", ids.includes("implants"));
-  check("the result is sorted by id", ids.join(",") === [...ids].sort().join(","));
+  // Sorted by the label, not the id: "mail" reads "EVE Mail" and "implants" has
+  // no curated label at all, so sorting by id would put them in the other order.
+  check("the result is sorted by the label the dropdown shows", ids.join(",") === "mail,fleet,implants");
   check("no id appears twice", new Set(ids).size === ids.length);
 
   // Original came from this character's own client, so it wins a conflict.

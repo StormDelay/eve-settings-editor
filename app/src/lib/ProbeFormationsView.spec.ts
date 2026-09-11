@@ -3,8 +3,10 @@ import { describe, expect, test, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
 import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
 import { calls } from "$lib/test/setup";
-import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { toasts } from "$lib/ui/toasts.svelte";
+import { accel } from "$lib/keys";
 import type { Formation, Formations, FormationSpec } from "$lib/api";
 
 // The clipboard goes through Tauri rather than `navigator.clipboard`, so this
@@ -15,10 +17,10 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn(() => Promise.resolve()),
 }));
 
-// The view raises dialogs on every failure path; jsdom has no Tauri to answer
-// them, and a test asserting on WHICH message appeared needs the spy anyway.
+// Only the file pickers are left. `message` is gone from the mock rather than
+// kept harmlessly: its absence is what asserts this view raises no dialog on any
+// failure path any more.
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  message: vi.fn(() => Promise.resolve()),
   open: vi.fn(),
   save: vi.fn(),
 }));
@@ -134,7 +136,7 @@ describe("editing", () => {
     render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
     await screen.findByDisplayValue("a");
 
-    await fireEvent.click(screen.getByText("New"));
+    await fireEvent.click(screen.getByText("New formation"));
 
     expect(await screen.findByDisplayValue("New formation")).toBeTruthy();
   });
@@ -241,7 +243,7 @@ describe("clipboard sharing", () => {
     const x = await screen.findByLabelText("probe 1 X");
     await fireEvent.input(x, { target: { value: "999" } });
 
-    await fireEvent.click(screen.getByText("Copy"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Copy/ }));
 
     const sent = calls.of("probe_yaml").at(-1)?.args as { formations: FormationSpec[] };
     expect(sent.formations).toHaveLength(1);
@@ -253,12 +255,17 @@ describe("clipboard sharing", () => {
   test("Copy confirms it copied, naming the formation", async () => {
     // Nothing else on screen changes: the clipboard is invisible and the file
     // is untouched, so without this the button looks inert.
+    //
+    // It is a toast now — the last of three hand-rolled `.flash` timers to go.
+    // Asserted on the queue rather than the DOM, because the host is mounted
+    // once in the shell and this spec mounts the view alone.
+    toasts.length = 0;
     await open();
     calls.stub("probe_yaml", SHARED);
 
-    await fireEvent.click(screen.getByText("Copy"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Copy/ }));
 
-    expect(await screen.findByText(/Copied .*close/)).toBeTruthy();
+    await vi.waitFor(() => expect(toasts.map((t) => t.message)).toContainEqual(expect.stringMatching(/Copied .*close/)));
   });
 
   test("Ctrl-C copies the formation, but not from inside a field", async () => {
@@ -281,7 +288,7 @@ describe("clipboard sharing", () => {
     ] satisfies FormationSpec[]);
     calls.stub("add_probe_formations", FORMATIONS);
 
-    await fireEvent.click(screen.getByText("Paste"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Paste/ }));
 
     await vi.waitFor(() => expect(calls.of("add_probe_formations")).toHaveLength(1));
     const sent = calls.of("add_probe_formations")[0].args as { formations: FormationSpec[] };
@@ -297,19 +304,24 @@ describe("clipboard sharing", () => {
     vi.mocked(readText).mockResolvedValue("formations: []\n");
     calls.stub("probe_parse_yaml", [] satisfies FormationSpec[]);
 
-    await fireEvent.click(screen.getByText("Paste"));
+    toasts.length = 0;
+    await fireEvent.click(screen.getByRole("button", { name: /^Paste/ }));
 
-    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
-    expect(vi.mocked(message).mock.calls[0][0]).toMatch(/no formations/);
+    // A toast, not an inline message, and one of only two places that is right:
+    // the clipboard is invisible, so no control on screen owns this failure.
+    await vi.waitFor(() =>
+      expect(toasts.map((t) => t.message)).toContainEqual(expect.stringMatching(/no formations/)),
+    );
     calls.never("add_probe_formations");
   });
 
   test("a refused clipboard read does not fail silently", async () => {
     await open();
     vi.mocked(readText).mockRejectedValue(new Error("denied"));
-    await fireEvent.click(screen.getByText("Paste"));
-    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
-    expect(vi.mocked(message).mock.calls[0][0]).toMatch(/Ctrl\+V/);
+    await fireEvent.click(screen.getByRole("button", { name: /^Paste/ }));
+    // The accelerator is rendered per platform rather than written into the
+    // string, so the assertion asks for whatever THIS platform prints.
+    expect((await screen.findByRole("alert")).textContent).toContain(accel("V"));
     calls.never("probe_parse_yaml");
   });
 
@@ -370,7 +382,7 @@ describe("file sharing", () => {
     const name = await screen.findByDisplayValue("close");
     await fireEvent.input(name, { target: { value: "closer" } });
 
-    await fireEvent.click(screen.getByText("Export…"));
+    await fireEvent.click(screen.getByText("Export formations…"));
     await screen.findByText("Export 1");
     await fireEvent.click(screen.getByText("Export 1"));
 
@@ -385,7 +397,7 @@ describe("file sharing", () => {
     // when nothing has asked you what you are exporting — returned before the
     // picker ever appeared, so Export looked like it offered no choice at all.
     await open();
-    await fireEvent.click(screen.getByText("Export…"));
+    await fireEvent.click(screen.getByText("Export formations…"));
 
     expect(await screen.findByText("Export 1")).toBeTruthy();
     expect(vi.mocked(saveDialog)).not.toHaveBeenCalled();
@@ -394,7 +406,7 @@ describe("file sharing", () => {
   test("cancelling the save dialog writes nothing", async () => {
     await open();
     vi.mocked(saveDialog).mockResolvedValueOnce(null);
-    await fireEvent.click(screen.getByText("Export…"));
+    await fireEvent.click(screen.getByText("Export formations…"));
     await fireEvent.click(await screen.findByText("Export 1"));
 
     await vi.waitFor(() => expect(vi.mocked(saveDialog)).toHaveBeenCalled());
@@ -411,7 +423,7 @@ describe("file sharing", () => {
     ] satisfies FormationSpec[]);
     calls.stub("add_probe_formations", FORMATIONS);
 
-    await fireEvent.click(screen.getByText("Import…"));
+    await fireEvent.click(screen.getByText("Import formations…"));
     await screen.findByText("Import 2");
     await fireEvent.click(screen.getByLabelText("b"));
     await fireEvent.click(screen.getByText("Import 1"));
@@ -428,7 +440,7 @@ describe("file sharing", () => {
     // paste out of date.
     await open();
     vi.mocked(saveDialog).mockResolvedValueOnce("C:/tmp/formations.yaml");
-    await fireEvent.click(screen.getByText("Export…"));
+    await fireEvent.click(screen.getByText("Export formations…"));
     await screen.findByText("Export 1");
 
     const ev = new Event("paste", { bubbles: true });
@@ -446,9 +458,14 @@ describe("file sharing", () => {
       throw { code: "not_formations", message: "This file contains no probe formations." };
     });
 
-    await fireEvent.click(screen.getByText("Import…"));
+    await fireEvent.click(screen.getByText("Import formations…"));
 
-    await vi.waitFor(() => expect(vi.mocked(message)).toHaveBeenCalled());
+    // Reported at the Import button, in the app's own error grammar, with the
+    // backend's sentence after the dash and no bracketed code anywhere in it.
+    const msg = await screen.findByRole("alert");
+    expect(msg.textContent).toContain("Those formations weren't imported");
+    expect(msg.textContent).toContain("This file contains no probe formations.");
+    expect(msg.textContent).not.toContain("not_formations");
     expect(screen.queryByTestId("picker-backdrop")).toBeNull();
     calls.never("add_probe_formations");
   });

@@ -1,6 +1,7 @@
 // Pure helpers for the neocom button list. No DOM, no Svelte — unit-tested in
 // neocom.test.ts.
 import type { NeocomButton } from "./api";
+import { neocomLabel } from "./windowLabels";
 
 export interface CatalogButton {
   id: string;
@@ -41,5 +42,7 @@ export function addableButtons(
       by.set(o.id, { id: o.id, btnType: o.btn_type, iconPath: o.icon_path, source: "original" });
     }
   }
-  return [...by.values()].sort((a, b) => a.id.localeCompare(b.id));
+  // Sorted by the label the dropdown shows, not by the id behind it — sorting
+  // on a key the reader cannot see puts "EVE Mail" between "Log" and "Map".
+  return [...by.values()].sort((a, b) => neocomLabel(a.id).localeCompare(neocomLabel(b.id)));
 }

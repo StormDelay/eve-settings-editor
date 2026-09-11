@@ -95,9 +95,9 @@ describe("copying columns to other tabs", () => {
     expect([partBox("Column order"), partBox("Visible columns"), partBox("Widths")].every((b) => b.checked)).toBe(true);
   });
 
-  test("Select all ticks every target", async () => {
+  test("All ticks every target", async () => {
     await openPanel();
-    await fireEvent.click(screen.getByText("Select all"));
+    await fireEvent.click(screen.getByText("All"));
     expect(targetBoxes().every((b) => b.checked)).toBe(true);
 
     await fireEvent.click(screen.getByText("None"));
@@ -109,7 +109,7 @@ describe("copying columns to other tabs", () => {
     const onCharDirty = vi.fn();
     render(OverviewColumnsTab, { data: multi, tabIndex: 0, charOpen: true, onChanged: noop, onUserDirty, onCharDirty });
     await fireEvent.click(screen.getByTitle("Copy this tab's column settings onto other tabs"));
-    await fireEvent.click(screen.getByText("Select all"));
+    await fireEvent.click(screen.getByText("All"));
     await fireEvent.click(partBox("Visible columns"));
 
     await fireEvent.click(screen.getByText(/^Copy to 2 tabs$/));
@@ -131,7 +131,7 @@ describe("copying columns to other tabs", () => {
     expect(widths.disabled).toBe(true);
     expect(widths.checked).toBe(false);
 
-    await fireEvent.click(screen.getByText("Select all"));
+    await fireEvent.click(screen.getByText("All"));
     await fireEvent.click(screen.getByText(/^Copy to 2 tabs$/));
 
     expect((calls.only("overview_copy_columns").args as { widths: boolean }).widths).toBe(false);
