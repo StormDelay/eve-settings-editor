@@ -41,3 +41,33 @@ describe("the 'taken by' note", () => {
     expect(note.getAttribute("title")).toBe("Activate High Power Slot 4");
   });
 });
+
+/**
+ * Capturing a binding swallows EVERY key, including the app's own accelerators —
+ * `Ctrl+Z` while a chip is listening must bind Ctrl+Z, not undo the document.
+ *
+ * The capture handler's `stopPropagation` is what makes that true, and it is one
+ * deletion away from being lost, so it gets its own test rather than riding on
+ * the fact that nothing has broken it yet.
+ */
+test("Ctrl+Z while capturing binds the key instead of undoing", async () => {
+  calls.stub("keybinds", BINDS);
+  calls.stub("set_keybind", { keybinds: BINDS, stolen: [] });
+  render(KeybindsView, { userOpen: true, userId: 1, onUserDirty: noop });
+
+  const cell = await screen.findByTitle(TAKER);
+  const chip = cell.closest("tr")!.querySelector(".chip") as HTMLButtonElement;
+  await fireEvent.click(chip);
+
+  let reachedWindow = false;
+  const spy = () => (reachedWindow = true);
+  window.addEventListener("keydown", spy);
+  try {
+    await fireEvent.keyDown(chip, { key: "z", keyCode: 90, ctrlKey: true });
+  } finally {
+    window.removeEventListener("keydown", spy);
+  }
+
+  expect(reachedWindow, "the capture must not let Ctrl+Z bubble to the shell").toBe(false);
+  expect(calls.of("set_keybind").length).toBe(1);
+});

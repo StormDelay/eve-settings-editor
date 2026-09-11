@@ -7,6 +7,7 @@ mod prefs;
 mod presets;
 mod scenes;
 mod setup;
+mod undo;
 
 #[cfg(test)]
 mod testkit;
@@ -76,6 +77,21 @@ fn apply_mutations(
     mutations: Vec<settings_model::Mutation>,
 ) -> Result<settings_model::Node, ErrDto> {
     ops::apply_mutations(&state, slot, &mutations)
+}
+
+#[tauri::command]
+fn undo(state: tauri::State<'_, AppState>) -> Option<undo::UndoOutcome> {
+    undo::undo(&state)
+}
+
+#[tauri::command]
+fn redo(state: tauri::State<'_, AppState>) -> Option<undo::UndoOutcome> {
+    undo::redo(&state)
+}
+
+#[tauri::command]
+fn undo_state(state: tauri::State<'_, AppState>) -> undo::UndoState {
+    undo::undo_state(&state)
 }
 
 #[tauri::command]
@@ -184,12 +200,14 @@ fn confirm_pairings(app: tauri::AppHandle, pairs: Vec<(u64, u64)>) -> accounts::
 }
 
 /// What the EVE launcher's own logs say about char↔account membership, minus
-/// whatever the store already agrees with. Read-only, and separate from
-/// `account_roster` on purpose: that one reloads after every alias edit and
-/// every confirm, and re-reading megabytes of logs on each would be silly.
+/// whatever the store already agrees with — plus a count of every character
+/// those logs named, which is the only thing that separates "the logs say
+/// nothing" from "everything they say is already paired". Read-only, and
+/// separate from `account_roster` on purpose: that one reloads after every alias
+/// edit and every confirm, and re-reading megabytes of logs on each would be silly.
 #[tauri::command]
-fn launcher_proposals(app: tauri::AppHandle) -> Vec<launcher::Proposal> {
-    launcher::proposals(&launcher::read_launcher_roster(), &accounts::load_store(&app_dir(&app)))
+fn launcher_proposals(app: tauri::AppHandle) -> launcher::LauncherReport {
+    launcher::report(&launcher::read_launcher_roster(), &accounts::load_store(&app_dir(&app)))
 }
 
 #[tauri::command]
@@ -200,6 +218,12 @@ fn begin_capture(state: tauri::State<'_, AppState>) {
 #[tauri::command]
 fn resolve_capture(state: tauri::State<'_, AppState>) -> accounts::CaptureResult {
     ops::resolve_capture(&state, &settings_model::default_roots())
+}
+
+/// Takes no roots, unlike both its siblings: it does no discovery.
+#[tauri::command]
+fn clear_capture(state: tauri::State<'_, AppState>) {
+    ops::clear_capture(&state);
 }
 
 #[tauri::command]
@@ -286,8 +310,8 @@ fn overview_set_states(state: tauri::State<'_, AppState>, which: String, ids: Ve
 }
 
 #[tauri::command]
-fn overview_set_state_color(state: tauri::State<'_, AppState>, id: i64, rgba: Option<[f64; 4]>) -> Result<settings_model::OverviewColumns, ErrDto> {
-    ops::overview_set_state_color(&state, id, rgba)
+fn overview_set_state_color(state: tauri::State<'_, AppState>, surface: String, id: i64, rgba: Option<[f64; 4]>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_set_state_color(&state, surface, id, rgba)
 }
 
 #[tauri::command]
@@ -635,10 +659,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
+            undo, redo, undo_state,
             window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
             launcher_proposals,
-            begin_capture, resolve_capture,
+            begin_capture, resolve_capture, clear_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             overview_copy_columns,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,

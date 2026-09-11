@@ -96,6 +96,26 @@ export function scenePos(p: ScenePos): Vec3 {
   });
 }
 
+/** How far a probe is from a scene object, and whether it is inside that
+ * object's volume — "is probe 3 inside the jump sphere" as a number rather than
+ * as a picture that only approximates it. Metres throughout, and both points
+ * are already in the same frame (offsets from the formation centre), so this is
+ * a plain separation and no bearing convention is involved.
+ *
+ * `inside` is false for an object with no volume: a marker has no inside to be
+ * in. The boundary counts as inside — a probe exactly on the sphere is at the
+ * edge of the volume, not outside it, and no source measures the radius finely
+ * enough for the other reading to mean anything.
+ *
+ * THE ARITHMETIC IS EXACT AND ITS INPUTS ARE NOT. The shipped scenes' distance,
+ * bearing, elevation and sphere radius are estimates and say so in their own
+ * comments; this number is only ever as good as the scene it is measured
+ * against. The viewer says as much next to it. */
+export function rangeTo(probe: Vec3, object: Vec3, radius = 0): { m: number; inside: boolean } {
+  const m = Math.hypot(probe[0] - object[0], probe[1] - object[1], probe[2] - object[2]);
+  return { m, inside: radius > 0 && m <= radius };
+}
+
 /** A horizontal circle of world radius `r` about the formation centre, as `n`
  * points. The caller projects them; this only knows which plane is the
  * horizontal one. */

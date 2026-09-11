@@ -1,17 +1,33 @@
 <script lang="ts">
-  import { api, errMessage, type OverviewColumns } from "./api";
-  import { message, confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { tick } from "svelte";
+  import { api, errMessage, errText, type OverviewColumns } from "./api";
+  import type { MenuItem } from "./ContextMenu.svelte";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { confirmDialog } from "./ui/confirm.svelte";
+  import { undoAction } from "./undo.svelte";
   import { documentDir } from "@tauri-apps/api/path";
-  import { names } from "./names.svelte";
-  import { parseTabName, formatTabName, plainTabName, cssColor, EVE_PALETTE, type TabName } from "./tabName";
+  import { plainTabName, formatTabName, type TabName } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
+  import OverviewTabList from "./OverviewTabList.svelte";
+  import Button from "./ui/Button.svelte";
+  import EmptyState from "./ui/EmptyState.svelte";
+  import InlineMessage from "./ui/InlineMessage.svelte";
+  import MenuButton from "./ui/MenuButton.svelte";
+  import ScopeBanner from "./ui/ScopeBanner.svelte";
+  import Tabs from "./ui/Tabs.svelte";
+  import { toast } from "./ui/toasts.svelte";
 
-  let { userOpen, userId, charId, charOpen, characters, refreshToken, onLoadCharacter, onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, sharedLabel = "" }:
-    { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; characters: number[]; refreshToken: number;
-      onLoadCharacter: (id: number) => void; onUserDirty: () => void; onCharDirty: () => void;
-      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void; sharedLabel?: string } = $props();
+  let { userOpen, userId, charId, charOpen, refreshToken, scopeLabel = "",
+        onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, focusSearch = $bindable(undefined) }:
+    { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; refreshToken: number;
+      scopeLabel?: string;
+      onUserDirty: () => void; onCharDirty: () => void;
+      onWindowAdded: (windowId: string) => void; onShowAccounts: () => void;
+      /** The shell's Ctrl+F. Overview's only search box is the group filter on
+       *  the Filters sub-tab. */
+      focusSearch?: () => void } = $props();
 
   let data = $state<OverviewColumns | null>(null);
   let tabIndex = $state<number | null>(null);
@@ -20,6 +36,16 @@
   // stays mounted (hidden via the `hidden` attribute, not `{#if}`) so switching
   // sub-tabs doesn't re-run a child's effects or reset its local state.
   let sub = $state("Columns");
+
+  // Ctrl+F. The box lives on the Filters sub-tab, and the sub-tabs stay MOUNTED
+  // and merely `hidden` (above) — so focusing it from Columns would do nothing
+  // at all, silently, exactly the way Layout's box failed from a railed
+  // inspector. Switch first, wait a tick for `hidden` to come off, then focus.
+  let focusFilters = $state<(() => void) | undefined>(undefined);
+  focusSearch = () => {
+    sub = "Filters";
+    void tick().then(() => focusFilters?.());
+  };
 
   async function reload() {
     if (!userOpen) { data = null; return; }
@@ -54,158 +80,117 @@
     return Number.isFinite(highest) ? highest : null;
   }
 
-  // Name entry is an inline input (see the markup below), NOT window.prompt —
-  // which the WebView2 renders as an ugly "localhost:1420 says …" dialog. One
-  // pending action drives all three tab/window name-entry flows (preset rename
-  // has its own pending state now, local to OverviewFiltersTab).
-  let pending = $state<
-    | { kind: "createTab"; value: string }
-    | { kind: "renameTab"; value: string; tabIdx: number }
-    | { kind: "addWindow"; value: string }
-    | null
-  >(null);
-  function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
+  /** Which control group owns a failure. Eight commands, five groups — the
+   *  message lands at the control that was operated rather than in a modal that
+   *  said "Edit failed" for all of them. */
+  type Where = "name" | "windows" | "entry" | "actions" | "move" | "strip" | "pack";
+  let editError = $state<{ where: Where; text: string; detail: string } | null>(null);
+  const at = (where: Where) => (editError?.where === where ? editError : null);
 
-  function startCreateTab() {
-    if (!data || data.tabs.length === 0) return;
-    pending = { kind: "createTab", value: "" };
-  }
-  function startRenameTab() {
-    if (!tab) return;
-    // The box edits the readable text; the tab's colour and bold ride along
-    // through `submitPending` rather than being retyped as raw markup.
-    pending = { kind: "renameTab", value: parseTabName(tab.name).text, tabIdx: tab.index };
-  }
-
-  // Tab names carry EVE's markup — see tabName.ts. The swatch and the B button
-  // rewrite the same `name` string the Rename box does, so neither needs a
-  // backend command of its own.
-  const nameParts = $derived(tab ? parseTabName(tab.name) : null);
-  let swatchOpen = $state(false);
-  let swatchEl: HTMLDivElement | undefined = $state();
-
-  async function setNameFormat(patch: Partial<TabName>) {
-    if (!tab || !nameParts) return;
-    const next = formatTabName({ ...nameParts, ...patch });
-    if (next === tab.name) return;
-    try { data = await api.tabRename(tab.index, next); onUserDirty(); }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+  /** `sentence` is the app's half of the error grammar — "<thing> wasn't
+   *  <verbed>" — and the backend owns the half after the dash. Every caller
+   *  writes its own, because what names WHICH thing failed is exactly what one
+   *  shared "Edit failed" could never say. */
+  async function edit(
+    run: () => Promise<OverviewColumns>,
+    where: Where,
+    sentence: string,
+  ): Promise<boolean> {
+    editError = null;
+    try {
+      data = await run();
+      return true;
+    } catch (e) {
+      editError = { where, text: `${sentence} — ${errText(e)}`, detail: errMessage(e) };
+      return false;
+    }
   }
 
-  function chipStyle(name: string): string {
-    const n = parseTabName(name);
-    return [n.color ? `color:${cssColor(n.color)}` : "", n.bold ? "font-weight:700" : ""]
-      .filter(Boolean).join(";");
-  }
-  function startAddWindow() {
-    if (!data || data.windows.length === 0) return;
-    pending = { kind: "addWindow", value: "Overview" };
-  }
-  // A windowless account is normal: EVE's own overview importer deletes the
-  // tab-to-window mapping, so anyone who has imported a pack lands here. Writing
-  // one REPLACES the client's default distribution and pins every tab into a
-  // single window, so it is offered rather than done — and the confirm says so.
-  async function setUpWindowMapping() {
-    if (!data || data.windows.length > 0) return;
-    const n = data.tabs.length;
-    const ok = await confirm(
-      `Put all ${n} tab${n === 1 ? "" : "s"} in one overview window?\n\n` +
-        `This account currently lets EVE decide which of your overview windows each tab ` +
-        `appears in. Setting this up replaces that with an explicit list, so every tab ` +
-        `starts in one window and you arrange them from there.\n\n` +
-        `The editor can't undo this — it can't remove the last overview window. If you ` +
-        `save and change your mind, importing an overview pack through the client removes ` +
-        `the list again.`,
-      { title: "Set up per-window tabs", kind: "warning" },
-    );
-    if (!ok) return;
-    try {
-      data = await api.overviewCreateWindowMapping();
-      onUserDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
-  }
-  async function submitPending() {
-    if (!pending) return;
-    const p = pending;
-    const name = p.value.trim();
-    pending = null;
-    if (!name) return;
-    try {
-      if (p.kind === "createTab") {
-        // `currentWindowIndex` is null in two different situations, and 0 is the
-        // right answer to both. A windowless account ignores the argument
-        // entirely — the backend refuses to fabricate a mapping and EVE
-        // distributes tabs itself. An account that HAS windows but whose
-        // selected tab belongs to none of them (the "Other" group) gets the new
-        // tab in window 0: arbitrary, but visible and movable, where refusing
-        // would leave the New button dead for a selection that looks ordinary.
-        data = await api.tabCreate(currentWindowIndex ?? 0, name, tabIndex);
-        tabIndex = newestTab() ?? tabIndex;
-        onUserDirty();
-      } else if (p.kind === "renameTab") {
-        const current = data?.tabs.find((t) => t.index === p.tabIdx)?.name ?? "";
-        // `p.value`, not the trimmed `name`: padding is how a tab is widened in
-        // game ("  main  ", "  3  "), so the typed spacing is kept verbatim and
-        // the trim above only answers "did they type anything at all".
-        const next = formatTabName({ ...parseTabName(current), text: p.value });
-        if (next === current) return;
-        data = await api.tabRename(p.tabIdx, next);
-        onUserDirty();
-      } else if (p.kind === "addWindow") {
-        // Add window writes the user grouping AND the char-file geometry, so mark
-        // BOTH slots dirty — otherwise saveFile skips the char slot and the new
-        // window's position never persists. Then hand the new window's id up so
-        // the Layout editor selects it: it defaults offset on top of window 0, so
-        // without selecting it it's easy to miss.
-        data = await api.overviewWindowAdd(name, tabIndex);
-        tabIndex = newestTab() ?? tabIndex;
-        onUserDirty();
-        onCharDirty();
-        const w = data.windows[data.windows.length - 1];
-        if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
-      }
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
-  }
-  async function deleteTab() {
-    if (!tab) return;
-    const ok = await confirm(`Delete tab "${plainTabName(tab.name)}"? This can't be undone.`, { title: "Delete tab", kind: "warning" });
-    if (!ok) return;
-    try {
-      const result = await api.tabDelete(tab.index);
-      data = result;
-      tabIndex = result.tabs[0]?.index ?? null;
-      onUserDirty();
-      // A delete renumbers the account's tabs, and the backend carries the open
-      // character's per-tab column widths and sort setting across with them —
-      // so that slot has unsaved work too whenever a character is open.
-      if (charOpen) onCharDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
-  }
-  async function moveTab(toWindow: number) {
-    if (!tab || !currentWindow) return;
-    const pos = data?.windows.find((w) => w.index === toWindow)?.tab_indices.length ?? 0;
-    try {
-      data = await api.tabMove(tab.index, currentWindow.index, toWindow, pos);
-      tabIndex = keepSelection(toWindow, pos);
+  async function createTab(name: string, windowIdx: number | null) {
+    // `windowIdx` is null in two different situations, and 0 is the right answer
+    // to both. A windowless account ignores the argument entirely — the backend
+    // refuses to fabricate a mapping and EVE distributes tabs itself. A tab in
+    // the "Other" group gets the new tab in window 0: arbitrary, but visible and
+    // movable, where refusing would leave the command dead for a selection that
+    // looks ordinary.
+    if (await edit(() => api.tabCreate(windowIdx ?? 0, name, tabIndex), "entry", "That wasn't saved")) {
+      tabIndex = newestTab() ?? tabIndex;
       onUserDirty();
     }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
   }
-  async function removeWindow() {
-    if (!data || data.windows.length <= 1 || !currentWindow) return;
-    const ok = await confirm(
-      `Remove Overview ${currentWindow.index + 1}? Its tabs move to Overview 1.`,
-      { title: "Remove overview window", kind: "warning" },
+
+  async function addWindow(name: string) {
+    // Add window writes the user grouping AND the char-file geometry, so mark
+    // BOTH slots dirty — otherwise saveFile skips the char slot and the new
+    // window's position never persists. Then hand the new window's id up so the
+    // Layout editor selects it: it defaults offset on top of window 0, so
+    // without selecting it it's easy to miss.
+    if (!(await edit(() => api.overviewWindowAdd(name, tabIndex), "entry", "That window wasn't added"))) return;
+    tabIndex = newestTab() ?? tabIndex;
+    onUserDirty();
+    onCharDirty();
+    const w = data?.windows[data.windows.length - 1];
+    if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
+  }
+
+  // Name, colour and bold all rewrite the same markup-bearing string, so they
+  // share one command — see tabName.ts. The inspector composes the string for
+  // colour and bold; this only writes it.
+  async function renameTab(idx: number, next: string) {
+    if (await edit(() => api.tabRename(idx, next), "name", "The tab name wasn't changed")) onUserDirty();
+  }
+
+  // The row editor edits the decomposed name — text, colour, weight — and hands
+  // back all three at once, because in the file they are one markup-bearing
+  // string. A name that comes back unchanged is not an edit, and an unparseable
+  // one re-emits as itself, which is what keeps `parseTabName`'s give-up case
+  // from being rewritten by the mere act of opening the editor on it.
+  function renameTabName(idx: number, name: TabName) {
+    const current = data?.tabs.find((t) => t.index === idx)?.name ?? "";
+    const next = formatTabName(name);
+    if (next === current) return;
+    void renameTab(idx, next);
+  }
+
+  // The confirm this replaces said "This can't be undone." It could: the delete
+  // mutates the in-memory document, and Discard re-reads both files from disk
+  // and reverses it exactly, up to the moment of Save. Thirty lines away in
+  // LayoutView the genuinely comparable mutation said the opposite and said it
+  // correctly — two dialogs, opposite claims, identical mechanism. That is the
+  // worst available outcome, because a user who reads both learns that this
+  // app's warnings are decoration.
+  //
+  // So: no dialog, and a toast carrying the sentence that is actually true.
+  async function deleteTab(idx: number) {
+    const target = data?.tabs.find((t) => t.index === idx);
+    if (!target) return;
+    const name = plainTabName(target.name);
+    if (!(await edit(() => api.tabDelete(idx), "actions", "That tab wasn't deleted"))) return;
+    toast(`Deleted “${name}”. Save to write it to disk.`, { action: undoAction() });
+    tabIndex = data?.tabs[0]?.index ?? null;
+    onUserDirty();
+    // A delete renumbers the account's tabs, and the backend carries the open
+    // character's per-tab column widths and sort setting across with them — so
+    // that slot has unsaved work too whenever a character is open.
+    if (charOpen) onCharDirty();
+  }
+
+  // Also in-memory, also reversed by Discard. The toast is more informative than
+  // the dialog it replaces, because it can COUNT the tabs that moved and the
+  // dialog could only say that they would.
+  async function removeWindow(windowIdx: number) {
+    if (!data || data.windows.length <= 1) return;
+    const moved = data.windows.find((w) => w.index === windowIdx)?.tab_indices.length ?? 0;
+    // Edits both slots (grouping + geometry) — mark both dirty so saveFile
+    // doesn't skip the char slot.
+    if (!(await edit(() => api.overviewWindowRemove(windowIdx), "actions", "That window wasn't removed"))) return;
+    toast(
+      `Removed Overview ${windowIdx + 1}. Its ${moved} tab${moved === 1 ? "" : "s"} moved to Overview 1.`,
+      { action: undoAction() },
     );
-    if (!ok) return;
-    try {
-      // Edits both slots (grouping + geometry) — mark both dirty so saveFile
-      // doesn't skip the char slot.
-      data = await api.overviewWindowRemove(currentWindow.index);
-      tabIndex = data.tabs[0]?.index ?? null;
-      onUserDirty();
-      onCharDirty();
-    } catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    tabIndex = data.tabs[0]?.index ?? null;
+    onUserDirty();
+    onCharDirty();
   }
 
   // Reordering or moving a tab RENUMBERS the tab table — EVE draws a window's
@@ -219,27 +204,78 @@
     return strip[pos] ?? tabIndex;
   }
 
-  // Drag-reorder of tabs within the current window (same pattern as the column list).
-  let tabDragFrom = $state<number | null>(null);
-  async function dropTab(to: number) {
-    if (tabDragFrom === null || !currentWindow) { tabDragFrom = null; return; }
-    const order = [...currentWindow.tab_indices];
-    const [moved] = order.splice(tabDragFrom, 1);
-    order.splice(to, 0, moved);
-    const windowIdx = currentWindow.index;
+  // Only the tabs of the window that was renumbered move — `renumber_to_strip_order`
+  // redistributes that window's own index slots and leaves every other window
+  // alone. So a selection outside it needs nothing, and a selection inside it is
+  // re-pointed from the position it will hold once the operation lands.
+  async function reorder(windowIdx: number, order: number[]) {
+    const before = data?.windows.find((w) => w.index === windowIdx)?.tab_indices ?? [];
+    // "Actually changed the order" — a drop in place is not an edit, and must
+    // not dirty the file or fire the width warning.
+    if (order.length === before.length && order.every((v, i) => v === before[i])) return;
     const selectedAt = tabIndex === null ? -1 : order.indexOf(tabIndex);
-    tabDragFrom = null;
-    try {
-      data = await api.tabReorder(windowIdx, order);
-      if (selectedAt >= 0) tabIndex = keepSelection(windowIdx, selectedAt);
-      onUserDirty();
-    }
-    catch (e) { await message(errMessage(e), { title: "Edit failed", kind: "error" }); }
+    if (!(await edit(() => api.tabReorder(windowIdx, order), "strip", "The tabs weren't reordered"))) return;
+    if (selectedAt >= 0) tabIndex = keepSelection(windowIdx, selectedAt);
+    onUserDirty();
+    warnWidthSwap();
   }
 
-  // Pack import/export is account-wide, so it lives in the view header rather
-  // than inside one sub-tab. Import marks the slot dirty; the user still saves.
+  async function moveTab(tabIdx: number, from: number, to: number, pos: number) {
+    const dst = data?.windows.find((w) => w.index === to)?.tab_indices ?? [];
+    const after = [...dst];
+    after.splice(Math.min(pos, after.length), 0, tabIdx);
+    const selectedAt = tabIndex === null ? -1 : after.indexOf(tabIndex);
+    if (!(await edit(() => api.tabMove(tabIdx, from, to, pos), "move", "That tab wasn't moved"))) return;
+    if (selectedAt >= 0) tabIndex = keepSelection(to, selectedAt);
+    onUserDirty();
+    warnWidthSwap();
+  }
+
+  // The shipped ceiling, surfaced at the one moment it is actionable. Per-tab
+  // column widths are keyed (overviewScroll2, tabIndex) in the CHARACTER file,
+  // so renumbering leaves them on the slot rather than on the tab. The remap is
+  // its own branch (docs/small-tasks.md); with no character open there are no
+  // widths on screen to be wrong, so there is nothing to say.
+  function warnWidthSwap() {
+    if (!charOpen) return;
+    toast("Tabs renumbered. Column widths stay with the position — check widths on the tabs you moved.", { variant: "warn" });
+  }
+
+  // A windowless account is normal: EVE's own overview importer deletes the
+  // tab-to-window mapping, so anyone who has imported a pack lands here. Writing
+  // one REPLACES the client's default distribution and pins every tab into a
+  // single window.
+  //
+  // The dialog is gone, not rewritten. Its text was good, and every word of it
+  // is now in the band directly above the button — which was ALREADY on screen
+  // saying most of it, one line from the control. That is a deletion rather than
+  // a redesign: say what an action costs before it is taken, in the control's
+  // own words, and there is nothing left for a dialog after the click to add.
+  async function setUpWindowMapping() {
+    if (!data || data.windows.length > 0) return;
+    const n = data.tabs.length;
+    if (!(await edit(() => api.overviewCreateWindowMapping(), "windows", "The windows weren't set up"))) return;
+    onUserDirty();
+    toast(`All ${n} tab${n === 1 ? "" : "s"} are now in one overview window.`, {
+      action: undoAction(),
+    });
+  }
+
+  // Pack import/export is account-wide, so it lives in the view's ⋯ rather than
+  // inside one sub-tab. Import marks the slot dirty; the user still saves.
   let packBusy = $state(false);
+
+  // The three account-wide, rare commands. Visible — unlike a right-click — and
+  // present-and-disabled rather than absent, so their position never moves.
+  function viewMenu(): MenuItem[] {
+    const mapped = (data?.windows.length ?? 0) > 0;
+    return [
+      { label: "Import overview pack…", run: importPack, disabled: packBusy, hint: packBusy ? "A pack command is in flight" : undefined },
+      { label: "Export overview pack…", run: exportPack, disabled: packBusy, hint: packBusy ? "A pack command is in flight" : undefined },
+      { label: "Assign tabs to windows", run: setUpWindowMapping, disabled: mapped,
+        hint: mapped ? "This account already assigns tabs to windows" : undefined },
+    ];
+  }
 
   // EVE's own export lands in Documents/EVE/Overview, so start the picker there.
   // Best-effort: if the path can't be resolved the dialog just opens wherever it
@@ -266,17 +302,23 @@
         .map(([name, count]) => (count > 0 ? `${name} (${count})` : name))
         .join(", ");
       const ignored = summary.ignored.length
-        ? `\n\nIgnored unknown sections: ${summary.ignored.join(", ")}`
+        ? `\nIgnored, not understood: ${summary.ignored.join(", ")}.`
         : "";
       // Per-tab column overrides are only ever stripped inside apply_tabs,
       // which only runs when the pack defines a non-empty tabSetup section —
       // a preset-only pack never touches them, so don't claim it does.
       const dropsColumns = summary.sections.some(([name, count]) => name === "tabSetup" && count > 0);
-      const columnsNote = dropsColumns ? " Per-tab column overrides are discarded." : "";
-      const ok = await confirm(
-        `This pack contains: ${what}.\n\nEach of those replaces your account's current overview settings.${columnsNote}${ignored}`,
-        { title: "Import overview pack", kind: "warning" },
-      );
+      const columnsNote = dropsColumns ? "\nPer-tab column widths are discarded." : "";
+      // The seventh modal surface, and the only one that is NOT a confirmation:
+      // it is a PREVIEW of a file the user has not seen the contents of
+      // anywhere else, so it cannot become a toast after the fact. It appears
+      // only once a pack has been picked.
+      const ok = await confirmDialog({
+        title: `Import ${picked.split(/[\\/]/).pop()}?`,
+        body: `It replaces: ${what}.${columnsNote}${ignored}`,
+        detail: picked,
+        confirm: "Import pack",
+      });
       if (!ok) return;
       const result = await api.packImport(picked);
       data = result.columns;
@@ -286,10 +328,16 @@
       // rule deleteTab already follows.
       if (!data.tabs.some((t) => t.index === tabIndex)) tabIndex = data.tabs[0]?.index ?? null;
       onUserDirty();
-      const warnings = result.report.warnings.length ? `\n\n${result.report.warnings.join("\n")}` : "";
-      await message(`Pack imported. Save to write it to the account file.${warnings}`, { title: "Import overview pack" });
+      const w = result.report.warnings;
+      // Warnings ride the same toast rather than stacking a second modal on the
+      // first. Past three they stop being readable in a toast at all, so it says
+      // how many and the detail stays on hover.
+      const warnings = w.length === 0 ? "" : w.length > 3 ? `\n${w.length} warnings.` : `\n${w.join("\n")}`;
+      toast(`Pack imported. Save to write it to the account file.${warnings}`, {
+        variant: w.length ? "warn" : "success",
+      });
     } catch (e) {
-      await message(errMessage(e), { title: "Import failed", kind: "error" });
+      editError = { where: "pack", text: `The pack wasn't imported — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       packBusy = false;
     }
@@ -304,273 +352,134 @@
     packBusy = true;
     try {
       const report = await api.packExport(picked);
-      const warnings = report.warnings.length ? `\n\n${report.warnings.join("\n")}` : "";
-      await message(`Exported ${report.applied.length} section(s).${warnings}`, { title: "Export overview pack" });
+      const n = report.applied.length;
+      toast(`Exported ${n} section${n === 1 ? "" : "s"} to ${picked.split(/[\\/]/).pop()}.`, {
+        variant: "success",
+      });
     } catch (e) {
-      await message(errMessage(e), { title: "Export failed", kind: "error" });
+      editError = { where: "pack", text: `The pack wasn't exported — ${errText(e)}`, detail: errMessage(e) };
     } finally {
       packBusy = false;
     }
   }
 </script>
 
-<!-- Dismiss the palette on a click anywhere outside it. Tested by containment
-     rather than by stopPropagation inside the popover, which would need a
-     handler on a non-interactive element. -->
-<svelte:window onpointerdown={(e) => {
-  if (swatchOpen && swatchEl && !swatchEl.contains(e.target as Node)) swatchOpen = false;
-}} />
-
-{#if !userOpen && charId !== null}
-  <div class="hint pair">
-    <p>Link this character to an account to edit shared settings — overview columns live in the account file.</p>
-    <button onclick={onShowAccounts}>Pair…</button>
-  </div>
-{:else if !userOpen}
-  <p class="hint">Open a character or account file to edit overview columns.</p>
-{:else if error}
-  <p class="error">{error}</p>
-{:else if data}
-  {#if sharedLabel}<p class="shared-banner">{sharedLabel}</p>{/if}
-  {#if data.tabs.length === 0}
-    <p class="hint">This account file has no overview tabs.</p>
-  {:else}
-    <div class="ov-controls">
-      <label>Tab
-        <select bind:value={tabIndex}>
-          {#if data.windows.length > 0}
-            {@const grouped = new Set(data.windows.flatMap((w) => w.tab_indices))}
-            {@const orphans = data.tabs.filter((t) => !grouped.has(t.index))}
-            {#each data.windows as w (w.index)}
-              <optgroup label="Overview {w.index + 1}">
-                {#each w.tab_indices as idx (idx)}
-                  {@const t = data.tabs.find((x) => x.index === idx)}
-                  <!-- plain text: an <option> can't carry the colour, and raw
-                       `<color=0x…>` in the dropdown is worse than neither. -->
-                  <option value={idx}>{t ? plainTabName(t.name) : `Tab ${idx}`}</option>
-                {/each}
-              </optgroup>
-            {/each}
-            {#if orphans.length > 0}
-              <optgroup label="Other">
-                {#each orphans as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
-              </optgroup>
-            {/if}
-          {:else}
-            {#each data.tabs as t (t.index)}<option value={t.index}>{plainTabName(t.name)}</option>{/each}
-          {/if}
-        </select>
-      </label>
-      <div class="tab-actions">
-        <button onclick={startCreateTab} disabled={!data || data.tabs.length === 0} title="New tab">+ New</button>
-        <button onclick={startRenameTab} disabled={!tab} title="Rename selected tab">Rename</button>
-        <button class="danger" onclick={deleteTab} disabled={!tab} title="Delete selected tab">Delete</button>
-        <div class="swatch-wrap" bind:this={swatchEl}>
-          <button class="swatch" disabled={!tab} title="Tab name colour"
-                  style={nameParts?.color ? `background:${cssColor(nameParts.color)}` : ""}
-                  onclick={() => (swatchOpen = !swatchOpen)}
-                  aria-label="Tab name colour">{nameParts?.color ? "" : "—"}</button>
-          {#if swatchOpen}
-            <div class="palette">
-              <div class="palette-grid">
-                {#each EVE_PALETTE as c (c)}
-                  <button style="background:#{c}" title="#{c}" aria-label="#{c}"
-                          onclick={() => { setNameFormat({ color: `FF${c.toUpperCase()}` }); swatchOpen = false; }}></button>
-                {/each}
-              </div>
-              <button class="palette-none"
-                      onclick={() => { setNameFormat({ color: null }); swatchOpen = false; }}>No colour</button>
+<!-- ONE child, spanning the work column and the column an inspector would sit
+     in. `display: contents` on the root is what lets it reach across: the root
+     stops participating in layout and `.work` becomes the grid item.
+     A tab's properties are docked under the list that selects it (§13), so
+     there is no third column to leave for the shell to fill. -->
+<div class="overview-view">
+  <div class="work wide">
+    <ScopeBanner label={scopeLabel} compact />
+    {#if !userOpen && charId !== null}
+      <div class="scroll">
+        <EmptyState
+          title="No account paired"
+          description="Overview columns live in the account file.">
+          {#snippet action()}<Button onclick={onShowAccounts}>Pair this character…</Button>{/snippet}
+        </EmptyState>
+      </div>
+    {:else if !userOpen}
+      <div class="scroll">
+        <EmptyState
+          title="No file open"
+          description="Open a character or an account file to edit its overview." />
+      </div>
+    {:else if error}
+      <div class="scroll"><InlineMessage variant="error">{error}</InlineMessage></div>
+    {:else if data}
+      <div class="sub-row">
+        {#if data.tabs.length > 0}
+          <Tabs
+            variant="underline"
+            class="subtabs"
+            ariaLabel="Overview section"
+            tabs={[
+              { id: "Columns", label: "Columns" },
+              { id: "Filters", label: "Filters" },
+              { id: "Appearance", label: "Appearance" },
+            ]}
+            bind:value={sub} />
+        {/if}
+        <!-- A real button, beside the tabs rather than pinned to the far edge
+             of the work column: as a small ghost at the right margin of a wide
+             window it was several hundred pixels from anything and read as
+             decoration. It is the only home for three account-wide commands. -->
+        <MenuButton items={viewMenu} title="Overview actions" variant="default" size="md" />
+      </div>
+      <!-- Pack import and export both live in that menu, so their failures land
+           beside the control that opens it. -->
+      {#if at("pack") || at("name")}
+        <InlineMessage variant="error" detail={editError!.detail}>{editError!.text}</InlineMessage>
+      {/if}
+      <div class="panes">
+        <!-- Just the list. Everything a tab has — its text, its colour, its
+             weight, which window it is in, and deleting it — is on the row
+             itself, so the properties pane §5 specced has nothing left to hold.
+             See §13: the two fields that outlived the move both turned out to
+             be duplicates of controls elsewhere. -->
+        <div class="side">
+          <OverviewTabList
+            {data}
+            {tabIndex}
+            onSelect={(i) => (tabIndex = i)}
+            onCreateTab={createTab}
+            onAddWindow={addWindow}
+            onRemoveWindow={removeWindow}
+            onDeleteTab={deleteTab}
+            onRenameTab={renameTabName}
+            onReorder={reorder}
+            onMove={moveTab}
+            onSetUpWindowMapping={setUpWindowMapping}
+            {editError} />
+        </div>
+        <div class="scroll">
+          {#if data.tabs.length > 0}
+            <div hidden={sub !== "Columns"}>
+              <OverviewColumnsTab {data} {tabIndex} {charOpen} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
+            </div>
+            <div hidden={sub !== "Filters"}>
+              <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty}
+                bind:focusSearch={focusFilters} />
+            </div>
+            <div hidden={sub !== "Appearance"}>
+              <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
             </div>
           {/if}
         </div>
-        <button class="bold-toggle" class:on={nameParts?.bold} disabled={!tab} title="Bold tab name"
-                aria-pressed={!!nameParts?.bold}
-                onclick={() => setNameFormat({ bold: !nameParts?.bold })}>B</button>
-        {#if currentWindow && data.windows.length > 1}
-          {@const cw = currentWindow}
-          <select aria-label="Move to window" value=""
-                  onchange={(e) => {
-                    const el = e.currentTarget as HTMLSelectElement;
-                    const v = el.value;
-                    el.value = "";
-                    if (v) moveTab(Number(v));
-                  }}>
-            <option value="" disabled>Move to window…</option>
-            {#each data.windows as w (w.index)}
-              {#if w.index !== cw.index}
-                <option value={w.index}>Overview {w.index + 1}</option>
-              {/if}
-            {/each}
-          </select>
-        {/if}
-        {#if data.windows.length >= 1}
-          <button onclick={startAddWindow} title="Add a new overview window">+ Window</button>
-        {/if}
-        {#if currentWindow && data.windows.length > 1 && currentWindow.index === data.windows.length - 1}
-          <button class="danger" onclick={removeWindow} title="Remove this (last) overview window">Remove Window</button>
-        {/if}
       </div>
-      {#if data.windows.length === 0}
-        <div class="no-windows">
-          <span>
-            Tabs aren't assigned to specific overview windows on this account — EVE spreads them
-            across your windows itself. That's normal: importing an overview pack through the
-            client removes the assignment.
-          </span>
-          <button onclick={setUpWindowMapping}>Set up per-window tabs</button>
-        </div>
-      {/if}
-      {#if pending}
-        <div class="name-entry">
-          <input type="text" bind:value={pending.value} use:focusInput
-                 placeholder={pending.kind === "addWindow" ? "First tab name" : "Tab name"}
-                 onkeydown={(e) => {
-                   if (e.key === "Enter") { e.preventDefault(); submitPending(); }
-                   else if (e.key === "Escape") pending = null;
-                 }} />
-          <button onclick={submitPending}>
-            {pending.kind === "addWindow" ? "Add window" : pending.kind === "renameTab" ? "Rename" : "Add tab"}
-          </button>
-          <button onclick={() => (pending = null)}>Cancel</button>
-        </div>
-      {/if}
-      <label>Character (for widths)
-        <select value={charId ?? ""} onchange={(e) => onLoadCharacter(Number((e.target as HTMLSelectElement).value))}>
-          <option value="" disabled>Select…</option>
-          {#each characters as c (c)}<option value={c}>{names[c]?.name ?? c}</option>{/each}
-        </select>
-      </label>
-    </div>
-    {#if currentWindow && currentWindow.tab_indices.length > 1}
-      {@const cw = currentWindow}
-      <ul class="ov-tabs">
-        {#each cw.tab_indices as idx, i (idx)}
-          {@const t = data.tabs.find((x) => x.index === idx)}
-          <li draggable="true" class:selected={idx === tabIndex}
-              ondragstart={(e) => { tabDragFrom = i;
-                // WebView2/Chromium won't fire `drop` unless dragstart sets data.
-                e.dataTransfer?.setData("text/plain", String(i));
-                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
-              ondragover={(e) => { e.preventDefault();
-                if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
-              ondrop={(e) => { e.preventDefault(); dropTab(i); }}
-              ondragend={() => (tabDragFrom = null)}>
-            <span class="grip" title="Drag to reorder">⠿</span>
-            <!-- The chips are the one place a tab's real colour and weight can
-                 be shown, so they render it. -->
-            <button type="button" class="tab-chip" style={t ? chipStyle(t.name) : ""}
-                    onclick={() => (tabIndex = idx)}>{t ? plainTabName(t.name) : `Tab ${idx}`}</button>
-          </li>
-        {/each}
-      </ul>
     {/if}
-    {#if characters.length === 0}
-      <p class="hint">No characters associated with this account yet — pair one in Accounts to edit widths.</p>
-    {/if}
-  {/if}
-
-  <div class="subtabs" role="tablist">
-    {#if data.tabs.length > 0}
-      {#each ["Columns", "Filters", "Appearance"] as name}
-        <button role="tab" aria-selected={sub === name} class:active={sub === name}
-                onclick={() => (sub = name)}>{name}</button>
-      {/each}
-    {/if}
-    <span class="pack-actions">
-      <button onclick={importPack} disabled={packBusy} title="Replace this account's overview from an EVE overview pack">Import pack…</button>
-      <button onclick={exportPack} disabled={packBusy} title="Write this account's overview out as an EVE overview pack">Export pack…</button>
-    </span>
   </div>
-  {#if data.tabs.length > 0}
-    <div hidden={sub !== "Columns"}>
-      <OverviewColumnsTab {data} {tabIndex} {charOpen} onChanged={(next) => (data = next)} {onUserDirty} {onCharDirty} />
-    </div>
-    <div hidden={sub !== "Filters"}>
-      <OverviewFiltersTab {data} {tabIndex} onChanged={(next) => (data = next)} {onUserDirty} />
-    </div>
-    <div hidden={sub !== "Appearance"}>
-      <OverviewAppearanceTab {data} onChanged={(next) => (data = next)} {onUserDirty} />
-    </div>
-  {/if}
-{/if}
+</div>
 
 <style>
-  .shared-banner {
-    margin: 0 0 0.6rem; padding: 0.3rem 0.5rem; font-size: 0.85em;
-    color: var(--fg-dim); border-left: 2px solid var(--accent); background: var(--bg-panel);
+  .overview-view { display: contents; }
+  /* `.work.wide` — spanning the column an inspector would occupy — is a shell
+     rule in app.css, because this view and the shell's own wrappers both set
+     it. Nothing about it is local to Overview. */
+  .sub-row { display: flex; align-items: flex-end; gap: var(--s3); margin: var(--s2) var(--s3); }
+  /* `:global` because the class rides into <Tabs>. This rule used to live in
+     OverviewAppearanceTab, which styles a DIFFERENT strip under the same name —
+     so this strip's margin came from a child component, and only worked because
+     the sub-tabs are hidden rather than unmounted. Declared here now, where the
+     strip actually is; same value, no visual change. */
+  :global(.subtabs) { margin: var(--s1) 0 var(--s2); }
+  /* Bounded side column, unbounded centre — the same reasoning LayoutView's
+     grid uses, and the reason the tab list cannot eat the content. Wider than
+     a bare list needs, because the side now carries the selected tab's fields
+     as well. */
+  .panes {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
   }
-  .pair { display: flex; align-items: center; gap: 0.6rem; }
-  .pair button {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px; font: inherit; cursor: pointer;
-  }
-  .ov-controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
-  .ov-controls label { display: flex; gap: 0.4rem; align-items: center; }
-  .tab-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-  .name-entry { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
-  .name-entry input { flex: 1; max-width: 16rem; }
-  .no-windows {
-    flex-basis: 100%;
+  .side {
     display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-    padding: 0.35rem 0.4rem;
-    font-size: 0.85em;
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
   }
-  .no-windows button { flex: none; }
-  button.danger { border-color: #a33; }
-  /* Dark native controls: the app runs in a dark WebView2; give selects, their
-     options, and inputs explicit dark colors (see the dark-native-controls memo). */
-  select, option, optgroup, .name-entry input {
-    background: var(--bg-panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; font: inherit;
-  }
-  .ov-tabs { list-style: none; padding: 0; margin: 0 0 0.6rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
-  .ov-tabs li {
-    display: flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.5rem;
-    border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
-  }
-  .ov-tabs li.selected { border-color: var(--accent); }
-  .ov-tabs button.tab-chip { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
-  /* Tab-name markup controls (see tabName.ts). */
-  .swatch-wrap { position: relative; display: inline-flex; }
-  .swatch {
-    width: 1.9rem; height: 1.6rem; padding: 0; cursor: pointer;
-    background: var(--bg-panel); color: var(--fg-dim);
-    border: 1px solid var(--border); border-radius: 3px; font: inherit;
-  }
-  .bold-toggle {
-    background: var(--bg-panel); color: var(--fg-dim); font-weight: 700;
-    border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; cursor: pointer;
-  }
-  .bold-toggle.on { color: var(--fg); border-color: var(--accent); }
-  .palette {
-    position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
-    padding: 0.35rem; background: var(--bg-panel);
-    border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  }
-  .palette-grid { display: grid; grid-template-columns: repeat(8, 1.1rem); gap: 3px; }
-  .palette-grid button { width: 1.1rem; height: 1.1rem; border: 1px solid #0006; border-radius: 2px; padding: 0; cursor: pointer; }
-  .palette-grid button:hover { outline: 1px solid var(--fg); }
-  .palette-none {
-    display: block; width: 100%; margin-top: 0.35rem; cursor: pointer;
-    background: none; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px;
-    padding: 1px 4px; font: inherit; font-size: 0.85em;
-  }
-  .grip { cursor: grab; opacity: 0.6; }
-  /* New in the sub-tab split (Task 8) — Columns/Filters/Appearance selector. */
-  .subtabs { display: flex; gap: 0.3rem; margin: 0.6rem 0 0.5rem; border-bottom: 1px solid var(--border); }
-  .subtabs button {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    color: var(--fg-dim); padding: 0.3rem 0.7rem; font: inherit; cursor: pointer;
-  }
-  .subtabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
-  /* The pack Import/Export buttons live inside .subtabs for layout only — they
-     aren't tab selectors, so undo the flat tab styling above and look like the
-     normal action buttons (.tab-actions) instead. */
-  .pack-actions button { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; color: var(--fg); }
-  .pack-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+  .side :global(.tablist) { flex: 1 1 auto; min-height: 4rem; }
 </style>
