@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The editor tells you when a newer version is out.** A message at launch names the new version, with a Download button that opens the right file for your system.
+
 ### Fixed
 - **Character files that hold a `uuid.UUID` open again** instead of failing with "Unsupported(NEWOBJ)" — the client started writing one under `trackedSkillPlanID`.
 - **The Layout tab loads for characters with both the old and the new Agency window** — two windows sharing a display name used to crash the window list before it drew anything.

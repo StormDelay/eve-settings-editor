@@ -8,6 +8,7 @@ mod presets;
 mod scenes;
 mod setup;
 mod undo;
+mod update;
 
 #[cfg(test)]
 mod testkit;
@@ -149,6 +150,13 @@ async fn refresh_character_names(
     tauri::async_runtime::spawn_blocking(move || names::resolve_blocking(&dir, &ids, true))
         .await
         .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn check_for_update() -> Result<Option<update::Update>, String> {
+    tauri::async_runtime::spawn_blocking(update::check_blocking)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -682,7 +690,8 @@ pub fn run() {
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
             scene_list,
             hud_layout, set_hud_value,
-            preferences, set_preferences
+            preferences, set_preferences,
+            check_for_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
