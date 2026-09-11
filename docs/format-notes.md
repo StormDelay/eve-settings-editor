@@ -513,10 +513,12 @@ snapshot — both reconstructing a Python `set` via `__builtin__.set`):
   second MARK. A non-empty tail is exercised only by a synthetic unit test
   (`decodes_reduce_with_nonempty_iterator_tail`), never by the corpus.
 - `NEWOBJ` (0x23) shares this exact framing (`(args_tuple[, state])` instead
-  of `(callable, args_tuple[, state])`, per marshal.c:947-982) but is never
-  observed in the corpus, so it is left `Unsupported` — implementing it
-  would be speculative (YAGNI). Likewise `DBROW` (0x2A) is left
-  `Unsupported`; it never appears either.
+  of `(callable, args_tuple[, state])`, per marshal.c:947-982). Never in the
+  corpus, but a 2026-09 character file carried one — a `uuid.UUID` under
+  `trackedSkillPlanID`, `NEWOBJ TUPLE2(TUPLE1(GLOBAL "uuid.UUID"),
+  DICT{"int": LONG<16 bytes>}) MARK MARK` — so it now decodes through the
+  same loop into `Value::Reduce { newobj: true, .. }` and re-encodes as 0x23.
+  `DBROW` (0x2A) is still left `Unsupported`; it has never appeared.
 
 ## Decoder coverage log
 
