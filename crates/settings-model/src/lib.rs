@@ -36,7 +36,7 @@ mod probe_pack;
 mod testkit;
 
 pub use backups::{list_backups, restore, BackupInfo};
-pub use discover::{default_roots, discover, file_kind, FileKind, Profile, SettingsFile};
+pub use discover::{default_roots, discover, file_kind, wine_user_dirs, FileKind, Profile, SettingsFile};
 pub use document::{Document, Fidelity, LoadError};
 pub use mutate::{apply, Mutation, MutateError, NewValue};
 pub use path::{resolve, resolve_mut, NodePath, Step};

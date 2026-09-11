@@ -1670,7 +1670,12 @@ appear in *every* account file in the folder — chat channel labels and contact
 lists, not membership.
 
 **The launcher does state it**, in
-`%APPDATA%\EVE Online\logs\eve-online-launcher-*.log`:
+`%APPDATA%\EVE Online\logs\eve-online-launcher-*.log`. On Linux the launcher runs
+under Proton, so that same path sits inside the prefix:
+`<steam library>/steamapps/compatdata/8500/pfx/drive_c/users/steamuser/AppData/Roaming/EVE Online/logs`
+(2026-09-11, one report with the library at `~/.local/share/Steam`). The
+`Documents/EVE/logs` folder next to it is the game client's — Chatlogs, Gamelogs,
+Marketlogs — and never holds launcher logs, on Windows or in a prefix.
 
 ```
 [esi] Fetching character details for <char_id>, <char_id>, <char_id>
