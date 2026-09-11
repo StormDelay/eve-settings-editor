@@ -84,7 +84,7 @@ fn build(
             children.push(child(class, Some("class".into()), Step::InstanceClass, false));
             children.push(child(state, Some("state".into()), Step::InstanceState, false));
         }
-        Value::Reduce { ctor, items, pairs } => {
+        Value::Reduce { ctor, items, pairs, .. } => {
             children.push(child(ctor, Some("ctor".into()), Step::ReduceCtor, false));
             for (i, item) in items.iter().enumerate() {
                 children.push(child(item, Some(format!("item[{i}]")), Step::ReduceItem(i), false));
