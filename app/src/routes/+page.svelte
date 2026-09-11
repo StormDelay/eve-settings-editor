@@ -28,6 +28,8 @@
   import { api, errMessage, errText, type OpenOutcome, type Slot } from "$lib/api";
   import type { Mutation, NodePath, TreeNodeData, PresetInfo } from "$lib/api";
   import { searchTree } from "$lib/search";
+  import { toast } from "$lib/ui/toasts.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { resolveNames } from "$lib/names.svelte";
   import { accountsStore } from "$lib/accounts.svelte";
   import { loadPrefs } from "$lib/prefs.svelte";
@@ -146,6 +148,18 @@
 
   void rescanProfiles();
   void loadPrefs();
+  // Sticky: a version number is something you read, not glance at. A failed
+  // check is silent — offline must never nag.
+  api
+    .checkForUpdate()
+    .then((u) => {
+      if (u)
+        toast(`Version ${u.version} is available`, {
+          duration: 0,
+          action: { label: "Download", run: () => void openUrl(u.url).catch(() => {}) },
+        });
+    })
+    .catch(() => {});
 
   // Measured so a sheet can inset past the two content-sized rows above the work
    // area. jsdom reports 0 for both, which just makes the sheet full-window there.
