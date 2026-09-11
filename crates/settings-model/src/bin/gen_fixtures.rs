@@ -196,6 +196,7 @@ fn codec_objects() -> Value {
                 ])),
                 items: vec![],
                 pairs: vec![],
+                newobj: false,
             },
         ),
         // The general MARK-delimited form the decoder implements but no real
@@ -209,6 +210,7 @@ fn codec_objects() -> Value {
                 ])),
                 items: vec![i(1), b("item")],
                 pairs: vec![(b("k1"), i(1)), (b("k2"), b("v2"))],
+                newobj: false,
             },
         ),
         // STREAM: an embedded marshal blob with its own slot scope.

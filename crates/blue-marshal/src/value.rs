@@ -45,8 +45,10 @@ pub enum Value {
     /// REDUCE (0x22): ctor tuple `(callable, args[, state])`, then the
     /// MARK-terminated list items, then the MARK-terminated (key, value)
     /// pairs — the wire framing kept verbatim (both empty in every corpus
-    /// occurrence).
-    Reduce { ctor: Box<Value>, items: Vec<Value>, pairs: Vec<(Value, Value)> },
+    /// occurrence). NEWOBJ (0x23) is byte-for-byte the same framing with a
+    /// `(args[, state])` ctor tuple (marshal.c:947-1010), so it shares the
+    /// variant and `newobj` records which opcode to re-emit.
+    Reduce { ctor: Box<Value>, items: Vec<Value>, pairs: Vec<(Value, Value)>, newobj: bool },
     /// A SHARED_FLAG-ed store: wraps exactly the node whose opcode carried
     /// the flag; `slot` is the 1-based tail-map slot it was stored into.
     /// Slots are explicit because corpus tail maps are heavily non-identity
@@ -91,10 +93,11 @@ impl Value {
                 Value::Instance { class: bc, state: bs },
             ) => ac.bits_eq(bc) && as_.bits_eq(bs),
             (
-                Value::Reduce { ctor: ac, items: ai, pairs: ap },
-                Value::Reduce { ctor: bc, items: bi, pairs: bp },
+                Value::Reduce { ctor: ac, items: ai, pairs: ap, newobj: an },
+                Value::Reduce { ctor: bc, items: bi, pairs: bp, newobj: bn },
             ) => {
-                ac.bits_eq(bc)
+                an == bn
+                    && ac.bits_eq(bc)
                     && ai.len() == bi.len()
                     && ai.iter().zip(bi).all(|(x, y)| x.bits_eq(y))
                     && ap.len() == bp.len()
@@ -240,8 +243,8 @@ fn write_value(out: &mut String, v: &Value, indent: usize, stream_depth: usize) 
             out.push('\n');
             let _ = write!(out, "{pad}}}");
         }
-        Value::Reduce { ctor, items, pairs } => {
-            out.push_str("reduce{\n");
+        Value::Reduce { ctor, items, pairs, newobj } => {
+            out.push_str(if *newobj { "newobj{\n" } else { "reduce{\n" });
             let _ = write!(out, "{pad}  ctor: ");
             write_value(out, ctor, indent + 1, stream_depth);
             out.push('\n');
@@ -535,6 +538,7 @@ mod tests {
             ctor: Box::new(Value::Global(b"M.f".to_vec())),
             items: vec![Value::Int(1)],
             pairs: vec![(Value::Int(0), Value::Int(1))],
+            newobj: false,
         };
         assert_eq!(
             dump_text(&r),
