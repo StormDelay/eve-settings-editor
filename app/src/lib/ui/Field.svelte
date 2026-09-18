@@ -34,6 +34,7 @@
     element = $bindable(),
     class: klass = "",
     controlClass = "",
+    title,
     onchange,
     oninput,
     ...rest
@@ -74,6 +75,10 @@
         identify a select or input by a class and then read a property only that
         element has, so the hook has to land on the element. */
     controlClass?: string;
+    /** A static tooltip for the control. Disabled + `disabledReason` wins over
+        this while disabled, the same precedence Button already uses — see
+        `tip` below. */
+    title?: string;
     onchange?: (e: Event) => void;
     oninput?: (e: Event) => void;
     [key: string]: unknown;
@@ -84,7 +89,12 @@
   const generated = `field-${++uid}`;
   const fid = $derived(id ?? generated);
   const eid = $derived(`${fid}-error`);
-  const tip = $derived(disabled && disabledReason ? disabledReason : undefined);
+  // Disabled + a reason wins over the caller's own `title`, the same
+  // precedence Button uses (`ui/Button.svelte`). `title` has to be destructured
+  // above rather than left in `...rest` for this to hold: a caller's `title`
+  // spread after `shared` would otherwise clobber this on every control below,
+  // reason included.
+  const tip = $derived(disabled && disabledReason ? disabledReason : title);
   const box = $derived(kind === "checkbox" || kind === "radio");
   const grouped = $derived(kind === "radio" && radioValue !== undefined);
   const ticked = $derived(grouped ? value === radioValue : !!value);
