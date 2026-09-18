@@ -112,7 +112,7 @@
   );
 
   // Aspects. "Everything" is exclusive. Labels are shared with PresetGroup —
-  // one six-item concept had two label sets in two files a user moves between
+  // one seven-item concept had two label sets in two files a user moves between
   // while doing the same job.
   const ASPECTS: { key: Aspect; label: string; account: boolean }[] = ASPECT_LABELS.map((a) => ({
     ...a,
