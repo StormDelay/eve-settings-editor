@@ -115,7 +115,7 @@
         : null,
   );
 
-  // The four views that edit account-scoped data — the same set the four
+  // The views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
   const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes", "fleet"];
   // The views that have something to inspect, and the whole of the rule.
