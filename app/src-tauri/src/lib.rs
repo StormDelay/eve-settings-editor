@@ -505,6 +505,35 @@ fn set_hud_value(
 }
 
 #[tauri::command]
+fn fleet_settings(state: tauri::State<'_, AppState>) -> Result<settings_model::Fleet, ErrDto> {
+    ops::fleet_settings(&state)
+}
+#[tauri::command]
+fn set_fleet_field(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    text: String,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_fleet_field(&state, &name, &text)
+}
+#[tauri::command]
+fn set_fleet_colour(
+    state: tauri::State<'_, AppState>,
+    broadcast: String,
+    rgb: Option<[f64; 3]>,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_fleet_colour(&state, &broadcast, rgb)
+}
+#[tauri::command]
+fn set_watchlist_colour(
+    state: tauri::State<'_, AppState>,
+    char_id: u64,
+    rgb: Option<[f64; 3]>,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_watchlist_colour(&state, char_id, rgb)
+}
+
+#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source: setup::BatchSource,
@@ -690,6 +719,7 @@ pub fn run() {
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
             scene_list,
             hud_layout, set_hud_value,
+            fleet_settings, set_fleet_field, set_fleet_colour, set_watchlist_colour,
             preferences, set_preferences,
             check_for_update
         ])
