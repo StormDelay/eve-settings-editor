@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { api, errMessage, errText, type Fleet, type HudEntry, type Rgb } from "./api";
+  import { api, errMessage, errText, type Fleet, type FoundCharacter, type HudEntry, type Rgb } from "./api";
   import { BROADCASTS, SHOW_OWN, listenField } from "./fleet";
   import { hexToRgb, rgbToHex, snapToPalette, UNSET_HEX } from "./colour";
-  import { resolveNames } from "./names.svelte";
+  import { names, resolveNames } from "./names.svelte";
+  import { toast } from "./ui/toasts.svelte";
+  import { undoAction } from "./undo.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
+  import ListRow from "./ui/ListRow.svelte";
   import Panel from "./ui/Panel.svelte";
   import PanelHeader from "./ui/PanelHeader.svelte";
 
@@ -97,6 +100,43 @@
 
   const checked = (e: Event) => (e.currentTarget as HTMLInputElement).checked;
   const picked = (e: Event) => (e.currentTarget as HTMLInputElement).value;
+
+  // --- watch list ---------------------------------------------------------
+  const nameOf = (id: number): string => names[id]?.name ?? String(id);
+  let addQuery = $state("");
+  // Blue is what 863 of the corpus's 1,382 entries chose; the other 519 are all
+  // one other colour, so it is the right starting swatch.
+  let addHex = $state(rgbToHex([0.2, 0.5, 1.0]));
+  let adding = $state(false);
+
+  const recolour = (id: number, hex: string) =>
+    write("watch", `${nameOf(id)}'s colour wasn't changed`, () => api.setWatchlistColour(id, snapToPalette(hex, palette) ?? hexToRgb(hex)), onCharDirty);
+  const remove = (id: number) =>
+    write("watch", `${nameOf(id)} wasn't removed`, () => api.setWatchlistColour(id, null), onCharDirty);
+
+  async function add(ev: SubmitEvent) {
+    ev.preventDefault();
+    const q = addQuery.trim();
+    if (!q || adding) return;
+    watchError = null;
+    adding = true;
+    try {
+      let found: FoundCharacter | null;
+      try { found = await api.lookupCharacter(q); }
+      catch (e) { watchError = { text: `${q} wasn't looked up — couldn't reach ESI`, detail: errMessage(e) }; return; }
+      if (!found) { watchError = { text: `No character called ${q}`, detail: "" }; return; }
+      const id = found.id;
+      if (fleet?.watchlist.some((w) => w.char_id === id)) { watchError = { text: `${found.name} is already in the list`, detail: "" }; return; }
+      const rgb = snapToPalette(addHex, palette) ?? hexToRgb(addHex);
+      const ok = await write("watch", `${found.name} wasn't added`, () => api.setWatchlistColour(id, rgb), onCharDirty);
+      if (ok) {
+        void resolveNames([id]);
+        addQuery = "";
+        // The new row can land below the fold, so the success is said out loud.
+        toast(`Added ${found.name}`, { action: undoAction() });
+      }
+    } finally { adding = false; }
+  }
 </script>
 
 <div class="fleet">
@@ -155,6 +195,52 @@
       </div>
     {/if}
   </Panel>
+
+  <Panel class="watchlist">
+    <PanelHeader title="Watch list colours" subtitle="The colour a fleet-mate shows in your watch list">
+      {#snippet actions()}<Chip size="sm">character file</Chip>{/snippet}
+    </PanelHeader>
+    {#if !charOpen}
+      <EmptyState title="No character open" description="Watch-list colours live in the character file." />
+    {:else if fleet}
+      {#if watchError}
+        <InlineMessage variant="error" detail={watchError.detail || undefined}>{watchError.text}</InlineMessage>
+      {/if}
+      {#if fleet.watchlist.length === 0}
+        <EmptyState title="No watch-list colours"
+          description="Colours you set on watch-list members in-game appear here. Add one below to colour a character before you next fleet with them." />
+      {:else}
+        <ul class="watch-list">
+          {#each fleet.watchlist as w (w.char_id)}
+            {@const label = nameOf(w.char_id)}
+            <li>
+              <ListRow title={String(w.char_id)}>
+                {#snippet leading()}
+                  <Field kind="color" list="fleet-palette" controlClass={w.rgb ? "" : "unset"}
+                    value={w.rgb ? rgbToHex(w.rgb) : UNSET_HEX} ariaLabel="Colour for {label}"
+                    disabled={w.rgb === null} disabledReason={NOT_EDITABLE}
+                    onchange={(e) => recolour(w.char_id, picked(e))} />
+                {/snippet}
+                <span class="label">{label}</span>
+                {#snippet trailing()}
+                  {#if w.rgb === null}<Chip tone="warn" size="sm">unreadable</Chip>{/if}
+                  {#if label !== String(w.char_id)}<span class="meta">{w.char_id}</span>{/if}
+                  <Button variant="ghost" size="sm" iconOnly title="Remove from the list"
+                    onclick={() => remove(w.char_id)}>✕</Button>
+                {/snippet}
+              </ListRow>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="add" onsubmit={add}>
+        <Field kind="text" label="Add a character" placeholder="Name or ID" width="18rem" bind:value={addQuery} />
+        <Field kind="color" list="fleet-palette" ariaLabel="Colour for the new entry" bind:value={addHex} />
+        <Button variant="primary" type="submit" disabled={addQuery.trim() === "" || adding}
+          disabledReason={adding ? "Looking the character up…" : "Type a character name or ID"}>Add</Button>
+      </form>
+    {/if}
+  </Panel>
 </div>
 
 <style>
@@ -165,4 +251,9 @@
   .colour { display: flex; align-items: center; gap: var(--s1); }
   /* The one sanctioned opacity: a placeholder swatch is not content. */
   .colour :global(.unset) { opacity: var(--o-disabled); }
+
+  .watch-list { list-style: none; margin: 0; padding: 0; max-width: 32rem; }
+  .watch-list .label { flex: 1; }
+  .meta { color: var(--text-muted); font-size: var(--t-caption); }
+  .add { display: flex; align-items: flex-end; gap: var(--s2); margin-top: var(--s3); }
 </style>
