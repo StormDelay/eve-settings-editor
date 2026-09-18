@@ -13,7 +13,10 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::hud::{project_fields, section_dict_mut, set_field, Field, HudEntry, HudError, HudKind, HudScope};
-use crate::treewalk::{collect_shared, effective, find_child, inline_all, is_bytes, section, Entries, SharedTable};
+use crate::treewalk::{
+    as_dict, collect_shared, dict_inner_mut, effective, find_child, inline_all, is_bytes, section, Entries,
+    SharedTable,
+};
 
 /// The sixteen broadcast types, in the row order of EVE's Broadcast Settings
 /// dialog, each with the checkbox's value when no key has been written (spec
@@ -225,6 +228,115 @@ pub fn set_broadcast_colour(
     Ok(())
 }
 
+const WATCHLIST_KEY: &[u8] = b"fleet_watchlistcolors";
+
+/// A character id however the client stored it: `Int` today, `Long` once ids
+/// pass 2³¹ (spec §2.6). Negative or oversized values are not ids.
+fn id_of(v: &Value) -> Option<u64> {
+    match v {
+        Value::Int(i) => u64::try_from(*i).ok(),
+        Value::Long(bytes) if !bytes.is_empty() && bytes.len() <= 8 && bytes[bytes.len() - 1] & 0x80 == 0 => {
+            let mut buf = [0u8; 8];
+            buf[..bytes.len()].copy_from_slice(bytes);
+            Some(u64::from_le_bytes(buf))
+        }
+        _ => None,
+    }
+}
+
+/// The key the client would write for `id`: `Int` while it fits, else the
+/// minimal-width little-endian two's-complement `Long` (2,321 of 2,322
+/// id-sized Longs in a sampled file are minimal-width).
+// ponytail: no corpus file has a watch-listed id above 2³¹ yet, so the Long arm
+// is unit-tested only — the first real file with one is the test that matters.
+fn id_key(id: u64) -> Value {
+    if let Ok(i) = i32::try_from(id) {
+        return Value::Int(i64::from(i));
+    }
+    let mut bytes = id.to_le_bytes().to_vec();
+    while bytes.len() > 1 && bytes[bytes.len() - 1] == 0 {
+        bytes.pop();
+    }
+    if bytes[bytes.len() - 1] & 0x80 != 0 {
+        bytes.push(0); // keep the sign bit clear: a positive two's-complement
+    }
+    Value::Long(bytes)
+}
+
+fn project_watchlist(char_root: Option<&Value>) -> Vec<WatchEntry> {
+    let Some(c) = char_root else { return Vec::new() };
+    let mut sh = SharedTable::new();
+    collect_shared(c, &mut sh);
+    let Some((ui, _)) = section(c, b"ui", &sh) else { return Vec::new() };
+    let Some(map) = find_child(ui, WATCHLIST_KEY, &sh).and_then(|v| as_dict(v, &sh)) else { return Vec::new() };
+    map.iter()
+        .filter_map(|(k, v)| Some(WatchEntry { char_id: id_of(effective(k, &sh))?, rgb: rgb_of(v, &sh) }))
+        .collect()
+}
+
+/// Set (`Some`) or remove (`None`) one character's watch-list colour. The map
+/// is minted as `(zero FILETIME, {})` when absent and something is being set,
+/// as `set_state_color` mints `stateColors`. Matches an existing entry by id
+/// VALUE, whichever wire kind the client used for the key. The caller
+/// reshares.
+pub fn set_watchlist_colour(
+    char_root: &mut Value,
+    id: u64,
+    rgb: Option<[f64; 3]>,
+) -> Result<(), FleetError> {
+    inline_all(char_root);
+    let ui = section_dict_mut(char_root, b"ui").ok_or(FleetError::NoSection)?;
+    if !ui.iter().any(|(k, _)| is_bytes(k, WATCHLIST_KEY)) {
+        if rgb.is_none() {
+            return Ok(()); // nothing stored, nothing to clear
+        }
+        ui.push((
+            Value::Bytes(WATCHLIST_KEY.to_vec()),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(Vec::new())]),
+        ));
+    }
+    let (_, slot) = ui.iter_mut().find(|(k, _)| is_bytes(k, WATCHLIST_KEY)).expect("just checked");
+    let entries = dict_inner_mut(slot).ok_or(FleetError::NotEditable)?;
+    match rgb {
+        None => entries.retain(|(k, _)| id_of(k) != Some(id)),
+        Some(c) => {
+            let val = rgb_value(c);
+            match entries.iter_mut().find(|(k, _)| id_of(k) == Some(id)) {
+                Some((_, v)) => *v = val,
+                None => entries.push((id_key(id), val)),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One key this module owns, as a batch-copy leaf. `batch::Category::Fleet`
+/// borrows these, so the batch key list and the editor's are one list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FleetLeaf {
+    pub scope: HudScope,
+    /// `[section, key]` — every fleet key is one level under `ui`.
+    pub path: [&'static [u8]; 2],
+}
+
+/// The 22 scalar rows, the 16 colour keys and the watch-list map. A `static`
+/// rather than a `const` so `&FLEET_LEAVES[i]` is `'static`, which is what
+/// `Category::Fleet` holds.
+pub static FLEET_LEAVES: [FleetLeaf; 39] = {
+    let mut out = [FleetLeaf { scope: HudScope::Char, path: [b"ui", WATCHLIST_KEY] }; 39];
+    let mut i = 0;
+    while i < 22 {
+        out[i] = FleetLeaf { scope: FIELDS[i].scope, path: [FIELDS[i].section, FIELDS[i].key] };
+        i += 1;
+    }
+    let mut t = 0;
+    while t < 16 {
+        out[22 + t] = FleetLeaf { scope: HudScope::Account, path: [b"ui", COLOUR_KEYS[t]] };
+        t += 1;
+    }
+    out // index 38 keeps the watch-list initialiser
+};
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WatchEntry {
     pub char_id: u64,
@@ -252,7 +364,7 @@ pub fn project_fleet(char_root: Option<&Value>, user_root: Option<&Value>) -> Fl
     Fleet {
         fields,
         colours: project_colours(user_root),
-        watchlist: Vec::new(),
+        watchlist: project_watchlist(char_root),
         palette: PALETTE.iter().map(|(n, c)| (n.to_string(), *c)).collect(),
         char_open: char_root.is_some(),
         user_open: user_root.is_some(),
@@ -554,5 +666,105 @@ mod tests {
         )]);
         let f = project_fleet(None, Some(&user));
         assert_eq!(colour(&f, "InPosition").state, Colour::Set { rgb: [0.0, 0.0, 0.0] });
+    }
+
+    fn char_with_watchlist() -> Value {
+        let map = Value::Dict(vec![
+            (Value::Int(1001131163), rgb(0.2, 0.5, 1.0)),
+            (Value::Int(1694010657), rgb(1.0, 0.7, 0.0)),
+            (Value::Int(90000001), Value::Str("blue".into())),
+        ]);
+        Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("fleet_watchlistcolors"), wrapped(map))]))])
+    }
+
+    fn watch_map(root: &Value) -> &Entries {
+        let leaf = ui_leaf(root, b"fleet_watchlistcolors").expect("map present");
+        let Value::Tuple(parts) = leaf else { panic!("wrapped") };
+        let Value::Dict(d) = &parts[1] else { panic!("dict payload") };
+        d
+    }
+
+    #[test]
+    fn the_watch_list_projects_in_file_order_and_keeps_unreadable_entries() {
+        let f = project_fleet(Some(&char_with_watchlist()), None);
+        assert_eq!(
+            f.watchlist,
+            vec![
+                WatchEntry { char_id: 1001131163, rgb: Some([0.2, 0.5, 1.0]) },
+                WatchEntry { char_id: 1694010657, rgb: Some([1.0, 0.7, 0.0]) },
+                WatchEntry { char_id: 90000001, rgb: None },
+            ]
+        );
+        assert!(project_fleet(None, None).watchlist.is_empty());
+        assert!(project_fleet(Some(&char_doc()), None).watchlist.is_empty(), "no map is an empty list");
+    }
+
+    #[test]
+    fn recolouring_overwrites_the_entry_in_place() {
+        let mut c = char_with_watchlist();
+        set_watchlist_colour(&mut c, 1001131163, Some([0.75, 0.0, 0.0])).unwrap();
+        let map = watch_map(&c);
+        assert_eq!(map.len(), 3);
+        assert_eq!(map[0], (Value::Int(1001131163), rgb(0.75, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn adding_appends_an_int_key_and_removing_retains_the_rest() {
+        let mut c = char_with_watchlist();
+        set_watchlist_colour(&mut c, 2117000000, Some([0.2, 0.5, 1.0])).unwrap();
+        assert_eq!(watch_map(&c)[3], (Value::Int(2117000000), rgb(0.2, 0.5, 1.0)));
+        set_watchlist_colour(&mut c, 1694010657, None).unwrap();
+        let ids: Vec<&Value> = watch_map(&c).iter().map(|(k, _)| k).collect();
+        assert_eq!(ids, vec![&Value::Int(1001131163), &Value::Int(90000001), &Value::Int(2117000000)]);
+        // The unreadable entry can be removed too — that is the only edit it offers.
+        set_watchlist_colour(&mut c, 90000001, None).unwrap();
+        assert_eq!(watch_map(&c).len(), 2);
+    }
+
+    #[test]
+    fn the_map_is_minted_on_first_add_and_not_on_a_remove() {
+        let mut c = char_doc();
+        set_watchlist_colour(&mut c, 5, None).unwrap();
+        assert!(ui_leaf(&c, b"fleet_watchlistcolors").is_none(), "nothing stored, nothing to clear");
+        set_watchlist_colour(&mut c, 5, Some([0.0, 0.0, 0.0])).unwrap();
+        let leaf = ui_leaf(&c, b"fleet_watchlistcolors").expect("minted");
+        let Value::Tuple(parts) = leaf else { panic!("wrapped") };
+        assert_eq!(parts[0], ts(), "a mint carries a zero FILETIME");
+        assert_eq!(watch_map(&c), &vec![(Value::Int(5), rgb(0.0, 0.0, 0.0))]);
+    }
+
+    /// Ids above i32 are written as the client writes ids: a minimal-width
+    /// little-endian two's-complement Long (spec §2.6). Read back either way.
+    #[test]
+    fn an_id_above_the_int_range_is_a_minimal_long_and_reads_back() {
+        let mut c = char_doc();
+        let id: u64 = 3_000_000_000; // 0xB2D05E00 — top bit of byte 4 set, so 5 bytes
+        set_watchlist_colour(&mut c, id, Some([0.2, 0.5, 1.0])).unwrap();
+        assert_eq!(watch_map(&c)[0].0, Value::Long(vec![0x00, 0x5E, 0xD0, 0xB2, 0x00]));
+        let f = project_fleet(Some(&c), None);
+        assert_eq!(f.watchlist[0].char_id, id);
+        // And a Long the client happened to write for a small value matches by value.
+        let mut d = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(b("fleet_watchlistcolors"), wrapped(Value::Dict(vec![(Value::Long(vec![7]), rgb(0.0, 0.0, 0.0))])))]),
+        )]);
+        assert_eq!(project_fleet(Some(&d), None).watchlist[0].char_id, 7);
+        set_watchlist_colour(&mut d, 7, None).unwrap();
+        assert!(watch_map(&d).is_empty());
+    }
+
+    #[test]
+    fn the_leaf_table_covers_every_key_once() {
+        assert_eq!(FLEET_LEAVES.len(), 39);
+        let chars = FLEET_LEAVES.iter().filter(|l| l.scope == HudScope::Char).count();
+        assert_eq!(chars, 5, "formation trio, finder toggle, watch-list map");
+        let mut keys: Vec<&[u8]> = FLEET_LEAVES.iter().map(|l| l.path[1]).collect();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 39, "no key appears twice");
+        assert!(FLEET_LEAVES.iter().all(|l| l.path[0] == b"ui"));
+        assert!(FLEET_LEAVES.iter().any(|l| l.path[1] == b"ShowOwnBroadcasts"));
+        assert!(FLEET_LEAVES.iter().any(|l| l.path[1] == b"fleet_broadcastcolor_Location"));
+        assert!(FLEET_LEAVES.iter().any(|l| l.path[1] == b"fleet_watchlistcolors" && l.scope == HudScope::Char));
     }
 }
