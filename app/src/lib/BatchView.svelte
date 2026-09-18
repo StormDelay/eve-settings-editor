@@ -102,7 +102,7 @@
   const offered = $derived<Aspect[]>(
     sourceKind === "preset"
       ? (preset?.aspects ?? [])
-      : ["layout", "overview", "autofill", "keybinds", "probe_formations", "everything"],
+      : ["layout", "overview", "autofill", "keybinds", "probe_formations", "fleet", "everything"],
   );
 
   const batchSource = $derived<BatchSource | null>(
