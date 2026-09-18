@@ -26,6 +26,8 @@ use settings_model::{
     project_hud, set_hud_value, Hud, HudScope,
     NeocomBar, NeocomError,
     project_chat, ChatPanel,
+    project_fleet, set_broadcast_colour, set_fleet_field as model_set_fleet_field,
+    set_watchlist_colour as model_set_watchlist_colour, Fleet,
 };
 
 use crate::accounts;
@@ -439,6 +441,57 @@ pub fn set_hud_field(state: &AppState, name: &str, text: &str) -> Result<Hud, Er
         |e| coded_err("hud", e),
     )?;
     hud_layout(state)
+}
+
+/// Project the fleet settings: both documents optional, an error only when
+/// neither is open. Lock user before char, the file's order.
+pub fn fleet_settings(state: &AppState) -> Result<Fleet, ErrDto> {
+    let uguard = state.user.lock().unwrap();
+    let cguard = state.char.lock().unwrap();
+    let user = uguard.as_ref().map(|d| &d.value);
+    let char_root = cguard.as_ref().map(|d| &d.value);
+    if user.is_none() && char_root.is_none() {
+        return Err(ErrDto::new("no_document", "no file open"));
+    }
+    Ok(project_fleet(char_root, user))
+}
+
+/// Write one fleet scalar into whichever document its scope names. The
+/// projection is the single source of truth for the side, as `set_hud_field`.
+pub fn set_fleet_field(state: &AppState, name: &str, text: &str) -> Result<Fleet, ErrDto> {
+    let scope = {
+        let f = fleet_settings(state)?;
+        f.fields
+            .iter()
+            .find(|e| e.name == name)
+            .map(|e| e.scope)
+            .ok_or_else(|| ErrDto::new("fleet", format!("unknown field {name:?}")))?
+    };
+    let slot = match scope {
+        HudScope::Char => Slot::Char,
+        HudScope::Account => Slot::User,
+    };
+    // Only a mint de-shares the document — the model's answer IS the reshare decision.
+    edit_reshared(
+        state,
+        slot,
+        |v| model_set_fleet_field(v, name, text).map(|minted| ((), minted)),
+        |e| coded_err("fleet", e),
+    )?;
+    fleet_settings(state)
+}
+
+/// Set (`Some`) or clear (`None`) one broadcast colour in the account file.
+pub fn set_fleet_colour(state: &AppState, broadcast: &str, rgb: Option<[f64; 3]>) -> Result<Fleet, ErrDto> {
+    edit_slot(state, Slot::User, |v| set_broadcast_colour(v, broadcast, rgb), |e| coded_err("fleet", e))?;
+    fleet_settings(state)
+}
+
+/// Set (`Some`) or remove (`None`) one character's watch-list colour in the
+/// character file.
+pub fn set_watchlist_colour(state: &AppState, char_id: u64, rgb: Option<[f64; 3]>) -> Result<Fleet, ErrDto> {
+    edit_slot(state, Slot::Char, |v| model_set_watchlist_colour(v, char_id, rgb), |e| coded_err("fleet", e))?;
+    fleet_settings(state)
 }
 
 pub fn restore_backup(state: &AppState, slot: Slot, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
@@ -1921,6 +1974,69 @@ mod tests {
     fn hud_without_a_character_file_is_an_error() {
         let state = AppState::new();
         assert!(hud_layout(&state).is_err());
+    }
+
+    /// root -> { b"ui": {} } — the section present, no fleet keys.
+    fn fleet_doc_bytes() -> Vec<u8> {
+        let doc = blue_marshal::Value::Dict(vec![(
+            blue_marshal::Value::Bytes(b"ui".to_vec()),
+            blue_marshal::Value::Dict(vec![]),
+        )]);
+        blue_marshal::encode(&doc).expect("encode fixture")
+    }
+
+    fn roundtrips(state: &AppState, slot: Slot) {
+        let guard = state.doc(slot).lock().unwrap();
+        let doc = guard.as_ref().expect("open");
+        let bytes = blue_marshal::encode(&doc.value).expect("encode");
+        assert_eq!(blue_marshal::decode(&bytes).unwrap(), doc.value, "reshare ran cleanly");
+    }
+
+    #[test]
+    fn fleet_needs_at_least_one_file_and_projects_with_only_an_account() {
+        let state = AppState::new();
+        assert!(fleet_settings(&state).is_err());
+        let path = temp_file("fleet-user", &fleet_doc_bytes());
+        open_file(&state, Slot::User, &path.to_string_lossy()).expect("open");
+        let f = fleet_settings(&state).expect("project");
+        assert!(f.user_open && !f.char_open);
+        assert_eq!(f.colours.len(), 16);
+    }
+
+    #[test]
+    fn fleet_field_and_colour_writes_land_in_the_account_file() {
+        let state = AppState::new();
+        let path = temp_file("fleet-user2", &fleet_doc_bytes());
+        open_file(&state, Slot::User, &path.to_string_lossy()).expect("open");
+
+        let f = set_fleet_field(&state, "listen_show_own", "1").expect("set");
+        let e = f.fields.iter().find(|e| e.name == "listen_show_own").expect("entry");
+        assert_eq!(e.value.as_deref(), Some("1"));
+
+        let f = set_fleet_colour(&state, "Target", Some([0.2, 0.5, 1.0])).expect("set");
+        let c = f.colours.iter().find(|c| c.broadcast == "Target").expect("entry");
+        assert_eq!(c.state, settings_model::Colour::Set { rgb: [0.2, 0.5, 1.0] });
+        let f = set_fleet_colour(&state, "Target", None).expect("clear");
+        assert_eq!(f.colours.iter().find(|c| c.broadcast == "Target").unwrap().state, settings_model::Colour::Cleared);
+        roundtrips(&state, Slot::User);
+
+        // A character-side field with no character open is a no_document error.
+        assert_eq!(set_fleet_field(&state, "formation", "1").unwrap_err().code, "no_document");
+    }
+
+    #[test]
+    fn watch_list_writes_land_in_the_character_file() {
+        let state = AppState::new();
+        let path = temp_file("fleet-char", &fleet_doc_bytes());
+        open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
+
+        let f = set_watchlist_colour(&state, 1001131163, Some([1.0, 0.7, 0.0])).expect("add");
+        assert_eq!(f.watchlist.len(), 1);
+        assert_eq!(f.watchlist[0].char_id, 1001131163);
+        let f = set_watchlist_colour(&state, 1001131163, None).expect("remove");
+        assert!(f.watchlist.is_empty());
+        roundtrips(&state, Slot::Char);
+        assert_eq!(set_fleet_colour(&state, "Target", None).unwrap_err().code, "no_document");
     }
 
     /// char -> ui -> neocomButtonRawData `(ts, List)` with two `utillib.KeyVal`
