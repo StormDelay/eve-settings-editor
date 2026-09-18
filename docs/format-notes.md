@@ -1709,8 +1709,9 @@ captures on B1 — see `docs/superpowers/specs/2026-09-18-fleet-editor-design.md
 §2 for the tables. Four things the next reader needs:
 
 - **A `listenBroadcast_<Type>` key is written only when its checkbox is
-  toggled.** Nine of the sixteen types have no key in any file; their default
-  is ticked. The seven every account carries default to the value they hold
+  toggled.** Eight of the sixteen types have no key in any file; a ninth,
+  `WarpTo`, has one only from the 2026-09-18 capture. Their default is
+  ticked. The seven every account carries default to the value they hold
   in ~93 % of accounts (five off, two on).
 - **The top checkbox writes two keys** — `listenBroadcast_ShowOwnBroadcasts`
   and a bare `ShowOwnBroadcasts` — same instant, same value. Write both.
