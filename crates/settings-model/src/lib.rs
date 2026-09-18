@@ -45,7 +45,10 @@ pub use projection::{project, Node};
 pub use save::{save, SaveError, SaveReport};
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
-pub use fleet::{project_fleet, set_fleet_field, ColourEntry, Fleet, WatchEntry, BROADCAST_TYPES};
+pub use fleet::{
+    default_colour, project_fleet, set_broadcast_colour, set_fleet_field, Colour, ColourEntry, Fleet,
+    FleetError, WatchEntry, BROADCAST_TYPES, PALETTE,
+};
 pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use probes::{
