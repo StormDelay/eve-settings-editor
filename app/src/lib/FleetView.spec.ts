@@ -253,6 +253,16 @@ describe("the watch list panel", () => {
     calls.never("set_watchlist_colour");
   });
 
+  test("add: a numeric id already listed says so without an ESI lookup", async () => {
+    mount();
+    const p = await panel("Watch list colours");
+    const box = within(p).getByLabelText("Add a character");
+    await fireEvent.input(box, { target: { value: "90000001" } });
+    await fireEvent.click(within(p).getByRole("button", { name: "Add" }));
+    expect((await within(p).findByRole("alert")).textContent?.trim()).toBe("90000001 is already in the list");
+    calls.never("lookup_character");
+  });
+
   test("an empty list has an empty state and the add row; no character file has neither", async () => {
     mount({ watchlist: [] });
     const p = await panel("Watch list colours");
@@ -266,6 +276,9 @@ describe("the watch list panel", () => {
     const p = await panel("Watch list colours");
     expect(within(p).getByText("No character open")).toBeTruthy();
     expect(within(p).queryByLabelText("Add a character")).toBeNull();
+    // The Formation panel is the other character-scoped one, and says so too.
+    const f = await panel("Formation");
+    expect(within(f).getByText("No character open")).toBeTruthy();
   });
 });
 
