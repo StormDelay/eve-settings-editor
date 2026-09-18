@@ -284,11 +284,30 @@ pub fn set_watchlist_colour(
     id: u64,
     rgb: Option<[f64; 3]>,
 ) -> Result<(), FleetError> {
+    // Checked BEFORE inlining: a remove against a document that has a `ui`
+    // section but no watch-list map yet writes nothing, and inlining first
+    // would still de-share the whole document for that no-op — via `ops`, a
+    // reshare and a pushed undo entry for a write that never happens. A `ui`
+    // section that is missing entirely falls through to the `NoSection` error
+    // below, same as every other write here.
+    if rgb.is_none() {
+        let mut sh = SharedTable::new();
+        collect_shared(char_root, &mut sh);
+        if let Some((ui, _)) = section(char_root, b"ui", &sh) {
+            if find_child(ui, WATCHLIST_KEY, &sh).is_none() {
+                return Ok(());
+            }
+        }
+    }
     inline_all(char_root);
     let ui = section_dict_mut(char_root, b"ui").ok_or(FleetError::NoSection)?;
     if !ui.iter().any(|(k, _)| is_bytes(k, WATCHLIST_KEY)) {
+        // Unreachable in practice — the pre-inline check above already
+        // returns for "no map, nothing to clear" — kept as a defensive
+        // fallback rather than trusting the two lookups to agree on every
+        // Shared/Ref shape.
         if rgb.is_none() {
-            return Ok(()); // nothing stored, nothing to clear
+            return Ok(());
         }
         ui.push((
             Value::Bytes(WATCHLIST_KEY.to_vec()),
@@ -372,7 +391,11 @@ pub fn project_fleet(char_root: Option<&Value>, user_root: Option<&Value>) -> Fl
 }
 
 /// Write one scalar. See `hud::set_field` for the contract; `Ok(true)` means a
-/// key was minted and the caller must reshare.
+/// key was minted and the caller must reshare. A multi-row name — `listen_show_own`
+/// is the one here with two — can be refused on its second row after the first
+/// was already written, leaving the document partly written; the caller
+/// (`ops::edit_reshared`) restores it from its pre-call snapshot on any `Err`,
+/// so "refused = untouched" is that command's guarantee, not this function's.
 pub fn set_fleet_field(root: &mut Value, name: &str, text: &str) -> Result<bool, HudError> {
     set_field(&FIELDS, root, name, text)
 }

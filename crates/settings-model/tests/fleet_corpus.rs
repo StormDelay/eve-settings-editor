@@ -37,6 +37,12 @@ fn bar(common: bool) -> usize {
 /// on whether the corpus contains fleet-broadcast captures at all.
 const CAPTURED_LISTEN: [&str; 1] = ["listen_WarpTo"];
 
+/// The top checkbox's field name — not a `BROADCAST_TYPES` entry, so it rides
+/// its own counter rather than the per-type `listen` loop below. Carried by
+/// the two 2026-09-18 captures (`listenBroadcast_ShowOwnBroadcasts`), so its
+/// real bar is the same 1 as a rare listen type's.
+const SHOW_OWN: &str = "listen_show_own";
+
 /// The real-file bar for one listen key: 20 for a `COMMON_LISTEN` key (the
 /// client writes these on every account regardless of toggling), 1 for
 /// `listen_WarpTo` (`CAPTURED_LISTEN`, the only rare type ever caught
@@ -62,6 +68,8 @@ fn every_account_fleet_key_reads_from_a_real_file() {
     let mut listen_real = [0usize; 16];
     let mut colour_syn = [0usize; 16];
     let mut colour_real = [0usize; 16];
+    let mut show_own_syn = 0usize;
+    let mut show_own_real = 0usize;
     let mut scanned = 0usize;
 
     for f in common::user_files() {
@@ -73,6 +81,10 @@ fn every_account_fleet_key_reads_from_a_real_file() {
             if e.value.is_some() {
                 if f.synthetic { listen_syn[i] += 1 } else { listen_real[i] += 1 }
             }
+        }
+        let show_own = fleet.fields.iter().find(|e| e.name == SHOW_OWN).expect("field projected");
+        if show_own.value.is_some() {
+            if f.synthetic { show_own_syn += 1 } else { show_own_real += 1 }
         }
         for (i, c) in fleet.colours.iter().enumerate() {
             if matches!(c.state, Colour::Set { .. } | Colour::Cleared) {
@@ -87,6 +99,10 @@ fn every_account_fleet_key_reads_from_a_real_file() {
             let need = listen_bar(name.as_str());
             assert!(listen_real[i] >= need, "{name} projected a value in only {}/{scanned} real account files", listen_real[i]);
         }
+    }
+    assert!(show_own_syn >= ENOUGH_SYNTHETIC, "{SHOW_OWN} projected no value in any synthetic account fixture");
+    if common::real_corpus_present() {
+        assert!(show_own_real >= ENOUGH_REAL_RARE, "{SHOW_OWN} projected a value in only {show_own_real}/{scanned} real account files");
     }
     for (i, t) in BROADCAST_TYPES.iter().enumerate() {
         assert!(colour_syn[i] >= ENOUGH_SYNTHETIC, "colour {t} read from no synthetic account fixture");
