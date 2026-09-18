@@ -1699,3 +1699,32 @@ accounts claim.
 Also present and unused: `[client-queue] Queued client startup { userId,
 characterId: <slot>, profile: '<name>' }`, which additionally names the profile
 folder. `characterId` there is a slot index, not a character id.
+
+### Fleet broadcast settings, watch-list colours and formation (2026-09-18)
+
+Everything sits under root `ui`, every leaf `(FILETIME, value)`-wrapped;
+account file for the Broadcast Settings dialog, character file for the watch
+list and the formation panel. Measured over 513 distinct files plus two live
+captures on B1 — see `docs/superpowers/specs/2026-09-18-fleet-editor-design.md`
+§2 for the tables. Four things the next reader needs:
+
+- **A `listenBroadcast_<Type>` key is written only when its checkbox is
+  toggled.** Nine of the sixteen types have no key in any file; their default
+  is ticked. The seven every account carries default to the value they hold
+  in ~93 % of accounts (five off, two on).
+- **The top checkbox writes two keys** — `listenBroadcast_ShowOwnBroadcasts`
+  and a bare `ShowOwnBroadcasts` — same instant, same value. Write both.
+- **EVE's ✕ (no colour) writes `(ts, None)`**; the key is not removed. Absent
+  means the type's default, which is a colour for four types and none for the
+  rest.
+- **Opening the dialog re-stamps every existing broadcast key** with one
+  FILETIME. A capture diff that shows 25 stamps moving is one dialog open, not
+  25 edits.
+
+The picker is nine swatches: yellow `1.0,0.7,0.0`, orange `1.0,0.35,0.0`, red
+`0.75,0,0`, green `0.1,0.6,0.1`, teal `0.0,0.63,0.57`, blue `0.2,0.5,1.0`,
+darkBlue `0.0,0.15,0.6`, black, white `0.7,0.7,0.7` — the same picker on a
+watch-list member. Saved fleet setups ("Form fleet with setup") are not in the
+files: the owner's names appear only in the account's `editHistory` for the
+"Store fleet setup" dialog, and two of the eight appear nowhere while the
+client still lists them.
