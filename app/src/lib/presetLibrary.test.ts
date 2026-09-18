@@ -21,6 +21,7 @@ check("autofill label", aspectLabel("autofill") === "Autofill");
 check("keybinds label", aspectLabel("keybinds") === "Keybinds");
 check("everything label", aspectLabel("everything") === "Everything");
 check("probe formations label", aspectLabel("probe_formations") === "Probe formations");
+check("fleet label", aspectLabel("fleet") === "Fleet");
 check(
   "probe formations summarise alongside others",
   summarise(info("P", ["keybinds", "probe_formations"])) === "Keybinds · Probe formations",

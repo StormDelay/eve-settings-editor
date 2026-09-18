@@ -44,14 +44,15 @@ describe("which key means what", () => {
     ["f", "view.find"],
     ["/", "help.shortcuts"],
     ["1", "go.layout"],
-    ["6", "go.raw"],
+    ["6", "go.fleet"],
+    ["7", "go.raw"],
   ])("%s is %s", (key, id) => {
     expect(commandFor(chord(key))?.id).toBe(id);
   });
 
   test("the view digits are the tab strip's own order", () => {
-    const ids = ["1", "2", "3", "4", "5", "6"].map((k) => commandFor(chord(k))!.id);
-    expect(ids).toEqual(["go.layout", "go.overview", "go.autofill", "go.keybinds", "go.probes", "go.raw"]);
+    const ids = ["1", "2", "3", "4", "5", "6", "7"].map((k) => commandFor(chord(k))!.id);
+    expect(ids).toEqual(["go.layout", "go.overview", "go.autofill", "go.keybinds", "go.probes", "go.fleet", "go.raw"]);
   });
 
   test("a bare key is not a chord", () => {
@@ -116,7 +117,7 @@ describe("running, and refusing to run", () => {
   test("an enabled command runs and the event is consumed", () => {
     resetSubject();
     let where: string | null = null;
-    const e = chord("6");
+    const e = chord("7");
     expect(handleKey(e, ctx({ goto: (v) => (where = v) }))).toBe(true);
     expect(where).toBe("raw");
     expect(e.preventDefault).toHaveBeenCalled();

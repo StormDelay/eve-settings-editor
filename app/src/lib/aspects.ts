@@ -13,5 +13,6 @@ export const ASPECT_LABELS: { key: Aspect; label: string }[] = [
   { key: "autofill", label: "Autofill (remembered text)" },
   { key: "keybinds", label: "Keybindings" },
   { key: "probe_formations", label: "Probe formations (custom scan formations)" },
+  { key: "fleet", label: "Fleet (broadcast settings, watch-list colours, formation)" },
   { key: "everything", label: "Everything (full clone of both files)" },
 ];

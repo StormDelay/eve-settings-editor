@@ -79,7 +79,8 @@ const CHORDS: Record<string, string> = {
   "3": "go.autofill",
   "4": "go.keybinds",
   "5": "go.probes",
-  "6": "go.raw",
+  "6": "go.fleet",
+  "7": "go.raw",
 };
 
 /**
