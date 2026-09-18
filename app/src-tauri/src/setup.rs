@@ -27,6 +27,7 @@ pub enum Aspect {
     Autofill,
     Keybinds,
     ProbeFormations,
+    Fleet,
     Everything,
 }
 
@@ -99,6 +100,17 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
             Aspect::Autofill => account_categories.push(Category::Autofill),
             Aspect::Keybinds => account_categories.push(Category::Keybinds),
             Aspect::ProbeFormations => account_categories.push(Category::ProbeFormations),
+            Aspect::Fleet => {
+                // Both sides: broadcast settings are per account, the watch
+                // list and formation per character. The leaf table is the
+                // model's own, so nothing here names a key.
+                for leaf in settings_model::FLEET_LEAVES.iter() {
+                    match leaf.scope {
+                        settings_model::HudScope::Char => char_categories.push(Category::Fleet(leaf)),
+                        settings_model::HudScope::Account => account_categories.push(Category::Fleet(leaf)),
+                    }
+                }
+            }
             Aspect::Everything => unreachable!("handled above"),
         }
     }
@@ -748,6 +760,26 @@ mod tests {
         );
         assert!(w.writes_account(), "layout writes the account file now");
         assert!(w.copies_char_geometry(), "the badge offset is absolute px, so the resolution warning must fire");
+    }
+
+    #[test]
+    fn fleet_carries_every_leaf_on_its_own_side() {
+        let w = aspect_writes(&[Aspect::Fleet]);
+        assert_eq!(w.char_categories.len(), 5, "formation trio, finder toggle, watch-list map");
+        assert_eq!(w.account_categories.len(), 34, "18 listen rows and 16 colours");
+        assert!(w.writes_account() && w.writes_char());
+        assert!(!w.copies_char_geometry(), "no window geometry moves");
+        for cat in w.char_categories.iter().chain(&w.account_categories) {
+            let Category::Fleet(leaf) = cat else { panic!("only fleet leaves") };
+            assert_eq!(leaf.path[0], b"ui");
+        }
+        let side = |key: &[u8]| {
+            let leaf = settings_model::FLEET_LEAVES.iter().find(|l| l.path[1] == key).expect("leaf");
+            (w.char_categories.contains(&Category::Fleet(leaf)), w.account_categories.contains(&Category::Fleet(leaf)))
+        };
+        assert_eq!(side(b"fleet_watchlistcolors"), (true, false));
+        assert_eq!(side(b"listenBroadcast_Target"), (false, true));
+        assert_eq!(side(b"fleet_broadcastcolor_Location"), (false, true));
     }
 
     /// The `(timestamp, value)` wrapper every real settings leaf carries.

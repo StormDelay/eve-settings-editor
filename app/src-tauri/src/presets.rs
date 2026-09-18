@@ -339,6 +339,16 @@ fn derive_aspects(char_doc: &Value, user_doc: &Value, full: bool) -> Vec<Aspect>
     if has_category(user_doc, Category::ProbeFormations) {
         out.push(Aspect::ProbeFormations);
     }
+    let fleet_present = settings_model::FLEET_LEAVES.iter().any(|leaf| {
+        let doc = match leaf.scope {
+            settings_model::HudScope::Char => char_doc,
+            settings_model::HudScope::Account => user_doc,
+        };
+        has_category(doc, Category::Fleet(leaf))
+    });
+    if fleet_present {
+        out.push(Aspect::Fleet);
+    }
     if full {
         out.push(Aspect::Everything);
     }
@@ -1268,5 +1278,21 @@ mod tests {
         let p = data.join("evil.evepreset");
         std::fs::write(&p, blue_marshal::encode(&bundle_value).unwrap()).unwrap();
         assert!(import_from(&data, &p).is_err(), "an untrusted name goes through sanitize_name");
+    }
+
+    #[test]
+    fn a_preset_holding_only_a_watch_list_map_reports_fleet() {
+        // Local bindings deliberately avoid the `char_doc`/`user_doc` helper
+        // names below — a same-named `let` would shadow those functions for
+        // the rest of this scope and the closing `char_doc()`/`user_doc()`
+        // calls would no longer resolve to them.
+        let map = Value::Tuple(vec![ts(), Value::Dict(vec![])]);
+        let watchlist_char_doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("fleet_watchlistcolors"), map)]))]);
+        assert_eq!(derive_aspects(&watchlist_char_doc, &Value::Dict(vec![]), false), vec![Aspect::Fleet]);
+        // And an account side alone is enough too.
+        let listen_user_doc = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("listenBroadcast_Target"), Value::Tuple(vec![ts(), Value::Int(1)]))]))]);
+        assert_eq!(derive_aspects(&Value::Dict(vec![]), &listen_user_doc, false), vec![Aspect::Fleet]);
+        // The existing fixtures hold no fleet key, so they must not report it.
+        assert!(!derive_aspects(&char_doc(), &user_doc(), false).contains(&Aspect::Fleet));
     }
 }
