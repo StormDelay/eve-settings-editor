@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage, errText, type OverviewColumns, type Rgba } from "./api";
-  import { snapToPalette } from "./colour";
+  import { snapToPalette, UNSET_HEX } from "./colour";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import {
     stateLabel, rgbaToHex, hexToRgba, moveInOrder, defaultColor,
@@ -25,10 +25,6 @@
     ["overviewBroadcastsToTop", "Show fleet broadcasts at the top"],
     ["hideCorpTicker", "Hide corporation ticker"],
   ];
-
-  // Last-resort swatch for a state with no stored colour AND no harvested
-  // default. Dimmed, because unlike a real default it carries no information.
-  const UNSET_HEX = "#808080";
 
   let surface = $state<"Background" | "Colortag">("Background");
 
