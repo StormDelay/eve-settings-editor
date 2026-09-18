@@ -268,3 +268,51 @@ describe("the watch list panel", () => {
     expect(within(p).queryByLabelText("Add a character")).toBeNull();
   });
 });
+
+describe("the formation panel", () => {
+  test("renders alongside the other two, each with its file chip", async () => {
+    mount();
+    await panel("Broadcast settings");
+    await panel("Watch list colours");
+    const p = await panel("Formation");
+    expect(within(p).getByText("character file")).toBeTruthy();
+    // And with no account file, the character panels still render.
+    calls.stub("fleet_settings", { ...FLEET, user_open: false });
+    render(FleetView, { charOpen: true, userOpen: false, onUserDirty: noop, onCharDirty: noop });
+    expect((await screen.findAllByRole("heading", { name: "Formation" })).length).toBe(2);
+  });
+
+  test("shows the three numbers and the finder toggle, defaults where absent", async () => {
+    mount();
+    const p = await panel("Formation");
+    expect((within(p).getByLabelText("Formation") as HTMLInputElement).value).toBe("0");
+    expect((within(p).getByLabelText("Size") as HTMLInputElement).value).toBe("20000");
+    expect((within(p).getByLabelText("Spacing") as HTMLInputElement).value).toBe("2000");
+    expect((within(p).getByLabelText("Show only my corp, alliance and high-standing fleets") as HTMLInputElement).checked).toBe(true);
+    expect(within(p).getByText("character file")).toBeTruthy();
+    expect(within(p).getByText(/Saved fleet setups live on CCP's servers/)).toBeTruthy();
+  });
+
+  test("a number commits rounded on change and the toggle writes 1/0", async () => {
+    mount();
+    const p = await panel("Formation");
+    const size = within(p).getByLabelText("Size") as HTMLInputElement;
+    await fireEvent.change(size, { target: { value: "30000.6" } });
+    await waitFor(() => expect(calls.only("set_fleet_field").args).toEqual({ name: "formation_size", text: "30001" }));
+    await fireEvent.click(within(p).getByLabelText("Show only my corp, alliance and high-standing fleets"));
+    await waitFor(() => expect(calls.of("set_fleet_field").length).toBe(2));
+    expect(calls.of("set_fleet_field")[1].args).toEqual({ name: "finder_group_only", text: "0" });
+  });
+
+  test("a refused number edit reports on this panel and puts the field back", async () => {
+    mount();
+    calls.stub("set_fleet_field", () => Promise.reject({ code: "not_editable", message: "nope" }));
+    const p = await panel("Formation");
+    const size = within(p).getByLabelText("Size") as HTMLInputElement;
+    await fireEvent.change(size, { target: { value: "1" } });
+    // `.trim()`: same InlineMessage whitespace-collapse as the broadcast and
+    // watch-list panels' own error tests above (no `title` prop passed here).
+    expect((await within(p).findByRole("alert")).textContent?.trim()).toBe("That formation setting wasn't changed — nope");
+    await waitFor(() => expect(size.value).toBe("20000"));
+  });
+});
