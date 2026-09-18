@@ -635,6 +635,9 @@ was dropped. "Source" is where the outstanding item is currently recorded.
 | P7 | Column width editable with a preset open | 0.20.0 | offline | preset spec §12.6, §5.1 |
 | P8 | Missing `preset.json` offers pruned aspects, never `Everything` | 0.20.0 | offline | preset spec §3.1 |
 | 36 | **The client accepts every file the editor wrote** | all | every session | §7 |
+| F1 | A watch-list entry the editor minted shows its colour in-game | 0.37.0 | A / A1 | fleet spec §6 |
+| F2 | A recoloured broadcast and a `listenBroadcast_*` key the editor minted for a never-keyed type are honoured | 0.37.0 | A / B1 | fleet spec §6 |
+| F3 | A `Long` watch-list key is honoured, if a character above 2³¹ can be found | 0.37.0 | A / A1 | fleet spec §2.6 |
 
 Items 6, 7, P4, P7 and P8 need no client at all — do them offline while the
 client is launching.
