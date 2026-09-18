@@ -198,6 +198,7 @@
           <Field kind="checkbox" label={SHOW_OWN.label} value={shown(SHOW_OWN.field) === "1"}
             disabled={unavailable(SHOW_OWN.field)} disabledReason={NOT_EDITABLE}
             onchange={(e) => setBroadcastField(SHOW_OWN.field, checked(e))} />
+          <span></span>
         </div>
         {#each BROADCASTS as b (b.type)}
           {@const name = listenField(b.type)}
