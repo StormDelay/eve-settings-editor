@@ -178,3 +178,93 @@ describe("the broadcast panel", () => {
     await waitFor(() => expect(calls.of("fleet_settings").length).toBe(2));
   });
 });
+
+describe("the watch list panel", () => {
+  test("lists entries with the resolved name, the id, a swatch and a remove button", async () => {
+    calls.stub("resolve_character_names", { "1001131163": { name: "Farm Delay", category: "character" } });
+    mount();
+    const p = await panel("Watch list colours");
+    const row = (await within(p).findByText("Farm Delay")).closest("li")!;
+    expect(within(row).getByText("1001131163")).toBeTruthy();
+    expect((within(row).getByLabelText("Colour for Farm Delay") as HTMLInputElement).value).toBe("#3380ff");
+    expect(within(p).getByText("character file")).toBeTruthy();
+    // The unresolved id renders bare, and its unreadable colour is marked and disabled.
+    const bare = within(p).getByText("90000001").closest("li")!;
+    expect(within(bare).getByText("unreadable")).toBeTruthy();
+    expect((within(bare).getByLabelText("Colour for 90000001") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  test("recolour writes exact palette floats; remove writes null", async () => {
+    mount();
+    const p = await panel("Watch list colours");
+    const swatch = (await within(p).findByLabelText("Colour for 1001131163")) as HTMLInputElement;
+    await fireEvent.change(swatch, { target: { value: "#bf0000" } });
+    await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(1));
+    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 1001131163, rgb: [0.75, 0.0, 0.0] });
+    const row = swatch.closest("li")!;
+    await fireEvent.click(within(row).getByTitle("Remove from the list"));
+    await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(2));
+    expect(calls.of("set_watchlist_colour")[1].args).toEqual({ charId: 1001131163, rgb: null });
+  });
+
+  test("add looks the name up, writes the picked colour, clears the box and toasts", async () => {
+    toasts.splice(0, toasts.length);
+    calls.stub("lookup_character", { id: 2117000000, name: "New Pilot" });
+    mount();
+    const p = await panel("Watch list colours");
+    const box = within(p).getByLabelText("Add a character") as HTMLInputElement;
+    const add = within(p).getByRole("button", { name: "Add" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    await fireEvent.input(box, { target: { value: "new pilot" } });
+    expect(add.disabled).toBe(false);
+    await fireEvent.click(add);
+    await waitFor(() => expect(calls.only("lookup_character").args).toEqual({ query: "new pilot" }));
+    await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(1));
+    // Blue is the default swatch (863 of 1,382 corpus entries).
+    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 2117000000, rgb: [0.2, 0.5, 1.0] });
+    await waitFor(() => expect(box.value).toBe(""));
+    // ToastHost lives in +layout, so the component test reads the store.
+    expect(toasts.map((t) => t.message)).toContain("Added New Pilot");
+  });
+
+  test("add: no such character, unreachable ESI, and already listed each say so and write nothing", async () => {
+    mount();
+    const p = await panel("Watch list colours");
+    const box = within(p).getByLabelText("Add a character");
+    const submit = async (q: string) => {
+      await fireEvent.input(box, { target: { value: q } });
+      await fireEvent.click(within(p).getByRole("button", { name: "Add" }));
+    };
+
+    // `.trim()`: InlineMessage collapses the whitespace around its (absent)
+    // title block to a leading/trailing space when no title is passed — the
+    // same reason the broadcast panel's error test above reads this way.
+    calls.stub("lookup_character", null);
+    await submit("Nobody");
+    expect((await within(p).findByRole("alert")).textContent?.trim()).toBe("No character called Nobody");
+
+    calls.stub("lookup_character", () => Promise.reject({ code: "esi", message: "ESI status 502" }));
+    await submit("Someone");
+    await waitFor(() => expect(within(p).getByRole("alert").textContent?.trim()).toBe("Someone wasn't looked up — couldn't reach ESI"));
+
+    calls.stub("lookup_character", { id: 1001131163, name: "Farm Delay" });
+    await submit("Farm Delay");
+    await waitFor(() => expect(within(p).getByRole("alert").textContent?.trim()).toBe("Farm Delay is already in the list"));
+    calls.never("set_watchlist_colour");
+  });
+
+  test("an empty list has an empty state and the add row; no character file has neither", async () => {
+    mount({ watchlist: [] });
+    const p = await panel("Watch list colours");
+    expect(within(p).getByText("No watch-list colours")).toBeTruthy();
+    expect(within(p).getByLabelText("Add a character")).toBeTruthy();
+  });
+
+  test("no character file: the panel says so without an action", async () => {
+    calls.stub("fleet_settings", { ...FLEET, char_open: false, watchlist: [] });
+    render(FleetView, { charOpen: false, userOpen: true, onUserDirty: noop, onCharDirty: noop });
+    const p = await panel("Watch list colours");
+    expect(within(p).getByText("No character open")).toBeTruthy();
+    expect(within(p).queryByLabelText("Add a character")).toBeNull();
+  });
+});
