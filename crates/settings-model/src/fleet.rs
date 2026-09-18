@@ -12,7 +12,8 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::hud::{project_fields, set_field, Field, HudEntry, HudError, HudKind, HudScope};
+use crate::hud::{project_fields, section_dict_mut, set_field, Field, HudEntry, HudError, HudKind, HudScope};
+use crate::treewalk::{collect_shared, effective, find_child, inline_all, is_bytes, section, Entries, SharedTable};
 
 /// The sixteen broadcast types, in the row order of EVE's Broadcast Settings
 /// dialog, each with the checkbox's value when no key has been written (spec
@@ -26,7 +27,6 @@ macro_rules! broadcast_types {
             concat!("listenBroadcast_", stringify!($t)).as_bytes(),
             $listen_default,
         )),*];
-        #[allow(dead_code)] // wired up by Tasks 3 and 6
         const COLOUR_KEYS: [&[u8]; 16] =
             [$(concat!("fleet_broadcastcolor_", stringify!($t)).as_bytes()),*];
     };
@@ -75,9 +75,154 @@ pub(crate) const FIELDS: [Field; 22] = {
     out
 };
 
+/// EVE's "Select Color" swatches, left to right, top row then bottom (spec
+/// §2.5). Names are labels for the datalist and tooltips, never written to a
+/// file — unlike `overview_pack::PALETTE`, whose names are pack vocabulary.
+pub const PALETTE: [(&str, [f64; 3]); 9] = [
+    ("yellow", [1.0, 0.7, 0.0]),
+    ("orange", [1.0, 0.35, 0.0]),
+    ("red", [0.75, 0.0, 0.0]),
+    ("green", [0.1, 0.6, 0.1]),
+    ("teal", [0.0, 0.63, 0.57]),
+    ("blue", [0.2, 0.5, 1.0]),
+    ("darkBlue", [0.0, 0.15, 0.6]),
+    ("black", [0.0, 0.0, 0.0]),
+    ("white", [0.7, 0.7, 0.7]),
+];
+
+/// The colour EVE shows for a type whose key was never written — the four the
+/// client itself stores on first open of the dialog, identical in every
+/// corpus account (spec §2.2). Everything else defaults to no colour.
+pub fn default_colour(broadcast: &str) -> Option<[f64; 3]> {
+    match broadcast {
+        "HealArmor" => Some([0.1, 0.6, 0.1]),
+        "HealCapacitor" => Some([1.0, 0.7, 0.0]),
+        "HealShield" => Some([0.2, 0.5, 1.0]),
+        "Target" => Some([0.75, 0.0, 0.0]),
+        _ => None,
+    }
+}
+
+/// The three wire states of a colour leaf (spec §2.4), plus the one this
+/// module refuses to touch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Colour {
+    /// No key: the type shows `ColourEntry::default`.
+    Absent,
+    /// `(ts, None)` — EVE's ✕. Captured live 2026-09-18 on `Location`.
+    Cleared,
+    Set { rgb: [f64; 3] },
+    /// A key of a shape this module does not write; refused on write rather
+    /// than overwritten (the `hud.rs` rule).
+    Unreadable,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ColourEntry {
     pub broadcast: String,
+    pub state: Colour,
+    pub default: Option<[f64; 3]>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "code", content = "detail", rename_all = "snake_case")]
+pub enum FleetError {
+    UnknownBroadcast(String),
+    /// No `ui` section to write into. Real character and account files always
+    /// have one.
+    NoSection,
+    /// The key holds a shape this module does not write; overwriting it would
+    /// change its type.
+    NotEditable,
+}
+
+impl std::fmt::Display for FleetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FleetError::UnknownBroadcast(t) => write!(f, "Unknown broadcast type {t:?}."),
+            FleetError::NoSection => write!(f, "This file has no section to write this value into."),
+            FleetError::NotEditable => {
+                write!(f, "This value has an unexpected type here and cannot be edited safely.")
+            }
+        }
+    }
+}
+
+fn num(v: &Value, sh: &SharedTable) -> Option<f64> {
+    match effective(v, sh) {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f64),
+        _ => None,
+    }
+}
+
+/// Three numbers, or `None` for anything else.
+fn rgb_of(v: &Value, sh: &SharedTable) -> Option<[f64; 3]> {
+    let Value::Tuple(items) = effective(v, sh) else { return None };
+    let [r, g, b] = items.as_slice() else { return None };
+    Some([num(r, sh)?, num(g, sh)?, num(b, sh)?])
+}
+
+fn rgb_value([r, g, b]: [f64; 3]) -> Value {
+    Value::Tuple(vec![Value::Float(r), Value::Float(g), Value::Float(b)])
+}
+
+fn read_colour(ui: &Entries, key: &[u8], sh: &SharedTable) -> Colour {
+    let Some(v) = find_child(ui, key, sh) else { return Colour::Absent };
+    let Value::Tuple(w) = v else { return Colour::Unreadable };
+    if w.len() != 2 {
+        return Colour::Unreadable;
+    }
+    match effective(&w[1], sh) {
+        Value::None => Colour::Cleared,
+        inner => rgb_of(inner, sh).map_or(Colour::Unreadable, |rgb| Colour::Set { rgb }),
+    }
+}
+
+fn project_colours(user_root: Option<&Value>) -> Vec<ColourEntry> {
+    let mut sh = SharedTable::new();
+    if let Some(u) = user_root {
+        collect_shared(u, &mut sh);
+    }
+    let ui = user_root.and_then(|u| section(u, b"ui", &sh)).map(|(entries, _)| entries);
+    BROADCAST_TYPES
+        .iter()
+        .zip(COLOUR_KEYS)
+        .map(|(t, key)| ColourEntry {
+            broadcast: t.to_string(),
+            state: ui.map_or(Colour::Absent, |ui| read_colour(ui, key, &sh)),
+            default: default_colour(t),
+        })
+        .collect()
+}
+
+/// Write one broadcast colour: `Some` → the three floats, `None` → `Value::None`
+/// (EVE's ✕). An absent key is minted; a key of another shape is refused. The
+/// caller reshares (this inlines first, so it is always a structural edit).
+pub fn set_broadcast_colour(
+    user: &mut Value,
+    broadcast: &str,
+    rgb: Option<[f64; 3]>,
+) -> Result<(), FleetError> {
+    let Some(i) = BROADCAST_TYPES.iter().position(|t| *t == broadcast) else {
+        return Err(FleetError::UnknownBroadcast(broadcast.to_string()));
+    };
+    let key = COLOUR_KEYS[i];
+    let value = rgb.map_or(Value::None, rgb_value);
+    inline_all(user);
+    let ui = section_dict_mut(user, b"ui").ok_or(FleetError::NoSection)?;
+    let flat = SharedTable::new();
+    match ui.iter_mut().find(|(k, _)| is_bytes(k, key)) {
+        Some((_, slot)) => match slot {
+            Value::Tuple(w) if w.len() == 2 && (w[1] == Value::None || rgb_of(&w[1], &flat).is_some()) => {
+                w[1] = value;
+            }
+            _ => return Err(FleetError::NotEditable),
+        },
+        None => ui.push((Value::Bytes(key.to_vec()), Value::Tuple(vec![Value::Long(vec![0u8; 8]), value]))),
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -106,9 +251,9 @@ pub fn project_fleet(char_root: Option<&Value>, user_root: Option<&Value>) -> Fl
     fields.dedup_by(|later, kept| later.name == kept.name);
     Fleet {
         fields,
-        colours: Vec::new(),
+        colours: project_colours(user_root),
         watchlist: Vec::new(),
-        palette: Vec::new(),
+        palette: PALETTE.iter().map(|(n, c)| (n.to_string(), *c)).collect(),
         char_open: char_root.is_some(),
         user_open: user_root.is_some(),
     }
@@ -289,5 +434,125 @@ mod tests {
         ]);
         let f = project_fleet(None, Some(&doc));
         assert_eq!(entry(&f, "listen_Target").value.as_deref(), Some("0"));
+    }
+
+    fn rgb(r: f64, g: f64, b_: f64) -> Value {
+        Value::Tuple(vec![Value::Float(r), Value::Float(g), Value::Float(b_)])
+    }
+
+    fn user_with_colours() -> Value {
+        Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![
+                (b("fleet_broadcastcolor_HealArmor"), wrapped(rgb(0.1, 0.6, 0.1))),
+                (b("fleet_broadcastcolor_Location"), wrapped(Value::None)),
+                (b("fleet_broadcastcolor_WarpTo"), wrapped(Value::Int(4))),
+            ]),
+        )])
+    }
+
+    fn colour<'a>(f: &'a Fleet, broadcast: &str) -> &'a ColourEntry {
+        f.colours.iter().find(|c| c.broadcast == broadcast).expect("every type is projected")
+    }
+
+    #[test]
+    fn colours_are_projected_for_every_type_in_row_order_with_three_states() {
+        let f = project_fleet(None, Some(&user_with_colours()));
+        assert_eq!(f.colours.len(), 16);
+        assert_eq!(f.colours[0].broadcast, "HealArmor");
+        assert_eq!(f.colours[15].broadcast, "Location");
+        assert_eq!(colour(&f, "HealArmor").state, Colour::Set { rgb: [0.1, 0.6, 0.1] });
+        assert_eq!(colour(&f, "Location").state, Colour::Cleared);
+        assert_eq!(colour(&f, "Target").state, Colour::Absent);
+        assert_eq!(colour(&f, "WarpTo").state, Colour::Unreadable);
+    }
+
+    #[test]
+    fn the_four_default_colours_ride_the_projection_and_the_rest_default_to_none() {
+        let f = project_fleet(None, None);
+        assert_eq!(colour(&f, "HealArmor").default, Some([0.1, 0.6, 0.1]));
+        assert_eq!(colour(&f, "HealCapacitor").default, Some([1.0, 0.7, 0.0]));
+        assert_eq!(colour(&f, "HealShield").default, Some([0.2, 0.5, 1.0]));
+        assert_eq!(colour(&f, "Target").default, Some([0.75, 0.0, 0.0]));
+        assert_eq!(colour(&f, "NeedBackup").default, None);
+        // No account file: every state is Absent, never an error.
+        assert!(f.colours.iter().all(|c| c.state == Colour::Absent));
+    }
+
+    #[test]
+    fn the_palette_is_eves_nine_swatches_with_teal_from_the_live_capture() {
+        let f = project_fleet(None, None);
+        assert_eq!(f.palette.len(), 9);
+        assert_eq!(f.palette[0], ("yellow".to_string(), [1.0, 0.7, 0.0]));
+        assert_eq!(f.palette[4], ("teal".to_string(), [0.0, 0.63, 0.57]));
+        assert_eq!(f.palette[8], ("white".to_string(), [0.7, 0.7, 0.7]));
+    }
+
+    #[test]
+    fn setting_a_colour_overwrites_in_place_and_keeps_the_timestamp() {
+        let real_ts = Value::Long(vec![9, 9, 9, 9, 9, 9, 9, 9]);
+        let mut user = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(b("fleet_broadcastcolor_Target"), Value::Tuple(vec![real_ts.clone(), rgb(0.75, 0.0, 0.0)]))]),
+        )]);
+        set_broadcast_colour(&mut user, "Target", Some([0.2, 0.5, 1.0])).unwrap();
+        assert_eq!(
+            ui_leaf(&user, b"fleet_broadcastcolor_Target"),
+            Some(&Value::Tuple(vec![real_ts, rgb(0.2, 0.5, 1.0)]))
+        );
+    }
+
+    #[test]
+    fn clearing_writes_none_without_removing_the_key() {
+        let mut user = user_with_colours();
+        set_broadcast_colour(&mut user, "HealArmor", None).unwrap();
+        assert_eq!(ui_leaf(&user, b"fleet_broadcastcolor_HealArmor"), Some(&wrapped(Value::None)));
+        let f = project_fleet(None, Some(&user));
+        assert_eq!(colour(&f, "HealArmor").state, Colour::Cleared);
+    }
+
+    #[test]
+    fn setting_an_absent_colour_mints_the_wrapped_leaf() {
+        let mut user = user_with_colours();
+        set_broadcast_colour(&mut user, "JumpTo", Some([0.0, 0.63, 0.57])).unwrap();
+        assert_eq!(ui_leaf(&user, b"fleet_broadcastcolor_JumpTo"), Some(&wrapped(rgb(0.0, 0.63, 0.57))));
+        // A cleared, absent type: writing None still mints, so the client reads
+        // an explicit "no colour" rather than falling back to its default.
+        set_broadcast_colour(&mut user, "Target", None).unwrap();
+        assert_eq!(ui_leaf(&user, b"fleet_broadcastcolor_Target"), Some(&wrapped(Value::None)));
+    }
+
+    #[test]
+    fn an_unreadable_colour_is_refused_not_overwritten() {
+        let mut user = user_with_colours();
+        let before = user.clone();
+        assert_eq!(set_broadcast_colour(&mut user, "WarpTo", Some([0.0, 0.0, 0.0])), Err(FleetError::NotEditable));
+        assert_eq!(user, before);
+    }
+
+    #[test]
+    fn an_unknown_type_and_a_missing_section_are_errors() {
+        let mut user = user_with_colours();
+        assert_eq!(
+            set_broadcast_colour(&mut user, "Nope", None),
+            Err(FleetError::UnknownBroadcast("Nope".into()))
+        );
+        let mut bare = Value::Dict(vec![]);
+        assert_eq!(set_broadcast_colour(&mut bare, "Target", None), Err(FleetError::NoSection));
+    }
+
+    /// A stored colour written as Int (the client is not type-stable across
+    /// generations — `hud.rs`'s Float-as-Int finding) still reads.
+    #[test]
+    fn an_int_component_reads_as_a_float() {
+        let user = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(
+                b("fleet_broadcastcolor_InPosition"),
+                wrapped(Value::Tuple(vec![Value::Int(0), Value::Int(0), Value::Int(0)])),
+            )]),
+        )]);
+        let f = project_fleet(None, Some(&user));
+        assert_eq!(colour(&f, "InPosition").state, Colour::Set { rgb: [0.0, 0.0, 0.0] });
     }
 }
