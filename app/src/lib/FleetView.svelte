@@ -121,6 +121,14 @@
     watchError = null;
     adding = true;
     try {
+      // A numeric id already on the list needs no lookup at all — the id IS
+      // the membership key, so this check runs before the ESI round-trip a
+      // name only resolves after. `Number(q)` on a non-numeric query is NaN,
+      // which no real char_id equals, so this is a no-op for a name query.
+      if (fleet?.watchlist.some((w) => w.char_id === Number(q))) {
+        watchError = { text: `${nameOf(Number(q))} is already in the list`, detail: "" };
+        return;
+      }
       let found: FoundCharacter | null;
       try { found = await api.lookupCharacter(q); }
       catch (e) { watchError = { text: `${q} wasn't looked up — couldn't reach ESI`, detail: errMessage(e) }; return; }
@@ -275,19 +283,27 @@
         <InlineMessage variant="error" detail={formationError.detail}>{formationError.text}</InlineMessage>
       {/if}
       <div class="rows">
+        <!-- Label always first, checkbox row included — HudPanel's shape
+             (HudPanel.svelte ~219-223): a Field with its own `label` puts a
+             control in the label column on some rows and a caption in it on
+             others, so nothing lines up. A bare Field plus a leading label
+             span keeps every control in the same track. -->
         {#each NUMBERS as n (n.name)}
           <div class="row">
-            <Field kind="number" label={n.label} min={0} step={n.step} width="8rem"
+            <span class="label">{n.label}</span>
+            <Field kind="number" ariaLabel={n.label} min={0} step={n.step} width="8rem"
               value={shown(n.name)} disabled={unavailable(n.name)} disabledReason={NOT_EDITABLE}
               onchange={numberEdit(n.name)} />
-            {#if n.name !== "formation"}<span class="meta">m</span>{/if}
+            {#if n.name !== "formation"}<span class="meta">m</span>{:else}<span></span>{/if}
           </div>
         {/each}
         <div class="row">
-          <Field kind="checkbox" label="Show only my corp, alliance and high-standing fleets"
+          <span class="label">Show only my corp, alliance and high-standing fleets</span>
+          <Field kind="checkbox" ariaLabel="Show only my corp, alliance and high-standing fleets"
             value={shown("finder_group_only") === "1"}
             disabled={unavailable("finder_group_only")} disabledReason={NOT_EDITABLE}
             onchange={(e) => setFormationField("finder_group_only", checked(e) ? "1" : "0")} />
+          <span></span>
         </div>
       </div>
       <p class="meta">Saved fleet setups live on CCP's servers and can't be edited here.</p>
@@ -297,15 +313,40 @@
 
 <style>
   .fleet { display: flex; flex-direction: column; gap: var(--s4); max-width: 56rem; }
-  .rows { display: flex; flex-direction: column; }
-  .row { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) 0; }
-  .row :global(.box) { flex: 1; }
+  /* Grid on the CONTAINER, rows as `display: contents` — HudPanel's shape
+     (`HudPanel.svelte`'s `.group`/`.row`). A grid on each row instead resolves
+     its tracks independently, so the swatch column trails the caption at
+     sixteen different x positions rather than sharing one.
+     `:global(.broadcasts)`: that class lands on Panel's own root element, a
+     child component's DOM, not an element this file writes directly — Svelte
+     can't verify the ancestor across that boundary and flags the plain
+     selector as unused (same reason AccountsView reaches into Panel's
+     `.capture` through `:global()`, the other direction). */
+  :global(.broadcasts) .rows {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    column-gap: var(--s3);
+    row-gap: var(--s1);
+    justify-content: start;
+    align-items: center;
+  }
+  :global(.broadcasts) .row { display: contents; }
   .colour { display: flex; align-items: center; gap: var(--s1); }
   /* The one sanctioned opacity: a placeholder swatch is not content. */
   .colour :global(.unset) { opacity: var(--o-disabled); }
 
+  :global(.formation) .rows {
+    display: grid;
+    grid-template-columns: max-content 8rem auto;
+    column-gap: var(--s3);
+    row-gap: var(--s1);
+    align-items: center;
+    justify-content: start;
+  }
+  :global(.formation) .row { display: contents; }
+  :global(.formation) .label { color: var(--text-secondary); font-size: var(--t-body); }
+
   .watch-list { list-style: none; margin: 0; padding: 0; max-width: 32rem; }
-  .watch-list .label { flex: 1; }
   .meta { color: var(--text-muted); font-size: var(--t-caption); }
   .add { display: flex; align-items: flex-end; gap: var(--s2); margin-top: var(--s3); }
 </style>
