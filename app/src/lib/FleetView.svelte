@@ -137,6 +137,28 @@
       }
     } finally { adding = false; }
   }
+
+  // --- formation ----------------------------------------------------------
+  const setFormationField = (name: string, text: string) =>
+    write("formation", "That formation setting wasn't changed", () => api.setFleetField(name, text), onCharDirty);
+
+  // Int fields: round before writing, and put the input back in step with the
+  // model whether or not the write landed — Svelte only patches `value` when
+  // the expression changes, so a refused edit would otherwise sit on screen
+  // beside a value that is not it (HudPanel's discipline).
+  const numberEdit = (name: string) => async (ev: Event) => {
+    const el = ev.target as HTMLInputElement;
+    const text = el.value;
+    if (text.trim() !== "" && Number.isFinite(Number(text))) {
+      await setFormationField(name, String(Math.round(Number(text))));
+    }
+    el.value = shown(name);
+  };
+  const NUMBERS: { name: string; label: string; step: number }[] = [
+    { name: "formation", label: "Formation", step: 1 },
+    { name: "formation_size", label: "Size", step: 100 },
+    { name: "formation_spacing", label: "Spacing", step: 100 },
+  ];
 </script>
 
 <div class="fleet">
@@ -239,6 +261,36 @@
         <Button variant="primary" type="submit" disabled={addQuery.trim() === "" || adding}
           disabledReason={adding ? "Looking the character up…" : "Type a character name or ID"}>Add</Button>
       </form>
+    {/if}
+  </Panel>
+
+  <Panel class="formation">
+    <PanelHeader title="Formation" subtitle="Fleet-warp formation, and the fleet finder">
+      {#snippet actions()}<Chip size="sm">character file</Chip>{/snippet}
+    </PanelHeader>
+    {#if !charOpen}
+      <EmptyState title="No character open" description="Formation settings live in the character file." />
+    {:else if fleet}
+      {#if formationError}
+        <InlineMessage variant="error" detail={formationError.detail}>{formationError.text}</InlineMessage>
+      {/if}
+      <div class="rows">
+        {#each NUMBERS as n (n.name)}
+          <div class="row">
+            <Field kind="number" label={n.label} min={0} step={n.step} width="8rem"
+              value={shown(n.name)} disabled={unavailable(n.name)} disabledReason={NOT_EDITABLE}
+              onchange={numberEdit(n.name)} />
+            {#if n.name !== "formation"}<span class="meta">m</span>{/if}
+          </div>
+        {/each}
+        <div class="row">
+          <Field kind="checkbox" label="Show only my corp, alliance and high-standing fleets"
+            value={shown("finder_group_only") === "1"}
+            disabled={unavailable("finder_group_only")} disabledReason={NOT_EDITABLE}
+            onchange={(e) => setFormationField("finder_group_only", checked(e) ? "1" : "0")} />
+        </div>
+      </div>
+      <p class="meta">Saved fleet setups live on CCP's servers and can't be edited here.</p>
     {/if}
   </Panel>
 </div>
