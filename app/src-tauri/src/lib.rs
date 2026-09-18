@@ -153,6 +153,15 @@ async fn refresh_character_names(
 }
 
 #[tauri::command]
+async fn lookup_character(app: tauri::AppHandle, query: String) -> Result<Option<names::Found>, ErrDto> {
+    let dir = app_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || names::lookup_blocking(&dir, &query))
+        .await
+        .map_err(|e| ErrDto::new("esi", e.to_string()))?
+        .map_err(|e| ErrDto::new("esi", e.0))
+}
+
+#[tauri::command]
 async fn check_for_update() -> Result<Option<update::Update>, String> {
     tauri::async_runtime::spawn_blocking(update::check_blocking)
         .await
@@ -697,7 +706,7 @@ pub fn run() {
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             undo, redo, undo_state,
-            window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
+            window_layout, resolve_character_names, refresh_character_names, lookup_character, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
             launcher_proposals,
             begin_capture, resolve_capture, clear_capture,

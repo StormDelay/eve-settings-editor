@@ -64,6 +64,51 @@ struct EsiName {
     name: String,
 }
 
+/// A character the lookup found — by name or by id — for the watch list's
+/// "Add a character" row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Found {
+    pub id: u64,
+    pub name: String,
+}
+
+/// The `characters` half of an ESI `/universe/ids` body. ESI omits a category
+/// with no hits, so the field defaults.
+#[derive(Debug, Deserialize)]
+struct EsiIds {
+    #[serde(default)]
+    characters: Vec<EsiIdEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EsiIdEntry {
+    id: u64,
+    name: String,
+}
+
+const ESI_IDS_URL: &str = "https://esi.evetech.net/latest/universe/ids/";
+
+fn parse_ids(bytes: &[u8]) -> Result<Option<Found>, FetchError> {
+    let ids: EsiIds = serde_json::from_slice(bytes).map_err(|e| FetchError(e.to_string()))?;
+    Ok(ids.characters.into_iter().next().map(|e| Found { id: e.id, name: e.name }))
+}
+
+/// One POST of a single name to ESI `/universe/ids`. An exact, case-insensitive
+/// match on ESI's side; `Ok(None)` when no character has that name.
+fn post_ids(client: &reqwest::blocking::Client, name: &str) -> Result<Option<Found>, FetchError> {
+    let resp = client
+        .post(ESI_IDS_URL)
+        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
+        .json(&[name])
+        .send()
+        .map_err(|e| FetchError(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(FetchError(format!("ESI status {}", resp.status())));
+    }
+    let bytes = resp.bytes().map_err(|e| FetchError(e.to_string()))?;
+    parse_ids(&bytes)
+}
+
 /// The (deduplicated) ids that must be fetched: cache misses, or every id when
 /// `refetch_all` (a manual refresh that ignores existing cache entries).
 fn needed(ids: &[u64], cache: &Cache, refetch_all: bool) -> Vec<u64> {
@@ -216,6 +261,55 @@ where
 /// call it from a worker thread.
 pub fn resolve_blocking(dir: &Path, ids: &[u64], refetch_all: bool) -> Cache {
     resolve_with(dir, ids, refetch_all, esi_fetch)
+}
+
+/// Find a character by name or id, cache first. A numeric query goes through
+/// the names endpoint (cache, then `fetch_names`) and counts only if ESI calls
+/// it a character; a name is looked up in the cache case-insensitively, then
+/// through `fetch_ids`, and a hit is written into the same cache so both
+/// directions are answered without a call from then on. `Err` is a transport
+/// failure — distinct from `Ok(None)`, "no such character" — so the UI can say
+/// which. Both fetchers are injected so this unit-tests without the network.
+fn lookup_with<N, I>(dir: &Path, query: &str, fetch_names: N, fetch_ids: I) -> Result<Option<Found>, FetchError>
+where
+    N: FnOnce(&[u64]) -> Result<Vec<EsiName>, FetchError>,
+    I: FnOnce(&str) -> Result<Option<Found>, FetchError>,
+{
+    let q = query.trim();
+    let mut cache = load_cache(dir);
+    let as_found = |id: u64, n: &ResolvedName| {
+        (n.category == "character").then(|| Found { id, name: n.name.clone() })
+    };
+
+    if let Ok(id) = q.parse::<u64>() {
+        if let Some(n) = cache.get(&id) {
+            return Ok(as_found(id, n));
+        }
+        let fetched = fetch_names(&[id])?;
+        apply_fetch(&mut cache, fetched);
+        let _ = save_cache(dir, &cache);
+        return Ok(cache.get(&id).and_then(|n| as_found(id, n)));
+    }
+
+    if let Some((id, n)) = cache.iter().find(|(_, n)| n.category == "character" && n.name.eq_ignore_ascii_case(q)) {
+        return Ok(Some(Found { id: *id, name: n.name.clone() }));
+    }
+    let hit = fetch_ids(q)?;
+    if let Some(f) = &hit {
+        cache.insert(f.id, ResolvedName { name: f.name.clone(), category: "character".into() });
+        let _ = save_cache(dir, &cache);
+    }
+    Ok(hit)
+}
+
+/// Production wiring: `lookup_with` over the real ESI client. Blocking — call
+/// it from a worker thread.
+pub fn lookup_blocking(dir: &Path, query: &str) -> Result<Option<Found>, FetchError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| FetchError(e.to_string()))?;
+    lookup_with(dir, query, esi_fetch, |q| post_ids(&client, q))
 }
 
 #[cfg(test)]
@@ -440,5 +534,78 @@ mod tests {
         // A non-404 failure (transport/other) must abort → caller falls back to cache.
         let post = |_: &[u64]| PostOutcome::Failed("offline".into());
         assert!(salvage_resolve(&[1, 2], &post).is_err());
+    }
+
+    fn character(name: &str) -> ResolvedName {
+        ResolvedName { name: name.into(), category: "character".into() }
+    }
+    fn no_names(_: &[u64]) -> Result<Vec<EsiName>, FetchError> {
+        panic!("the names endpoint must not be asked")
+    }
+    fn no_ids(_: &str) -> Result<Option<Found>, FetchError> {
+        panic!("the ids endpoint must not be asked")
+    }
+
+    #[test]
+    fn lookup_by_name_hits_the_cache_case_insensitively_without_a_call() {
+        let dir = temp_dir("lookup-cache");
+        let mut cache = Cache::new();
+        cache.insert(96821229, character("Holy Storm"));
+        save_cache(&dir, &cache).unwrap();
+        let found = lookup_with(&dir, "holy storm", no_names, no_ids).unwrap();
+        assert_eq!(found, Some(Found { id: 96821229, name: "Holy Storm".into() }));
+    }
+
+    #[test]
+    fn lookup_by_name_asks_esi_on_a_miss_and_persists_the_answer() {
+        let dir = temp_dir("lookup-miss");
+        let found = lookup_with(&dir, "Farm Delay", no_names, |q| {
+            assert_eq!(q, "Farm Delay");
+            Ok(Some(Found { id: 2117000000, name: "Farm Delay".into() }))
+        })
+        .unwrap();
+        assert_eq!(found.as_ref().map(|f| f.id), Some(2117000000));
+        // Both directions are cached from now on.
+        assert_eq!(load_cache(&dir).get(&2117000000), Some(&character("Farm Delay")));
+        let again = lookup_with(&dir, "farm delay", no_names, no_ids).unwrap();
+        assert_eq!(again.map(|f| f.id), Some(2117000000));
+    }
+
+    #[test]
+    fn lookup_by_name_returns_none_when_esi_knows_nobody() {
+        let dir = temp_dir("lookup-none");
+        assert_eq!(lookup_with(&dir, "Nobody Here", no_names, |_| Ok(None)).unwrap(), None);
+        assert!(load_cache(&dir).is_empty(), "a miss is not cached");
+    }
+
+    #[test]
+    fn lookup_by_id_uses_the_names_endpoint_and_only_accepts_a_character() {
+        let dir = temp_dir("lookup-id");
+        let found = lookup_with(&dir, " 96821229 ", |ids| {
+            assert_eq!(ids, &[96821229]);
+            Ok(vec![EsiName { category: "character".into(), id: 96821229, name: "Holy Storm".into() }])
+        }, no_ids)
+        .unwrap();
+        assert_eq!(found, Some(Found { id: 96821229, name: "Holy Storm".into() }));
+        // Cached: the second ask makes no call.
+        assert_eq!(lookup_with(&dir, "96821229", no_names, no_ids).unwrap().map(|f| f.name), Some("Holy Storm".into()));
+        // A corporation id resolves to a name ESI is happy with, but it is not a character.
+        let corp = lookup_with(&dir, "98000001", |_| Ok(vec![EsiName { category: "corporation".into(), id: 98000001, name: "Corp".into() }]), no_ids).unwrap();
+        assert_eq!(corp, None);
+    }
+
+    #[test]
+    fn a_transport_failure_is_an_error_not_a_miss() {
+        let dir = temp_dir("lookup-offline");
+        assert!(lookup_with(&dir, "Someone", no_names, |_| Err(FetchError("offline".into()))).is_err());
+        assert!(lookup_with(&dir, "12345", |_| Err(FetchError("offline".into())), no_ids).is_err());
+    }
+
+    #[test]
+    fn parse_ids_reads_the_characters_array_and_tolerates_its_absence() {
+        let body = br#"{"characters":[{"id":96821229,"name":"Holy Storm"}],"corporations":[{"id":1,"name":"x"}]}"#;
+        assert_eq!(parse_ids(body).unwrap(), Some(Found { id: 96821229, name: "Holy Storm".into() }));
+        assert_eq!(parse_ids(br#"{}"#).unwrap(), None);
+        assert!(parse_ids(b"not json").is_err());
     }
 }
