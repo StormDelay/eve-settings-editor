@@ -166,6 +166,10 @@ describe("the undo boundary (05b §8)", () => {
     "OverviewFiltersTab.svelte",
     "LayoutView.svelte",
     "NeocomButtons.svelte",
+    // `set_watchlist_colour` routes through the same `edit_reshared` undo-stack
+    // push as every other mutating command (`app/src-tauri/src/ops.rs`), so a
+    // watch-list add is exactly as undoable as a mutation.
+    "FleetView.svelte",
     "undo.svelte.ts",
   ];
 
