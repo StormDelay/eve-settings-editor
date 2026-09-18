@@ -170,6 +170,42 @@ export interface Hud {
   entries: HudEntry[];
 }
 
+export type Rgb = [number, number, number];
+/** A broadcast colour's three wire states, plus the one the backend refuses to
+ *  touch. `absent` shows the type's default; `cleared` is EVE's ✕. */
+export type Colour =
+  | { state: "absent" }
+  | { state: "cleared" }
+  | { state: "set"; rgb: Rgb }
+  | { state: "unreadable" };
+export interface ColourEntry {
+  broadcast: string;
+  state: Colour;
+  /** What EVE shows when no key is stored — a colour for four types, none for the rest. */
+  default: Rgb | null;
+}
+export interface WatchEntry {
+  char_id: number;
+  /** null when the stored value is not three numbers — shown as unreadable, removable only. */
+  rgb: Rgb | null;
+}
+export interface Fleet {
+  /** The scalars, in HudEntry's shape: `listen_<Type>`, `listen_show_own`,
+   *  `formation`, `formation_size`, `formation_spacing`, `finder_group_only`. */
+  fields: HudEntry[];
+  /** Sixteen entries, EVE's row order. */
+  colours: ColourEntry[];
+  watchlist: WatchEntry[];
+  /** EVE's nine swatches, `[name, rgb]`. */
+  palette: [string, Rgb][];
+  char_open: boolean;
+  user_open: boolean;
+}
+export interface FoundCharacter {
+  id: number;
+  name: string;
+}
+
 export type StackRole = "container" | "member";
 export interface StackRef {
   container_id: string;
@@ -405,7 +441,7 @@ export interface BatchTargetResult {
   error: string | null;
 }
 
-export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "probe_formations" | "everything";
+export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "probe_formations" | "fleet" | "everything";
 export interface CharWrite {
   char_id: number;
   path: string;
@@ -481,6 +517,17 @@ export const api = {
   hud: () => invoke<Hud>("hud_layout"),
   setHudValue: (name: string, text: string) =>
     invoke<Hud>("set_hud_value", { name, text }),
+  fleet: () => invoke<Fleet>("fleet_settings"),
+  setFleetField: (name: string, text: string) =>
+    invoke<Fleet>("set_fleet_field", { name, text }),
+  setFleetColour: (broadcast: string, rgb: Rgb | null) =>
+    invoke<Fleet>("set_fleet_colour", { broadcast, rgb }),
+  setWatchlistColour: (charId: number, rgb: Rgb | null) =>
+    invoke<Fleet>("set_watchlist_colour", { charId, rgb }),
+  /** `null` when ESI knows no character by that name or id; rejects with code
+   *  `esi` when ESI could not be reached — the two read differently to the user. */
+  lookupCharacter: (query: string) =>
+    invoke<FoundCharacter | null>("lookup_character", { query }),
   resolveCharacterNames: (ids: number[]) =>
     invoke<NameMap>("resolve_character_names", { ids }),
   refreshCharacterNames: (ids: number[]) =>

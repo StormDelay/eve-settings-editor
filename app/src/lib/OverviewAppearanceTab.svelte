@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, errMessage, errText, type OverviewColumns, type Rgba } from "./api";
+  import { snapToPalette } from "./colour";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import {
     stateLabel, rgbaToHex, hexToRgba, moveInOrder, defaultColor,
@@ -121,12 +122,8 @@
   // Alpha isn't exposed; carry the stored one through so a non-1.0 entry keeps it.
   function setColor(id: number, hex: string) {
     const alpha = colors.get(id)?.[3] ?? 1;
-    // A hex inverts to n/255 — #bf0000 gives 0.74901…, not the 0.75 EVE stores
-    // for `red` — so picking a palette colour off the swatch would still write
-    // something no pack export could name. When the hex IS a known palette
-    // colour's hex, write that palette entry's exact floats instead. Nothing
-    // visible changes: both render as the same #rrggbb.
-    const exact = palette.find(([, p]) => rgbaToHex(p) === hex)?.[1];
+    // See colour.ts for why a palette hex must write the palette's exact floats.
+    const exact = snapToPalette(hex, palette);
     const rgba: Rgba = exact ? [exact[0], exact[1], exact[2], alpha] : hexToRgba(hex, alpha);
     return edit(() => api.overviewSetStateColor(isBg ? "background" : "flag", id, rgba));
   }
