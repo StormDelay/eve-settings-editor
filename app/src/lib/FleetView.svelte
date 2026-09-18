@@ -141,17 +141,10 @@
               <!-- An unset swatch shows a placeholder and takes the one disabled
                    treatment, so "no colour" and "black" cannot be confused —
                    the appearance tab's convention. -->
-              <!-- `title` is computed here rather than left to Field's own
-                   disabled+disabledReason tooltip: Field passes a caller
-                   `title` through `...rest`, spread AFTER its own computed
-                   one, so a literal `title` always wins over disabledReason
-                   regardless of `disabled` — it has to already say the right
-                   thing for both states. -->
               <Field kind="color" list="fleet-palette" controlClass={rgb ? "" : "unset"}
                 value={rgb ? rgbToHex(rgb) : UNSET_HEX}
-                ariaLabel="Colour for {b.label}"
-                title={unreadable ? NOT_EDITABLE : rgb ? undefined : "No colour"}
-                disabled={unreadable}
+                ariaLabel="Colour for {b.label}" title={rgb ? undefined : "No colour"}
+                disabled={unreadable} disabledReason={NOT_EDITABLE}
                 onchange={(e) => pickColour(b.type, picked(e))} />
               <Button variant="ghost" size="sm" iconOnly title="No colour"
                 disabled={noColour(b.type)} disabledReason="Already no colour"
