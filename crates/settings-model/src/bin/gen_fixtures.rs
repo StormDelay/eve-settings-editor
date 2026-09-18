@@ -349,6 +349,19 @@ fn char_modern() -> Value {
             b("ui"),
             dict(vec![
                 (b("fightersDetachedPosition"), w(tup(vec![i(326), i(54)]))),
+                // Fleet: the formation trio, the finder toggle and a two-member
+                // watch list keyed by character id (spec 2026-09-18 §2.1).
+                (b("setFleetFormation"), w(i(0))),
+                (b("setFleetFormationSize"), w(i(20000))),
+                (b("setFleetFormationSpacing"), w(i(2000))),
+                (b("fleetfinder_showGroupAndHighStandingsFleets"), w(i(1))),
+                (
+                    b("fleet_watchlistcolors"),
+                    w(dict(vec![
+                        (i(1001131163), tup(vec![f(0.2), f(0.5), f(1.0)])),
+                        (i(1694010657), tup(vec![f(1.0), f(0.7), f(0.0)])),
+                    ])),
+                ),
                 // Per-tab overview column widths, keyed by a tuple whose first
                 // element repeats across every entry (so `reshare` interns it
                 // and the on-disk key becomes `(Ref, Int)`).
@@ -716,6 +729,43 @@ fn user_modern() -> Value {
         (b("shipuialigntop"), w(Value::Bool(true))),
         (b("detachFighterUI"), w(Value::Bool(true))),
         (b("displayFighterUI"), w(Value::Bool(true))),
+        // Fleet broadcast settings: every listen key (the client writes seven
+        // by itself and the rest only when toggled) and every colour key, one
+        // of them cleared to None the way EVE's ✕ writes it.
+        (b("listenBroadcast_ShowOwnBroadcasts"), w(i(1))),
+        (b("ShowOwnBroadcasts"), w(i(1))),
+        (b("listenBroadcast_HealArmor"), w(i(0))),
+        (b("listenBroadcast_HealCapacitor"), w(i(0))),
+        (b("listenBroadcast_NeedBackup"), w(i(0))),
+        (b("listenBroadcast_Target"), w(i(1))),
+        (b("listenBroadcast_HealShield"), w(i(0))),
+        (b("listenBroadcast_WarpTo"), w(i(1))),
+        (b("listenBroadcast_TravelTo"), w(i(1))),
+        (b("listenBroadcast_Event"), w(i(1))),
+        (b("listenBroadcast_JumpTo"), w(i(1))),
+        (b("listenBroadcast_AlignTo"), w(i(1))),
+        (b("listenBroadcast_HealTarget"), w(i(1))),
+        (b("listenBroadcast_InPosition"), w(i(1))),
+        (b("listenBroadcast_EnemySpotted"), w(i(1))),
+        (b("listenBroadcast_HoldPosition"), w(i(0))),
+        (b("listenBroadcast_JumpBeacon"), w(i(1))),
+        (b("listenBroadcast_Location"), w(i(1))),
+        (b("fleet_broadcastcolor_HealArmor"), w(tup(vec![f(0.1), f(0.6), f(0.1)]))),
+        (b("fleet_broadcastcolor_HealCapacitor"), w(tup(vec![f(1.0), f(0.7), f(0.0)]))),
+        (b("fleet_broadcastcolor_NeedBackup"), w(tup(vec![f(1.0), f(0.7), f(0.0)]))),
+        (b("fleet_broadcastcolor_Target"), w(tup(vec![f(0.75), f(0.0), f(0.0)]))),
+        (b("fleet_broadcastcolor_HealShield"), w(tup(vec![f(0.2), f(0.5), f(1.0)]))),
+        (b("fleet_broadcastcolor_WarpTo"), w(tup(vec![f(1.0), f(0.35), f(0.0)]))),
+        (b("fleet_broadcastcolor_TravelTo"), w(tup(vec![f(0.75), f(0.0), f(0.0)]))),
+        (b("fleet_broadcastcolor_Event"), w(tup(vec![f(0.1), f(0.6), f(0.1)]))),
+        (b("fleet_broadcastcolor_JumpTo"), w(tup(vec![f(0.0), f(0.63), f(0.57)]))),
+        (b("fleet_broadcastcolor_AlignTo"), w(tup(vec![f(0.2), f(0.5), f(1.0)]))),
+        (b("fleet_broadcastcolor_HealTarget"), w(tup(vec![f(0.0), f(0.15), f(0.6)]))),
+        (b("fleet_broadcastcolor_InPosition"), w(tup(vec![f(0.0), f(0.0), f(0.0)]))),
+        (b("fleet_broadcastcolor_EnemySpotted"), w(tup(vec![f(0.7), f(0.7), f(0.7)]))),
+        (b("fleet_broadcastcolor_HoldPosition"), w(tup(vec![f(1.0), f(0.7), f(0.0)]))),
+        (b("fleet_broadcastcolor_JumpBeacon"), w(tup(vec![f(1.0), f(0.35), f(0.0)]))),
+        (b("fleet_broadcastcolor_Location"), w(Value::None)),
         // The locked-target list, in its real section (`ui`, not `windows` —
         // see hud.rs). The pair is a FRACTION: y over the screen height, x over
         // the width right of the neocom, so 0.5442122186495176 = 1354/2488 is
