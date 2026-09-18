@@ -36,5 +36,6 @@ check(
   "a pruned preset lists what it holds",
   summarise(info("P", ["layout", "keybinds"])) === "Layout · Keybinds",
 );
+check("a fleet-only preset summarises as Fleet", summarise(info("W", ["fleet"])) === "Fleet");
 check("a broken preset summarises as unreadable", summarise({ ...info("B", []), error: "boom" }) === "unreadable");
 check("an empty preset says so", summarise(info("E", [])) === "empty");

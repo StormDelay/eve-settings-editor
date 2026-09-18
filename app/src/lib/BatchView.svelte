@@ -102,7 +102,7 @@
   const offered = $derived<Aspect[]>(
     sourceKind === "preset"
       ? (preset?.aspects ?? [])
-      : ["layout", "overview", "autofill", "keybinds", "probe_formations", "fleet", "everything"],
+      : ASPECT_LABELS.map((a) => a.key),
   );
 
   const batchSource = $derived<BatchSource | null>(

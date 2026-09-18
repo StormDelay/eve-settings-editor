@@ -126,6 +126,17 @@ describe("aspect selection", () => {
     await fireEvent.click(aspect("Window layout"));
     await waitFor(() => expect(aspect("Everything (full clone of both files)").checked).toBe(false));
   });
+
+  test("a character source offers Fleet, and ticking it sends aspects: [\"fleet\"] to setup_preview", async () => {
+    await mount();
+    expect(aspect("Fleet (broadcast settings, watch-list colours, formation)")).toBeTruthy();
+
+    await fireEvent.click(targetBox(90000002));
+    await fireEvent.click(aspect("Fleet (broadcast settings, watch-list colours, formation)"));
+    await waitFor(() => expect(calls.of("setup_preview").length).toBeGreaterThan(0));
+    const sent = calls.of("setup_preview").at(-1)!.args!;
+    expect(sent.aspects).toEqual(["fleet"]);
+  });
 });
 
 describe("which characters can be written", () => {
