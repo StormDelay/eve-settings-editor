@@ -73,6 +73,7 @@ export interface Ctx {
   showBatch: () => void;
   showAbout: () => void;
   showShortcuts: () => void;
+  showAiAccess: () => void;
   openPalette: () => void;
   findInView: () => void;
 }
@@ -215,6 +216,15 @@ export const COMMANDS: Command[] = [
     enabled: () => true,
     homes: [{ at: "app-menu" }],
     run: (ctx) => ctx.showShortcuts(),
+  },
+  {
+    id: "help.aiAccess",
+    label: "AI access…",
+    group: "Help",
+    keywords: "mcp claude assistant ai",
+    enabled: () => true,
+    homes: [{ at: "app-menu" }],
+    run: (ctx) => ctx.showAiAccess(),
   },
 ];
 
