@@ -12,7 +12,10 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt};
 use serde_json::{json, Map, Value};
 
-use crate::ops::{AppState, ErrDto, Slot};
+use settings_model::{discover, FileKind, Profile};
+
+use crate::accounts::{self, AccountRoster};
+use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::undo;
 
 pub struct EveMcp {
@@ -73,7 +76,6 @@ fn fail(e: ErrDto) -> Value {
 fn err(code: &str, message: impl Into<String>) -> Value {
     fail(ErrDto::new(code, message))
 }
-#[allow(dead_code)]
 fn ok<T: serde::Serialize>(v: T) -> ToolResult {
     serde_json::to_value(v).map_err(|e| err("serialize", e.to_string()))
 }
@@ -89,7 +91,6 @@ fn req<T: serde::de::DeserializeOwned>(args: &Args, key: &str) -> Result<T, Valu
     }
 }
 /// An optional argument. Absent and JSON null both mean "not given".
-#[allow(dead_code)]
 fn opt<T: serde::de::DeserializeOwned>(args: &Args, key: &str) -> Result<Option<T>, Value> {
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -126,6 +127,40 @@ fn tool_defs() -> Vec<ToolDef> {
             description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML). Call it before your first edit of a kind you have not done in this conversation.",
             schema: || obj(json!({ "topic": { "type": "string", "enum": TOPICS } }), &["topic"]),
         },
+        ToolDef {
+            name: "open",
+            description: "Open the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file adds column widths. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Opening replaces what was open and clears undo. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
+            schema: || obj(json!({
+                "char_id": { "type": "integer", "description": "Character id; resolves char_file and, if paired, user_file." },
+                "char_file": { "type": "string", "description": "Path to core_char_<id>.dat. Overrides char_id's lookup." },
+                "user_file": { "type": "string", "description": "Path to core_user_<id>.dat. Required unless char_id resolves it." }
+            }), &[]),
+        },
+        ToolDef {
+            name: "save",
+            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. Only edit a character that is logged out.",
+            schema: || obj(json!({
+                "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." }
+            }), &[]),
+        },
+        ToolDef {
+            name: "undo",
+            description: "Revert the last unsaved edit (one tool call = one step; a batch is one step). Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "list_backups",
+            description: "The backups of the open file in a slot, newest first. Every save and every restore creates one.",
+            schema: || obj(json!({ "slot": { "type": "string", "enum": ["char", "user"] } }), &["slot"]),
+        },
+        ToolDef {
+            name: "restore_backup",
+            description: "Replace the open file in a slot with a backup and reopen it. WRITES TO DISK IMMEDIATELY: the backup is checked to decode, the current file is backed up first (it becomes list_backups' newest entry), then replaced atomically. Unsaved edits in that slot are discarded.",
+            schema: || obj(json!({
+                "slot": { "type": "string", "enum": ["char", "user"] },
+                "backup_path": { "type": "string", "description": "A path from list_backups." }
+            }), &["slot", "backup_path"]),
+        },
     ]
 }
 
@@ -149,6 +184,11 @@ impl EveMcp {
         match name {
             "status" => self.status(),
             "eve_guide" => self.eve_guide(args),
+            "open" => self.open(args),
+            "save" => self.save(args),
+            "undo" => self.undo(),
+            "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
+            "restore_backup" => self.restore_backup(args),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -178,6 +218,101 @@ impl EveMcp {
         match primer(&topic) {
             Some(text) => Ok(json!({ "topic": topic, "text": text })),
             None => Err(err("unknown_topic", format!("no topic `{topic}`; one of {}", TOPICS.join(", ")))),
+        }
+    }
+}
+
+/// The character file with `char_id`, and the account file the roster pairs it
+/// with when that file sits in the same profile directory.
+fn locate(char_id: u64, profiles: &[Profile], roster: &AccountRoster) -> Option<(PathBuf, Option<PathBuf>)> {
+    let user_id = roster.accounts.iter().find(|a| a.characters.contains(&char_id)).map(|a| a.user_id);
+    profiles.iter().find_map(|p| {
+        let c = p.files.iter().find(|f| f.kind == FileKind::Char && f.id == Some(char_id))?;
+        let u = user_id
+            .and_then(|uid| p.files.iter().find(|f| f.kind == FileKind::User && f.id == Some(uid)))
+            .map(|f| f.path.clone());
+        Some((c.path.clone(), u))
+    })
+}
+
+fn open_slot(state: &AppState, slot: Slot, path: &str) -> Result<Value, Value> {
+    match ops::open_file(state, slot, path).map_err(fail)? {
+        OpenOutcome::Opened { path, fidelity, .. } => Ok(json!({ "path": path, "fidelity": fidelity })),
+        OpenOutcome::ParseFailed { path, offset, message, .. } => {
+            Err(err("parse_failed", format!("{path}: {message} at byte {offset}")))
+        }
+    }
+}
+
+impl EveMcp {
+    fn open(&self, args: &Args) -> ToolResult {
+        let char_id: Option<u64> = opt(args, "char_id")?;
+        let mut char_file: Option<String> = opt(args, "char_file")?;
+        let mut user_file: Option<String> = opt(args, "user_file")?;
+        if let Some(id) = char_id {
+            let profiles = discover(&self.roots);
+            let roster = accounts::load_roster(&self.roots, &self.dir);
+            let (c, u) = locate(id, &profiles, &roster).ok_or_else(|| {
+                err("unknown_character", format!("no core_char_{id}.dat in any profile; call list_characters"))
+            })?;
+            char_file.get_or_insert_with(|| c.to_string_lossy().into_owned());
+            if user_file.is_none() {
+                user_file = u.map(|p| p.to_string_lossy().into_owned());
+            }
+        }
+        let Some(user_file) = user_file else {
+            return Err(err(
+                "no_account_file",
+                "user_file is required: the account file (core_user_<id>.dat) holds presets and formations. list_characters shows which one pairs with a character, or its unpaired_accounts.",
+            ));
+        };
+        let user = open_slot(&self.state, Slot::User, &user_file)?;
+        let char = match char_file {
+            Some(p) => Some(open_slot(&self.state, Slot::Char, &p)?),
+            None => {
+                ops::close_file(&self.state, Slot::Char);
+                None
+            }
+        };
+        Ok(json!({ "char": char, "user": user }))
+    }
+
+    fn save(&self, args: &Args) -> ToolResult {
+        let force: bool = opt(args, "force")?.unwrap_or(false);
+        let mut saved = Vec::new();
+        let mut skipped = Vec::new();
+        for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
+            let Some(path) = self.doc_path(slot) else { continue };
+            if !self.state.history.lock().unwrap().dirty(slot) {
+                skipped.push(name);
+                continue;
+            }
+            let report = ops::save_document(&self.state, slot, force).map_err(|e| match e.code.as_str() {
+                "conflict" => err(
+                    "conflict",
+                    "the file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
+                ),
+                _ => fail(e),
+            })?;
+            saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path }));
+        }
+        Ok(json!({ "saved": saved, "skipped": skipped }))
+    }
+
+    fn undo(&self) -> ToolResult {
+        match undo::undo(&self.state) {
+            Some(_) => self.status(),
+            None => Err(err("nothing_to_undo", "the undo stack is empty")),
+        }
+    }
+
+    fn restore_backup(&self, args: &Args) -> ToolResult {
+        let slot: Slot = req(args, "slot")?;
+        let backup: String = req(args, "backup_path")?;
+        match ops::restore_backup(&self.state, slot, &backup).map_err(fail)? {
+            OpenOutcome::Opened { path, .. } => Ok(json!({ "path": path, "status": self.status()? })),
+            // Unreachable in practice: `restore` refuses a backup that does not decode.
+            OpenOutcome::ParseFailed { path, message, .. } => Err(err("parse_failed", format!("{path}: {message}"))),
         }
     }
 }
@@ -231,6 +366,133 @@ pub fn serve() {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    use crate::testkit::{b, temp_file};
+    use blue_marshal::{encode, Value as BmValue};
+    use std::path::PathBuf;
+
+    /// An account file with one overview tab named PvP, columns NAME (visible)
+    /// and TYPE (hidden). Mirrors `ops::tests::overview_user_bytes`.
+    fn overview_user_bytes() -> Vec<u8> {
+        let tab = BmValue::Dict(vec![
+            (BmValue::Str("name".into()), BmValue::Str("PvP".into())),
+            (b("tabColumnOrder"), BmValue::List(vec![b("NAME"), b("TYPE")])),
+            (b("tabColumns"), BmValue::List(vec![b("NAME")])),
+        ]);
+        encode(&BmValue::Dict(vec![(
+            b("overview"),
+            BmValue::Dict(vec![(
+                b("tabsettings_new"),
+                BmValue::Tuple(vec![BmValue::Long(vec![0u8; 8]), BmValue::Dict(vec![(BmValue::Int(0), tab)])]),
+            )]),
+        )]))
+        .unwrap()
+    }
+
+    /// A server with `bytes` written to a temp account file and opened in the
+    /// user slot.
+    fn open_user(bytes: &[u8]) -> (EveMcp, PathBuf) {
+        let path = temp_file("mcp", bytes);
+        let s = EveMcp::for_tests();
+        let mut a = Args::new();
+        a.insert("user_file".into(), json!(path.to_string_lossy()));
+        s.call("open", &a).unwrap();
+        (s, path)
+    }
+
+    fn args(v: Value) -> Args {
+        v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn open_requires_the_account_file() {
+        let s = EveMcp::for_tests();
+        let e = s.call("open", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "no_account_file");
+    }
+
+    #[test]
+    fn open_reports_both_slots_and_status_sees_them() {
+        let (s, path) = open_user(&overview_user_bytes());
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["user"]["path"], json!(path.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false);
+        assert_eq!(st["char"], Value::Null);
+    }
+
+    #[test]
+    fn open_of_an_undecodable_file_is_parse_failed() {
+        let path = temp_file("mcp-bad", &[0x7E, 0, 0, 0, 0, 0x3D]);
+        let s = EveMcp::for_tests();
+        let e = s.call("open", &args(json!({ "user_file": path.to_string_lossy() }))).unwrap_err();
+        assert_eq!(e["code"], "parse_failed");
+    }
+
+    #[test]
+    fn save_skips_a_clean_slot_and_writes_a_dirty_one_with_a_backup() {
+        let (s, path) = open_user(&overview_user_bytes());
+        let v = s.call("save", &Args::new()).unwrap();
+        assert_eq!(v["saved"], json!([]));
+        assert_eq!(v["skipped"], json!(["user"]));
+
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true);
+        let v = s.call("save", &Args::new()).unwrap();
+        assert_eq!(v["saved"][0]["slot"], "user");
+        assert_eq!(v["saved"][0]["path"], json!(path.to_string_lossy()));
+        assert!(PathBuf::from(v["saved"][0]["backup_path"].as_str().unwrap()).exists());
+        assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], false);
+    }
+
+    #[test]
+    fn save_conflict_is_an_error_until_forced() {
+        let (s, path) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        std::fs::write(&path, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
+        let e = s.call("save", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "conflict");
+        assert!(e["message"].as_str().unwrap().contains("force"));
+        s.call("save", &args(json!({ "force": true }))).unwrap();
+    }
+
+    #[test]
+    fn undo_reverts_an_edit_and_errors_on_an_empty_stack() {
+        let (s, _) = open_user(&overview_user_bytes());
+        assert_eq!(s.call("undo", &Args::new()).unwrap_err()["code"], "nothing_to_undo");
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        let st = s.call("undo", &Args::new()).unwrap();
+        assert_eq!(st["user"]["dirty"], false);
+        assert_eq!(st["can_undo"], false);
+    }
+
+    #[test]
+    fn list_backups_then_restore_puts_the_saved_bytes_back() {
+        let (s, path) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        s.call("save", &Args::new()).unwrap();
+        let backups = s.call("list_backups", &args(json!({ "slot": "user" }))).unwrap();
+        let newest = backups[0]["path"].as_str().unwrap().to_string();
+
+        let v = s.call("restore_backup", &args(json!({ "slot": "user", "backup_path": newest }))).unwrap();
+        assert_eq!(v["path"], json!(path.to_string_lossy()));
+        let oc = ops::overview_columns(&s.state).unwrap();
+        assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 1, "TYPE hidden again");
+    }
+
+    #[test]
+    fn locate_finds_the_char_file_and_its_paired_account_file() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic");
+        let profiles = settings_model::discover(&[root]);
+        let mut roster = crate::accounts::AccountRoster { accounts: vec![], unassigned: vec![] };
+        assert_eq!(locate(1, &profiles, &roster), None);
+        let (c, u) = locate(90000001, &profiles, &roster).expect("synthetic char 90000001");
+        assert!(c.ends_with("core_char_90000001.dat"));
+        assert_eq!(u, None, "no pairing without a roster entry");
+
+        roster.accounts.push(crate::accounts::AccountView { user_id: 80000001, alias: None, characters: vec![90000001] });
+        let (_, u) = locate(90000001, &profiles, &roster).unwrap();
+        assert!(u.unwrap().ends_with("core_user_80000001.dat"));
+    }
 
     #[test]
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
