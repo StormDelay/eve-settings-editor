@@ -1,6 +1,6 @@
 # MCP server (design)
 
-Status: designed 2026-09-19, not yet planned.
+Status: designed 2026-09-19, planned 2026-09-19 (docs/superpowers/plans/2026-09-19-mcp-server.md).
 
 Milestone context: an **MCP server** so a player can drive the editor through
 an AI client — "hide the Corporation column on my main's PvP tab", "add a
@@ -141,7 +141,7 @@ the decision here is only that no macro or schema generation is *used*.
 | `save` | `force?: bool` | `ops::save_document` per **dirty** slot | `{saved: [{slot, path, backup_path}], skipped: [slot]}`. `Conflict` → error `conflict`: "the file changed on disk since it was opened (the EVE client or the editor wrote it) — ask the user before retrying with `force: true`". `ReadOnly` → error `read_only` with the reason. |
 | `undo` | — | `undo::undo` | `status` output; error `nothing_to_undo` when the stack is empty. One undo = one tool call's worth of change (a batch is one entry). |
 | `list_backups` | `slot` | `ops::list_file_backups` | the existing `BackupInfo` list |
-| `restore_backup` | `slot`, `backup_path` | `ops::restore_backup` | **Writes to disk immediately** (as the GUI): the backup is validated as decodable, the live file is backed up first, then replaced atomically and reopened. Returns `{path, pre_restore_backup}` + `status`. The description says all of that. |
+| `restore_backup` | `slot`, `backup_path` | `ops::restore_backup` | **Writes to disk immediately** (as the GUI): the backup is validated as decodable, the live file is backed up first, then replaced atomically and reopened. Returns `{path, status}`; the pre-restore backup is `list_backups`' newest entry (`ops::restore_backup` re-opens the file and does not return that path). The description says all of that. |
 
 ### 3.3 Overview tools (9)
 
@@ -467,7 +467,10 @@ Nothing in `crates/`, nothing in `ops.rs`.
 3. Manual, Windows: Register in the sheet, restart Claude Desktop, ask it to
    list characters, open one, hide a column on a named tab, save. The file's
    backup exists, the GUI opens the saved file with the column hidden, and the
-   GUI's own save afterwards is not blocked.
+   GUI's own save afterwards is not blocked. On a machine without Claude
+   Desktop, a scripted stdio run against the release exe on copies of the
+   synthetic fixtures stands in (see the plan's ledger); the model-in-the-loop
+   check is then done by the user after registering the server.
 4. Manual, macOS if a machine is available: the same, with the
    `Contents/MacOS` path in the snippet. Linux: the AppImage snippet shows the
    `$APPIMAGE` path.
