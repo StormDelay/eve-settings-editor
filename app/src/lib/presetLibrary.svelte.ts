@@ -15,6 +15,7 @@ const LABELS: Record<Aspect, string> = {
   autofill: "Autofill",
   keybinds: "Keybinds",
   probe_formations: "Probe formations",
+  fleet: "Fleet",
   everything: "Everything",
 };
 

@@ -28,10 +28,10 @@ const tab = (name: string) => screen.getByRole("tab", { name });
 const names = () => screen.getAllByRole("tab").map((t) => t.textContent?.trim());
 
 describe("with nothing open", () => {
-  test("all six render, five disabled, each with a reason", () => {
+  test("all seven render, six disabled, each with a reason", () => {
     mount();
-    expect(names()).toEqual(["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Raw"]);
-    for (const v of ["Layout", "Overview", "Autofill", "Keybinds", "Probes"]) {
+    expect(names()).toEqual(["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Fleet", "Raw"]);
+    for (const v of ["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Fleet"]) {
       expect(tab(v).getAttribute("aria-disabled")).toBe("true");
       expect(tab(v).getAttribute("title")).toBeTruthy();
     }

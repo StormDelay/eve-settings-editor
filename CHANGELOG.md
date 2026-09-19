@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A Fleet tab.** Edit EVE's broadcast settings — which broadcasts you receive and the colour each shows in — your watch list's per-character colours, and the fleet-warp formation, with EVE's own nine-colour palette.
+- **Add a watch-list colour for any character by name or ID**, looked up through ESI.
+- **Fleet is a copy aspect.** Copy settings and presets can carry one character's broadcast settings, watch-list colours and formation onto others.
+
 ## [0.36.0] - 2026-09-11
 
 The editor now tells you when a newer version is out.

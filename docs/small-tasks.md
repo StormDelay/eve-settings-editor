@@ -13,6 +13,20 @@ Workflow:
 
 ## Open
 
+- [ ] **Fleet → Formation edits the formation as a bare numeric id.** The
+  owner flagged it on the 2026-09-19 look at the shipped Fleet tab: a number
+  field labelled "Formation" says nothing about which fleet-warp formation `0`,
+  `1` or `3` is. The in-game names were never captured — the corpus holds `0` in
+  222 of 225 files, `1` once and `3` twice — so the spec (§2.7) deliberately
+  shipped the id as a number rather than guess labels. Fix shape: capture the
+  formation panel's dropdown in-game (one screenshot of the list, then pick
+  each entry once and read `setFleetFormation` back from the file, the way the
+  broadcast types were recovered), put the id → name table in
+  `app/src/lib/fleet.ts` beside `BROADCASTS`, and turn the field into a
+  `Field kind="select"` over it with the raw id as the fallback label for an
+  unknown value. Size and spacing stay numbers. _Added 2026-09-19 (fleet
+  editor live look)._
+
 - [x] **A failed launcher-log read is reported as "your logs say nothing".**
   `AccountsView.svelte:233` swallows the launcher read with `.catch(() => {})`
   and the `.finally` on the next line sets `launcherState.loaded = true`

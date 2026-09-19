@@ -243,12 +243,15 @@ ordered list of panel/mode pairs.
 `shiporbitabyssalspace` / `tactical`, `orbitCameraAutoTracking` (314) `Bool`,
 `sensorSuiteEnabled` (332) `Bool`.
 
-**Fleet.** `setFleetFormation` (280) `Int`, `setFleetFormationSize` (280) `Int`,
-`setFleetFormationSpacing` (278) `Int`, `fleet_watchlistcolors` (177) dict
-`{<charID>: colour}`, `fleetfinder_showGroupAndHighStandingsFleets` (292) `Int`,
+**Fleet.** Modelled by the app's Fleet view (`fleet.rs`): `setFleetFormation`
+(280) `Int`, `setFleetFormationSize` (280) `Int`, `setFleetFormationSpacing`
+(278) `Int`, `fleet_watchlistcolors` (177) dict `{<charID>: (r, g, b)}` — all
+keys `Int` so far, `Long` once ids pass 2³¹,
+`fleetfinder_showGroupAndHighStandingsFleets` (292) `Int`. Not modelled:
 `fleetAdvert_lastAdvert` (314) dict or `Instance(utillib.KeyVal)`,
 `fleetAdvert_lastAdvertAdvancedOptions` (236) dict of 8 fields,
-`fleetReconnect` (367) `None` or `Tuple(Long, Long)`.
+`fleetReconnect` (367) `None` or `Tuple(Long, Long)`, `fleetWathlistMemberInfo`
+(always `{}`).
 
 **Combat log formatting.** `damageMessages_config` (314) and
 `generalMessages_config` (314), both `Tuple(Int, Bytes align, Int, Int|Float)`.
@@ -685,8 +688,13 @@ saved probe arrangements from the scanner's formation menu.
   ids are signed, negative ids are not user formations, and anything reading the
   name must handle both `Bytes` and `Str` (§3 trap 5).
 
-**Fleet.** `listenBroadcast_{HealArmor,HealShield,HealCapacitor,Target,HoldPosition,InPosition,NeedBackup}`
-(`Int` 0/1), `fleet_broadcastcolor_<type>`, `fleetHistoryFilter`,
+**Fleet.** Modelled by the app's Fleet view (`fleet.rs`):
+`listenBroadcast_<Type>` (`Int` 0/1) for sixteen types — the client writes
+seven itself and the rest only when toggled — plus
+`listenBroadcast_ShowOwnBroadcasts` and a bare `ShowOwnBroadcasts` written
+together; `fleet_broadcastcolor_<Type>` for the same sixteen, `(r, g, b)` or
+`None` for EVE's ✕. The type tokens, defaults and palette floats are in the
+fleet editor spec §2. Not modelled (window state): `fleetHistoryFilter`,
 `fleetFinderBroadcastsVisible`, `fleetfinder_{scope,range,standing}Filter`,
 `updateOnBossChange`, `hideInfo`, `public`, `publicgood`, `corp`, `alliance`.
 

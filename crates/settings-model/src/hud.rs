@@ -59,14 +59,19 @@ pub struct Hud {
 /// One editable value. `elem` indexes into an `(x, y)` tuple; `None` means the
 /// leaf itself. Defaults are EVE's built-in behaviour when the key is absent
 /// (assumed, confirmed in the slice's live smoke).
-struct Field {
-    name: &'static str,
-    section: &'static [u8],
-    key: &'static [u8],
-    elem: Option<usize>,
-    kind: HudKind,
-    default: &'static str,
-    scope: HudScope,
+///
+/// Crate-visible because `fleet.rs` declares its own table and drives the same
+/// locate/mint machinery with it — the field table is a parameter now, not a
+/// module constant.
+#[derive(Clone, Copy)]
+pub(crate) struct Field {
+    pub(crate) name: &'static str,
+    pub(crate) section: &'static [u8],
+    pub(crate) key: &'static [u8],
+    pub(crate) elem: Option<usize>,
+    pub(crate) kind: HudKind,
+    pub(crate) default: &'static str,
+    pub(crate) scope: HudScope,
 }
 
 const FIELDS: [Field; 12] = [
@@ -131,23 +136,30 @@ const FIELDS: [Field; 12] = [
             elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
 ];
 
-pub fn project_hud(char_root: &Value, user_root: Option<&Value>) -> Hud {
+/// Project a field table against whichever documents are open. A `None` root
+/// leaves that side's fields `Unavailable` — no account file is normal (an
+/// unpaired character), and for the fleet table no character file is too.
+pub(crate) fn project_fields(
+    fields: &[Field],
+    char_root: Option<&Value>,
+    user_root: Option<&Value>,
+) -> Vec<HudEntry> {
     let mut char_shared = SharedTable::new();
-    collect_shared(char_root, &mut char_shared);
+    if let Some(c) = char_root {
+        collect_shared(c, &mut char_shared);
+    }
     let mut user_shared = SharedTable::new();
     if let Some(u) = user_root {
         collect_shared(u, &mut user_shared);
     }
 
-    let entries = FIELDS
+    fields
         .iter()
         .map(|f| {
             let (root, shared) = match f.scope {
-                HudScope::Char => (Some(char_root), &char_shared),
+                HudScope::Char => (char_root, &char_shared),
                 HudScope::Account => (user_root, &user_shared),
             };
-            // No account file open is normal (an unpaired character): the account-
-            // scoped fields are then simply not writable.
             let (value, set) = root.map_or((None, SetTarget::Unavailable), |r| probe(r, f, shared));
             HudEntry {
                 name: f.name.to_string(),
@@ -158,8 +170,11 @@ pub fn project_hud(char_root: &Value, user_root: Option<&Value>) -> Hud {
                 set,
             }
         })
-        .collect();
-    Hud { entries }
+        .collect()
+}
+
+pub fn project_hud(char_root: &Value, user_root: Option<&Value>) -> Hud {
+    Hud { entries: project_fields(&FIELDS, Some(char_root), user_root) }
 }
 
 fn probe(root: &Value, f: &Field, shared: &SharedTable) -> (Option<String>, SetTarget) {
@@ -307,46 +322,59 @@ impl std::fmt::Display for HudError {
     }
 }
 
-/// Write one HUD field. An existing key is overwritten in place (no reshare
-/// needed — a scalar edit is not structural). An absent key is minted as the
-/// `(timestamp, value)` leaf real files use, which needs `inline_all` first per
-/// the house rule; the caller (`ops`) reshares afterwards.
+/// Write one field of `fields` by name. An existing key is overwritten in
+/// place (no reshare needed — a scalar edit is not structural). An absent key
+/// is minted as the `(timestamp, value)` leaf real files use, which needs
+/// `inline_all` first per the house rule; the caller (`ops`) reshares
+/// afterwards. Returns `true` when any row MINTED, which is the only path that
+/// de-shares the document.
 ///
-/// Shares `locate`'s three-way decision with `probe` so the two can never
-/// disagree about whether a key is genuinely absent (safe to mint) or merely
-/// unreadable (must be refused, not duplicated).
-/// Write one HUD field. Returns `true` when the write MINTED an absent key,
-/// which is the only path that de-shares the document (`mint` inlines first) and
-/// so the only one whose caller must `reshare` before encoding. Overwriting a
-/// key that is already there sets one scalar in place and needs neither.
-pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<bool, HudError> {
-    let f = FIELDS
-        .iter()
-        .find(|f| f.name == name)
-        .ok_or_else(|| HudError::UnknownField(name.to_string()))?;
-
-    // Resolve the decision under an immutable borrow, then mutate.
-    let located = {
-        let mut shared = SharedTable::new();
-        collect_shared(root, &mut shared);
-        let (entries, base) = section(root, f.section, &shared).ok_or(HudError::NoSection)?;
-        locate(entries, &base, f, &shared)
-    };
-
-    match located {
-        Located::Writable(path, _) => {
-            let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
-            crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))?;
-            Ok(false)
-        }
-        Located::Unwritable => Err(HudError::NotEditable),
-        Located::Absent => mint(root, f, text).map(|_| true),
+/// Every row carrying `name` is written, in table order. HUD names are unique
+/// so this is one row; the fleet table has one name on two rows (the top
+/// checkbox of EVE's Broadcast Settings writes two keys) and this is what
+/// keeps them in step. A failure part-way is rolled back by `edit_reshared`.
+pub(crate) fn set_field(
+    fields: &[Field],
+    root: &mut Value,
+    name: &str,
+    text: &str,
+) -> Result<bool, HudError> {
+    let rows: Vec<&Field> = fields.iter().filter(|f| f.name == name).collect();
+    if rows.is_empty() {
+        return Err(HudError::UnknownField(name.to_string()));
     }
+    let mut minted = false;
+    for f in rows {
+        // Resolve the decision under an immutable borrow, then mutate.
+        let located = {
+            let mut shared = SharedTable::new();
+            collect_shared(root, &mut shared);
+            let (entries, base) = section(root, f.section, &shared).ok_or(HudError::NoSection)?;
+            locate(entries, &base, f, &shared)
+        };
+        match located {
+            Located::Writable(path, _) => {
+                let m = crate::mutate::Mutation::SetScalar { path, text: text.to_string() };
+                crate::mutate::apply(root, &m).map_err(|e| HudError::Parse(e.to_string()))?;
+            }
+            Located::Unwritable => return Err(HudError::NotEditable),
+            Located::Absent => {
+                mint(fields, root, f, text)?;
+                minted = true;
+            }
+        }
+    }
+    Ok(minted)
+}
+
+/// Write one HUD field. See `set_field` for the contract.
+pub fn set_hud_value(root: &mut Value, name: &str, text: &str) -> Result<bool, HudError> {
+    set_field(&FIELDS, root, name, text)
 }
 
 /// Insert the absent leaf. After `inline_all` every key is a plain byte-string,
 /// so this half needs no `Shared`/`Ref` resolution.
-fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
+fn mint(fields: &[Field], root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
     // Build the leaf value BEFORE touching the document: a rejected input
     // (HudError::Parse) must leave the document exactly as it was, not
     // partway de-shared by inline_all with no compensating reshare (the
@@ -357,7 +385,7 @@ fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
         Some(ix) => {
             // A point field mints the whole (x, y); the untouched axis takes the
             // sibling field's default.
-            let sibling = FIELDS
+            let sibling = fields
                 .iter()
                 .find(|o| o.section == f.section && o.key == f.key && o.elem != f.elem)
                 .expect("every point field has a sibling axis");
@@ -381,7 +409,7 @@ fn mint(root: &mut Value, f: &Field, text: &str) -> Result<(), HudError> {
 /// A top-level section's entries, mutably, by plain byte-string key. Only valid
 /// after `inline_all` (no `Ref`/`Shared` resolution — see `treewalk::section`
 /// for the read-only, sharing-aware counterpart used before that point).
-fn section_dict_mut<'a>(root: &'a mut Value, section: &[u8]) -> Option<&'a mut Entries> {
+pub(crate) fn section_dict_mut<'a>(root: &'a mut Value, section: &[u8]) -> Option<&'a mut Entries> {
     let Value::Dict(entries) = root else { return None };
     let (_, v) = entries.iter_mut().find(|(k, _)| is_bytes(k, section))?;
     match v {

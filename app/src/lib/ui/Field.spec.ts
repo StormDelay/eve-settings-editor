@@ -113,4 +113,21 @@ describe("Field", () => {
     expect(input.disabled).toBe(true);
     expect(input.getAttribute("title")).toBe("No file open");
   });
+
+  // `title` and `disabledReason` can both be supplied — a caller's own static
+  // tooltip, plus the reason to show only while disabled — and the reason has
+  // to win while disabled, the same precedence Button already uses. `title` is
+  // spread onto the control alongside every other prop, so this also pins that
+  // a caller's `title` cannot clobber the reason.
+  test("a disabled field's reason wins over its own title; an enabled one keeps its title", async () => {
+    const { rerender } = render(Field, {
+      label: "Width", value: "", disabled: true, disabledReason: "No file open", title: "Width in pixels",
+    });
+    expect(screen.getByLabelText("Width").getAttribute("title")).toBe("No file open");
+
+    await rerender({
+      label: "Width", value: "", disabled: false, disabledReason: "No file open", title: "Width in pixels",
+    });
+    expect(screen.getByLabelText("Width").getAttribute("title")).toBe("Width in pixels");
+  });
 });
