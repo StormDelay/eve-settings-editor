@@ -324,6 +324,56 @@ fn tool_defs() -> Vec<ToolDef> {
                 "on": { "type": "boolean" }
             })), &["ops"]),
         },
+        ToolDef {
+            name: "overview_pack_preview",
+            description: "Summarise an overview pack file (the YAML players share) without changing anything: which presets, tabs and appearance it carries. Preview before overview_pack_import.",
+            schema: || obj(json!({ "path": { "type": "string", "description": "Path to the .yaml pack file." } }), &["path"]),
+        },
+        ToolDef {
+            name: "overview_pack_import",
+            description: "Import an overview pack file into the open account: its presets, tabs and appearance replace or extend the current ones, as the editor's Import does. One undo step. Nothing reaches disk until save.",
+            schema: || obj(json!({ "path": { "type": "string" } }), &["path"]),
+        },
+        ToolDef {
+            name: "overview_pack_export",
+            description: "Write the open account's overview as a pack file others can import. Writes that YAML file only — the settings files are untouched. Returns what was included and any colour the pack format cannot name.",
+            schema: || obj(json!({ "path": { "type": "string", "description": "Where to write the .yaml file." } }), &["path"]),
+        },
+        ToolDef {
+            name: "probes_get",
+            description: "The open account's probe scanner formations: id, name, probes as [x, y, z] metre offsets from the formation centre (X and Z horizontal, Y up), and one scan range in metres per probe; plus the selected formation id if any. Needs the account file open.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "probes_set",
+            description: "Create a formation (omit id: next free id) or replace one (give id). 1 to 8 probes as [x, y, z] in METRES from the centre — not AU; 1 AU = 149597870700 m. X and Z are the horizontal plane, Y is up. ranges: one metre value per probe (0.5 AU = 74798935350 is the default; the ladder doubles 0.25 → 32 AU). Returns all formations. Nothing reaches disk until save. Unsure: eve_guide probes.",
+            schema: || obj(json!({
+                "id": { "type": "integer" },
+                "name": { "type": "string" },
+                "probes": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }, "minItems": 1, "maxItems": 8 },
+                "ranges": { "type": "array", "items": { "type": "number" }, "minItems": 1, "maxItems": 8 }
+            }), &["name", "probes", "ranges"]),
+        },
+        ToolDef {
+            name: "probes_remove",
+            description: "Delete a formation by id. Ids stay dense: later formations shift down. Returns all formations. Nothing reaches disk until save.",
+            schema: || obj(json!({ "id": { "type": "integer" } }), &["id"]),
+        },
+        ToolDef {
+            name: "probes_reorder",
+            description: "Reorder formations: order lists every current id in the wanted sequence; they are renumbered 0.. in that order (the in-game menu follows it). Returns all formations. Nothing reaches disk until save.",
+            schema: || obj(json!({ "order": { "type": "array", "items": { "type": "integer" } } }), &["order"]),
+        },
+        ToolDef {
+            name: "probes_add_yaml",
+            description: "Add formations from the editor's YAML exchange format (formations: - name, range or ranges, probes: [[x,y,z]…] in metres). Colliding names get a numeric suffix. Returns all formations. Nothing reaches disk until save. Unsure about the format: eve_guide probes.",
+            schema: || obj(json!({ "yaml": { "type": "string" } }), &["yaml"]),
+        },
+        ToolDef {
+            name: "probes_export_yaml",
+            description: "The open account's formations as the editor's YAML exchange text, to share or to edit and feed back through probes_add_yaml. Changes nothing.",
+            schema: || obj(json!({}), &[]),
+        },
     ]
 }
 
@@ -360,6 +410,26 @@ impl EveMcp {
             "overview_tabs_edit" => self.batch(args, tabs_op),
             "overview_presets_edit" => self.batch(args, presets_op),
             "overview_appearance_edit" => self.batch(args, appearance_op),
+            "overview_pack_preview" => ok(ops::pack_preview(&req::<String>(args, "path")?).map_err(fail)?),
+            "overview_pack_import" => ok(ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
+            "overview_pack_export" => ok(ops::pack_export(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
+            "probes_get" => ok(ops::probe_formations(&self.state).map_err(fail)?),
+            "probes_set" => ok(ops::set_probe_formation(&self.state, opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
+            "probes_remove" => ok(ops::remove_probe_formation(&self.state, req(args, "id")?).map_err(fail)?),
+            "probes_reorder" => ok(ops::reorder_probe_formations(&self.state, req(args, "order")?).map_err(fail)?),
+            "probes_add_yaml" => {
+                let specs = ops::probe_parse_yaml(&req::<String>(args, "yaml")?).map_err(fail)?;
+                ok(ops::add_probe_formations(&self.state, specs).map_err(fail)?)
+            }
+            "probes_export_yaml" => {
+                let f = ops::probe_formations(&self.state).map_err(fail)?;
+                let specs: Vec<settings_model::FormationSpec> = f
+                    .formations
+                    .into_iter()
+                    .map(|f| settings_model::FormationSpec { name: f.name, probes: f.probes, ranges: f.ranges })
+                    .collect();
+                Ok(json!({ "yaml": ops::probe_yaml(&specs) }))
+            }
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -1246,5 +1316,68 @@ mod tests {
         ]}))).unwrap_err();
         assert_eq!(e["code"], "missing_field");
         assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
+    }
+
+    fn empty_ui_bytes() -> Vec<u8> {
+        encode(&BmValue::Dict(vec![(b("ui"), BmValue::Dict(vec![]))])).unwrap()
+    }
+
+    #[test]
+    fn probes_set_creates_at_the_next_free_id_and_get_shows_it() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        let v = s.call("probes_set", &args(json!({ "name": "pair", "probes": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], "ranges": [1000.0, 2000.0] }))).unwrap();
+        assert_eq!(v["formations"][0]["id"], 0);
+        assert_eq!(v["formations"][0]["name"], "pair");
+        let v = s.call("probes_set", &args(json!({ "id": 0, "name": "renamed", "probes": [[1.0, 0.0, 0.0]], "ranges": [1000.0] }))).unwrap();
+        assert_eq!(v["formations"].as_array().unwrap().len(), 1);
+        assert_eq!(s.call("probes_get", &Args::new()).unwrap()["formations"][0]["name"], "renamed");
+    }
+
+    #[test]
+    fn probes_set_with_nine_probes_is_a_probe_error() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        let e = s.call("probes_set", &args(json!({ "name": "nine", "probes": vec![[0.0, 0.0, 0.0]; 9], "ranges": vec![1.0; 9] }))).unwrap_err();
+        assert!(e["message"].as_str().unwrap().contains("between 1 and 8"), "{e}");
+    }
+
+    #[test]
+    fn probes_export_yaml_then_add_yaml_round_trips_and_reorder_remove_work() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        s.call("probes_set", &args(json!({ "name": "a", "probes": [[1.0, 0.0, 0.0]], "ranges": [1000.0] }))).unwrap();
+        s.call("probes_set", &args(json!({ "name": "b", "probes": [[0.0, 1.0, 0.0]], "ranges": [2000.0] }))).unwrap();
+        let yaml = s.call("probes_export_yaml", &Args::new()).unwrap()["yaml"].as_str().unwrap().to_string();
+        assert!(yaml.contains("name: 'a'"));
+
+        let v = s.call("probes_add_yaml", &args(json!({ "yaml": yaml }))).unwrap();
+        let names: Vec<&str> = v["formations"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), 4, "two added, names de-duplicated: {names:?}");
+
+        let v = s.call("probes_reorder", &args(json!({ "order": [3, 2, 1, 0] }))).unwrap();
+        assert_eq!(v["formations"][0]["name"], names[3]);
+        let v = s.call("probes_remove", &args(json!({ "id": 0 }))).unwrap();
+        assert_eq!(v["formations"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn probes_add_yaml_rejects_text_that_is_not_a_formation_file() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        assert!(s.call("probes_add_yaml", &args(json!({ "yaml": "not: [a formation" }))).is_err());
+    }
+
+    #[test]
+    fn pack_preview_of_a_missing_file_is_an_error_and_export_then_preview_round_trips() {
+        let (s, _) = open_user(&overview_user_bytes());
+        assert!(s.call("overview_pack_preview", &args(json!({ "path": "Z:/nope.yaml" }))).is_err());
+        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25], vec![], vec![]).unwrap();
+        let out = std::env::temp_dir().join(format!("mcp-pack-{}.yaml", std::process::id()));
+        s.call("overview_pack_export", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
+        let preview = s.call("overview_pack_preview", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
+        // `PackSummary` carries section names and counts, not preset names --
+        // the pack's "presets" section is what proves the fork made it in.
+        assert!(
+            preview["sections"].as_array().unwrap().iter().any(|s| s[0] == "presets" && s[1] == 1),
+            "{preview}"
+        );
+        s.call("overview_pack_import", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
     }
 }
