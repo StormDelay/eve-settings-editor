@@ -252,7 +252,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "undo",
-            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot (status shows it). (one tool call = one step; a batch is one step). Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
+            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -581,12 +581,15 @@ impl EveMcp {
                 "user_file is required: the account file (core_user_<id>.dat) holds presets and formations. list_characters shows which one pairs with a character, or its unpaired_accounts.",
             ));
         };
-        // Clear both slots first: `open_file` leaves a slot untouched on an
-        // I/O error, so opening a new account beside a failed character open
-        // must not leave the PREVIOUS character paired with it.
-        ops::close_file(&self.state, Slot::Char);
-        ops::close_file(&self.state, Slot::User);
+        // Open the user slot FIRST: `open_file` replaces a slot on success
+        // but leaves it untouched on an io error, so a failing open here (a
+        // bad or missing path) returns via `?` with the previous session —
+        // BOTH slots — still intact.
         let user = open_slot(&self.state, Slot::User, &user_file)?;
+        // Only once the new account is open do we drop the old character:
+        // clearing it unconditionally before this point would discard a
+        // still-valid pairing if the user open above had failed.
+        ops::close_file(&self.state, Slot::Char);
         let char = match char_file {
             Some(p) => Some(open_slot(&self.state, Slot::Char, &p)?),
             None => None,
@@ -953,6 +956,27 @@ mod tests {
         assert_eq!(s.call("status", &Args::new()).unwrap()["char"], Value::Null);
     }
 
+    /// `open_file` leaves a slot untouched on an io error — a failing NEW
+    /// account open must not discard the session that was already open,
+    /// unsaved edits included.
+    #[test]
+    fn a_failed_account_open_leaves_the_previous_session_intact() {
+        let (s, path) = open_user(&overview_user_bytes());
+        let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
+        s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+
+        let e = s
+            .call("open", &args(json!({ "user_file": "Z:/no/such/core_user_1.dat", "char_file": cpath.to_string_lossy() })))
+            .unwrap_err();
+        assert_eq!(e["code"], "io");
+
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["user"]["path"], json!(path.to_string_lossy()), "the original account is still open");
+        assert_eq!(st["user"]["dirty"], true, "the unsaved edit survived");
+        assert_eq!(st["char"]["path"], json!(cpath.to_string_lossy()), "the original character is still open");
+    }
+
     #[test]
     fn open_of_an_undecodable_file_is_parse_failed() {
         let path = temp_file("mcp-bad", &[0x7E, 0, 0, 0, 0, 0x3D]);
@@ -1218,10 +1242,14 @@ mod tests {
             r#"{"version": null, "groups": {"25": {"id": 25, "name": "Frigate", "category_id": 6, "category_name": "Ship"}}}"#,
         )
         .unwrap();
-        let ids: Vec<i64> = group_catalog(&dir).iter().map(|g| g.id).collect();
-        let mut deduped = ids.clone();
-        deduped.dedup();
-        assert_eq!(ids.len(), deduped.len(), "id 25 must appear once: {ids:?}");
+        let rows = group_catalog(&dir);
+        // `Vec::dedup` only removes ADJACENT duplicates; the bundled id 25
+        // sits mid-catalog and the cache copy is appended at the end, so a
+        // set comparison is the check that actually fails without the
+        // production sort+dedup.
+        let ids: std::collections::HashSet<i64> = rows.iter().map(|g| g.id).collect();
+        assert_eq!(ids.len(), rows.len(), "duplicate id in {rows:?}");
+        assert_eq!(rows.iter().filter(|g| g.id == 25).count(), 1, "id 25 must appear exactly once: {rows:?}");
     }
 
     #[test]
