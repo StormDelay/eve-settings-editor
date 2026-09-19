@@ -2,6 +2,7 @@ mod accounts;
 mod groups;
 mod launcher;
 pub mod mcp;
+mod mcp_setup;
 mod names;
 mod ops;
 mod prefs;
@@ -745,6 +746,7 @@ pub fn run() {
             hud_layout, set_hud_value,
             fleet_settings, set_fleet_field, set_fleet_colour, set_watchlist_colour,
             preferences, set_preferences,
+            mcp_setup::mcp_setup_info, mcp_setup::mcp_set_claude_desktop,
             check_for_update
         ])
         .run(tauri::generate_context!())
