@@ -138,7 +138,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "save",
-            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. Only edit a character that is logged out.",
+            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
             schema: || obj(json!({
                 "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." }
             }), &[]),
@@ -244,6 +244,15 @@ fn open_slot(state: &AppState, slot: Slot, path: &str) -> Result<Value, Value> {
     }
 }
 
+/// The word a save error should use for a slot, matching how the tool
+/// descriptions already talk about the two files.
+fn slot_label(slot: Slot) -> &'static str {
+    match slot {
+        Slot::User => "account",
+        Slot::Char => "character",
+    }
+}
+
 impl EveMcp {
     fn open(&self, args: &Args) -> ToolResult {
         let char_id: Option<u64> = opt(args, "char_id")?;
@@ -287,14 +296,27 @@ impl EveMcp {
                 skipped.push(name);
                 continue;
             }
-            let report = ops::save_document(&self.state, slot, force).map_err(|e| match e.code.as_str() {
-                "conflict" => err(
-                    "conflict",
-                    "the file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
-                ),
-                _ => fail(e),
-            })?;
-            saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path }));
+            match ops::save_document(&self.state, slot, force) {
+                Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
+                // A slot after this one in the loop may never be tried — attach
+                // what already made it to disk, or the caller can't tell a
+                // half-saved batch from a save that touched nothing.
+                Err(e) => {
+                    let mut v = match e.code.as_str() {
+                        "conflict" => err(
+                            "conflict",
+                            format!(
+                                "the {} file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
+                                slot_label(slot)
+                            ),
+                        ),
+                        _ => err(&e.code, format!("{} file: {}", slot_label(slot), e.message)),
+                    };
+                    v["saved"] = json!(saved);
+                    v["skipped"] = json!(skipped);
+                    return Err(v);
+                }
+            }
         }
         Ok(json!({ "saved": saved, "skipped": skipped }))
     }
@@ -453,6 +475,40 @@ mod tests {
         assert_eq!(e["code"], "conflict");
         assert!(e["message"].as_str().unwrap().contains("force"));
         s.call("save", &args(json!({ "force": true }))).unwrap();
+    }
+
+    #[test]
+    fn save_reports_what_was_already_saved_when_a_later_slot_fails() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
+        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+
+        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::apply_mutation(
+            &s.state,
+            Slot::Char,
+            &settings_model::Mutation::InsertDictEntry {
+                parent: vec![],
+                key: settings_model::NewValue::Str("x".into()),
+                value: settings_model::NewValue::Int("1".into()),
+            },
+        )
+        .unwrap();
+
+        // The char file changes on disk after load, so its save conflicts —
+        // but only after the user slot already went through.
+        std::fs::write(&cpath, encode(&BmValue::Dict(vec![(b("k"), BmValue::Int(1))])).unwrap()).unwrap();
+
+        let e = s.call("save", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "conflict");
+        assert_eq!(e["saved"][0]["slot"], "user");
+        assert!(PathBuf::from(e["saved"][0]["backup_path"].as_str().unwrap()).exists());
+        assert!(e["message"].as_str().unwrap().contains("character"));
+
+        let v = s.call("save", &args(json!({ "force": true }))).unwrap();
+        assert_eq!(v["saved"].as_array().unwrap().len(), 1);
+        assert_eq!(v["saved"][0]["slot"], "char");
+        assert_eq!(v["skipped"], json!(["user"]));
     }
 
     #[test]
