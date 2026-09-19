@@ -463,6 +463,14 @@ fn remove_probe_formation(
 }
 
 #[tauri::command]
+fn reorder_probe_formations(
+    state: tauri::State<'_, AppState>,
+    order: Vec<i64>,
+) -> Result<settings_model::Formations, ErrDto> {
+    ops::reorder_probe_formations(&state, order)
+}
+
+#[tauri::command]
 fn probe_yaml(formations: Vec<settings_model::FormationSpec>) -> String {
     ops::probe_yaml(&formations)
 }
@@ -724,7 +732,7 @@ pub fn run() {
             settings_preset_delete, settings_preset_export, settings_preset_import,
             stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
-            probe_formations, set_probe_formation, remove_probe_formation,
+            probe_formations, set_probe_formation, remove_probe_formation, reorder_probe_formations,
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
             scene_list,
             hud_layout, set_hud_value,

@@ -302,7 +302,9 @@ pub fn set_formation(
         Some((_, slot)) => *slot = entry,
         None => d.push((Value::Int(id), entry)),
     }
-    Ok(())
+    // Every write leaves ids dense and in display order, so a create at any
+    // free id lands at the end of the list.
+    renumber(v, &[])
 }
 
 /// Delete a formation, repointing `selectedFormationID` when it named this one.
@@ -326,7 +328,60 @@ pub fn remove_formation(v: &mut Value, id: i64) -> Result<(), ProbeError> {
             set_selected(v, next)?;
         }
     }
-    Ok(())
+    // Close the gap the deletion left; the repointed selection follows.
+    renumber(v, &[])
+}
+
+/// Renumber the user formations to `0..n`: the ids in `order` first, in that
+/// order, then every other non-negative id ascending. The dict is rewritten in
+/// the same sequence, so id order and dict order agree — the client's menu
+/// follows the new order whichever of the two it sorts by. Negative ids (the
+/// `-4` scratch slot) keep their entries and their place ahead of the rest.
+/// `selectedFormationID` is remapped through the same old→new table.
+///
+/// Works on the STORED dict, not the projection, so an entry `read_formation`
+/// rejects is renumbered along with the rest rather than dropped. The document
+/// must be inlined.
+fn renumber(v: &mut Value, order: &[i64]) -> Result<(), ProbeError> {
+    let selected = project_formations(v).ok().and_then(|p| p.selected);
+    let d = formations_mut(v)?;
+    let (mut negatives, mut positives): (Vec<_>, Vec<_>) =
+        std::mem::take(d).into_iter().partition(|(k, _)| matches!(k, Value::Int(i) if *i < 0));
+    positives.sort_by_key(|(k, _)| match k { Value::Int(i) => *i, _ => i64::MAX });
+    let mut sequence: Vec<(Value, Value)> = Vec::with_capacity(positives.len());
+    for id in order {
+        if let Some(pos) = positives.iter().position(|(k, _)| matches!(k, Value::Int(i) if i == id)) {
+            sequence.push(positives.remove(pos));
+        }
+    }
+    sequence.append(&mut positives);
+    let mut remap = None;
+    for (new, (k, _)) in sequence.iter_mut().enumerate() {
+        if matches!(k, Value::Int(old) if Some(*old) == selected) {
+            remap = Some(new as i64);
+        }
+        *k = Value::Int(new as i64);
+    }
+    negatives.append(&mut sequence);
+    *d = negatives;
+    match remap {
+        Some(new) if Some(new) != selected => set_selected(v, new),
+        _ => Ok(()),
+    }
+}
+
+/// Put the user formations in `order`, which must name every readable
+/// formation exactly once. Ids become positions (see `renumber`).
+pub fn reorder_formations(v: &mut Value, order: &[i64]) -> Result<(), ProbeError> {
+    let mut have: Vec<i64> = project_formations(v)?.formations.iter().map(|f| f.id).collect();
+    let mut want = order.to_vec();
+    have.sort_unstable();
+    want.sort_unstable();
+    if have != want {
+        return Err(ProbeError::NoSuchFormation);
+    }
+    inline_all(v);
+    renumber(v, order)
 }
 
 /// The smallest unused id `>= 0`. Corpus ids are small and reused rather than
@@ -650,7 +705,10 @@ mod tests {
         let mut v = doc(); // selected = 0
         remove_formation(&mut v, 0).unwrap();
         let p = project_formations(&v).unwrap();
-        assert_eq!(p.selected, Some(1), "the selection must never name a deleted formation");
+        // The survivor is renumbered to 0 by the same write, so assert on the
+        // formation the selection names, not on the number.
+        let sel = p.formations.iter().find(|f| Some(f.id) == p.selected);
+        assert_eq!(sel.map(|f| f.name.as_str()), Some("on grid"), "the selection must never name a deleted formation");
     }
 
     #[test]
@@ -676,6 +734,80 @@ mod tests {
         assert_eq!(remove_formation(&mut v, 9), Err(ProbeError::NoSuchFormation));
         assert_eq!(remove_formation(&mut v, -4), Err(ProbeError::NoSuchFormation));
         assert!(stored(&v).iter().any(|(k, _)| matches!(k, Value::Int(-4))));
+    }
+
+    /// `(id, name)` per stored non-negative entry, in dict order — the shape
+    /// every compaction test asserts on.
+    fn ids_and_names(v: &Value) -> Vec<(i64, String)> {
+        let sh = SharedTable::new();
+        stored(v)
+            .iter()
+            .filter_map(|(k, e)| match (k, e) {
+                (Value::Int(i), Value::Tuple(t)) if *i >= 0 => Some((*i, text(&t[0], &sh).unwrap_or_default())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn removing_a_formation_closes_the_id_gap() {
+        let mut v = doc();
+        set_formation(&mut v, 2, "third", &[[1.0, 1.0, 1.0]], &[DEFAULT_RANGE]).unwrap();
+        remove_formation(&mut v, 1).unwrap();
+        assert_eq!(ids_and_names(&v), vec![(0, "close".into()), (1, "third".into())]);
+        assert!(stored(&v).iter().any(|(k, _)| matches!(k, Value::Int(-4))), "the scratch slot stays");
+    }
+
+    #[test]
+    fn a_create_beyond_the_end_compacts_to_the_next_position() {
+        let mut v = doc();
+        set_formation(&mut v, 7, "far", &[[1.0, 1.0, 1.0]], &[DEFAULT_RANGE]).unwrap();
+        assert_eq!(ids_and_names(&v), vec![(0, "close".into()), (1, "on grid".into()), (2, "far".into())]);
+    }
+
+    #[test]
+    fn reorder_assigns_ids_by_position_and_remaps_the_selection() {
+        let mut v = doc(); // selected = 0 "close"
+        reorder_formations(&mut v, &[1, 0]).unwrap();
+        // Dict order and id order agree, so the client's menu follows either.
+        assert_eq!(ids_and_names(&v), vec![(0, "on grid".into()), (1, "close".into())]);
+        let p = project_formations(&v).unwrap();
+        assert_eq!(p.selected, Some(1), "the selection follows \"close\" to its new id");
+    }
+
+    #[test]
+    fn reorder_leaves_the_scratch_slot_alone() {
+        let mut v = doc();
+        reorder_formations(&mut v, &[1, 0]).unwrap();
+        let scratch = stored(&v).iter().find(|(k, _)| matches!(k, Value::Int(-4))).expect("kept");
+        let Value::Tuple(t) = &scratch.1 else { panic!() };
+        assert_eq!(t[0], b("tempFormation"), "name stays Bytes, untouched");
+    }
+
+    #[test]
+    fn reorder_keeps_an_entry_the_projection_cannot_read() {
+        // An empty probe list is unreadable, so the UI never shows id 0 and a
+        // reorder cannot name it. It must still be in the file afterwards.
+        let mut v = Value::Dict(vec![(b("ui"), Value::Dict(vec![
+            (b("probescanning.customFormations"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Int(0), formation(Value::Str("broken".into()), vec![])),
+                (Value::Int(1), formation(Value::Str("b".into()), vec![probe(1.0, 0.0, 0.0, DEFAULT_RANGE)])),
+                (Value::Int(2), formation(Value::Str("c".into()), vec![probe(2.0, 0.0, 0.0, DEFAULT_RANGE)])),
+            ])])),
+        ]))]);
+        reorder_formations(&mut v, &[2, 1]).unwrap();
+        assert_eq!(ids_and_names(&v), vec![(0, "c".into()), (1, "b".into()), (2, "broken".into())]);
+    }
+
+    #[test]
+    fn reorder_rejects_a_wrong_id_set_and_leaves_the_document_untouched() {
+        let mut v = doc();
+        let before = v.clone();
+        assert_eq!(reorder_formations(&mut v, &[0]), Err(ProbeError::NoSuchFormation), "missing 1");
+        assert_eq!(reorder_formations(&mut v, &[0, 1, 9]), Err(ProbeError::NoSuchFormation), "unknown 9");
+        assert_eq!(reorder_formations(&mut v, &[0, 0]), Err(ProbeError::NoSuchFormation), "duplicate");
+        assert_eq!(reorder_formations(&mut v, &[0, -4]), Err(ProbeError::NoSuchFormation), "scratch slot");
+        assert_eq!(v, before);
     }
 
     #[test]

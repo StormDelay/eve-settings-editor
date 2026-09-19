@@ -682,6 +682,14 @@ saved probe arrangements from the scanner's formation menu.
   formation re-saved and rounded differently, not three formations. The
   location-dependent loss measured above is the likely cause, though this has not
   been tested at `"close"`'s scale.
+- **The editor keeps ids dense and equal to list position.** Nothing in the file
+  records an order, and nothing measures whether the client's menu sorts by id
+  or by dict order — so after every write the editor makes the two agree: user
+  ids are `0..n-1`, the dict is written in that sequence, `selectedFormationID`
+  follows its formation, and negative ids are left in place. A reorder is a
+  renumbering. **Confirmed in-game 2026-09-19:** the scanner's formation menu
+  follows the reordered file. Which of the two the client sorts by is still not
+  separated, and does not need to be while the editor keeps them equal.
 - **Id `-4` is a scratch slot, and its name is `Bytes`, not `Str`.** 4 files carry
   `-4: (b"tempFormation", …)` alongside `0`, holding coordinates within rounding
   distance of `"close"` — the client's copy of the formation being edited. So the
