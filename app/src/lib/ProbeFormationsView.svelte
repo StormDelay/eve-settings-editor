@@ -15,6 +15,7 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
+  import type { MenuItem } from "./ContextMenu.svelte";
 
   let { userOpen, userId = null, refreshToken = 0, onUserDirty, onShowAccounts = () => {} }:
     { userOpen: boolean; userId?: number | null; onUserDirty: () => void;
@@ -180,14 +181,17 @@
   }
 
   async function commit(id: number | null = selectedId) {
-    // `next_id` fills the lowest free gap, not the end of the list, so a
-    // freshly minted id can land in the MIDDLE of the sorted response — never
-    // identify it by position.
-    const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
+    // Every write renumbers ids to positions (probes.rs `renumber`), so a
+    // formation is identified by its POSITION across a save, never by the id
+    // it went in under: an edit keeps its index, a create is the last row.
+    const index = visibleIndex;
     try {
       loaded = await api.setProbeFormation(id, draftName, draftProbes, draftRanges);
       onUserDirty();
-      if (id === null) select(loaded.formations.find((f) => !before.has(f.id)) ?? null);
+      if (id === null) select(loaded.formations.at(-1) ?? null);
+      // Not `select`: the draft IS what was just saved, and re-syncing it
+      // would drop the probe the user has under the gizmo mid-edit.
+      else selectedId = loaded.formations[index]?.id ?? selectedId;
     } catch (e) {
       editorError = { text: `That formation wasn't saved — ${errText(e)}`, detail: errMessage(e) };
       await reload();
@@ -303,14 +307,42 @@
    * each caller reports under its own title. */
   async function addShared(specs: FormationSpec[]) {
     if (specs.length === 0) return;
-    const before = new Set(loaded?.formations.map((f) => f.id) ?? []);
     loaded = await api.addProbeFormations(specs);
     onUserDirty();
-    // next_id fills the lowest free gap, so an added formation can land in the
-    // MIDDLE of the sorted response — diff the ids rather than reading the end.
-    const added = loaded.formations.filter((f) => !before.has(f.id));
-    if (added.length) select(added[added.length - 1]);
+    // Added formations are the last rows: ids are positions after every write.
+    select(loaded.formations.at(-1) ?? null);
   }
+
+  /** Move the row at `from` to `to`. The backend takes the whole id sequence,
+   * renumbers ids to positions and carries the selection with its formation;
+   * the open formation's new id is wherever its old one landed in `order`. */
+  async function reorder(from: number, to: number) {
+    if (!loaded || from === to || to < 0 || to >= loaded.formations.length) return;
+    const order = loaded.formations.map((f) => f.id);
+    const [moved] = order.splice(from, 1);
+    order.splice(to, 0, moved);
+    const at = selectedId === null ? -1 : order.indexOf(selectedId);
+    try {
+      loaded = await api.reorderProbeFormations(order);
+      onUserDirty();
+      // Not `select`: the draft may hold uncommitted edits to the formation
+      // that just moved, and they must survive the move.
+      if (at >= 0) selectedId = loaded.formations[at]?.id ?? null;
+    } catch (e) {
+      listError = { text: `That formation wasn't moved — ${errText(e)}`, detail: errMessage(e) };
+    }
+  }
+
+  function rowMenu(i: number): MenuItem[] {
+    const last = (loaded?.formations.length ?? 0) - 1;
+    return [
+      { label: "Move up", run: () => reorder(i, i - 1), disabled: i === 0, hint: i === 0 ? "Already first" : undefined },
+      { label: "Move down", run: () => reorder(i, i + 1), disabled: i === last, hint: i === last ? "Already last" : undefined },
+    ];
+  }
+
+  // Drag, the fast route; the row menu is the keyboard one.
+  let drag = $state<number | null>(null);
 
   async function copyFormation() {
     if (visibleIndex < 0) return;
@@ -508,9 +540,25 @@
   <div class="probes">
     <aside class="formation-list">
       <ul>
-        {#each loaded.formations as f (f.id)}
+        {#each loaded.formations as f, i (f.id)}
           <li>
-            <ListRow selected={f.id === selectedId} onclick={() => select(f)}>{f.name}</ListRow>
+            <ListRow
+              selected={f.id === selectedId}
+              onclick={() => select(f)}
+              actions={rowMenu(i)}
+              draggable
+              ondragstart={(e: DragEvent) => {
+                drag = i;
+                // WebView2/Chromium won't fire `drop` unless dragstart sets data.
+                e.dataTransfer?.setData("text/plain", String(f.id));
+                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+              }}
+              ondragover={(e: DragEvent) => { e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+              ondrop={(e: DragEvent) => { e.preventDefault();
+                const from = drag; drag = null;
+                if (from !== null) reorder(from, i); }}
+              ondragend={() => (drag = null)}>{f.name}</ListRow>
           </li>
         {/each}
       </ul>
