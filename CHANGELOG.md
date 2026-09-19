@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.37.0] - 2026-09-19
 
-A Fleet tab: broadcasts, watch-list colours and formation.
+A Fleet tab, and probe formations you can reorder.
 
 ### Added
 - **A Fleet tab.** Edit EVE's broadcast settings — which broadcasts you receive and the colour each shows in — your watch list's per-character colours, and the fleet-warp formation, with EVE's own nine-colour palette.
