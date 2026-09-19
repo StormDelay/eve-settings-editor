@@ -187,6 +187,20 @@ fn obj(properties: Value, required: &[&str]) -> Value {
     json!({ "type": "object", "additionalProperties": false, "properties": properties, "required": required })
 }
 
+/// The item schema of a batched edit tool: `op` from `ops`, plus the union
+/// of every op's fields, all optional. Which op takes which field is in the
+/// tool description — that text is what the model reads.
+fn op_item(ops: &[&str], fields: Value) -> Value {
+    let mut props = fields;
+    props["op"] = json!({ "type": "string", "enum": ops });
+    json!({
+        "ops": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": false, "properties": props, "required": ["op"] }
+        }
+    })
+}
+
 /// One tool's wire definition. The description is what the model reads —
 /// it is the product; keep each under ~80 words (they load every turn).
 struct ToolDef {
@@ -266,6 +280,50 @@ fn tool_defs() -> Vec<ToolDef> {
                 "name": { "type": "string", "description": "e.g. \"Friendly: Fleet\" or \"Target Capsuleer: All\"." }
             }), &[]),
         },
+        ToolDef {
+            name: "overview_columns_edit",
+            description: "Edit a tab's columns, as a batch applied in order (one undo step; the first failure rolls everything back). Ops: set_visible {tab, column, visible}; set_order {tab, order: [column names, all of them]}; set_width {tab, column, width} (needs the character file); copy_columns {from_tab, to_tabs, order, visible, widths} (booleans choose what to copy). Column names as overview_get lists them. Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            schema: || obj(op_item(&["set_visible", "set_order", "set_width", "copy_columns"], json!({
+                "tab": { "type": "integer" }, "column": { "type": "string" }, "visible": { "type": "boolean" },
+                "order": { "type": "array", "items": { "type": "string" } }, "width": { "type": "integer" },
+                "from_tab": { "type": "integer" }, "to_tabs": { "type": "array", "items": { "type": "integer" } },
+                "widths": { "type": "boolean" }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "overview_tabs_edit",
+            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name}; delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window}; create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
+                "tab": { "type": "integer" }, "window": { "type": "integer" }, "name": { "type": "string" },
+                "from_tab": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer" } },
+                "from_window": { "type": "integer" }, "to_window": { "type": "integer" }, "pos": { "type": "integer" },
+                "preset": { "type": "string" }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "overview_presets_edit",
+            description: "Edit presets, as a batch (one undo step; first failure rolls back). Ops: create {from, name} (copy an existing preset); rename {name, new_name}; delete {name}; set_groups {name, groups: [group ids]}; set_states {name, filtered_states, always_shown_states}; fork {tab, name, groups, filtered_states, always_shown_states} (new preset from explicit lists — e.g. builtin_presets' — and point the tab at it). Group ids from groups_search; state ids from overview_get names.states. Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide presets.",
+            schema: || obj(op_item(&["create", "rename", "delete", "set_groups", "set_states", "fork"], json!({
+                "name": { "type": "string" }, "from": { "type": "string" }, "new_name": { "type": "string" },
+                "tab": { "type": "integer" },
+                "groups": { "type": "array", "items": { "type": "integer" } },
+                "filtered_states": { "type": "array", "items": { "type": "integer" } },
+                "always_shown_states": { "type": "array", "items": { "type": "integer" } }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "overview_appearance_edit",
+            description: "Edit overview appearance, as a batch (one undo step; first failure rolls back). Ops: set_states {list, ids} where list is background or flag (the enabled states) or backgroundOrder or flagOrder (priority order, first match wins); set_state_color {surface: background|flag, id, rgba?: [r,g,b,a] 0–1} (omit rgba to restore EVE's default); set_bool {key, on} for applyToStructures, applyToOtherObjects, useSmallColorTags, useSmallText, overviewBroadcastsToTop, hideCorpTicker. State ids and labels from overview_get names.states. Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide states.",
+            schema: || obj(op_item(&["set_states", "set_state_color", "set_bool"], json!({
+                "list": { "type": "string", "enum": ["background", "backgroundOrder", "flag", "flagOrder"] },
+                "ids": { "type": "array", "items": { "type": "integer" } },
+                "surface": { "type": "string", "enum": ["background", "flag"] },
+                "id": { "type": "integer" },
+                "rgba": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+                "key": { "type": "string", "enum": settings_model::OVERVIEW_BOOLS },
+                "on": { "type": "boolean" }
+            })), &["ops"]),
+        },
     ]
 }
 
@@ -298,6 +356,10 @@ impl EveMcp {
             "overview_get" => self.overview_get(),
             "groups_search" => self.groups_search(args),
             "builtin_presets" => self.builtin_presets(args),
+            "overview_columns_edit" => self.batch(args, columns_op),
+            "overview_tabs_edit" => self.batch(args, tabs_op),
+            "overview_presets_edit" => self.batch(args, presets_op),
+            "overview_appearance_edit" => self.batch(args, appearance_op),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -578,6 +640,94 @@ impl EveMcp {
                 format!("`{name}` matches {}; use a display_name", many.iter().map(|p| format!("\"{}\"", p.display_name)).collect::<Vec<_>>().join(", ")),
             )),
         }
+    }
+}
+
+fn unknown_op(op: &str) -> Value {
+    err("bad_arguments", format!("unknown op `{op}`"))
+}
+
+fn columns_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "set_visible" => ops::set_overview_visible(state, req(a, "tab")?, &req::<String>(a, "column")?, req(a, "visible")?),
+        "set_order" => ops::set_overview_order(state, req(a, "tab")?, req(a, "order")?),
+        "set_width" => ops::set_overview_width(state, req(a, "tab")?, &req::<String>(a, "column")?, req(a, "width")?),
+        "copy_columns" => ops::overview_copy_columns(state, req(a, "from_tab")?, req(a, "to_tabs")?, req(a, "order")?, req(a, "visible")?, req(a, "widths")?),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
+fn tabs_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "create" => ops::tab_create(state, req(a, "window")?, req(a, "name")?, opt(a, "from_tab")?),
+        "rename" => ops::tab_rename(state, req(a, "tab")?, req(a, "name")?),
+        "delete" => ops::tab_delete(state, req(a, "tab")?),
+        "reorder" => ops::tab_reorder(state, req(a, "window")?, req(a, "order")?),
+        "move" => ops::tab_move(state, req(a, "tab")?, req(a, "from_window")?, req(a, "to_window")?, req(a, "pos")?),
+        "set_preset" => ops::tab_set_preset(state, req(a, "tab")?, req(a, "preset")?),
+        "window_add" => ops::overview_window_add(state, req(a, "name")?, opt(a, "from_tab")?),
+        "window_remove" => ops::overview_window_remove(state, req(a, "window")?),
+        "create_window_mapping" => ops::overview_create_window_mapping(state),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
+fn presets_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "create" => ops::preset_create(state, req(a, "from")?, req(a, "name")?),
+        "rename" => ops::preset_rename(state, req(a, "name")?, req(a, "new_name")?),
+        "delete" => ops::preset_delete(state, req(a, "name")?),
+        "set_groups" => ops::preset_set_groups(state, req(a, "name")?, req(a, "groups")?),
+        "set_states" => ops::preset_set_states(state, req(a, "name")?, req(a, "filtered_states")?, req(a, "always_shown_states")?),
+        "fork" => ops::preset_fork(state, req(a, "tab")?, req(a, "name")?, req(a, "groups")?, req(a, "filtered_states")?, req(a, "always_shown_states")?),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
+fn appearance_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "set_states" => ops::overview_set_states(state, req(a, "list")?, req(a, "ids")?),
+        "set_state_color" => ops::overview_set_state_color(state, req(a, "surface")?, req(a, "id")?, opt(a, "rgba")?),
+        "set_bool" => ops::overview_set_bool(state, req(a, "key")?, req(a, "on")?),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
+impl EveMcp {
+    /// Apply `ops` in order under one undo group, so the batch is one undo
+    /// step and — because `edit_reshared` rolls an open group back on any
+    /// failing write — atomic. A failure carries the op's index.
+    fn batch(&self, args: &Args, apply: fn(&AppState, &Args) -> Result<(), Value>) -> ToolResult {
+        let ops_list: Vec<Args> = req(args, "ops")?;
+        {
+            let _group = undo::group(&self.state);
+            for (i, op) in ops_list.iter().enumerate() {
+                if let Err(mut e) = apply(&self.state, op) {
+                    // A write failure already rolled the group back inside
+                    // `edit_reshared`; a parse failure did not. `rollback_group`
+                    // is a no-op when nothing was written, so call it always.
+                    let mut u = self.state.user.lock().unwrap();
+                    let mut c = self.state.char.lock().unwrap();
+                    self.state.history.lock().unwrap().rollback_group(&mut u, &mut c);
+                    e["op_index"] = json!(i);
+                    return Err(e);
+                }
+            }
+        }
+        let oc = ops::overview_columns(&self.state).map_err(fail)?;
+        self.overview_with_names(oc)
     }
 }
 
@@ -976,5 +1126,125 @@ mod tests {
         assert_eq!(two["user_file"], Value::Null);
         let unpaired = p["unpaired_accounts"].as_array().unwrap();
         assert_eq!(unpaired.len(), 3, "80000002..4 have no character");
+    }
+
+    /// `undo::group` must be re-entrant: the batched tools wrap ops that open
+    /// their own group (copy_columns, tab_delete, window_add/remove), and an
+    /// inner guard's drop must not close the batch's group.
+    #[test]
+    fn a_nested_undo_group_rides_the_outer_one() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let before = undo::undo_state(&s.state).depth;
+        {
+            let _outer = undo::group(&s.state);
+            ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+            {
+                let _inner = undo::group(&s.state);
+                ops::set_overview_order(&s.state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+            }
+            ops::set_overview_visible(&s.state, 0, "TYPE", false).unwrap();
+        }
+        assert_eq!(undo::undo_state(&s.state).depth, before + 1, "three writes under one group, one entry");
+    }
+
+    fn visible_count(v: &Value) -> usize {
+        v["tabs"][0]["columns"].as_array().unwrap().iter().filter(|c| c["visible"] == true).count()
+    }
+
+    #[test]
+    fn columns_edit_applies_a_batch_as_one_undo_step() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let before = undo::undo_state(&s.state).depth;
+        let v = s.call("overview_columns_edit", &args(json!({ "ops": [
+            { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
+            { "op": "set_order", "tab": 0, "order": ["TYPE", "NAME"] }
+        ]}))).unwrap();
+        assert_eq!(visible_count(&v), 2);
+        assert_eq!(v["tabs"][0]["columns"][0]["name"], "TYPE");
+        assert_eq!(undo::undo_state(&s.state).depth, before + 1);
+        assert!(v["names"].is_object(), "edits return the same self-describing shape as overview_get");
+    }
+
+    #[test]
+    fn a_failing_op_rolls_the_whole_batch_back_and_names_its_index() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let before = s.call("overview_get", &Args::new()).unwrap();
+        let depth = undo::undo_state(&s.state).depth;
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [
+            { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
+            { "op": "set_visible", "tab": 99, "column": "TYPE", "visible": true }
+        ]}))).unwrap_err();
+        // An unknown COLUMN is not an error (`set_column_visible` adds it); an
+        // unknown TAB is `NoTab`, so that is the failing op.
+        assert_eq!(e["op_index"], 1);
+        assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
+        assert_eq!(undo::undo_state(&s.state).depth, depth);
+    }
+
+    #[test]
+    fn a_missing_op_field_names_the_op_and_field() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0 }] }))).unwrap_err();
+        assert_eq!(e["code"], "missing_field");
+        assert_eq!(e["op_index"], 0);
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "explode" }] }))).unwrap_err();
+        assert_eq!(e["code"], "bad_arguments");
+    }
+
+    #[test]
+    fn presets_edit_forks_a_builtin_onto_the_tab() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let fleet = s.call("builtin_presets", &args(json!({ "name": "Friendly: Fleet" }))).unwrap();
+        let v = s.call("overview_presets_edit", &args(json!({ "ops": [{
+            "op": "fork", "tab": 0, "name": "My Fleet",
+            "groups": fleet["groups"], "filtered_states": fleet["filtered_states"], "always_shown_states": fleet["always_shown_states"]
+        }]}))).unwrap();
+        assert_eq!(v["tabs"][0]["preset"], "My Fleet");
+        let p = v["presets"].as_array().unwrap().iter().find(|p| p["name"] == "My Fleet").unwrap();
+        assert_eq!(p["groups"], fleet["groups"]);
+        assert_eq!(p["filtered_states"], fleet["filtered_states"]);
+    }
+
+    #[test]
+    fn tabs_edit_creates_renames_and_deletes_in_one_batch() {
+        let (s, _) = open_user(&overview_user_bytes());
+        ops::overview_create_window_mapping(&s.state).unwrap();
+        let v = s.call("overview_tabs_edit", &args(json!({ "ops": [
+            { "op": "create", "window": 0, "name": "Mining", "from_tab": 0 },
+            { "op": "rename", "tab": 1, "name": "Rocks" }
+        ]}))).unwrap();
+        assert_eq!(v["tabs"].as_array().unwrap().len(), 2);
+        assert_eq!(v["tabs"][1]["name"], "Rocks");
+        let v = s.call("overview_tabs_edit", &args(json!({ "ops": [{ "op": "delete", "tab": 1 }] }))).unwrap();
+        assert_eq!(v["tabs"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn appearance_edit_sets_states_and_a_colour_then_clears_it() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let v = s.call("overview_appearance_edit", &args(json!({ "ops": [
+            { "op": "set_states", "list": "background", "ids": [11, 13] },
+            { "op": "set_state_color", "surface": "background", "id": 13, "rgba": [1.0, 0.0, 0.0, 1.0] },
+            { "op": "set_bool", "key": "useSmallText", "on": true }
+        ]}))).unwrap();
+        assert_eq!(v["appearance"]["background"]["enabled"], json!([11, 13]));
+        assert!(v["appearance"]["colors"].as_array().unwrap().iter().any(|c| c[0] == 13));
+        assert!(v["appearance"]["bools"].as_array().unwrap().iter().any(|b| b[0] == "useSmallText" && b[1] == true));
+        let v = s.call("overview_appearance_edit", &args(json!({ "ops": [
+            { "op": "set_state_color", "surface": "background", "id": 13 }
+        ]}))).unwrap();
+        assert!(!v["appearance"]["colors"].as_array().unwrap().iter().any(|c| c[0] == 13));
+    }
+
+    #[test]
+    fn a_parse_error_after_a_successful_op_still_rolls_the_batch_back() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let before = s.call("overview_get", &Args::new()).unwrap();
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [
+            { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
+            { "op": "set_order", "tab": 0 }
+        ]}))).unwrap_err();
+        assert_eq!(e["code"], "missing_field");
+        assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
     }
 }
