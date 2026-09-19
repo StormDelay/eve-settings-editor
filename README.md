@@ -26,6 +26,26 @@ from any backup.
   same kind, no account pairing needed.
 - **Raw tree editor** with search, for everything else.
 
+## AI access
+
+The app can be driven by an AI assistant through the
+[Model Context Protocol](https://modelcontextprotocol.io): the same executable
+started with `--mcp` is an MCP server exposing the overview and probe-formation
+editors. Every edit goes through the same backup → verify → atomic-write chain as
+the app itself, and nothing is written until the assistant saves.
+
+Open **AI access…** from the app menu. With Claude Desktop installed, **Register**
+adds the server to its config (restart Claude Desktop afterwards). For any other
+MCP client, copy the snippet shown there into the client's config — it is the
+standard `mcpServers` shape:
+
+```json
+{ "mcpServers": { "eve-settings-editor": { "command": "<path to the app>", "args": ["--mcp"] } } }
+```
+
+Edit a character only while it is logged out; the EVE client rewrites its
+settings on logout.
+
 ## Install
 
 Download the installer for your OS from the
