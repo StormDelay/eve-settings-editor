@@ -151,7 +151,7 @@ open; column widths additionally need `char`. Every edit returns
 
 | Tool | Input | Backed by |
 |---|---|---|
-| `overview_get` | — | `ops::overview_columns` + inlined names: `names: {states: {id: label}, groups: {id: name}}` for every state and group id the projection references. State labels from `overview-states.json` (`states` ∪ `exceptionStates`), group names from the bundled `overview-groups.json` plus the on-disk ESI delta cache (`groups::cached(dir)`, new, read-only). Both JSON files are `include_str!`-ed from `app/src/lib/data/`. |
+| `overview_get` | — | `ops::overview_columns` + inlined names: `names: {states: {id: label}, groups: {id: name}}` for every state and group id the projection references. State labels from `overview-states.json` (`states`), group names from the bundled `overview-groups.json` plus the on-disk ESI delta cache (`groups::cached(dir)`, new, read-only). Both JSON files are `include_str!`-ed from `app/src/lib/data/`. |
 | `groups_search` | `query`, `limit?` (default 50) | the same catalog: case-insensitive substring on group name **or** category name → `[{id, name, category}]`. No network. |
 | `overview_columns_edit` | `ops: [...]` | `set_visible {tab, column, visible}` → `set_overview_visible`; `set_order {tab, order}` → `set_overview_order`; `set_width {tab, column, width}` → `set_overview_width`; `copy_columns {from_tab, to_tabs, order, visible, widths}` → `overview_copy_columns` |
 | `overview_tabs_edit` | `ops: [...]` | `create {window, name, from_tab?}` → `tab_create`; `rename {tab, name}`; `delete {tab}`; `reorder {window, order}`; `move {tab, from_window, to_window, pos}`; `set_preset {tab, preset}`; `window_add {name, from_tab?}` → `overview_window_add`; `window_remove {window}`; `create_window_mapping {}` |
@@ -469,7 +469,7 @@ Nothing in `crates/`, nothing in `ops.rs`.
    backup exists, the GUI opens the saved file with the column hidden, and the
    GUI's own save afterwards is not blocked. On a machine without Claude
    Desktop, a scripted stdio run against the release exe on copies of the
-   synthetic fixtures stands in (see the plan's ledger); the model-in-the-loop
+   synthetic fixtures stands in; the model-in-the-loop
    check is then done by the user after registering the server.
 4. Manual, macOS if a machine is available: the same, with the
    `Contents/MacOS` path in the snippet. Linux: the AppImage snippet shows the

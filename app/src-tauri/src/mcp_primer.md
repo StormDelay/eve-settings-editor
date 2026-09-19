@@ -61,6 +61,8 @@ A state is a condition on a pilot or object. Ids and labels:
 - 53 — Pilot has a kill right on them that you can activate
 - 66 — Pilot has retribution timer
 
+Id 68 may appear in `order` lists without a label; the client never renders it — leave it in place.
+
 `appearance` in `overview_get` has two independent lists: `background` (the row's background colour) and `flag` (the small colour tag before the name). Each has `enabled` — the ticked states — and `order` — the priority: the first enabled state that applies wins. In `overview_appearance_edit`, `set_states` with `list` `background` or `flag` sets the enabled subset; `backgroundOrder` or `flagOrder` sets the priority order. `set_state_color` overrides one state's colour on one surface as `rgba` (four floats 0–1); omit `rgba` to return to EVE's default.
 
 ## probes
