@@ -78,6 +78,10 @@ fn group_catalog(dir: &Path) -> Vec<GroupRow> {
         .flat_map(|c| c.groups.into_iter().map(move |g| GroupRow { id: g.id, name: g.name, category: c.name.clone() }))
         .collect();
     rows.extend(groups::cached(dir).into_iter().map(|g| GroupRow { id: g.id, name: g.name, category: g.category_name }));
+    // A bundled group can also appear in the ESI delta cache (the delta
+    // widens over time) — keep one row per id.
+    rows.sort_by_key(|g| g.id);
+    rows.dedup_by_key(|g| g.id);
     rows
 }
 
@@ -142,6 +146,14 @@ fn primer_sections() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// Run blocking work off the tokio thread `serve()` drives the protocol on.
+/// `names::resolve_blocking` does reqwest::blocking I/O; on the runtime
+/// thread that panics in debug builds (a runtime dropped inside a runtime)
+/// and stalls the reader in release. A scoped thread keeps the borrow.
+fn off_runtime<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| s.spawn(work).join().expect("blocking worker panicked"))
+}
+
 fn primer(topic: &str) -> Option<&'static str> {
     primer_sections().into_iter().find(|(s, _)| *s == topic).map(|(_, b)| b)
 }
@@ -196,6 +208,7 @@ fn op_item(ops: &[&str], fields: Value) -> Value {
     json!({
         "ops": {
             "type": "array",
+            "minItems": 1,
             "items": { "type": "object", "additionalProperties": false, "properties": props, "required": ["op"] }
         }
     })
@@ -239,7 +252,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "undo",
-            description: "Revert the last unsaved edit (one tool call = one step; a batch is one step). Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
+            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot (status shows it). (one tool call = one step; a batch is one step). Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -292,7 +305,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "overview_tabs_edit",
-            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name}; delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window}; create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name}; delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
             schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
                 "tab": { "type": "integer" }, "window": { "type": "integer" }, "name": { "type": "string" },
                 "from_tab": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer" } },
@@ -411,7 +424,10 @@ impl EveMcp {
             "overview_presets_edit" => self.batch(args, presets_op),
             "overview_appearance_edit" => self.batch(args, appearance_op),
             "overview_pack_preview" => ok(ops::pack_preview(&req::<String>(args, "path")?).map_err(fail)?),
-            "overview_pack_import" => ok(ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
+            "overview_pack_import" => {
+                let r = ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?;
+                Ok(json!({ "columns": self.overview_with_names(r.columns)?, "report": r.report }))
+            }
             "overview_pack_export" => ok(ops::pack_export(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
             "probes_get" => ok(ops::probe_formations(&self.state).map_err(fail)?),
             "probes_set" => ok(ops::set_probe_formation(&self.state, opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
@@ -565,13 +581,15 @@ impl EveMcp {
                 "user_file is required: the account file (core_user_<id>.dat) holds presets and formations. list_characters shows which one pairs with a character, or its unpaired_accounts.",
             ));
         };
+        // Clear both slots first: `open_file` leaves a slot untouched on an
+        // I/O error, so opening a new account beside a failed character open
+        // must not leave the PREVIOUS character paired with it.
+        ops::close_file(&self.state, Slot::Char);
+        ops::close_file(&self.state, Slot::User);
         let user = open_slot(&self.state, Slot::User, &user_file)?;
         let char = match char_file {
             Some(p) => Some(open_slot(&self.state, Slot::Char, &p)?),
-            None => {
-                ops::close_file(&self.state, Slot::Char);
-                None
-            }
+            None => None,
         };
         Ok(json!({ "char": char, "user": user }))
     }
@@ -636,7 +654,7 @@ impl EveMcp {
             .flat_map(|p| p.files.iter().filter(|f| f.kind == FileKind::Char).filter_map(|f| f.id))
             .collect();
         // Cache first, ESI for the rest — the window's first launch does the same.
-        let names = names::resolve_blocking(&self.dir, &ids, false);
+        let names = off_runtime(|| names::resolve_blocking(&self.dir, &ids, false));
         Ok(characters(&profiles, &roster, &names))
     }
 
@@ -707,7 +725,7 @@ impl EveMcp {
             [] => Err(err("unknown_preset", format!("no built-in preset `{name}`; call builtin_presets without a name for the list"))),
             many => Err(err(
                 "ambiguous_preset",
-                format!("`{name}` matches {}; use a display_name", many.iter().map(|p| format!("\"{}\"", p.display_name)).collect::<Vec<_>>().join(", ")),
+                format!("`{name}` matches {}; use a display_name or key", many.iter().map(|p| format!("\"{}\"", p.display_name)).collect::<Vec<_>>().join(", ")),
             )),
         }
     }
@@ -888,6 +906,22 @@ mod tests {
         v.as_object().unwrap().clone()
     }
 
+    /// Dropping a tokio runtime inside `block_on` is the panic reqwest's
+    /// blocking client triggers in debug builds; `off_runtime` must make it
+    /// safe, because `list_characters` does exactly that for uncached names.
+    #[test]
+    fn blocking_work_runs_off_the_runtime_thread() {
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        rt.block_on(async {
+            let n = off_runtime(|| {
+                let inner = tokio::runtime::Builder::new_current_thread().build().unwrap();
+                drop(inner);
+                42
+            });
+            assert_eq!(n, 42);
+        });
+    }
+
     #[test]
     fn open_requires_the_account_file() {
         let s = EveMcp::for_tests();
@@ -902,6 +936,21 @@ mod tests {
         assert_eq!(st["user"]["path"], json!(path.to_string_lossy()));
         assert_eq!(st["user"]["dirty"], false);
         assert_eq!(st["char"], Value::Null);
+    }
+
+    #[test]
+    fn a_failed_char_reopen_does_not_leave_the_previous_character_paired() {
+        let (s, path) = open_user(&overview_user_bytes());
+        let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
+        s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
+        assert!(s.call("status", &Args::new()).unwrap()["char"].is_object());
+
+        let missing = cpath.with_file_name("does-not-exist.dat");
+        let e = s
+            .call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": missing.to_string_lossy() })))
+            .unwrap_err();
+        assert_eq!(e["code"], "io");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"], Value::Null);
     }
 
     #[test]
@@ -1158,6 +1207,24 @@ mod tests {
     }
 
     #[test]
+    fn group_catalog_returns_each_id_once_even_when_the_delta_cache_repeats_a_bundled_id() {
+        let dir = std::env::temp_dir().join(format!("mcp-groups-dedup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // id 25 ("Frigate") is already in the bundled overview-groups.json;
+        // the delta cache can also carry it (a widened delta over time).
+        std::fs::write(
+            dir.join("groups-cache.json"),
+            r#"{"version": null, "groups": {"25": {"id": 25, "name": "Frigate", "category_id": 6, "category_name": "Ship"}}}"#,
+        )
+        .unwrap();
+        let ids: Vec<i64> = group_catalog(&dir).iter().map(|g| g.id).collect();
+        let mut deduped = ids.clone();
+        deduped.dedup();
+        assert_eq!(ids.len(), deduped.len(), "id 25 must appear once: {ids:?}");
+    }
+
+    #[test]
     fn builtin_presets_lists_43_and_returns_one_by_display_name() {
         let s = EveMcp::for_tests();
         let all = s.call("builtin_presets", &Args::new()).unwrap();
@@ -1378,6 +1445,7 @@ mod tests {
             preview["sections"].as_array().unwrap().iter().any(|s| s[0] == "presets" && s[1] == 1),
             "{preview}"
         );
-        s.call("overview_pack_import", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
+        let v = s.call("overview_pack_import", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
+        assert!(v["columns"]["names"].is_object(), "the same self-describing shape as overview_get: {v}");
     }
 }
