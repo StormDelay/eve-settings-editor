@@ -47,7 +47,19 @@ fn initialize_then_tools_list() {
     writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
     let list = request(&mut stdin, &mut out, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
     assert_eq!(list["id"], 2, "{list}");
-    assert!(list["result"]["tools"].is_array(), "{list}");
+    let mut names: Vec<&str> =
+        list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "builtin_presets", "eve_guide", "groups_search", "list_backups", "list_characters", "open",
+            "overview_appearance_edit", "overview_columns_edit", "overview_get", "overview_pack_export",
+            "overview_pack_import", "overview_pack_preview", "overview_presets_edit", "overview_tabs_edit",
+            "probes_add_yaml", "probes_export_yaml", "probes_get", "probes_remove", "probes_reorder", "probes_set",
+            "restore_backup", "save", "status", "undo",
+        ]
+    );
 
     drop(stdin);
     let _ = child.wait();
