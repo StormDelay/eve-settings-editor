@@ -31,12 +31,13 @@ beat:
 | **Flat op schemas, no `oneOf`/`anyOf`** | Tagged-union op schemas | Gemini's function-calling subset and OpenAI strict mode don't reliably accept unions. Claude reads a flat `{op, …optional fields}` object just as well. |
 | **Catalogs as tools** (`groups_search`, names inlined in `overview_get`) | MCP resources | Several clients only implement tools. A search tool is also *better* than a 1500-row dump. |
 | **`rmcp`** (official Rust SDK) for transport + protocol | Hand-rolled JSON-RPC over stdio (~150 lines, zero deps) | The protocol still moves (version negotiation, capabilities, notifications); Claude Desktop is the strict client. Schemas stay hand-written (§3.1), so rmcp's macros and `schemars` are not used. |
+| **EVE context in layers**: `initialize.instructions` primer + `eve_guide(topic)` tool + self-describing data (§3.6) | Long tool descriptions; MCP resources | Descriptions are loaded every turn, so they stay terse; resources are not universal; a guide *tool* reaches every client and costs nothing until called. |
 
 ## 2. Architecture
 
 ```
 AI client ──stdio, JSON-RPC──▶ eve-settings-editor(.exe) --mcp
-                                  └─ mcp.rs        rmcp ServerHandler, 22 tools
+                                  └─ mcp.rs        rmcp ServerHandler, 24 tools, primer as `instructions`
                                        └─ ops::*   → settings-model → core_*.dat
                                        └─ names / accounts / groups  (app dir, read-mostly)
 ```
@@ -195,6 +196,66 @@ Baked into the tool text because the model has no other channel:
    `save`.
 5. **Group ids come from `groups_search`; state ids come from `overview_get`'s
    `names.states`.** In the presets and appearance tools.
+6. **Unsure about a concept: `eve_guide`.** The last sentence of every edit
+   tool's description.
+
+### 3.6 EVE context for the model
+
+The model knows EVE at player level — what a frigate is, what the overview
+does, what probes are. What it does not know is **this app's model of the
+files**, and the file semantics that are not obvious from the game. That is
+what the context carries, in three layers with different reach and cost:
+
+| Layer | Reach | Cost | Carries |
+|---|---|---|---|
+| Tool descriptions (§3.5) | every client | loaded every turn — 24 tools × ~80 words ≈ 2.5k tokens, so they stay terse | the rule that matters at that step; one worked `ops` example per edit tool |
+| `initialize.instructions` — MCP's server hint, which Claude Desktop and Claude Code inject as system context | most clients; some drop it | ~600 tokens/turn | the primer's first section: files, model, workflow |
+| `eve_guide(topic)` tool | every client | nothing until called | any one primer section, for depth and as the fallback where `instructions` is dropped |
+| Self-describing data | every client | only when fetched | `overview_get` inlines state labels and group names; ids never travel naked (§3.3) |
+
+**One source, two exposures.** `app/src-tauri/src/mcp_primer.md`, compiled
+in with `include_str!`, split on `## ` headings. The first section is the
+`instructions` text; `eve_guide(topic)` returns one section by its heading
+slug. Topics, and what each states:
+
+- `workflow` (the first section, doubles as `instructions`): `core_user_<id>`
+  is the **account** file — overview presets, appearance, probe formations
+  live there; `core_char_<id>` is the **character** file — column widths.
+  Hence `open` requires the account file. The sequence: `list_characters` →
+  `open` → `*_get` → edit → `save`. Rules 1–5 of §3.5, once.
+- `overview`: windows → tabs; each tab shows one **preset** by name and has its
+  own column order/visibility/widths. Tab indices are global across windows,
+  window indices are positional. Columns are named as `overview_get` lists
+  them.
+- `presets`: a preset = `groups` (object types by id — `groups_search`) +
+  `filtered_states` (a row shows *only if* one of these applies) +
+  `always_shown_states` (a row shows *regardless*). EVE ships built-in presets
+  ("Target Capsuleer: All", "Friendly: Fleet", …) that are not stored in the
+  file; `builtin_presets` returns their lists, and `overview_presets_edit`'s
+  `fork` op copies one onto a tab under a new name.
+- `states`: the state ids with their labels (from `overview-states.json`),
+  and that `background` and `flag` are two independent lists, each an enabled
+  subset plus a priority order where the first match wins.
+- `probes`: a formation is 1–8 probes (`MAX_PROBES`), offsets from the
+  formation centre in **metres, not AU** (1 AU = 149,597,870,700 m,
+  `M_PER_AU`), X and Z the horizontal plane, Y up; one scan range per probe,
+  also in metres; the default is 0.5 AU (`DEFAULT_RANGE`); the in-game
+  ladder doubles from 0.25 AU to 32 AU. A worked 7-probe spread in YAML, so
+  `probes_add_yaml` has a template.
+
+The primer is ~600 words in total; the `workflow` section is ~200. It is
+written from the overview and probe design specs and the constants named
+above — compilation, not research — and it is the only prose the model ever
+sees, so it is reviewed like UI copy.
+
+**Two tools this adds** (both need no slot open):
+
+| Tool | Input | Returns |
+|---|---|---|
+| `eve_guide` | `topic ∈ workflow \| overview \| presets \| states \| probes` (schema `enum`) | `{topic, text}` |
+| `builtin_presets` | `name?` | without `name`: `[{name, display_name, era}]` for every entry of `default-presets.json` (`modern` and `legacy`; display names from `default-preset-names.json`); with `name`: that preset's `{name, groups, filtered_states, always_shown_states}` — the three lists `fork` takes. Error `unknown_preset` otherwise. Both JSON files `include_str!`-ed from `app/src/lib/data/`. |
+
+Tool count is therefore 7 session + 9 overview + 6 probes + 2 context = **24**.
 
 ## 4. Portability
 
@@ -242,6 +303,11 @@ exe with `["--mcp"]`:
 
 `command` is an argv array in every one of these, so spaces in
 `C:\Program Files\EVE Settings Editor\…` and `…/Contents/MacOS/…` are fine.
+
+`initialize.instructions` is honoured by Claude Desktop and Claude Code and
+by most current clients, but it is a hint the client *may* surface; a client
+that drops it still gets the full primer through `eve_guide`, which every
+edit tool's description points at (§3.6).
 
 Per-call permission prompts are a client feature, not a protocol one: a
 full-auto agent will not ask before `save`. What holds regardless of client is
@@ -334,6 +400,15 @@ round-trip untouched. Errors: `not_installed` (no `Claude` dir), `io`,
   `save`: `conflict`, and `force: true` then saves.
 - `status` reports dirty flags and `can_undo` truthfully across an edit, an
   `undo`, and a `save`.
+- **Primer**: `mcp_primer.md` splits into exactly the five topics of §3.6, in
+  that order, each non-empty; `eve_guide` returns the section whose slug
+  matches and `unknown_topic` otherwise; the `instructions` string equals the
+  `workflow` section; and every state id in `overview-states.json` appears in
+  the `states` section (so the primer cannot drift from the catalog).
+- **Built-in presets**: `builtin_presets` without a name lists 43 entries
+  (36 modern + 7 legacy) each with a display name; with "Fleet" returns lists
+  equal to the catalog's; `overview_presets_edit` `fork` with those lists
+  produces a preset `overview_get` shows with the same three lists.
 - **Schema invariants**: for every tool — name matches `^[a-z][a-z0-9_]*$`,
   description non-empty, schema `type: object`, `additionalProperties: false`,
   `required ⊆ properties`, and the serialised schema contains none of
@@ -351,7 +426,8 @@ round-trip untouched. Errors: `not_installed` (no `Claude` dir), `io`,
 
 Integration (`app/src-tauri/tests/mcp_stdio.rs`): spawn
 `env!("CARGO_BIN_EXE_app")` with `--mcp`, send `initialize`,
-`notifications/initialized`, `tools/list`; assert the 22 tool names. Runs in
+`notifications/initialized`, `tools/list`; assert the 24 tool names and that
+`initialize` returned a non-empty `instructions`. Runs in
 `cargo test` on CI (Linux runner). Kept to the handshake on purpose — the
 tools themselves are covered without a process.
 
@@ -366,7 +442,8 @@ the command and re-render from its result, Copy writes the clipboard.
 | `app/src-tauri/Cargo.toml` | `rmcp`, `tokio`, `dirs` (§2.4) |
 | `app/src-tauri/src/main.rs` | the `--mcp` branch (§2.1) |
 | `app/src-tauri/src/lib.rs` | `pub mod mcp; mod mcp_setup;`, `app_dir_base()` (§2.3), register the two setup commands |
-| `app/src-tauri/src/mcp.rs` | **new**: `serve()`, the `ServerHandler`, the 22 tool schemas and handlers, catalog `include_str!`s, unit tests |
+| `app/src-tauri/src/mcp.rs` | **new**: `serve()`, the `ServerHandler` (with `instructions`), the 24 tool schemas and handlers, catalog and primer `include_str!`s, unit tests |
+| `app/src-tauri/src/mcp_primer.md` | **new**: the five-section EVE primer (§3.6) |
 | `app/src-tauri/src/mcp_setup.rs` | **new**: `McpSetup`, exe path, Claude Desktop config read/merge/write, the two commands, unit tests |
 | `app/src-tauri/src/groups.rs` | `pub fn cached(dir) -> Vec<GroupEntry>` — read the delta cache without network |
 | `app/src-tauri/tests/mcp_stdio.rs` | **new**: handshake smoke test |
