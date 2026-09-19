@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-19
+
+A Fleet tab: broadcasts, watch-list colours and formation.
+
 ### Added
 - **A Fleet tab.** Edit EVE's broadcast settings — which broadcasts you receive and the colour each shows in — your watch list's per-character colours, and the fleet-warp formation, with EVE's own nine-colour palette.
 - **Add a watch-list colour for any character by name or ID**, looked up through ESI.
