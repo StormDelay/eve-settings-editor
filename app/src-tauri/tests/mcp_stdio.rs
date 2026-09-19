@@ -39,6 +39,10 @@ fn initialize_then_tools_list() {
     );
     assert_eq!(init["id"], 1, "{init}");
     assert_eq!(init["result"]["serverInfo"]["name"], "eve-settings-editor", "{init}");
+    assert!(
+        init["result"]["instructions"].as_str().is_some_and(|s| s.contains("core_user_")),
+        "instructions missing: {init}"
+    );
 
     writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
     let list = request(&mut stdin, &mut out, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
