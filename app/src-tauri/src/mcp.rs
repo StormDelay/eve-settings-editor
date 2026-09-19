@@ -15,6 +15,7 @@ use serde_json::{json, Map, Value};
 use settings_model::{discover, FileKind, Profile};
 
 use crate::accounts::{self, AccountRoster};
+use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::undo;
 
@@ -161,6 +162,11 @@ fn tool_defs() -> Vec<ToolDef> {
                 "backup_path": { "type": "string", "description": "A path from list_backups." }
             }), &["slot", "backup_path"]),
         },
+        ToolDef {
+            name: "list_characters",
+            description: "Every EVE profile on this machine with its characters (id, name when known, character file) and, where the editor has paired them, the account file each belongs to. Accounts with no paired character are listed as unpaired_accounts. Start here; then open.",
+            schema: || obj(json!({}), &[]),
+        },
     ]
 }
 
@@ -189,6 +195,7 @@ impl EveMcp {
             "undo" => self.undo(),
             "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
             "restore_backup" => self.restore_backup(args),
+            "list_characters" => self.list_characters(),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -233,6 +240,55 @@ fn locate(char_id: u64, profiles: &[Profile], roster: &AccountRoster) -> Option<
             .map(|f| f.path.clone());
         Some((c.path.clone(), u))
     })
+}
+
+/// The `list_characters` payload, pure: profiles as discovered, pairings as
+/// the roster has them, names as the cache has them.
+fn characters(profiles: &[Profile], roster: &AccountRoster, names: &names::Cache) -> Value {
+    let account_of = |char_id: u64| roster.accounts.iter().find(|a| a.characters.contains(&char_id));
+    let profiles: Vec<Value> = profiles
+        .iter()
+        .map(|p| {
+            let user_path = |uid: u64| {
+                p.files.iter().find(|f| f.kind == FileKind::User && f.id == Some(uid)).map(|f| f.path.to_string_lossy().into_owned())
+            };
+            let characters: Vec<Value> = p
+                .files
+                .iter()
+                .filter(|f| f.kind == FileKind::Char)
+                .filter_map(|f| f.id.map(|id| (id, f)))
+                .map(|(id, f)| {
+                    let acct = account_of(id);
+                    json!({
+                        "char_id": id,
+                        "name": names.get(&id).map(|n| n.name.clone()),
+                        "char_file": f.path.to_string_lossy(),
+                        "user_id": acct.map(|a| a.user_id),
+                        "user_file": acct.and_then(|a| user_path(a.user_id)),
+                        "account_alias": acct.and_then(|a| a.alias.clone()),
+                    })
+                })
+                .collect();
+            let paired: std::collections::HashSet<u64> =
+                roster.accounts.iter().filter(|a| !a.characters.is_empty()).map(|a| a.user_id).collect();
+            let unpaired: Vec<Value> = p
+                .files
+                .iter()
+                .filter(|f| f.kind == FileKind::User)
+                .filter_map(|f| f.id.map(|id| (id, f)))
+                .filter(|(id, _)| !paired.contains(id))
+                .map(|(id, f)| {
+                    let alias = roster.accounts.iter().find(|a| a.user_id == id).and_then(|a| a.alias.clone());
+                    json!({ "user_id": id, "user_file": f.path.to_string_lossy(), "alias": alias })
+                })
+                .collect();
+            json!({
+                "install": p.install, "server": p.server, "profile": p.profile,
+                "characters": characters, "unpaired_accounts": unpaired,
+            })
+        })
+        .collect();
+    json!({ "profiles": profiles })
 }
 
 fn open_slot(state: &AppState, slot: Slot, path: &str) -> Result<Value, Value> {
@@ -336,6 +392,18 @@ impl EveMcp {
             // Unreachable in practice: `restore` refuses a backup that does not decode.
             OpenOutcome::ParseFailed { path, message, .. } => Err(err("parse_failed", format!("{path}: {message}"))),
         }
+    }
+
+    fn list_characters(&self) -> ToolResult {
+        let profiles = discover(&self.roots);
+        let roster = accounts::load_roster(&self.roots, &self.dir);
+        let ids: Vec<u64> = profiles
+            .iter()
+            .flat_map(|p| p.files.iter().filter(|f| f.kind == FileKind::Char).filter_map(|f| f.id))
+            .collect();
+        // Cache first, ESI for the rest — the window's first launch does the same.
+        let names = names::resolve_blocking(&self.dir, &ids, false);
+        Ok(characters(&profiles, &roster, &names))
     }
 }
 
@@ -663,5 +731,33 @@ mod tests {
         for (id, label) in catalog["states"].as_object().unwrap() {
             assert!(states.contains(&format!("- {id} — ")), "state {id} ({label}) is missing from the primer");
         }
+    }
+
+    #[test]
+    fn characters_lists_each_profile_with_names_pairings_and_unpaired_accounts() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic");
+        let profiles = settings_model::discover(&[root]);
+        let roster = crate::accounts::AccountRoster {
+            accounts: vec![crate::accounts::AccountView { user_id: 80000001, alias: Some("main".into()), characters: vec![90000001] }],
+            unassigned: vec![80000002, 80000003, 80000004],
+        };
+        let mut names = crate::names::Cache::new();
+        names.insert(90000001, crate::names::ResolvedName { name: "Synthetic One".into(), category: "character".into() });
+
+        let v = characters(&profiles, &roster, &names);
+        let p = &v["profiles"][0];
+        assert_eq!(p["profile"], "Default");
+        let chars = p["characters"].as_array().unwrap();
+        assert_eq!(chars.len(), 3);
+        let one = chars.iter().find(|c| c["char_id"] == 90000001).unwrap();
+        assert_eq!(one["name"], "Synthetic One");
+        assert_eq!(one["user_id"], 80000001);
+        assert_eq!(one["account_alias"], "main");
+        assert!(one["user_file"].as_str().unwrap().ends_with("core_user_80000001.dat"));
+        let two = chars.iter().find(|c| c["char_id"] == 90000002).unwrap();
+        assert_eq!(two["name"], Value::Null);
+        assert_eq!(two["user_file"], Value::Null);
+        let unpaired = p["unpaired_accounts"].as_array().unwrap();
+        assert_eq!(unpaired.len(), 3, "80000002..4 have no character");
     }
 }
