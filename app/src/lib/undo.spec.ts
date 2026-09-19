@@ -143,7 +143,7 @@ describe("the text-field guard", () => {
   const ctx: Ctx = {
     goto: noop, pickFile: noop, save: noop, discard: noop, showHistory: noop,
     showAccounts: noop, showBatch: noop, showAbout: noop, showShortcuts: noop,
-    openPalette: noop, findInView: noop,
+    showAiAccess: noop, openPalette: noop, findInView: noop,
   };
   const chord = (key: string, target: EventTarget | null, shiftKey = false) =>
     ({ key, ctrlKey: true, metaKey: false, shiftKey, target, preventDefault: vi.fn() }) as unknown as KeyboardEvent;

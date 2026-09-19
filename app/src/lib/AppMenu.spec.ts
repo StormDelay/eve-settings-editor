@@ -30,6 +30,7 @@ const baseCtx: Ctx = {
   showBatch: noop,
   showAbout: noop,
   showShortcuts: noop,
+  showAiAccess: noop,
   openPalette: noop,
   findInView: noop,
 };

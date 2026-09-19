@@ -1,6 +1,8 @@
 mod accounts;
 mod groups;
 mod launcher;
+pub mod mcp;
+mod mcp_setup;
 mod names;
 mod ops;
 mod prefs;
@@ -25,11 +27,17 @@ use tauri::Manager;
 /// it is — it is installer and OS-level app identity, not a display name.
 pub(crate) const APP_DIR: &str = "EVE Settings Editor";
 
+/// The app dir resolved without a Tauri handle. `dirs::data_dir()` is what
+/// Tauri's `data_dir()` calls, so the MCP process (`mcp.rs`) lands in the same
+/// folder as the window — names cache, accounts.json, groups cache shared.
+pub(crate) fn app_dir_base() -> Option<PathBuf> {
+    dirs::data_dir().map(|d| d.join(APP_DIR))
+}
+
 pub(crate) fn app_dir(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
-        .data_dir()
-        .map(|d| d.join(APP_DIR))
-        .unwrap_or_else(|_| std::env::temp_dir())
+    app_dir_base()
+        .or_else(|| app.path().data_dir().ok().map(|d| d.join(APP_DIR)))
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 /// Move a pre-0.32 identifier-named folder to its new name, once. Runs before
@@ -738,6 +746,7 @@ pub fn run() {
             hud_layout, set_hud_value,
             fleet_settings, set_fleet_field, set_fleet_colour, set_watchlist_colour,
             preferences, set_preferences,
+            mcp_setup::mcp_setup_info, mcp_setup::mcp_set_claude_desktop,
             check_for_update
         ])
         .run(tauri::generate_context!())

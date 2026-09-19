@@ -55,6 +55,7 @@
     "go.copySettings",
     null,
     "help.shortcuts",
+    "help.aiAccess",
     "file.about",
   ];
 

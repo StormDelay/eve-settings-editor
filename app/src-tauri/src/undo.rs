@@ -330,6 +330,13 @@ impl History {
     }
 }
 
+/// See `group()`. `owner` is false for a nested guard, which must not close
+/// the group the outer one opened.
+pub struct Group<'a> {
+    history: &'a Mutex<History>,
+    owner: bool,
+}
+
 /// Makes the rest of this Tauri command ONE undo step: the first write inside
 /// the group pushes its entry — which already holds the before-state of BOTH
 /// slots — and every later write in the same command rides it.
@@ -349,23 +356,31 @@ impl History {
 /// and a matching `open`/`close` pair would leak the flag down that path. The
 /// symptom would not be a crash: the flag stays set, and every LATER command in
 /// the session pushes nothing and becomes silently un-undoable.
-pub struct Group<'a>(&'a Mutex<History>);
-
+///
+/// Re-entrant: a nested `group()` rides the open one and its drop is a no-op.
 pub fn group(state: &AppState) -> Group<'_> {
     // Takes and RELEASES the history lock. It must not hold it: the next thing
     // the command does is call `edit_reshared`, which takes user → char →
     // history, and a held history lock would deadlock on the third.
-    state.history.lock().unwrap().group = Some(false);
-    Group(&state.history)
+    let mut h = state.history.lock().unwrap();
+    let owner = h.group.is_none();
+    if owner {
+        h.group = Some(false);
+    }
+    drop(h);
+    Group { history: &state.history, owner }
 }
 
 impl Drop for Group<'_> {
     fn drop(&mut self) {
+        if !self.owner {
+            return;
+        }
         // `unwrap_or_else(into_inner)` rather than `unwrap()`: a panic inside a
         // Drop during an unwind aborts the process, and a poisoned History means
         // the app is already dead — closing the group should not turn that into
         // an abort.
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).group = None;
+        self.history.lock().unwrap_or_else(|e| e.into_inner()).group = None;
     }
 }
 

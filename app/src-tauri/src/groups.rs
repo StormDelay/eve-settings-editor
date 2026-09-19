@@ -159,6 +159,12 @@ pub fn sync_blocking(dir: &Path, known_ids: &[i64], relevant_categories: &[i64])
     sync_with(dir, known_ids, relevant_categories, fetch_server_version(), esi_fetch_delta)
 }
 
+/// The delta cache's entries, read-only — no network. For a caller that only
+/// needs names for ids it already has (the MCP server's catalogs).
+pub fn cached(dir: &Path) -> Vec<GroupEntry> {
+    load_cache(dir).groups.into_values().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +236,17 @@ mod tests {
         // A None server_version (e.g. /status unreachable) returns the cache, no fetch.
         let out = sync_with(&dir, &[1], &[6], None, |_known| panic!("must not fetch"));
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn cached_reads_the_delta_without_a_fetcher() {
+        let dir = std::env::temp_dir().join(format!("groups-cached-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(cached(&dir).is_empty());
+        let entry = GroupEntry { id: 424242, name: "Future Frigate".into(), category_id: 6, category_name: "Ship".into() };
+        let cache = GroupCache { version: Some("v".into()), groups: HashMap::from([(424242, entry.clone())]) };
+        fs::write(cache_path(&dir), serde_json::to_vec(&cache).unwrap()).unwrap();
+        assert_eq!(cached(&dir), vec![entry]);
     }
 }
