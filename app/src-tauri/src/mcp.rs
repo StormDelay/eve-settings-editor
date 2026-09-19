@@ -5,16 +5,18 @@
 //!
 //! stdout IS the protocol here. Nothing in this process may print to it.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt};
 use serde_json::{json, Map, Value};
 
-use settings_model::{discover, FileKind, Profile};
+use settings_model::{discover, FileKind, OverviewColumns, Profile};
 
 use crate::accounts::{self, AccountRoster};
+use crate::groups;
 use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::undo;
@@ -45,8 +47,85 @@ type ToolResult = Result<Value, Value>;
 const PRIMER: &str = include_str!("mcp_primer.md");
 /// State ids → labels, the same file the UI ships. The primer test pins that
 /// every id here appears in the `states` section.
-#[allow(dead_code)]
 const STATES_JSON: &str = include_str!("../../src/lib/data/overview-states.json");
+/// The bundled group catalog the UI ships: `{categories: [{id, name, groups: [{id, name}]}]}`.
+const GROUPS_JSON: &str = include_str!("../../src/lib/data/overview-groups.json");
+/// EVE's built-in presets, `{modern: [...], legacy: [...]}`, each
+/// `{key, name, groups, filteredStates, alwaysShownStates}`.
+const PRESETS_JSON: &str = include_str!("../../src/lib/data/default-presets.json");
+/// Display names for the modern built-ins, keyed by the numeric part of `key`.
+const PRESET_NAMES_JSON: &str = include_str!("../../src/lib/data/default-preset-names.json");
+
+#[derive(serde::Serialize, Clone, PartialEq, Debug)]
+struct GroupRow {
+    id: i64,
+    name: String,
+    category: String,
+}
+
+/// Bundled catalog plus the ESI delta cache — no network.
+fn group_catalog(dir: &Path) -> Vec<GroupRow> {
+    #[derive(serde::Deserialize)]
+    struct Cat { name: String, groups: Vec<Grp> }
+    #[derive(serde::Deserialize)]
+    struct Grp { id: i64, name: String }
+    #[derive(serde::Deserialize)]
+    struct File { categories: Vec<Cat> }
+    let file: File = serde_json::from_str(GROUPS_JSON).expect("overview-groups.json");
+    let mut rows: Vec<GroupRow> = file
+        .categories
+        .into_iter()
+        .flat_map(|c| c.groups.into_iter().map(move |g| GroupRow { id: g.id, name: g.name, category: c.name.clone() }))
+        .collect();
+    rows.extend(groups::cached(dir).into_iter().map(|g| GroupRow { id: g.id, name: g.name, category: g.category_name }));
+    rows
+}
+
+fn state_labels() -> HashMap<i64, String> {
+    let v: Value = serde_json::from_str(STATES_JSON).expect("overview-states.json");
+    v["states"]
+        .as_object()
+        .expect("states map")
+        .iter()
+        .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_str()?.to_string())))
+        .collect()
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+struct BuiltinPreset {
+    key: String,
+    name: String,
+    display_name: String,
+    era: &'static str,
+    groups: Vec<i64>,
+    filtered_states: Vec<i64>,
+    always_shown_states: Vec<i64>,
+}
+
+fn builtin_catalog() -> Vec<BuiltinPreset> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Raw { key: String, name: String, groups: Vec<i64>, filtered_states: Vec<i64>, always_shown_states: Vec<i64> }
+    #[derive(serde::Deserialize)]
+    struct File { modern: Vec<Raw>, legacy: Vec<Raw> }
+    let file: File = serde_json::from_str(PRESETS_JSON).expect("default-presets.json");
+    let names: HashMap<String, String> = serde_json::from_str(PRESET_NAMES_JSON).expect("default-preset-names.json");
+    // A closure capturing `names` by reference and returning a `move` closure
+    // over that reference can't be called twice (the borrow checker ties the
+    // returned closure's lifetime to one call) — a free fn sidesteps it.
+    fn convert<'a>(era: &'static str, names: &'a HashMap<String, String>) -> impl Fn(Raw) -> BuiltinPreset + 'a {
+        move |r: Raw| {
+            let display_name = names.get(r.key.trim_start_matches("DefaultPreset_")).cloned().unwrap_or_else(|| r.name.clone());
+            BuiltinPreset {
+                key: r.key, name: r.name, display_name, era,
+                groups: r.groups, filtered_states: r.filtered_states, always_shown_states: r.always_shown_states,
+            }
+        }
+    }
+    let mut out: Vec<BuiltinPreset> = file.modern.into_iter().map(convert("modern", &names)).collect();
+    out.extend(file.legacy.into_iter().map(convert("legacy", &names)));
+    out
+}
 
 pub(crate) const TOPICS: [&str; 5] = ["workflow", "overview", "presets", "states", "probes"];
 
@@ -167,6 +246,26 @@ fn tool_defs() -> Vec<ToolDef> {
             description: "Every EVE profile on this machine with its characters (id, name when known, character file) and, where the editor has paired them, the account file each belongs to. Accounts with no paired character are listed as unpaired_accounts. Start here; then open.",
             schema: || obj(json!({}), &[]),
         },
+        ToolDef {
+            name: "overview_get",
+            description: "The open account's overview: windows (which tabs each shows), tabs (index, name, preset, columns with order/visible/width), presets (groups, filtered_states, always_shown_states), appearance (background and flag state lists, colours, bools), plus names.states and names.groups labelling every id used. Needs the account file open; column widths need the character file too.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "groups_search",
+            description: "Find overview group ids by name: case-insensitive substring match on the group name or its category (Ship, Structure, Celestial, Drone, Entity, …). Returns [{id, name, category}]. Use the ids in presets.",
+            schema: || obj(json!({
+                "query": { "type": "string" },
+                "limit": { "type": "integer", "description": "Max results, default 50." }
+            }), &["query"]),
+        },
+        ToolDef {
+            name: "builtin_presets",
+            description: "EVE's built-in overview presets, which the files do not store. Without name: every preset's name, display_name and era. With name (display name, name or key, case-insensitive): that preset's groups, filtered_states and always_shown_states — the three lists overview_presets_edit's fork takes.",
+            schema: || obj(json!({
+                "name": { "type": "string", "description": "e.g. \"Friendly: Fleet\" or \"Target Capsuleer: All\"." }
+            }), &[]),
+        },
     ]
 }
 
@@ -196,6 +295,9 @@ impl EveMcp {
             "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
             "restore_backup" => self.restore_backup(args),
             "list_characters" => self.list_characters(),
+            "overview_get" => self.overview_get(),
+            "groups_search" => self.groups_search(args),
+            "builtin_presets" => self.builtin_presets(args),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -404,6 +506,78 @@ impl EveMcp {
         // Cache first, ESI for the rest — the window's first launch does the same.
         let names = names::resolve_blocking(&self.dir, &ids, false);
         Ok(characters(&profiles, &roster, &names))
+    }
+
+    fn overview_get(&self) -> ToolResult {
+        let oc = ops::overview_columns(&self.state).map_err(fail)?;
+        self.overview_with_names(oc)
+    }
+
+    /// The projection plus a label for every state and group id it mentions,
+    /// so ids never reach the model naked (spec §3.3).
+    fn overview_with_names(&self, oc: OverviewColumns) -> ToolResult {
+        let mut state_ids: Vec<i64> = Vec::new();
+        let mut group_ids: Vec<i64> = Vec::new();
+        for p in &oc.presets {
+            group_ids.extend(&p.groups);
+            state_ids.extend(&p.filtered_states);
+            state_ids.extend(&p.always_shown_states);
+        }
+        let a = &oc.appearance;
+        state_ids.extend(a.background.enabled.iter().chain(&a.background.order).chain(&a.flag.enabled).chain(&a.flag.order));
+        state_ids.extend(a.colors.iter().chain(&a.flag_colors).map(|(id, _)| id));
+        let labels = state_labels();
+        let catalog = group_catalog(&self.dir);
+        let states: HashMap<String, &String> =
+            state_ids.iter().filter_map(|id| labels.get(id).map(|l| (id.to_string(), l))).collect();
+        let groups: HashMap<String, &str> = group_ids
+            .iter()
+            .filter_map(|id| catalog.iter().find(|g| g.id == *id).map(|g| (id.to_string(), g.name.as_str())))
+            .collect();
+        let mut v = serde_json::to_value(&oc).map_err(|e| err("serialize", e.to_string()))?;
+        v["names"] = json!({ "states": states, "groups": groups });
+        Ok(v)
+    }
+
+    fn groups_search(&self, args: &Args) -> ToolResult {
+        let query: String = req(args, "query")?;
+        let limit: usize = opt::<usize>(args, "limit")?.unwrap_or(50);
+        let q = query.to_lowercase();
+        let hits: Vec<GroupRow> = group_catalog(&self.dir)
+            .into_iter()
+            .filter(|g| g.name.to_lowercase().contains(&q) || g.category.to_lowercase().contains(&q))
+            .take(limit)
+            .collect();
+        ok(hits)
+    }
+
+    fn builtin_presets(&self, args: &Args) -> ToolResult {
+        let catalog = builtin_catalog();
+        let Some(name) = opt::<String>(args, "name")? else {
+            let list: Vec<Value> =
+                catalog.iter().map(|p| json!({ "name": p.name, "display_name": p.display_name, "era": p.era })).collect();
+            return Ok(Value::Array(list));
+        };
+        let q = name.to_lowercase();
+        // One combined match, not display_name-then-fallback: a legacy preset's
+        // display_name defaults to its bare name (no entry in the names file), so
+        // preferring display_name matches first silently shadowed the real
+        // ambiguity — e.g. "All" names two MODERN presets ("Target Capsuleer:
+        // All", "General: All") and legacy's own "All" is a third; matching
+        // display_name alone found only the legacy one and returned it as if
+        // unambiguous.
+        let hits: Vec<&BuiltinPreset> = catalog
+            .iter()
+            .filter(|p| p.display_name.to_lowercase() == q || p.name.to_lowercase() == q || p.key.to_lowercase() == q)
+            .collect();
+        match hits.as_slice() {
+            [one] => ok(one),
+            [] => Err(err("unknown_preset", format!("no built-in preset `{name}`; call builtin_presets without a name for the list"))),
+            many => Err(err(
+                "ambiguous_preset",
+                format!("`{name}` matches {}; use a display_name", many.iter().map(|p| format!("\"{}\"", p.display_name)).collect::<Vec<_>>().join(", ")),
+            )),
+        }
     }
 }
 
@@ -731,6 +905,49 @@ mod tests {
         for (id, label) in catalog["states"].as_object().unwrap() {
             assert!(states.contains(&format!("- {id} — ")), "state {id} ({label}) is missing from the primer");
         }
+    }
+
+    #[test]
+    fn overview_get_inlines_state_labels_and_group_names() {
+        let (s, _) = open_user(&overview_user_bytes());
+        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25, 26], vec![11], vec![]).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert_eq!(v["tabs"][0]["preset"], "Frigs");
+        assert_eq!(v["names"]["states"]["11"], "Pilot is in your fleet");
+        assert_eq!(v["names"]["groups"]["25"], "Frigate");
+        assert_eq!(v["names"]["groups"]["26"], "Cruiser");
+    }
+
+    #[test]
+    fn overview_get_without_an_account_file_is_no_document() {
+        let s = EveMcp::for_tests();
+        assert_eq!(s.call("overview_get", &Args::new()).unwrap_err()["code"], "no_document");
+    }
+
+    #[test]
+    fn groups_search_matches_group_and_category_names_case_insensitively() {
+        let s = EveMcp::for_tests();
+        let hits = s.call("groups_search", &args(json!({ "query": "FRIGATE", "limit": 100 }))).unwrap();
+        let hits = hits.as_array().unwrap();
+        assert!(hits.iter().any(|g| g["id"] == 25 && g["name"] == "Frigate" && g["category"] == "Ship"));
+        assert!(hits.len() >= 10);
+        let cat = s.call("groups_search", &args(json!({ "query": "celestial" }))).unwrap();
+        assert!(cat.as_array().unwrap().iter().all(|g| g["category"] == "Celestial"));
+        let capped = s.call("groups_search", &args(json!({ "query": "frigate" }))).unwrap();
+        assert_eq!(capped.as_array().unwrap().len(), 50, "default limit");
+    }
+
+    #[test]
+    fn builtin_presets_lists_43_and_returns_one_by_display_name() {
+        let s = EveMcp::for_tests();
+        let all = s.call("builtin_presets", &Args::new()).unwrap();
+        assert_eq!(all.as_array().unwrap().len(), 43);
+        assert!(all.as_array().unwrap().iter().any(|p| p["display_name"] == "Friendly: Fleet" && p["era"] == "modern"));
+        let fleet = s.call("builtin_presets", &args(json!({ "name": "friendly: fleet" }))).unwrap();
+        assert_eq!(fleet["name"], "Fleet");
+        assert!(fleet["groups"].as_array().unwrap().contains(&json!(25)));
+        assert_eq!(s.call("builtin_presets", &args(json!({ "name": "nope" }))).unwrap_err()["code"], "unknown_preset");
+        assert_eq!(s.call("builtin_presets", &args(json!({ "name": "All" }))).unwrap_err()["code"], "ambiguous_preset");
     }
 
     #[test]
