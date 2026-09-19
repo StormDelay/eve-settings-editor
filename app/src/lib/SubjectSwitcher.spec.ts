@@ -78,6 +78,7 @@ const SWITCHER_PROPS = {
     showBatch: noop,
     showAbout: noop,
     showShortcuts: noop,
+    showAiAccess: noop,
     openPalette: noop,
     findInView: noop,
   } satisfies Ctx,

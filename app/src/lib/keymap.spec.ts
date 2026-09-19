@@ -19,6 +19,7 @@ const ctx = (over: Partial<Ctx> = {}): Ctx => ({
   showBatch: noop,
   showAbout: noop,
   showShortcuts: noop,
+  showAiAccess: noop,
   openPalette: noop,
   findInView: noop,
   ...over,

@@ -105,11 +105,19 @@ function rustCommands(): Map<string, Set<string>> {
   return out;
 }
 
-/// Names listed in `tauri::generate_handler![...]`.
+/// Names listed in `tauri::generate_handler![...]`. A command in its own
+/// module (mcp_setup's two) is listed module-qualified — `mcp_setup::foo` —
+/// while `rustCommands()` records the bare `fn` name, so the module prefix is
+/// stripped here rather than the fn scan growing a second, module-aware path.
 function registered(): Set<string> {
   const m = rustSrc.match(/generate_handler!\s*\[([\s\S]*?)\]/);
   if (!m) throw new Error("no generate_handler! block found");
-  return new Set(m[1].split(",").map((s) => s.trim()).filter(Boolean));
+  return new Set(
+    m[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^[a-zA-Z0-9_]+::/, ""))
+      .filter(Boolean),
+  );
 }
 
 // ---- the contract --------------------------------------------------------

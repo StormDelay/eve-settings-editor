@@ -424,6 +424,15 @@ export interface SceneList {
   problems: string[];
 }
 
+export interface McpSetup {
+  command: string;
+  args: string[];
+  /** The `mcpServers` JSON any MCP client takes, pretty-printed. */
+  snippet: string;
+  /** null when Claude Desktop's config directory does not exist. */
+  claude_desktop: { config_path: string; registered: boolean } | null;
+}
+
 export type KeybindEntry = {
   command: string;
   /** null = unbound. Otherwise [17?, 18?, 16?, key]. */
@@ -672,6 +681,8 @@ export const api = {
   packPreview: (path: string) => invoke<PackSummary>("pack_preview", { path }),
   packImport: (path: string) => invoke<PackImportResult>("pack_import", { path }),
   packExport: (path: string) => invoke<PackReport>("pack_export", { path }),
+  mcpSetupInfo: () => invoke<McpSetup>("mcp_setup_info"),
+  mcpSetClaudeDesktop: (on: boolean) => invoke<McpSetup>("mcp_set_claude_desktop", { on }),
 };
 
 /**
