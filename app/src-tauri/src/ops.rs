@@ -1106,6 +1106,15 @@ pub fn remove_probe_formation(
     edit_user_probes(state, |v| settings_model::remove_formation(v, id))
 }
 
+/// `order` is every formation's current id, in the wanted sequence; ids become
+/// positions.
+pub fn reorder_probe_formations(
+    state: &AppState,
+    order: Vec<i64>,
+) -> Result<settings_model::Formations, ErrDto> {
+    edit_user_probes(state, |v| settings_model::reorder_formations(v, &order))
+}
+
 /// Emit the shared YAML for a set of formations.
 ///
 /// The FRONTEND supplies the data rather than naming ids for a lookup here:
@@ -1829,6 +1838,19 @@ mod tests {
         let names: Vec<&str> = f.formations.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, vec!["close", "close copy", "close copy 2"]);
         assert_eq!(f.formations[0].probes, vec![[1.0, 0.0, 0.0]], "the original must not move");
+    }
+
+    #[test]
+    fn reorder_probe_formations_renumbers_to_the_given_order() {
+        let (state, _p) = state_with_close();
+        add_probe_formations(&state, vec![spec("a", 2.0), spec("b", 3.0)]).unwrap();
+        let f = reorder_probe_formations(&state, vec![2, 0, 1]).unwrap();
+        let names: Vec<&str> = f.formations.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["b", "close", "a"]);
+        let ids: Vec<i64> = f.formations.iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![0, 1, 2], "ids are positions after every write");
+        let err = reorder_probe_formations(&state, vec![0, 1]).unwrap_err();
+        assert_eq!(err.code, "no_such_formation");
     }
 
     #[test]
