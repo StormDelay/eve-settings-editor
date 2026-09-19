@@ -271,6 +271,14 @@ Workflow:
   formation menu intact. If it does not, restrict the editor to exactly 8 and
   amend §2.4 of the design. _Added 2026-08-03 (probe formation editor)._
 
+- [x] **Confirm in-client that the scanner's formation menu follows a reorder.**
+  The file records no order; the editor makes id order and dict order agree
+  (`probes.rs` `renumber`) so the menu follows the new order whichever of the
+  two the client sorts by. Had it sorted by name, no file-side reorder would
+  have been possible and the drag grip and Move up/down would have come out.
+  Reordered in the editor, reopened the client: the menu followed. _Added
+  2026-09-18 (probe formation reorder); confirmed in-game 2026-09-19._
+
 - [ ] **Draggable splits and column edges on the canvas.** The chat splits are
   now editable as numeric fields on the selected window (2026-07-30), but not by
   dragging the splitter on the canvas, and the overview column widths are still

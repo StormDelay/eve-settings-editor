@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 - **A Fleet tab.** Edit EVE's broadcast settings — which broadcasts you receive and the colour each shows in — your watch list's per-character colours, and the fleet-warp formation, with EVE's own nine-colour palette.
 - **Add a watch-list colour for any character by name or ID**, looked up through ESI.
 - **Fleet is a copy aspect.** Copy settings and presets can carry one character's broadcast settings, watch-list colours and formation onto others.
+- **Probe formations can be reordered.** Drag a formation in the list, or use Move up / Move down from its ⋯ menu; the scanner's formation menu follows the new order.
+
+### Changed
+- **Probe formation ids stay dense.** Deleting a formation closes the gap, and new or imported formations land at the end of the list instead of filling the lowest free number.
 
 ## [0.36.0] - 2026-09-11
 
