@@ -21,6 +21,7 @@ check("autofill label", aspectLabel("autofill") === "Autofill");
 check("keybinds label", aspectLabel("keybinds") === "Keybinds");
 check("everything label", aspectLabel("everything") === "Everything");
 check("probe formations label", aspectLabel("probe_formations") === "Probe formations");
+check("fleet label", aspectLabel("fleet") === "Fleet");
 check(
   "probe formations summarise alongside others",
   summarise(info("P", ["keybinds", "probe_formations"])) === "Keybinds · Probe formations",
@@ -35,5 +36,6 @@ check(
   "a pruned preset lists what it holds",
   summarise(info("P", ["layout", "keybinds"])) === "Layout · Keybinds",
 );
+check("a fleet-only preset summarises as Fleet", summarise(info("W", ["fleet"])) === "Fleet");
 check("a broken preset summarises as unreadable", summarise({ ...info("B", []), error: "boom" }) === "unreadable");
 check("an empty preset says so", summarise(info("E", [])) === "empty");

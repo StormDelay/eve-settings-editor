@@ -487,7 +487,7 @@ describe("the view tabs", () => {
     await openFile("core_char_950.dat");
     await waitFor(() => expect(calls.of("open_file").length).toBe(1));
     expect(names()).toEqual(before);
-    expect(before).toEqual(["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Raw"]);
+    expect(before).toEqual(["Layout", "Overview", "Autofill", "Keybinds", "Probes", "Fleet", "Raw"]);
   });
 });
 
