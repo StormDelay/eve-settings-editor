@@ -53,7 +53,8 @@ pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use probes::{
     check_formation, next_free_id, next_id as next_formation_id, project_formations,
-    remove_formation, set_formation, Formation, Formations, ProbeError, DEFAULT_RANGE, MAX_PROBES,
+    remove_formation, reorder_formations, set_formation, Formation, Formations, ProbeError,
+    DEFAULT_RANGE, MAX_PROBES,
 };
 pub use overview::{copy_tab_columns, copy_tab_widths, project_overview, set_column_order, set_column_visible, set_column_width, Appearance, OverviewColumn, OverviewColumns, OverviewError, OverviewTab, OverviewWindow, StateSurface};
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};

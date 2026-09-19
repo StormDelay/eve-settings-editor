@@ -124,21 +124,43 @@ describe("editing", () => {
     expect(lastSet().ranges).toEqual([149597870700, 149597870700]);
   });
 
-  test("New selects the newly minted formation even when its id fills a gap", async () => {
-    // next_id fills the lowest free gap (probes.rs), so with ids {0, 2} the
-    // new formation lands at id 1 — the MIDDLE of the sorted response, not
-    // its end. Selecting by position would land on id 2 ("b") instead.
+  test("New selects the created formation, which a renumbering save puts last", async () => {
+    // Every write renumbers ids to positions (probes.rs `renumber`), so a file
+    // this tool left with ids {0, 2} comes back {0, 1, 2} with the new one at
+    // the END and "b" moved from 2 to 1. Diffing the id sets would pick "b".
     const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350] };
     const b: Formation = { id: 2, name: "b", probes: [[4, 5, 6]], ranges: [74798935350] };
-    const created: Formation = { id: 1, name: "New formation", probes: [[0, 0, 0]], ranges: [74798935350] };
+    const created: Formation = { id: 2, name: "New formation", probes: [[0, 0, 0]], ranges: [74798935350] };
     calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);
-    calls.stub("set_probe_formation", { formations: [a, created, b], selected: 1 } satisfies Formations);
+    calls.stub("set_probe_formation", { formations: [a, { ...b, id: 1 }, created], selected: 0 } satisfies Formations);
     render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
     await screen.findByDisplayValue("a");
 
     await fireEvent.click(screen.getByText("New formation"));
 
     expect(await screen.findByDisplayValue("New formation")).toBeTruthy();
+  });
+
+  test("editing a formation keeps it selected when the save renumbers it", async () => {
+    // Same gap, editing "b" (id 2): the save returns it at id 1. The editor
+    // must follow it there, not blank on a vanished id 2.
+    const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350] };
+    const b: Formation = { id: 2, name: "b", probes: [[4, 5, 6]], ranges: [74798935350] };
+    calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);
+    calls.stub("set_probe_formation", { formations: [a, { ...b, id: 1, name: "bee" }], selected: 0 } satisfies Formations);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+    await screen.findByDisplayValue("a");
+    await fireEvent.click(screen.getByRole("button", { name: "b" }));
+    const name = await screen.findByDisplayValue("b");
+    await fireEvent.input(name, { target: { value: "bee" } });
+    await fireEvent.blur(name);
+
+    expect(lastSet().id).toBe(2);
+    expect(await screen.findByDisplayValue("bee")).toBeTruthy();
+    // And the NEXT save names the new id.
+    await fireEvent.input(name, { target: { value: "bees" } });
+    await fireEvent.blur(name);
+    expect(lastSet().id).toBe(1);
   });
 
   test("switching account resyncs the drafts even when the id stays valid", async () => {
@@ -169,6 +191,53 @@ describe("editing", () => {
     calls.never("set_probe_formation");
   });
 });
+
+describe("ordering", () => {
+  const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350] };
+  const b: Formation = { id: 1, name: "b", probes: [[4, 5, 6]], ranges: [74798935350] };
+  const row = (name: string) => screen.getByText(name).closest('[role="option"]') as HTMLElement;
+
+  async function openTwo() {
+    calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);
+    // The backend answers a reorder with ids renumbered to positions.
+    calls.stub("reorder_probe_formations", { formations: [{ ...b, id: 0 }, { ...a, id: 1 }], selected: 1 } satisfies Formations);
+    calls.stub("set_probe_formation", { formations: [{ ...b, id: 0 }, { ...a, id: 1 }], selected: 1 } satisfies Formations);
+    render(ProbeFormationsView, { userOpen: true, userId: 1, onUserDirty: noop });
+    await screen.findByDisplayValue("a");
+  }
+
+  test("Move down sends the whole order and the selection follows the moved formation", async () => {
+    await openTwo();
+    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Move down" }));
+
+    expect(calls.of("reorder_probe_formations").at(-1)?.args).toEqual({ order: [1, 0] });
+    // "a" is still the open formation, now under id 1 — so its next save says so.
+    const name = await screen.findByDisplayValue("a");
+    await fireEvent.input(name, { target: { value: "aa" } });
+    await fireEvent.blur(name);
+    expect(lastSet().id).toBe(1);
+  });
+
+  test("Move up on the first row is present and disabled", async () => {
+    await openTwo();
+    await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    const up = screen.getByRole("menuitem", { name: "Move up" }) as HTMLButtonElement;
+    expect(up.disabled).toBe(true);
+    const down = screen.getByRole("menuitem", { name: "Move down" }) as HTMLButtonElement;
+    expect(down.disabled).toBe(false);
+  });
+
+  test("dropping a row on another reorders", async () => {
+    await openTwo();
+    expect(row("a").getAttribute("draggable")).toBe("true");
+    await fireEvent.dragStart(row("b"));
+    await fireEvent.drop(row("a"));
+    expect(calls.of("reorder_probe_formations").at(-1)?.args).toEqual({ order: [1, 0] });
+  });
+
+});
+
 
 describe("per-probe range", () => {
   test("a probe's range picker sends only that probe's new range", async () => {

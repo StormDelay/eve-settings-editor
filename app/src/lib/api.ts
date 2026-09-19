@@ -649,6 +649,10 @@ export const api = {
   ) => invoke<Formations>("set_probe_formation", { id, name, probes, ranges }),
   removeProbeFormation: (id: number) =>
     invoke<Formations>("remove_probe_formation", { id }),
+  /** Every formation's current id in the wanted sequence. Ids become positions
+   * in the response, and so does the selection. */
+  reorderProbeFormations: (order: number[]) =>
+    invoke<Formations>("reorder_probe_formations", { order }),
   /** The shared YAML for these formations. Pure text — the caller supplies the
    * data, so Copy and Export can send an uncommitted draft. */
   probeYaml: (formations: FormationSpec[]) => invoke<string>("probe_yaml", { formations }),
