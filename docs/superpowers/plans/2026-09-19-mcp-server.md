@@ -1684,8 +1684,10 @@ Add to `mod tests` in `mcp.rs`:
         let depth = undo::undo_state(&s.state).depth;
         let e = s.call("overview_columns_edit", &args(json!({ "ops": [
             { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
-            { "op": "set_visible", "tab": 0, "column": "NO_SUCH_COLUMN", "visible": true }
+            { "op": "set_visible", "tab": 99, "column": "TYPE", "visible": true }
         ]}))).unwrap_err();
+        // An unknown COLUMN is not an error (`set_column_visible` adds it); an
+        // unknown TAB is `NoTab`, so that is the failing op.
         assert_eq!(e["op_index"], 1);
         assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
         assert_eq!(undo::undo_state(&s.state).depth, depth);
@@ -2004,7 +2006,7 @@ Spec §3.3 (packs), §3.4. Delivers the remaining overview tools and all of prob
     #[test]
     fn probes_set_with_nine_probes_is_a_probe_error() {
         let (s, _) = open_user(&empty_ui_bytes());
-        let e = s.call("probes_set", &args(json!({ "name": "nine", "probes": [[0.0,0.0,0.0]; 9], "ranges": [1.0; 9] }))).unwrap_err();
+        let e = s.call("probes_set", &args(json!({ "name": "nine", "probes": vec![[0.0, 0.0, 0.0]; 9], "ranges": vec![1.0; 9] }))).unwrap_err();
         assert!(e["message"].as_str().unwrap().contains("between 1 and 8"), "{e}");
     }
 
