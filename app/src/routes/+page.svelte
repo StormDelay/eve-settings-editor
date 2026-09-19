@@ -6,6 +6,7 @@
   import ContextBar from "$lib/ContextBar.svelte";
   import ViewTabs from "$lib/ViewTabs.svelte";
   import AboutPanel from "$lib/AboutPanel.svelte";
+  import AiAccessPanel from "$lib/AiAccessPanel.svelte";
   import LayoutView from "$lib/LayoutView.svelte";
   import AccountsView from "$lib/AccountsView.svelte";
   import OverviewView from "$lib/OverviewView.svelte";
@@ -80,6 +81,7 @@
     selectedPath = null;
   });
   let aboutOpen = $state(false);
+  let aiAccessOpen = $state(false);
   let switcherOpen = $state(false);
   let historyOpen = $state(false);
   let shortcutsOpen = $state(false);
@@ -442,6 +444,7 @@
     showBatch: () => (sheet = "batch"),
     showAbout: () => (aboutOpen = true),
     showShortcuts: () => (shortcutsOpen = true),
+    showAiAccess: () => (aiAccessOpen = true),
     openPalette: () => (switcherOpen = !switcherOpen),
     // Suppressed while a sheet is open: every box it could focus is behind the
     // scrim, and focusing an inert control would break the sheet's focus trap.
@@ -785,6 +788,7 @@
 </main>
 
 {#if aboutOpen}<AboutPanel onClose={() => (aboutOpen = false)} />{/if}
+{#if aiAccessOpen}<AiAccessPanel onClose={() => (aiAccessOpen = false)} />{/if}
 {#if shortcutsOpen}<ShortcutsSheet onClose={() => (shortcutsOpen = false)} />{/if}
 
 <!-- Mounted once, here. Every transient confirmation in the app renders through
