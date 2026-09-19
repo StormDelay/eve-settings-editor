@@ -35,6 +35,38 @@ type Args = Map<String, Value>;
 /// A tool's outcome: the JSON the model reads, or the JSON error it reads.
 type ToolResult = Result<Value, Value>;
 
+/// The EVE context the model reads (spec §3.6). One file, two exposures: the
+/// `## workflow` section is the server's `instructions`; `eve_guide` returns
+/// any one section. Compiled in so it ships with the tool.
+const PRIMER: &str = include_str!("mcp_primer.md");
+/// State ids → labels, the same file the UI ships. The primer test pins that
+/// every id here appears in the `states` section.
+#[allow(dead_code)]
+const STATES_JSON: &str = include_str!("../../src/lib/data/overview-states.json");
+
+pub(crate) const TOPICS: [&str; 5] = ["workflow", "overview", "presets", "states", "probes"];
+
+/// `(slug, body)` per `## ` heading, in file order.
+fn primer_sections() -> Vec<(&'static str, &'static str)> {
+    PRIMER
+        .split("\n## ")
+        .map(|chunk| chunk.strip_prefix("## ").unwrap_or(chunk))
+        .filter(|chunk| !chunk.trim().is_empty())
+        .map(|chunk| {
+            let (slug, body) = chunk.split_once('\n').unwrap_or((chunk, ""));
+            (slug.trim(), body.trim())
+        })
+        .collect()
+}
+
+fn primer(topic: &str) -> Option<&'static str> {
+    primer_sections().into_iter().find(|(s, _)| *s == topic).map(|(_, b)| b)
+}
+
+fn instructions() -> &'static str {
+    primer("workflow").expect("mcp_primer.md starts with `## workflow`")
+}
+
 fn fail(e: ErrDto) -> Value {
     serde_json::to_value(e).unwrap_or_default()
 }
@@ -50,7 +82,6 @@ fn pretty(v: &Value) -> String {
 }
 
 /// A required argument, deserialised into whatever the op wants.
-#[allow(dead_code)]
 fn req<T: serde::de::DeserializeOwned>(args: &Args, key: &str) -> Result<T, Value> {
     match args.get(key) {
         None => Err(err("missing_field", format!("`{key}` is required"))),
@@ -84,11 +115,18 @@ struct ToolDef {
 }
 
 fn tool_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "status",
-        description: "What is open right now: the character and account file paths, whether each has unsaved edits, and whether undo is possible. Call it to re-orient in a long conversation.",
-        schema: || obj(json!({}), &[]),
-    }]
+    vec![
+        ToolDef {
+            name: "status",
+            description: "What is open right now: the character and account file paths, whether each has unsaved edits, and whether undo is possible. Call it to re-orient in a long conversation.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "eve_guide",
+            description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML). Call it before your first edit of a kind you have not done in this conversation.",
+            schema: || obj(json!({ "topic": { "type": "string", "enum": TOPICS } }), &["topic"]),
+        },
+    ]
 }
 
 fn tools() -> Vec<Tool> {
@@ -107,9 +145,10 @@ impl EveMcp {
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
     /// finish in microseconds. (`list_characters` may block on ESI once for
     /// unknown names, exactly as the window's first launch does.)
-    fn call(&self, name: &str, _args: &Args) -> ToolResult {
+    fn call(&self, name: &str, args: &Args) -> ToolResult {
         match name {
             "status" => self.status(),
+            "eve_guide" => self.eve_guide(args),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -133,12 +172,21 @@ impl EveMcp {
             "can_undo": undo::undo_state(&self.state).can_undo,
         }))
     }
+
+    fn eve_guide(&self, args: &Args) -> ToolResult {
+        let topic: String = req(args, "topic")?;
+        match primer(&topic) {
+            Some(text) => Ok(json!({ "topic": topic, "text": text })),
+            None => Err(err("unknown_topic", format!("no topic `{topic}`; one of {}", TOPICS.join(", ")))),
+        }
+    }
 }
 
 impl ServerHandler for EveMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("eve-settings-editor", env!("CARGO_PKG_VERSION")))
+            .with_instructions(instructions())
     }
 
     async fn list_tools(
@@ -258,6 +306,44 @@ mod tests {
             }
             serde_json::Value::Array(a) => a.iter().for_each(|c| assert_single_string_types(c, tool)),
             _ => {}
+        }
+    }
+
+    #[test]
+    fn primer_has_the_five_topics_in_order_and_none_is_empty() {
+        let sections = primer_sections();
+        let slugs: Vec<&str> = sections.iter().map(|(s, _)| *s).collect();
+        assert_eq!(slugs, TOPICS);
+        for (slug, body) in &sections {
+            assert!(body.len() > 100, "{slug} is too short to be a primer section");
+        }
+    }
+
+    #[test]
+    fn instructions_are_the_workflow_section() {
+        assert_eq!(instructions(), primer("workflow").unwrap());
+        assert!(instructions().contains("save"));
+    }
+
+    #[test]
+    fn eve_guide_returns_a_section_and_rejects_an_unknown_topic() {
+        let s = EveMcp::for_tests();
+        let mut a = Args::new();
+        a.insert("topic".into(), json!("probes"));
+        let v = s.call("eve_guide", &a).unwrap();
+        assert_eq!(v["topic"], "probes");
+        assert!(v["text"].as_str().unwrap().contains("metres"));
+        a.insert("topic".into(), json!("mining"));
+        assert_eq!(s.call("eve_guide", &a).unwrap_err()["code"], "unknown_topic");
+    }
+
+    /// The primer cannot drift from the state catalog the UI ships.
+    #[test]
+    fn states_section_names_every_catalog_state() {
+        let catalog: Value = serde_json::from_str(STATES_JSON).unwrap();
+        let states = primer("states").unwrap();
+        for (id, label) in catalog["states"].as_object().unwrap() {
+            assert!(states.contains(&format!("- {id} — ")), "state {id} ({label}) is missing from the primer");
         }
     }
 }
