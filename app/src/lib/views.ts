@@ -11,7 +11,7 @@
 //! template beside it.
 import { subject } from "./subject.svelte";
 
-export type View = "layout" | "overview" | "autofill" | "keybinds" | "probes" | "raw";
+export type View = "layout" | "overview" | "autofill" | "keybinds" | "probes" | "fleet" | "raw";
 
 /**
  * Row order, and it is THE order — fixed membership is worth nothing if the
@@ -27,6 +27,7 @@ export const VIEWS: { id: View; label: string }[] = [
   { id: "autofill", label: "Autofill" },
   { id: "keybinds", label: "Keybinds" },
   { id: "probes", label: "Probes" },
+  { id: "fleet", label: "Fleet" },
   { id: "raw", label: "Raw" },
 ];
 
