@@ -18,6 +18,7 @@ mod save;
 mod treewalk;
 mod windows;
 mod hud;
+mod fleet;
 mod chat;
 mod neocom;
 mod probes;
@@ -44,6 +45,10 @@ pub use projection::{project, Node};
 pub use save::{save, SaveError, SaveReport};
 pub use windows::{window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
+pub use fleet::{
+    default_colour, project_fleet, set_broadcast_colour, set_fleet_field, set_watchlist_colour, Colour,
+    ColourEntry, Fleet, FleetError, FleetLeaf, WatchEntry, BROADCAST_TYPES, FLEET_LEAVES, PALETTE,
+};
 pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use probes::{

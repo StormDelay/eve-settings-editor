@@ -153,6 +153,15 @@ async fn refresh_character_names(
 }
 
 #[tauri::command]
+async fn lookup_character(app: tauri::AppHandle, query: String) -> Result<Option<names::Found>, ErrDto> {
+    let dir = app_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || names::lookup_blocking(&dir, &query))
+        .await
+        .map_err(|e| ErrDto::new("esi", e.to_string()))?
+        .map_err(|e| ErrDto::new("esi", e.0))
+}
+
+#[tauri::command]
 async fn check_for_update() -> Result<Option<update::Update>, String> {
     tauri::async_runtime::spawn_blocking(update::check_blocking)
         .await
@@ -505,6 +514,35 @@ fn set_hud_value(
 }
 
 #[tauri::command]
+fn fleet_settings(state: tauri::State<'_, AppState>) -> Result<settings_model::Fleet, ErrDto> {
+    ops::fleet_settings(&state)
+}
+#[tauri::command]
+fn set_fleet_field(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    text: String,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_fleet_field(&state, &name, &text)
+}
+#[tauri::command]
+fn set_fleet_colour(
+    state: tauri::State<'_, AppState>,
+    broadcast: String,
+    rgb: Option<[f64; 3]>,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_fleet_colour(&state, &broadcast, rgb)
+}
+#[tauri::command]
+fn set_watchlist_colour(
+    state: tauri::State<'_, AppState>,
+    char_id: u64,
+    rgb: Option<[f64; 3]>,
+) -> Result<settings_model::Fleet, ErrDto> {
+    ops::set_watchlist_colour(&state, char_id, rgb)
+}
+
+#[tauri::command]
 fn setup_preview(
     app: tauri::AppHandle,
     source: setup::BatchSource,
@@ -668,7 +706,7 @@ pub fn run() {
             discover_profiles, open_file, close_file,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             undo, redo, undo_state,
-            window_layout, resolve_character_names, refresh_character_names, sync_group_catalog,
+            window_layout, resolve_character_names, refresh_character_names, lookup_character, sync_group_catalog,
             account_roster, set_account_alias, confirm_pairing, confirm_pairings, unpair_character,
             launcher_proposals,
             begin_capture, resolve_capture, clear_capture,
@@ -690,6 +728,7 @@ pub fn run() {
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
             scene_list,
             hud_layout, set_hud_value,
+            fleet_settings, set_fleet_field, set_fleet_colour, set_watchlist_colour,
             preferences, set_preferences,
             check_for_update
         ])

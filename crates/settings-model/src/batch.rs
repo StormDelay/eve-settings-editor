@@ -7,15 +7,13 @@
 //! still holds (the proven autofill.rs / overview.rs inline-first idiom).
 
 use blue_marshal::Value;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::document::{Document, LoadError};
 use crate::save::{save, SaveReport};
 use crate::treewalk::{dict_inner, dict_inner_mut, inline_all, is_bytes, Entries};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
     Layout,
     Autofill,
@@ -59,6 +57,11 @@ pub enum Category {
     // someone would leave them unable to drag their own list back in-game.
     HudTargetOrigin,
     HudTargetAlign,
+    /// One fleet key. The leaf table is `fleet::FLEET_LEAVES` — the editor's own
+    /// key list — so a key added there is a category here with no second list
+    /// to keep in step. Every leaf is one level under `ui`, on the side its
+    /// `scope` names.
+    Fleet(&'static crate::fleet::FleetLeaf),
 }
 
 impl Category {
@@ -91,6 +94,7 @@ impl Category {
             // only an inlined dump shows the real tree. See hud.rs.
             Category::HudTargetOrigin => &[b"ui", b"targetOrigin"],
             Category::HudTargetAlign => &[b"ui", b"alignHorizontally"],
+            Category::Fleet(leaf) => &leaf.path,
         }
     }
 
@@ -118,6 +122,10 @@ impl Category {
     /// building a root `notifications` key — but these two live under `ui`,
     /// which every such preset already has, so there is nothing to test. Filed
     /// in docs/small-tasks.md; re-saving the preset fixes it.
+    ///
+    /// The fleet leaves take the same rule: a copy makes the two characters
+    /// match key-for-key, which includes removing a target's watch-list map
+    /// when the source has none.
     pub fn absent_means_default(self) -> bool {
         matches!(
             self,
@@ -129,6 +137,7 @@ impl Category {
                 | Category::HudNeocomWidth
                 | Category::HudTargetOrigin
                 | Category::HudTargetAlign
+                | Category::Fleet(_)
         )
     }
 }
@@ -834,5 +843,31 @@ mod tests {
         let Value::Dict(w) = windows else { panic!("windows is a dict") };
         let (_, v) = w.iter().find(|(k, _)| is_bytes(k, b"neocomWidth")).expect("the key was copied");
         assert_eq!(*v, Value::Int(72), "the source's width won");
+    }
+
+    #[test]
+    fn a_fleet_category_is_one_leaf_under_ui_and_absence_means_default() {
+        let leaf = settings_model_fleet_leaf(b"fleet_watchlistcolors");
+        let cat = Category::Fleet(leaf);
+        assert_eq!(cat.key_path(), &[b"ui".as_slice(), b"fleet_watchlistcolors".as_slice()]);
+        assert!(cat.absent_means_default(), "a copy makes the target match key-for-key, like the HUD leaves");
+        // Extract → apply carries the map, and a source without it deletes the target's.
+        let map = Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Int(5), Value::Tuple(vec![Value::Float(0.2), Value::Float(0.5), Value::Float(1.0)]))])]);
+        let source = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("fleet_watchlistcolors"), map.clone())]))]);
+        let mut target = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("keep"), Value::Int(1))]))]);
+        apply_to_tree(&mut target, &extract_categories(&source, &[cat]));
+        let Value::Dict(root) = &target else { panic!("dict") };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).unwrap();
+        let Value::Dict(ui) = ui else { panic!("dict") };
+        assert!(ui.iter().any(|(k, _)| is_bytes(k, b"fleet_watchlistcolors")));
+        assert!(ui.iter().any(|(k, _)| is_bytes(k, b"keep")), "siblings survive");
+
+        let bare_source = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("other"), Value::Int(0))]))]);
+        let extracted = extract_categories(&bare_source, &[cat]);
+        assert_eq!(extracted, vec![(cat, None)], "absent on the source = EVE's default = delete on the target");
+    }
+
+    fn settings_model_fleet_leaf(key: &[u8]) -> &'static crate::fleet::FleetLeaf {
+        crate::fleet::FLEET_LEAVES.iter().find(|l| l.path[1] == key).expect("a fleet leaf")
     }
 }
