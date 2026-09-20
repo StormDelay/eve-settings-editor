@@ -58,20 +58,53 @@ const PRESET_NAMES_JSON: &str = include_str!("../../src/lib/data/default-preset-
 
 /// Windows virtual-key codes → EVE's key names, the table `keybinds.ts`
 /// renders and validates with. One file, two readers.
-#[allow(dead_code)]
 const VK_LABELS_JSON: &str = include_str!("../../src/lib/data/vk-labels.json");
 
-#[allow(dead_code)]
 fn vk_labels() -> HashMap<i64, String> {
     let raw: HashMap<String, String> = serde_json::from_str(VK_LABELS_JSON).expect("vk-labels.json");
     raw.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect()
 }
 
 /// A key by the name a person types — "Q", "f1", "page up" — or `None`.
-#[allow(dead_code)]
 fn vk_code(name: &str) -> Option<i64> {
     let want = name.trim();
     vk_labels().into_iter().find(|(_, label)| label.eq_ignore_ascii_case(want)).map(|(code, _)| code)
+}
+
+/// Command → (label, group), the UI's `command-names.json`.
+const COMMAND_NAMES_JSON: &str = include_str!("../../src/lib/data/command-names.json");
+
+fn command_names() -> HashMap<String, (String, String)> {
+    #[derive(serde::Deserialize)]
+    struct Entry { label: String, group: String }
+    let raw: HashMap<String, Entry> = serde_json::from_str(COMMAND_NAMES_JSON).expect("command-names.json");
+    raw.into_iter().map(|(k, e)| (k, (e.label, e.group))).collect()
+}
+
+/// `[17, 81]` → "Ctrl+Q", as `keybinds.ts`'s `keysToLabel` renders it.
+fn combo_label(keys: &[i64]) -> String {
+    let labels = vk_labels();
+    keys.iter()
+        .map(|&c| match c {
+            settings_model::MOD_CTRL => "Ctrl".to_string(),
+            settings_model::MOD_ALT => "Alt".to_string(),
+            settings_model::MOD_SHIFT => "Shift".to_string(),
+            _ => labels.get(&c).cloned().unwrap_or_else(|| format!("VK{c}")),
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn keybinds_view(k: &settings_model::Keybinds) -> Value {
+    let names = command_names();
+    let entries: Vec<Value> = k.entries.iter().map(|e| {
+        let (label, group) = names.get(&e.command).cloned().unwrap_or_else(|| (e.command.clone(), "Other".into()));
+        json!({
+            "command": e.command, "label": label, "group": group,
+            "keys": e.keys, "combo": e.keys.as_deref().map(combo_label), "malformed": e.malformed,
+        })
+    }).collect();
+    json!({ "entries": entries, "available": k.available })
 }
 
 #[derive(serde::Serialize, Clone, PartialEq, Debug)]
@@ -420,6 +453,35 @@ fn tool_defs() -> Vec<ToolDef> {
             description: "The open account's formations as the editor's YAML exchange text, to share or to edit and feed back through probes_add_yaml. Changes nothing.",
             schema: || obj(json!({}), &[]),
         },
+        ToolDef {
+            name: "autofill_get",
+            description: "The account's remembered texts — what EVE autocompletes in search boxes, chat, market, and so on — as [{widget, entries}]. widget is EVE's internal box id. Needs the account file open.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "autofill_set",
+            description: "Replace one widget's remembered entries (an empty list clears that one box). Returns every list. Nothing reaches disk until save.",
+            schema: || obj(json!({ "widget": { "type": "string" }, "entries": { "type": "array", "items": { "type": "string" } } }), &["widget", "entries"]),
+        },
+        ToolDef {
+            name: "autofill_clear_all",
+            description: "Clear every remembered text on this account — every search box, every chat, every market query. Returns the (now empty) lists. Nothing reaches disk until save.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "keybinds_get",
+            description: "The account's key bindings: [{command, label, group, keys, combo, malformed}] where combo reads like \"Ctrl+Q\" and keys are the stored codes; available is false when the account never opened the in-game keybinding screen. Needs the account file open. Key names for keybind_set are the ones you see in combo.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "keybind_set",
+            description: "Bind a command to a key: key is a name as keybinds_get shows it (\"Q\", \"F1\", \"Num 5\", \"Page Up\"), with ctrl/alt/shift as needed; omit key to unbind. A combo another command holds is taken from it — stolen lists the losers, so tell the user. Returns keybinds and stolen. Nothing reaches disk until save. Unsure: eve_guide keybinds.",
+            schema: || obj(json!({
+                "command": { "type": "string" },
+                "key": { "type": "string" },
+                "ctrl": { "type": "boolean" }, "alt": { "type": "boolean" }, "shift": { "type": "boolean" }
+            }), &["command"]),
+        },
     ]
 }
 
@@ -479,6 +541,11 @@ impl EveMcp {
                     .collect();
                 Ok(json!({ "yaml": ops::probe_yaml(&specs) }))
             }
+            "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
+            "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
+            "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
+            "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state).map_err(fail)?)),
+            "keybind_set" => self.keybind_set(args),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -856,6 +923,26 @@ impl EveMcp {
             }
         }
         finish(self)
+    }
+
+    fn keybind_set(&self, args: &Args) -> ToolResult {
+        let command: String = req(args, "command")?;
+        let keys = match opt::<String>(args, "key")? {
+            None => None,
+            Some(name) => {
+                let code = vk_code(&name).ok_or_else(|| {
+                    err("unknown_key", format!("no key named `{name}`; names are the ones keybinds_get shows, e.g. Q, F1, Num 5, Page Up"))
+                })?;
+                let mut keys = Vec::new();
+                if opt::<bool>(args, "ctrl")?.unwrap_or(false) { keys.push(settings_model::MOD_CTRL); }
+                if opt::<bool>(args, "alt")?.unwrap_or(false) { keys.push(settings_model::MOD_ALT); }
+                if opt::<bool>(args, "shift")?.unwrap_or(false) { keys.push(settings_model::MOD_SHIFT); }
+                keys.push(code);
+                Some(keys)
+            }
+        };
+        let r = ops::set_keybind_cmd(&self.state, &command, keys).map_err(fail)?;
+        Ok(json!({ "keybinds": keybinds_view(&r.keybinds), "stolen": r.stolen }))
     }
 }
 
@@ -1546,5 +1633,78 @@ mod tests {
         );
         let v = s.call("overview_pack_import", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
         assert!(v["columns"]["names"].is_object(), "the same self-describing shape as overview_get: {v}");
+    }
+
+    /// root -> ui -> editHistory -> (ts, { "/a/box": ["Jita", "Amarr"] }) —
+    /// `ops::tests::autofill_user_bytes`'s shape.
+    fn autofill_user_bytes() -> Vec<u8> {
+        let hist = BmValue::Dict(vec![(b("/a/box"), BmValue::List(vec![BmValue::Str("Jita".into()), BmValue::Str("Amarr".into())]))]);
+        let ui = BmValue::Dict(vec![(b("editHistory"), BmValue::Tuple(vec![BmValue::Long(vec![0u8; 8]), hist]))]);
+        encode(&BmValue::Dict(vec![(b("ui"), ui)])).unwrap()
+    }
+
+    /// root -> cmd -> customCmds -> (ts, { command: codes }) — the model
+    /// crate's `user_with_binds` shape: `cmd` bare, leaves bare tuples.
+    fn keybinds_user_bytes() -> Vec<u8> {
+        let codes = |v: &[i64]| BmValue::Tuple(v.iter().map(|&n| BmValue::Int(n)).collect());
+        let table = BmValue::Dict(vec![
+            (b("CmdActivateHighPowerSlot1"), codes(&[81])),
+            (b("CmdActivateMediumPowerSlot1"), codes(&[17, 83])),
+            (b("CmdToggleAutopilot"), BmValue::None),
+        ]);
+        let cmd = BmValue::Dict(vec![(b("customCmds"), BmValue::Tuple(vec![BmValue::Long(vec![0u8; 8]), table]))]);
+        encode(&BmValue::Dict(vec![(b("cmd"), cmd)])).unwrap()
+    }
+
+    #[test]
+    fn autofill_get_set_and_clear_all() {
+        let (s, _) = open_user(&autofill_user_bytes());
+        let v = s.call("autofill_get", &Args::new()).unwrap();
+        assert_eq!(v[0]["widget"], "/a/box");
+        assert_eq!(v[0]["entries"], json!(["Jita", "Amarr"]));
+        let v = s.call("autofill_set", &args(json!({ "widget": "/a/box", "entries": ["Dodixie"] }))).unwrap();
+        assert_eq!(v[0]["entries"], json!(["Dodixie"]));
+        let v = s.call("autofill_clear_all", &Args::new()).unwrap();
+        assert!(v.as_array().unwrap().iter().all(|l| l["entries"].as_array().unwrap().is_empty()));
+        assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true);
+    }
+
+    #[test]
+    fn keybinds_get_labels_commands_and_renders_combos() {
+        let (s, _) = open_user(&keybinds_user_bytes());
+        let v = s.call("keybinds_get", &Args::new()).unwrap();
+        assert_eq!(v["available"], true);
+        let e = v["entries"].as_array().unwrap();
+        let high = e.iter().find(|x| x["command"] == "CmdActivateHighPowerSlot1").unwrap();
+        assert_eq!(high["label"], "Activate High Power Slot 1");
+        assert_eq!(high["group"], "Modules");
+        assert_eq!(high["combo"], "Q");
+        assert_eq!(high["keys"], json!([81]));
+        let med = e.iter().find(|x| x["command"] == "CmdActivateMediumPowerSlot1").unwrap();
+        assert_eq!(med["combo"], "Ctrl+S");
+        let ap = e.iter().find(|x| x["command"] == "CmdToggleAutopilot").unwrap();
+        assert_eq!(ap["combo"], Value::Null);
+        assert_eq!(ap["keys"], Value::Null);
+    }
+
+    #[test]
+    fn keybind_set_binds_by_name_steals_and_unbinds() {
+        let (s, _) = open_user(&keybinds_user_bytes());
+        // Ctrl+S is CmdActivateMediumPowerSlot1's; giving it to autopilot steals it.
+        let v = s.call("keybind_set", &args(json!({ "command": "CmdToggleAutopilot", "key": "s", "ctrl": true }))).unwrap();
+        assert_eq!(v["stolen"], json!(["CmdActivateMediumPowerSlot1"]));
+        let e = v["keybinds"]["entries"].as_array().unwrap();
+        assert_eq!(e.iter().find(|x| x["command"] == "CmdToggleAutopilot").unwrap()["keys"], json!([17, 83]));
+        let v = s.call("keybind_set", &args(json!({ "command": "CmdToggleAutopilot" }))).unwrap();
+        let e = v["keybinds"]["entries"].as_array().unwrap();
+        assert_eq!(e.iter().find(|x| x["command"] == "CmdToggleAutopilot").unwrap()["keys"], Value::Null);
+        let err = s.call("keybind_set", &args(json!({ "command": "CmdToggleAutopilot", "key": "Hyper" }))).unwrap_err();
+        assert_eq!(err["code"], "unknown_key");
+    }
+
+    #[test]
+    fn combo_label_orders_modifiers_and_names_unknown_codes() {
+        assert_eq!(combo_label(&[17, 18, 16, 68]), "Ctrl+Alt+Shift+D");
+        assert_eq!(combo_label(&[999]), "VK999");
     }
 }
