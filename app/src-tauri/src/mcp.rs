@@ -1875,8 +1875,8 @@ mod tests {
         assert_eq!(combo_label(&[999]), "VK999");
     }
 
-    /// `ops::tests::neocom_char_bytes`'s shape: two buttons on the bar, one in
-    /// the Original snapshot.
+    /// `ops::tests::neocom_char_bytes`'s shape: two buttons on the bar, two in
+    /// the Original snapshot (one conflicting with bundled, one legacy-only).
     fn neocom_char_bytes() -> Vec<u8> {
         let ts = || BmValue::Long(vec![0u8; 8]);
         let button = |id: &str, btn_type: i64, icon: &str| BmValue::Instance {
@@ -1888,7 +1888,7 @@ mod tests {
         };
         encode(&BmValue::Dict(vec![(b("ui"), BmValue::Dict(vec![
             (b("neocomButtonRawData"), BmValue::Tuple(vec![ts(), BmValue::List(vec![button("chat", 10, "res:/ui/Texture/WindowIcons/chatchannel.png"), button("wallet", 1, "res:/ui/Texture/WindowIcons/wallet.png")])])),
-            (b("neocomButtonRawDataOriginal"), BmValue::Tuple(vec![ts(), BmValue::Tuple(vec![button("chat", 10, "res:/ui/Texture/WindowIcons/chatchannel.png")])])),
+            (b("neocomButtonRawDataOriginal"), BmValue::Tuple(vec![ts(), BmValue::Tuple(vec![button("chat", 10, "chat.png"), button("legacyprobe", 7, "legacy.png")])])),
         ]))])).unwrap()
     }
 
@@ -1900,22 +1900,27 @@ mod tests {
         assert_eq!(ids, ["chat", "wallet"]);
         let avail = v["available"].as_array().unwrap();
         assert!(avail.iter().any(|e| e["id"] == "market"), "bundled catalog present");
-        assert!(avail.iter().any(|e| e["id"] == "chat" && e["icon_path"] == "res:/ui/Texture/WindowIcons/chatchannel.png"), "the bundled catalog entry present");
-        assert!(avail.len() >= 22, "catalog has at least 22 entries");
+        assert!(avail.iter().any(|e| e["id"] == "chat" && e["icon_path"] == "res:/ui/Texture/WindowIcons/chatchannel.png"), "bundled wins conflict: chat uses bundled icon, not original's chat.png");
+        assert!(avail.iter().any(|e| e["id"] == "legacyprobe" && e["btn_type"] == 7 && e["icon_path"] == "legacy.png"), "union includes original-only entries: legacyprobe");
+        assert!(avail.len() >= 23, "catalog has bundled (22) plus original-only legacyprobe");
     }
 
     #[test]
     fn neocom_edit_adds_by_id_from_the_catalog_reorders_and_resets() {
         let (s, _) = open_char(&neocom_char_bytes());
         let v = s.call("neocom_edit", &args(json!({ "ops": [
+            { "op": "add", "id": "legacyprobe" },
             { "op": "add", "id": "market" },
-            { "op": "reorder", "order": [2, 0, 1] }
+            { "op": "reorder", "order": [3, 0, 1, 2] }
         ]}))).unwrap();
         let ids: Vec<&str> = v["buttons"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, ["market", "chat", "wallet"]);
+        assert_eq!(ids, ["market", "chat", "wallet", "legacyprobe"]);
+        let legacy = v["buttons"].as_array().unwrap().iter().find(|b| b["id"] == "legacyprobe").unwrap();
+        assert_eq!(legacy["btn_type"], 7);
+        assert_eq!(legacy["icon_path"], "legacy.png");
         let e = s.call("neocom_edit", &args(json!({ "ops": [{ "op": "add", "id": "no_such_button" }] }))).unwrap_err();
         assert_eq!(e["code"], "unknown_button");
         let v = s.call("neocom_edit", &args(json!({ "ops": [{ "op": "reset" }] }))).unwrap();
-        assert_eq!(v["buttons"].as_array().unwrap().len(), 1);
+        assert_eq!(v["buttons"].as_array().unwrap().len(), 2);
     }
 }
