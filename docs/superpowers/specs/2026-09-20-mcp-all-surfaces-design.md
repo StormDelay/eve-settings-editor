@@ -127,7 +127,7 @@ tests pass untouched.
 | `fleet_edit` | `ops: [...]` | `set_field {name, value}` → `ops::set_fleet_field`; `set_colour {broadcast, rgb?}` (omit `rgb` to clear, EVE's ✕) → `ops::set_fleet_colour`; `set_watchlist_colour {char_id, rgb?}` → `ops::set_watchlist_colour`. `rgb` is `[r, g, b]` 0–1. Returns `fleet_get`'s shape. |
 | `lookup_character` | `query` (name or id) | `names::lookup_blocking(dir, query)` on `off_runtime` → `{id, name}` or error `not_found`; ESI errors → `esi`. For "add X to my watchlist in red". |
 
-### 2.7 Chat (2) — character file
+### 2.7 Chat (2) — account file (the chat *window* is character-side; its splits are account-scoped, per `ops::set_chat_splits`)
 
 | Tool | Input | Backed by |
 |---|---|---|
@@ -166,8 +166,8 @@ character's settings kept by this app — not an overview preset (see
 `eve_guide`'s enum follows.
 
 - `workflow`: one added paragraph naming the editors and which file each
-  lives in (character: layout, neocom, HUD, chat; account: autofill, keybinds;
-  both: fleet), and that copy settings and settings presets write files
+  lives in (character: layout, neocom, HUD; account: autofill, keybinds, chat
+  splits; both: fleet), and that copy settings and settings presets write files
   directly.
 - `layout`: `layout_render` first — look before moving anything; window ids
   are EVE's internal names (`overview`, `market`, `chatchannel_local`, …) with
