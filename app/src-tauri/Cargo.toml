@@ -40,4 +40,8 @@ tokio = { version = "1", features = ["rt", "time", "io-std"] }
 # What Tauri's `data_dir()` calls, so the MCP process resolves the same app dir
 # without a Tauri handle (lib.rs `app_dir_base`).
 dirs = "6"
+# layout_render (mcp_render.rs): a PNG of the window layout as an MCP image
+# block. Both crates are already in the lockfile through Tauri's icon handling.
+png = "0.18"
+base64 = "0.22"
 
