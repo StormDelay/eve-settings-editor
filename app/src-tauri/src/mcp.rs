@@ -60,6 +60,10 @@ const PRESET_NAMES_JSON: &str = include_str!("../../src/lib/data/default-preset-
 /// renders and validates with. One file, two readers.
 const VK_LABELS_JSON: &str = include_str!("../../src/lib/data/vk-labels.json");
 
+/// The bundled neocom button catalog (`{id, btnType, iconPath}`), the base
+/// the UI unions with a file's stale `Original` snapshot.
+const NEOCOM_JSON: &str = include_str!("../../src/lib/data/neocom-buttons.json");
+
 fn vk_labels() -> HashMap<i64, String> {
     let raw: HashMap<String, String> = serde_json::from_str(VK_LABELS_JSON).expect("vk-labels.json");
     raw.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect()
@@ -283,6 +287,49 @@ fn op_item(ops: &[&str], fields: Value) -> Value {
             "items": { "type": "object", "additionalProperties": false, "properties": props, "required": ["op"] }
         }
     })
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+struct NeocomEntry { id: String, btn_type: i64, icon_path: String }
+
+/// Bundled ∪ the file's Original, by id; the bundled entry wins a conflict.
+fn neocom_available(bar: &settings_model::NeocomBar) -> Vec<NeocomEntry> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Raw { id: String, btn_type: i64, icon_path: String }
+    let bundled: Vec<Raw> = serde_json::from_str(NEOCOM_JSON).expect("neocom-buttons.json");
+    let mut out: Vec<NeocomEntry> = bundled.into_iter().map(|r| NeocomEntry { id: r.id, btn_type: r.btn_type, icon_path: r.icon_path }).collect();
+    for o in &bar.original {
+        if !out.iter().any(|e| e.id == o.id) {
+            out.push(NeocomEntry { id: o.id.clone(), btn_type: o.btn_type, icon_path: o.icon_path.clone() });
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+fn neocom_view(bar: &settings_model::NeocomBar) -> Value {
+    json!({ "buttons": bar.buttons, "available": neocom_available(bar) })
+}
+
+fn neocom_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "reorder" => ops::neocom_reorder(state, req(a, "order")?),
+        "remove" => ops::neocom_remove(state, req(a, "index")?),
+        "add" => {
+            let id: String = req(a, "id")?;
+            let bar = ops::neocom_bar(state).map_err(fail)?;
+            let e = neocom_available(&bar).into_iter().find(|e| e.id == id)
+                .ok_or_else(|| err("unknown_button", format!("no button `{id}`; ids are neocom_get's available list")))?;
+            ops::neocom_add(state, &e.id, e.btn_type, &e.icon_path)
+        }
+        "reset" => ops::neocom_reset(state),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
 }
 
 /// One tool's wire definition. The description is what the model reads —
@@ -510,6 +557,19 @@ fn tool_defs() -> Vec<ToolDef> {
                 "ctrl": { "type": "boolean" }, "alt": { "type": "boolean" }, "shift": { "type": "boolean" }
             }), &["command"]),
         },
+        ToolDef {
+            name: "neocom_edit",
+            description: "Edit the Neocom bar as a batch (one undo step; first failure rolls back). Ops: reorder {order: [every current index, in the wanted sequence]}; remove {index}; add {id} (an id from neocom_get's available, appended at the end); reset {} (back to EVE's original bar). Returns neocom_get's shape. Nothing reaches disk until save.",
+            schema: || obj(op_item(&["reorder", "remove", "add", "reset"], json!({
+                "order": { "type": "array", "items": { "type": "integer" } },
+                "index": { "type": "integer" }, "id": { "type": "string" }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "neocom_get",
+            description: "The character's Neocom bar (the vertical button strip): buttons in order [{index, id, btn_type, icon_path, children}] and available — every button that can be added, by id. Needs the character file open.",
+            schema: || obj(json!({}), &[]),
+        },
     ]
 }
 
@@ -592,6 +652,8 @@ impl EveMcp {
             "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
             "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state).map_err(fail)?)),
             "keybind_set" => self.keybind_set(args),
+            "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state).map_err(fail)?))),
+            "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state).map_err(fail)?)),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -1811,5 +1873,49 @@ mod tests {
     fn combo_label_orders_modifiers_and_names_unknown_codes() {
         assert_eq!(combo_label(&[17, 18, 16, 68]), "Ctrl+Alt+Shift+D");
         assert_eq!(combo_label(&[999]), "VK999");
+    }
+
+    /// `ops::tests::neocom_char_bytes`'s shape: two buttons on the bar, one in
+    /// the Original snapshot.
+    fn neocom_char_bytes() -> Vec<u8> {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let button = |id: &str, btn_type: i64, icon: &str| BmValue::Instance {
+            class: Box::new(b("utillib.KeyVal")),
+            state: Box::new(BmValue::Dict(vec![
+                (b("btnType"), BmValue::Int(btn_type)), (b("children"), BmValue::None),
+                (b("iconPath"), b(icon)), (b("id"), b(id)),
+            ])),
+        };
+        encode(&BmValue::Dict(vec![(b("ui"), BmValue::Dict(vec![
+            (b("neocomButtonRawData"), BmValue::Tuple(vec![ts(), BmValue::List(vec![button("chat", 10, "res:/ui/Texture/WindowIcons/chatchannel.png"), button("wallet", 1, "res:/ui/Texture/WindowIcons/wallet.png")])])),
+            (b("neocomButtonRawDataOriginal"), BmValue::Tuple(vec![ts(), BmValue::Tuple(vec![button("chat", 10, "res:/ui/Texture/WindowIcons/chatchannel.png")])])),
+        ]))])).unwrap()
+    }
+
+    #[test]
+    fn neocom_get_lists_the_bar_and_the_union_catalog() {
+        let (s, _) = open_char(&neocom_char_bytes());
+        let v = s.call("neocom_get", &Args::new()).unwrap();
+        let ids: Vec<&str> = v["buttons"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["chat", "wallet"]);
+        let avail = v["available"].as_array().unwrap();
+        assert!(avail.iter().any(|e| e["id"] == "market"), "bundled catalog present");
+        assert!(avail.iter().any(|e| e["id"] == "chat" && e["icon_path"] == "res:/ui/Texture/WindowIcons/chatchannel.png"), "the bundled catalog entry present");
+        assert!(avail.len() >= 22, "catalog has at least 22 entries");
+    }
+
+    #[test]
+    fn neocom_edit_adds_by_id_from_the_catalog_reorders_and_resets() {
+        let (s, _) = open_char(&neocom_char_bytes());
+        let v = s.call("neocom_edit", &args(json!({ "ops": [
+            { "op": "add", "id": "market" },
+            { "op": "reorder", "order": [2, 0, 1] }
+        ]}))).unwrap();
+        let ids: Vec<&str> = v["buttons"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["market", "chat", "wallet"]);
+        let e = s.call("neocom_edit", &args(json!({ "ops": [{ "op": "add", "id": "no_such_button" }] }))).unwrap_err();
+        assert_eq!(e["code"], "unknown_button");
+        let v = s.call("neocom_edit", &args(json!({ "ops": [{ "op": "reset" }] }))).unwrap();
+        assert_eq!(v["buttons"].as_array().unwrap().len(), 1);
     }
 }
