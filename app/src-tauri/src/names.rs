@@ -58,7 +58,7 @@ fn save_cache(dir: &Path, cache: &Cache) -> std::io::Result<()> {
 
 /// One entry from ESI `/universe/names`.
 #[derive(Debug, PartialEq, Deserialize)]
-struct EsiName {
+pub(crate) struct EsiName {
     category: String,
     id: u64,
     name: String,
@@ -270,7 +270,7 @@ pub fn resolve_blocking(dir: &Path, ids: &[u64], refetch_all: bool) -> Cache {
 /// directions are answered without a call from then on. `Err` is a transport
 /// failure — distinct from `Ok(None)`, "no such character" — so the UI can say
 /// which. Both fetchers are injected so this unit-tests without the network.
-fn lookup_with<N, I>(dir: &Path, query: &str, fetch_names: N, fetch_ids: I) -> Result<Option<Found>, FetchError>
+pub(crate) fn lookup_with<N, I>(dir: &Path, query: &str, fetch_names: N, fetch_ids: I) -> Result<Option<Found>, FetchError>
 where
     N: FnOnce(&[u64]) -> Result<Vec<EsiName>, FetchError>,
     I: FnOnce(&str) -> Result<Option<Found>, FetchError>,
