@@ -332,6 +332,62 @@ fn neocom_op(state: &AppState, a: &Args) -> Result<(), Value> {
     .map_err(fail)
 }
 
+/// The fleet projection without `set` targets, watch-list ids named from the
+/// cache when known, colours as {state, rgb?, default?}.
+fn fleet_view(f: &settings_model::Fleet, names: &names::Cache) -> Value {
+    let colours: Vec<Value> = f.colours.iter().map(|c| {
+        let (state, rgb) = match &c.state {
+            settings_model::Colour::Absent => ("absent", None),
+            settings_model::Colour::Cleared => ("cleared", None),
+            settings_model::Colour::Set { rgb } => ("set", Some(*rgb)),
+            settings_model::Colour::Unreadable => ("unreadable", None),
+        };
+        json!({ "broadcast": c.broadcast, "state": state, "rgb": rgb, "default": c.default })
+    }).collect();
+    let watchlist: Vec<Value> = f.watchlist.iter().map(|w| json!({
+        "char_id": w.char_id, "name": names.get(&w.char_id).map(|n| n.name.clone()), "rgb": w.rgb,
+    })).collect();
+    json!({
+        "fields": f.fields.iter().map(hud_entry_view).collect::<Vec<_>>(),
+        "colours": colours, "watchlist": watchlist,
+        "palette": f.palette.iter().map(|(n, rgb)| json!({ "name": n, "rgb": rgb })).collect::<Vec<_>>(),
+        "char_open": f.char_open, "user_open": f.user_open,
+    })
+}
+
+fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "set_field" => ops::set_fleet_field(state, &req::<String>(a, "name")?, &req::<String>(a, "value")?),
+        "set_colour" => ops::set_fleet_colour(state, &req::<String>(a, "broadcast")?, opt(a, "rgb")?),
+        "set_watchlist_colour" => ops::set_watchlist_colour(state, req(a, "char_id")?, opt(a, "rgb")?),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
+fn lookup_result(r: Result<Option<names::Found>, names::FetchError>) -> ToolResult {
+    match r {
+        Ok(Some(f)) => Ok(json!({ "id": f.id, "name": f.name })),
+        Ok(None) => Err(err("not_found", "no character by that name or id")),
+        Err(e) => Err(err("esi", format!("ESI lookup failed: {}", e.0))),
+    }
+}
+
+impl EveMcp {
+    fn fleet_get(&self) -> ToolResult {
+        let f = ops::fleet_settings(&self.state).map_err(fail)?;
+        // Names from the cache only — no network on a read. `resolve_blocking`
+        // with an empty id list is NOT "the whole cache": it selects only the
+        // ids passed in (here, none), so it always comes back empty regardless
+        // of what is on disk. `load_cache` is the actual cache-only accessor —
+        // already `pub`, so no visibility change was needed for it.
+        let names = names::load_cache(&self.dir);
+        Ok(fleet_view(&f, &names))
+    }
+}
+
 /// One tool's wire definition. The description is what the model reads —
 /// it is the product; keep each under ~80 words (they load every turn).
 struct ToolDef {
@@ -570,6 +626,26 @@ fn tool_defs() -> Vec<ToolDef> {
             description: "The character's Neocom bar (the vertical button strip): buttons in order [{index, id, btn_type, icon_path, children}] and available — every button that can be added, by id. Needs the character file open.",
             schema: || obj(json!({}), &[]),
         },
+        ToolDef {
+            name: "fleet_get",
+            description: "The fleet settings across both files: fields (broadcast toggles, formation, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "fleet_edit",
+            description: "Edit fleet settings as a batch (one undo step; first failure rolls back). Ops: set_field {name, value} (value as text, matching the field's kind); set_colour {broadcast, rgb?} (rgb [r,g,b] 0–1 from the palette; omit rgb to clear to EVE's ✕); set_watchlist_colour {char_id, rgb?} (omit rgb to remove the colour; find ids with lookup_character). Returns fleet_get's shape. Nothing reaches disk until save.",
+            schema: || obj(op_item(&["set_field", "set_colour", "set_watchlist_colour"], json!({
+                "name": { "type": "string" }, "value": { "type": "string" },
+                "broadcast": { "type": "string" },
+                "rgb": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+                "char_id": { "type": "integer" }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "lookup_character",
+            description: "Find a character's id by name, or confirm an id, through EVE's ESI (cached afterwards). Returns {id, name}; not_found when ESI knows no such character. Use it for watch-list colours.",
+            schema: || obj(json!({ "query": { "type": "string" } }), &["query"]),
+        },
     ]
 }
 
@@ -654,6 +730,12 @@ impl EveMcp {
             "keybind_set" => self.keybind_set(args),
             "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state).map_err(fail)?))),
             "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state).map_err(fail)?)),
+            "fleet_get" => self.fleet_get(),
+            "fleet_edit" => self.batch(args, fleet_op, |s| s.fleet_get()),
+            "lookup_character" => {
+                let q: String = req(args, "query")?;
+                lookup_result(off_runtime(|| names::lookup_blocking(&self.dir, &q)))
+            }
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -1922,5 +2004,58 @@ mod tests {
         assert_eq!(e["code"], "unknown_button");
         let v = s.call("neocom_edit", &args(json!({ "ops": [{ "op": "reset" }] }))).unwrap();
         assert_eq!(v["buttons"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn fleet_get_projects_both_sides_and_strips_paths() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        let cpath = temp_file("mcp-fleet-char", &empty_ui_bytes());
+        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        let v = s.call("fleet_get", &Args::new()).unwrap();
+        assert_no_paths(&v, "fleet_get");
+        assert_eq!(v["user_open"], true);
+        assert_eq!(v["char_open"], true);
+        assert!(v["fields"].as_array().unwrap().iter().any(|f| f["name"] == "listen_show_own"));
+        assert!(v["colours"].as_array().unwrap().iter().any(|c| c["broadcast"] == "Target"));
+        assert!(v["palette"].as_array().unwrap().len() >= 8);
+    }
+
+    #[test]
+    fn fleet_edit_sets_a_field_a_colour_and_a_watchlist_entry_then_clears_the_colour() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        let cpath = temp_file("mcp-fleet-char2", &empty_ui_bytes());
+        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        let v = s.call("fleet_edit", &args(json!({ "ops": [
+            { "op": "set_field", "name": "listen_show_own", "value": "1" },
+            { "op": "set_colour", "broadcast": "Target", "rgb": [0.2, 0.5, 1.0] },
+            { "op": "set_watchlist_colour", "char_id": 90000001, "rgb": [1.0, 0.0, 0.0] }
+        ]}))).unwrap();
+        let f = v["fields"].as_array().unwrap().iter().find(|f| f["name"] == "listen_show_own").unwrap();
+        assert_eq!(f["value"], "1");
+        let c = v["colours"].as_array().unwrap().iter().find(|c| c["broadcast"] == "Target").unwrap();
+        assert_eq!(c["state"], "set");
+        assert_eq!(c["rgb"], json!([0.2, 0.5, 1.0]));
+        let w = v["watchlist"].as_array().unwrap().iter().find(|w| w["char_id"] == 90000001).unwrap();
+        assert_eq!(w["rgb"], json!([1.0, 0.0, 0.0]));
+        let v = s.call("fleet_edit", &args(json!({ "ops": [{ "op": "set_colour", "broadcast": "Target" }] }))).unwrap();
+        let c = v["colours"].as_array().unwrap().iter().find(|c| c["broadcast"] == "Target").unwrap();
+        assert_eq!(c["state"], "cleared");
+        assert_eq!(undo::undo_state(&s.state).depth, 2, "two batches, two undo steps");
+    }
+
+    #[test]
+    fn lookup_result_maps_a_hit_a_miss_and_a_transport_error() {
+        let dir = std::env::temp_dir().join(format!("mcp-lookup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let hit = names::lookup_with(&dir, "Some Pilot", |_| Ok(vec![]), |_| Ok(Some(names::Found { id: 42, name: "Some Pilot".into() })));
+        assert_eq!(lookup_result(hit).unwrap(), json!({ "id": 42, "name": "Some Pilot" }));
+        // Now cached: the fetchers must not be consulted.
+        let cached = names::lookup_with(&dir, "some pilot", |_| panic!("cache miss"), |_| panic!("cache miss"));
+        assert_eq!(lookup_result(cached).unwrap()["id"], 42);
+        let miss = names::lookup_with(&dir, "Nobody", |_| Ok(vec![]), |_| Ok(None));
+        assert_eq!(lookup_result(miss).unwrap_err()["code"], "not_found");
+        let down = names::lookup_with(&dir, "Anyone", |_| Ok(vec![]), |_| Err(names::FetchError("timeout".into())));
+        assert_eq!(lookup_result(down).unwrap_err()["code"], "esi");
     }
 }
