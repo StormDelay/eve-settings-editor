@@ -674,6 +674,14 @@ fn tool_defs() -> Vec<ToolDef> {
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
+            name: "layout_render",
+            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]}. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
+            schema: || obj(json!({
+                "width": { "type": "integer", "minimum": 320, "maximum": 2048, "description": "Image width in pixels, default 1024." },
+                "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." }
+            }), &[]),
+        },
+        ToolDef {
             name: "layout_edit",
             description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — and only where settable is true); stack_create {a, b}; stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns layout_get's shape. Nothing reaches disk until save. Unsure: eve_guide layout.",
             schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans"], json!({
@@ -824,6 +832,16 @@ impl EveMcp {
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "layout_get" => Ok(layout_view(&ops::window_layout(&self.state, Slot::Char).map_err(fail)?)),
+            "layout_render" => {
+                use base64::Engine as _;
+                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
+                let include_closed = opt::<bool>(args, "include_closed")?.unwrap_or(false);
+                let (png, legend) = crate::mcp_render::layout_png(&wl, width, include_closed);
+                let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
+                v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
+                Ok(v)
+            }
             "layout_edit" => self.batch(args, layout_op, |s| Ok(layout_view(&ops::window_layout(&s.state, Slot::Char).map_err(fail)?))),
             "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
@@ -2262,5 +2280,19 @@ mod tests {
         ]}))).unwrap();
         assert_eq!(v["stacks"][0]["members"], json!(["m2", "m1"]));
         assert_eq!(undo::undo_state(&s.state).depth, 1, "stack ops open their own group; the batch is still one step");
+    }
+
+    #[test]
+    fn layout_render_returns_a_png_and_a_legend_through_the_tool() {
+        use base64::Engine as _;
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
+        assert_eq!(v["width"], 400);
+        assert_eq!(v["windows"].as_array().unwrap().len(), 6);
+        let png = base64::engine::general_purpose::STANDARD.decode(v["png_base64"].as_str().unwrap()).unwrap();
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        let blocks = blocks(v);
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[1], ContentBlock::Image(_)));
     }
 }
