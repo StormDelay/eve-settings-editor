@@ -1,6 +1,6 @@
 # MCP: the remaining editors (design)
 
-Status: designed 2026-09-20, not yet planned.
+Status: designed 2026-09-20, planned 2026-09-20 (docs/superpowers/plans/2026-09-20-mcp-all-surfaces.md).
 
 Milestone context: slice 2 of the MCP server
 (`docs/superpowers/specs/2026-09-19-mcp-server-design.md`, shipped in PR #96
@@ -174,8 +174,9 @@ character's settings kept by this app — not an overview preset (see
   `label` as the readable name; geometry is
   pixels at `reference_w × reference_h`, and a window whose stored screen size
   differs is re-stamped on edit; a stack is a tabbed container drawn at its
-  anchor member's geometry; `open`/`pinned`/`locked`/`compact` are the usual
-  flags, listed per window with whether they can be set.
+  anchor member's geometry; flags are the file's own keys (`openWindows`, `pinnedWindows`,
+  `lockedWindows`, `compactWindows`, …), listed per window with whether they
+  can be set.
 - `keybinds`: a binding is modifiers + one key, named as `Ctrl+Alt+Q`; setting
   a combo another command holds steals it and the result lists the losers;
   key names are the labels in `keybinds_get`'s `combo` field.
