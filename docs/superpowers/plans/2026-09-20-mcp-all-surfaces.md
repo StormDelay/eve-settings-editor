@@ -869,7 +869,7 @@ fn fleet_view(f: &settings_model::Fleet, names: &names::Cache) -> Value {
             settings_model::Colour::Absent => ("absent", None),
             settings_model::Colour::Cleared => ("cleared", None),
             settings_model::Colour::Set { rgb } => ("set", Some(*rgb)),
-            _ => ("unknown", None),
+            settings_model::Colour::Unreadable => ("unreadable", None),
         };
         json!({ "broadcast": c.broadcast, "state": state, "rgb": rgb, "default": c.default })
     }).collect();
@@ -914,7 +914,7 @@ impl EveMcp {
 }
 ```
 
-`Colour` has a fourth variant this module "refuses to touch" (`fleet.rs:108-120`); the `_ =>` arm covers it. `names::resolve_blocking(dir, &[], false)` with no ids only loads the cache — confirm by reading `resolve_with` (it returns after `load_cache` when `needed` is empty); if it would still build a client, replace with a `names::load_cache`-style accessor made `pub(crate)`.
+`Colour`'s four variants are `Absent`, `Cleared`, `Set { rgb }`, `Unreadable` (`fleet.rs:112-121`); the match is exhaustive without a wildcard (a `_` arm would be `unreachable_patterns`, which `-D warnings` rejects). `names::resolve_blocking(dir, &[], false)` with no ids only loads the cache — confirm by reading `resolve_with` (it returns after `load_cache` when `needed` is empty); if it would still build a client, replace with a `names::load_cache`-style accessor made `pub(crate)`.
 
 Tool defs:
 
@@ -1308,8 +1308,10 @@ mod tests {
         let rows = &legend.windows;
         assert!(rows.iter().find(|r| r.id == "overview").unwrap().drawn);
         assert!(!rows.iter().find(|r| r.id == "fitting").unwrap().drawn);
-        let drawn_stack_members = rows.iter().filter(|r| r.stack.as_deref() == Some("C") && r.drawn).count();
-        assert_eq!(drawn_stack_members, 1, "a stack draws once, at its anchor");
+        let in_stack: Vec<&LegendRow> = rows.iter().filter(|r| r.stack.as_deref() == Some("C")).collect();
+        assert_eq!(in_stack.len(), 3, "m1, m2 and the container C all belong to the stack");
+        assert_eq!(in_stack.iter().filter(|r| r.drawn).count(), 1, "a stack draws once, at its anchor");
+        assert!(rows.iter().find(|r| r.id == "C").unwrap().drawn, "C is open with geometry, so it is the anchor");
 
         let (png, legend) = layout_png(&wl, 640, true);
         let img = decode(&png);
@@ -1469,8 +1471,14 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
         c.fill(0, gy, width as i64, 1, GRID);
     }
 
-    // A stack draws once, at its anchor, with its members' labels stacked.
-    let anchor_of = |id: &str| wl.stacks.iter().find(|s| s.members.iter().any(|m| m == id)).map(|s| (s.container_id.clone(), s.anchor_id.clone(), s.members.clone()));
+    // A stack draws once, at its anchor — the container when it is open with
+    // geometry, else the frontmost open member (`windows.rs`'s anchor rule) —
+    // with its members' labels stacked. Every window in the stack, container
+    // included, carries a `StackRef`, so that is the key.
+    let stack_of = |w: &settings_model::WindowRect| {
+        w.stack.as_ref().and_then(|r| wl.stacks.iter().find(|s| s.container_id == r.container_id))
+            .map(|s| (s.container_id.clone(), s.anchor_id.clone(), s.members.clone()))
+    };
     let mut rows = Vec::new();
     let mut fill_i = 0usize;
     for w in &wl.windows {
@@ -1478,7 +1486,7 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
             rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: 0, y: 0, w: 0, h: 0, drawn: false, stack: None });
             continue;
         };
-        let stack = anchor_of(&w.id);
+        let stack = stack_of(w);
         let is_anchor_or_free = stack.as_ref().map_or(true, |(_, anchor, _)| anchor == &w.id);
         let open = w.open && w.renderable;
         let drawn = is_anchor_or_free && (open || include_closed);
@@ -1654,9 +1662,10 @@ Spec §2.8. Cross-file; writes immediately.
         assert!(results.iter().all(|r| r["ok"] == true), "{v}");
         let acct = results.iter().find(|r| r["path"].as_str().unwrap().contains("core_user_600")).unwrap();
         assert!(PathBuf::from(acct["backup_path"].as_str().unwrap()).exists());
+        let bytes = std::fs::read(prof.join("core_user_600.dat")).unwrap();
+        assert!(bytes.windows(3).any(|w| w == b"SRC"), "the source's overview subtree landed in the target file");
+        assert!(!bytes.windows(3).any(|w| w == b"TGT"), "and replaced the target's");
         s.call("open", &args(json!({ "user_file": prof.join("core_user_600.dat").to_string_lossy() }))).unwrap();
-        let ov = s.call("overview_get", &Args::new()).unwrap();
-        assert!(ov.to_string().contains("SRC"), "the source's overview landed: {ov}");
     }
 
     #[test]
