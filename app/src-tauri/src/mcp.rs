@@ -107,6 +107,11 @@ fn keybinds_view(k: &settings_model::Keybinds) -> Value {
     json!({ "entries": entries, "available": k.available })
 }
 
+/// A HUD-style entry without its `set` target (paths stay server-side).
+fn hud_entry_view(e: &settings_model::HudEntry) -> Value {
+    json!({ "name": e.name, "kind": e.kind, "value": e.value, "default": e.default, "scope": e.scope })
+}
+
 #[derive(serde::Serialize, Clone, PartialEq, Debug)]
 struct GroupRow {
     id: i64,
@@ -454,6 +459,29 @@ fn tool_defs() -> Vec<ToolDef> {
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
+            name: "chat_get",
+            description: "Per chat channel, the member-list width and input-box height the player set, as [{window_id, userlist_width, input_height}] — window_id is the layout id (chatchannel_local, …); a null means never resized. Account-side: needs the account file open (empty list otherwise).",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "chat_set_splits",
+            description: "Set the member-list width and/or input-box height (pixels) for one or more chat channels by window_id; at least one of the two. Returns chat_get's shape. Nothing reaches disk until save.",
+            schema: || obj(json!({
+                "window_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                "userlist_width": { "type": "integer" }, "input_height": { "type": "integer" }
+            }), &["window_ids"]),
+        },
+        ToolDef {
+            name: "hud_get",
+            description: "The character's HUD furniture settings — ship HUD offset and scale, target row position, effect icons and the like — as {entries: [{name, kind, value, default, scope}]}: kind is float/int/bool, value null means EVE's default applies, scope says which file holds it (char or account). Needs the character file open; the account file adds its own entries.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "hud_set",
+            description: "Set one HUD entry by name to a value written as text (\"-77\", \"0.5\", \"true\"), matching its kind. Returns hud_get's shape. Nothing reaches disk until save.",
+            schema: || obj(json!({ "name": { "type": "string" }, "value": { "type": "string" } }), &["name", "value"]),
+        },
+        ToolDef {
             name: "autofill_get",
             description: "The account's remembered texts — what EVE autocompletes in search boxes, chat, market, and so on — as [{widget, entries}]. widget is EVE's internal box id. Needs the account file open.",
             schema: || obj(json!({}), &[]),
@@ -540,6 +568,24 @@ impl EveMcp {
                     .map(|f| settings_model::FormationSpec { name: f.name, probes: f.probes, ranges: f.ranges })
                     .collect();
                 Ok(json!({ "yaml": ops::probe_yaml(&specs) }))
+            }
+            "chat_get" => ok(ops::chat_panels(&self.state).map_err(fail)?),
+            "chat_set_splits" => {
+                let ids: Vec<String> = req(args, "window_ids")?;
+                let userlist: Option<i64> = opt(args, "userlist_width")?;
+                let input: Option<i64> = opt(args, "input_height")?;
+                if userlist.is_none() && input.is_none() {
+                    return Err(err("missing_field", "give userlist_width and/or input_height"));
+                }
+                ok(ops::set_chat_splits(&self.state, ids, userlist, input).map_err(fail)?)
+            }
+            "hud_get" => {
+                let h = ops::hud_layout(&self.state).map_err(fail)?;
+                Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
+            }
+            "hud_set" => {
+                let h = ops::set_hud_field(&self.state, &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
+                Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
@@ -1573,6 +1619,65 @@ mod tests {
 
     fn empty_ui_bytes() -> Vec<u8> {
         encode(&BmValue::Dict(vec![(b("ui"), BmValue::Dict(vec![]))])).unwrap()
+    }
+
+    /// A character file with empty `windows` and `ui` sections — enough for
+    /// the HUD projection to report every field absent and mint on write.
+    fn hud_char_bytes() -> Vec<u8> {
+        encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![])), (b("ui"), BmValue::Dict(vec![]))])).unwrap()
+    }
+
+    /// Like `open_user`, for the character slot. `temp_file` names every file
+    /// core_user_5.dat; the name does not matter to `open_file`.
+    fn open_char(bytes: &[u8]) -> (EveMcp, PathBuf) {
+        let path = temp_file("mcp-char", bytes);
+        let s = EveMcp::for_tests();
+        ops::open_file(&s.state, Slot::Char, path.to_str().unwrap()).unwrap();
+        (s, path)
+    }
+
+    fn assert_no_paths(v: &Value, tool: &str) {
+        match v {
+            Value::Object(m) => {
+                for (k, c) in m {
+                    assert!(!k.ends_with("_path") && k != "set" && k != "path" || tool.starts_with("copy") || tool == "save" || tool == "open", "{tool}: key `{k}` leaks a path");
+                    assert_no_paths(c, tool);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|c| assert_no_paths(c, tool)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn hud_get_strips_paths_and_hud_set_mints_a_field() {
+        let (s, _) = open_char(&hud_char_bytes());
+        let v = s.call("hud_get", &Args::new()).unwrap();
+        assert_no_paths(&v, "hud_get");
+        let ship = v["entries"].as_array().unwrap().iter().find(|e| e["name"] == "ship_offset").unwrap();
+        assert_eq!(ship["value"], Value::Null);
+        assert_eq!(ship["scope"], "char");
+        let v = s.call("hud_set", &args(json!({ "name": "ship_offset", "value": "-77" }))).unwrap();
+        let ship = v["entries"].as_array().unwrap().iter().find(|e| e["name"] == "ship_offset").unwrap();
+        assert_eq!(ship["value"], "-77");
+        assert!(s.call("hud_set", &args(json!({ "name": "no_such_field", "value": "1" }))).is_err());
+    }
+
+    #[test]
+    fn hud_get_without_a_character_file_is_no_document() {
+        let s = EveMcp::for_tests();
+        assert_eq!(s.call("hud_get", &Args::new()).unwrap_err()["code"], "no_document");
+    }
+
+    #[test]
+    fn chat_get_is_empty_on_a_bare_account_and_set_splits_mints_both_keys() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        assert_eq!(s.call("chat_get", &Args::new()).unwrap(), json!([]));
+        let v = s.call("chat_set_splits", &args(json!({ "window_ids": ["chatchannel_local"], "userlist_width": 135, "input_height": 64 }))).unwrap();
+        let p = v.as_array().unwrap().iter().find(|p| p["window_id"] == "chatchannel_local").unwrap();
+        assert_eq!(p["userlist_width"], 135);
+        assert_eq!(p["input_height"], 64);
+        assert_eq!(s.call("chat_set_splits", &args(json!({ "window_ids": ["chatchannel_local"] }))).unwrap_err()["code"], "missing_field");
     }
 
     #[test]
