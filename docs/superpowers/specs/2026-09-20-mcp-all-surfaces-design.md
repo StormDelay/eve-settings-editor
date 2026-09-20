@@ -7,7 +7,7 @@ Milestone context: slice 2 of the MCP server
 as 24 tools over the overview and probe editors). This slice puts every other
 per-file editor — layout, autofill, keybinds, neocom, HUD, fleet, chat — and
 the two cross-file operations — copy settings and settings presets — behind
-the same server. **21 new tools, 45 in total.** Accounts (roster, aliases,
+the same server. **22 new tools, 46 in total.** Accounts (roster, aliases,
 pairing, guided capture), preferences, the update check and the raw-tree tool
 stay out, as decided on 2026-09-20.
 
@@ -22,7 +22,9 @@ tool results `{"code","message"}`; batched `_edit` tools take `ops: [{op, …}]`
 (`minItems: 1`), run under one `undo::group`, are atomic through
 `edit_reshared`'s rollback plus the runner's own `rollback_group` on a parse
 error, and return the editor's re-projected model; descriptions are the
-product. Nothing in `ops.rs` or `crates/` changes. No new dependencies.
+product. Nothing in `ops.rs` or `crates/` changes. Two direct dependencies
+that are already in the lockfile through Tauri (`png` 0.18, `base64` 0.22) —
+nothing new is downloaded.
 
 Two additions to the conventions:
 
@@ -41,19 +43,21 @@ Decisions taken on 2026-09-20, with what they beat:
 
 | Decision | Over | Because |
 |---|---|---|
-| Per-editor `_get` + batched `_edit`, 45 tools | Fewer, wider tools (~30); one tool per op (~70) | Same convention as slice 1; small specific schemas; 45 is well inside what Claude Desktop/Code handle. |
+| Per-editor `_get` + batched `_edit`, 46 tools | Fewer, wider tools (~30); one tool per op (~70) | Same convention as slice 1; small specific schemas; 46 is well inside what Claude Desktop/Code handle. |
+| `layout_render` returns a PNG of the layout as an MCP image block | Deferring images; an SVG the model reads as text | The user's call: a model can only place windows sensibly if it can see them, and the first ask will be "show me my layout". PNG is what every image-capable client displays; the legend text block serves clients that cannot. |
 | Per-file editors + copy settings + settings presets | Per-file only; everything but capture | Copy settings is the highest-value AI ask ("copy my main's overview onto my alts"); accounts is app config, not game settings, and capture is interactive. |
 | The key-code table moves to `app/src/lib/data/vk-labels.json`, read by both sides | A Rust-owned table served by a command; a second copy in Rust | Zero plumbing, one source, and exactly how `overview-groups.json`, `overview-states.json` and `default-presets.json` already work. When catalog data moves to Rust, all four move together. |
 | Layout geometry and flags are written by building the canvas's own mutations server-side | Exposing `apply_mutations` with paths | The paths stay inside the server; the tool is `{window, x, y, w, h}`. Still no raw-tree tool. |
 
 ## 2. Tool surface
 
-### 2.1 Layout (2) — needs the character file; the account file adds nothing here
+### 2.1 Layout (3) — needs the character file; the account file adds nothing here
 
 | Tool | Input | Backed by | Returns |
 |---|---|---|---|
 | `layout_get` | — | `ops::window_layout(state, Slot::Char)` | `{reference_w, reference_h, windows: [{id, label, name?, open, renderable, resolution_matches, geom?: {x, y, w, h, screen_w, screen_h}, flags: [{name, value, settable}], stack?: {container_id, index?}}], stacks: [{container_id, container_label, anchor_id, members}]}` — the projection minus every path; `settable` is `set != Unavailable`. Units are pixels at the file's reference resolution. |
 | `layout_edit` | `ops: [...]` | see below | `layout_get`'s shape |
+| `layout_render` | `width?` (px, default 1024, 320–2048), `include_closed?` (default false) | `layout_get`'s data → `mcp_render::layout_png` | **Two content blocks**: a PNG image (base64, `image/png`) of the screen at the file's reference aspect ratio, every open renderable window drawn as a filled box with a 1-px border and its `label` in a 5×7 bitmap font (uppercased, truncated to the box), stacks drawn once at their anchor with a tab strip and the member labels; plus a text block `{width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack?}]}` — the legend, which is also what a client without image support sees. |
 
 Ops of `layout_edit`, each one flat object with `op` plus the union of fields:
 
@@ -65,6 +69,21 @@ The geometry and flag ops collect their mutations and apply them with one
 `ops::apply_mutations(state, Slot::Char, &mutations)` per op — inside the
 batch's group, so the batch stays one undo step. The projection is re-read
 before each op (paths can move after a structural stack edit).
+
+**Rendering** (`app/src-tauri/src/mcp_render.rs`, `pub(crate) fn layout_png(&WindowLayout, width: u32, include_closed: bool) -> (Vec<u8>, Legend)`):
+pure Rust over an RGB buffer — a dark ground, a 1-px grid every 10 % of the
+reference size, one fill colour per window cycling through eight muted hues,
+a darker border, and labels from a hand-coded 5×7 bitmap font covering
+`A–Z 0–9 - _ . /` (anything else draws as `.`), scaled ×2 when the box is
+tall enough. Encoded with the `png` crate (RGB, default compression); a
+1024-wide flat-colour image is a few KB, ~10–30 KB as base64. Closed windows
+are skipped unless `include_closed`, in which case they draw as an outline
+only. No HUD furniture, no neocom — windows and stacks only, and the
+description says so. The tool result carries the image and the legend as
+two content blocks, which means `EveMcp::call`'s return type grows a variant
+for tools that attach images (`Reply { json, images: Vec<Png> }` or the
+like — the plan decides the exact shape; `call_tool` maps it to
+`CallToolResult::success(vec![text, image])`).
 
 ### 2.2 Autofill (3) — account file
 
@@ -150,8 +169,9 @@ character's settings kept by this app — not an overview preset (see
   lives in (character: layout, neocom, HUD, chat; account: autofill, keybinds;
   both: fleet), and that copy settings and settings presets write files
   directly.
-- `layout`: window ids are EVE's internal names (`overview`, `market`,
-  `chatchannel_local`, …) with `label` as the readable name; geometry is
+- `layout`: `layout_render` first — look before moving anything; window ids
+  are EVE's internal names (`overview`, `market`, `chatchannel_local`, …) with
+  `label` as the readable name; geometry is
   pixels at `reference_w × reference_h`, and a window whose stored screen size
   differs is re-stamped on edit; a stack is a tabbed container drawn at its
   anchor member's geometry; `open`/`pinned`/`locked`/`compact` are the usual
@@ -177,6 +197,15 @@ that `workflow` names every editor tool prefix.
   the screen-size stamp; `set_flag` on an `Insert` target mints the key;
   `flag_unavailable` and `unknown_window` surface as errors with the batch
   rolled back.
+- Render (`mcp_render.rs`): the PNG decodes (via the `png` crate's decoder)
+  to the requested width and the reference aspect ratio; a pixel at the centre
+  of an open window's box has that window's fill colour and a pixel outside
+  every box has the ground colour; a closed window is absent unless
+  `include_closed`; a stack draws once, at its anchor; the legend lists every
+  window with `drawn` true/false; the bitmap font renders each supported glyph
+  as a non-empty 5×7 pattern and an unsupported character as `.`. Through the
+  tool: `layout_render` on the fixture returns one text block and one
+  `image/png` block whose base64 decodes to a PNG signature.
 - Keybinds: `"ctrl+q"` → `[17, 81]`; unbind; `unknown_key`; `stolen` populated
   when a combo moves; `vk-labels.json` has every code `keysToLabel`'s tests
   expect (the frontend tests cover that side untouched).
@@ -196,7 +225,7 @@ that `workflow` names every editor tool prefix.
   and `not_found`; the ESI-backed `lookup_blocking` is only called by the tool
   arm, on `off_runtime`. No network in tests.
 - Invariants and smoke: the schema test covers the new tools automatically;
-  the stdio smoke test's sorted name list grows to 45.
+  the stdio smoke test's sorted name list grows to 46.
 - Frontend: `keybinds.test.ts` passes unchanged after the JSON move; `npm run
   check` clean.
 
@@ -206,9 +235,11 @@ that `workflow` names every editor tool prefix.
 |---|---|
 | `app/src/lib/data/vk-labels.json` | **new** — `VK_LABELS` moved verbatim |
 | `app/src/lib/keybinds.ts` | import the JSON instead of the literal |
-| `app/src-tauri/src/mcp.rs` | 21 tool defs, handlers, views (path stripping), the mutation builders for layout, catalog `include_str!`s (`neocom-buttons.json`, `command-names.json`, `vk-labels.json`), tests |
+| `app/src-tauri/src/mcp.rs` | 22 tool defs, handlers, views (path stripping), the mutation builders for layout, catalog `include_str!`s (`neocom-buttons.json`, `command-names.json`, `vk-labels.json`), the image-carrying reply variant, tests |
+| `app/src-tauri/src/mcp_render.rs` | **new** — `layout_png`, the bitmap font, the legend; unit tests |
+| `app/src-tauri/Cargo.toml` | `png = "0.18"`, `base64 = "0.22"` (both already in the lockfile) |
 | `app/src-tauri/src/mcp_primer.md` | three sections + the workflow paragraph |
-| `app/src-tauri/tests/mcp_stdio.rs` | 45 names |
+| `app/src-tauri/tests/mcp_stdio.rs` | 46 names |
 | `README.md` | the "AI access" section lists what the assistant can edit |
 | `CHANGELOG.md` | one `[Unreleased]` line |
 | spec §3.6 of slice 1 | unchanged; this document is the addendum |
@@ -222,9 +253,10 @@ table and dispatch stay in one file so the invariants test keeps one source.
 
 1. All tests in §4 green; `cargo test --workspace`, clippy `-D warnings`,
    `npm run check`, `npm test` — exit code 0 each.
-2. The stdio smoke test lists 45 tools against the release exe.
+2. The stdio smoke test lists 46 tools against the release exe.
 3. Model-in-the-loop, with the server registered in Claude Code as it is now
-   (rebuild release first): "move my market window to the top-left", "bind
+   (rebuild release first): "show me my layout" (the model describes the
+   image), "move my market window to the top-left", "bind
    Q to approach", "add <name> to my watchlist in red", "copy my main's overview
    onto <alt>" — each completes through the descriptions as written, and
    `copy_preview` is called before `copy_apply` without being told.
@@ -234,5 +266,4 @@ table and dispatch stay in one file so the invariants test keeps one source.
 
 - Accounts: roster, aliases, pairing, launcher proposals — app config, and
   guided capture is interactive.
-- A `layout_get` per-window `screenshot`/canvas — no image tools in v1.
 - Everything in slice 1's §11 (HTTP transport, raw tree, read-only knob).
