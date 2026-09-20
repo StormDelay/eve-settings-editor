@@ -54,8 +54,8 @@ fn initialize_then_tools_list() {
         names,
         [
             "autofill_clear_all", "autofill_get", "autofill_set", "builtin_presets", "chat_get", "chat_set_splits",
-            "eve_guide", "fleet_edit", "fleet_get", "groups_search", "hud_get", "hud_set", "keybind_set", "keybinds_get", "list_backups",
-            "list_characters", "lookup_character", "neocom_edit", "neocom_get", "open", "overview_appearance_edit", "overview_columns_edit", "overview_get",
+            "eve_guide", "fleet_edit", "fleet_get", "groups_search", "hud_get", "hud_set", "keybind_set", "keybinds_get", "layout_edit", "layout_get",
+            "list_backups", "list_characters", "lookup_character", "neocom_edit", "neocom_get", "open", "overview_appearance_edit", "overview_columns_edit", "overview_get",
             "overview_pack_export", "overview_pack_import", "overview_pack_preview", "overview_presets_edit",
             "overview_tabs_edit", "probes_add_yaml", "probes_export_yaml", "probes_get", "probes_remove",
             "probes_reorder", "probes_set", "restore_backup", "save", "status", "undo",
