@@ -53,12 +53,12 @@ fn initialize_then_tools_list() {
     assert_eq!(
         names,
         [
-            "autofill_clear_all", "autofill_get", "autofill_set", "builtin_presets", "eve_guide", "groups_search",
-            "keybind_set", "keybinds_get", "list_backups", "list_characters", "open",
-            "overview_appearance_edit", "overview_columns_edit", "overview_get", "overview_pack_export",
-            "overview_pack_import", "overview_pack_preview", "overview_presets_edit", "overview_tabs_edit",
-            "probes_add_yaml", "probes_export_yaml", "probes_get", "probes_remove", "probes_reorder", "probes_set",
-            "restore_backup", "save", "status", "undo",
+            "autofill_clear_all", "autofill_get", "autofill_set", "builtin_presets", "chat_get", "chat_set_splits",
+            "eve_guide", "groups_search", "hud_get", "hud_set", "keybind_set", "keybinds_get", "list_backups",
+            "list_characters", "open", "overview_appearance_edit", "overview_columns_edit", "overview_get",
+            "overview_pack_export", "overview_pack_import", "overview_pack_preview", "overview_presets_edit",
+            "overview_tabs_edit", "probes_add_yaml", "probes_export_yaml", "probes_get", "probes_remove",
+            "probes_reorder", "probes_set", "restore_backup", "save", "status", "undo",
         ]
     );
 
