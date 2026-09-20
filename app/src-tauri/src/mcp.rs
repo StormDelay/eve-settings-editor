@@ -56,6 +56,24 @@ const PRESETS_JSON: &str = include_str!("../../src/lib/data/default-presets.json
 /// Display names for the modern built-ins, keyed by the numeric part of `key`.
 const PRESET_NAMES_JSON: &str = include_str!("../../src/lib/data/default-preset-names.json");
 
+/// Windows virtual-key codes → EVE's key names, the table `keybinds.ts`
+/// renders and validates with. One file, two readers.
+#[allow(dead_code)]
+const VK_LABELS_JSON: &str = include_str!("../../src/lib/data/vk-labels.json");
+
+#[allow(dead_code)]
+fn vk_labels() -> HashMap<i64, String> {
+    let raw: HashMap<String, String> = serde_json::from_str(VK_LABELS_JSON).expect("vk-labels.json");
+    raw.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect()
+}
+
+/// A key by the name a person types — "Q", "f1", "page up" — or `None`.
+#[allow(dead_code)]
+fn vk_code(name: &str) -> Option<i64> {
+    let want = name.trim();
+    vk_labels().into_iter().find(|(_, label)| label.eq_ignore_ascii_case(want)).map(|(code, _)| code)
+}
+
 #[derive(serde::Serialize, Clone, PartialEq, Debug)]
 struct GroupRow {
     id: i64,
@@ -894,6 +912,18 @@ mod tests {
     use crate::testkit::{b, temp_file};
     use blue_marshal::{encode, Value as BmValue};
     use std::path::PathBuf;
+
+    #[test]
+    fn the_key_table_parses_and_maps_names_both_ways() {
+        let labels = vk_labels();
+        assert_eq!(labels.get(&81).map(String::as_str), Some("Q"));
+        assert_eq!(labels.get(&112).map(String::as_str), Some("F1"));
+        assert!(labels.len() >= 80);
+        assert_eq!(vk_code("q"), Some(81));
+        assert_eq!(vk_code("Page Up"), Some(33));
+        assert_eq!(vk_code("num 5"), Some(101));
+        assert_eq!(vk_code("Hyper"), None);
+    }
 
     /// An account file with one overview tab named PvP, columns NAME (visible)
     /// and TYPE (hidden). Mirrors `ops::tests::overview_user_bytes`.
