@@ -175,6 +175,21 @@ fn pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
+/// A tool that returns a picture puts it under this key as base64 PNG;
+/// `blocks` lifts it into an MCP image block so the text never carries it.
+const PNG_KEY: &str = "png_base64";
+
+/// The content blocks for one tool result: the JSON as text, plus an image
+/// block when the result carries one.
+fn blocks(mut v: Value) -> Vec<ContentBlock> {
+    let png = v.as_object_mut().and_then(|m| m.remove(PNG_KEY)).and_then(|p| p.as_str().map(str::to_owned));
+    let mut out = vec![ContentBlock::text(pretty(&v))];
+    if let Some(data) = png {
+        out.push(ContentBlock::image(data, "image/png"));
+    }
+    out
+}
+
 /// A required argument, deserialised into whatever the op wants.
 fn req<T: serde::de::DeserializeOwned>(args: &Args, key: &str) -> Result<T, Value> {
     match args.get(key) {
@@ -419,10 +434,10 @@ impl EveMcp {
             "overview_get" => self.overview_get(),
             "groups_search" => self.groups_search(args),
             "builtin_presets" => self.builtin_presets(args),
-            "overview_columns_edit" => self.batch(args, columns_op),
-            "overview_tabs_edit" => self.batch(args, tabs_op),
-            "overview_presets_edit" => self.batch(args, presets_op),
-            "overview_appearance_edit" => self.batch(args, appearance_op),
+            "overview_columns_edit" => self.batch(args, columns_op, |s| s.overview_get()),
+            "overview_tabs_edit" => self.batch(args, tabs_op, |s| s.overview_get()),
+            "overview_presets_edit" => self.batch(args, presets_op, |s| s.overview_get()),
+            "overview_appearance_edit" => self.batch(args, appearance_op, |s| s.overview_get()),
             "overview_pack_preview" => ok(ops::pack_preview(&req::<String>(args, "path")?).map_err(fail)?),
             "overview_pack_import" => {
                 let r = ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?;
@@ -800,7 +815,12 @@ impl EveMcp {
     /// Apply `ops` in order under one undo group, so the batch is one undo
     /// step and — because `edit_reshared` rolls an open group back on any
     /// failing write — atomic. A failure carries the op's index.
-    fn batch(&self, args: &Args, apply: fn(&AppState, &Args) -> Result<(), Value>) -> ToolResult {
+    fn batch(
+        &self,
+        args: &Args,
+        apply: fn(&AppState, &Args) -> Result<(), Value>,
+        finish: impl FnOnce(&EveMcp) -> ToolResult,
+    ) -> ToolResult {
         let ops_list: Vec<Args> = req(args, "ops")?;
         {
             let _group = undo::group(&self.state);
@@ -817,8 +837,7 @@ impl EveMcp {
                 }
             }
         }
-        let oc = ops::overview_columns(&self.state).map_err(fail)?;
-        self.overview_with_names(oc)
+        finish(self)
     }
 }
 
@@ -846,7 +865,7 @@ impl ServerHandler for EveMcp {
         // Both outcomes are *results*, not protocol errors: the model must be
         // able to read a domain failure and react to it.
         let result = match self.call(&request.name, &args) {
-            Ok(v) => CallToolResult::success(vec![ContentBlock::text(pretty(&v))]),
+            Ok(v) => CallToolResult::success(blocks(v)),
             Err(e) => CallToolResult::error(vec![ContentBlock::text(pretty(&e))]),
         };
         Ok(result.into())
@@ -1097,6 +1116,28 @@ mod tests {
         let s = EveMcp::for_tests();
         let e = s.call("no_such_tool", &Args::new()).unwrap_err();
         assert_eq!(e["code"], "unknown_tool");
+    }
+
+    #[test]
+    fn a_png_base64_field_becomes_an_image_block_and_leaves_the_text() {
+        let v = json!({ "legend": 1, "png_base64": "iVBORw0KGgo=" });
+        let result = blocks(v);
+        assert_eq!(result.len(), 2);
+        match &result[0] {
+            ContentBlock::Text(t) => {
+                assert!(t.text.contains("\"legend\": 1"));
+                assert!(!t.text.contains("png_base64"), "the image data is not repeated as text");
+            }
+            other => panic!("first block should be text, got {other:?}"),
+        }
+        match &result[1] {
+            ContentBlock::Image(i) => {
+                assert_eq!(i.mime_type, "image/png");
+                assert_eq!(i.data, "iVBORw0KGgo=");
+            }
+            other => panic!("second block should be an image, got {other:?}"),
+        }
+        assert_eq!(blocks(json!({ "a": 1 })).len(), 1, "no image field, one text block");
     }
 
     #[test]
