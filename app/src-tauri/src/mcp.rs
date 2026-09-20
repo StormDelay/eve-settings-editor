@@ -13,7 +13,7 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt};
 use serde_json::{json, Map, Value};
 
-use settings_model::{discover, FileKind, OverviewColumns, Profile};
+use settings_model::{discover, FileKind, Mutation, NewValue, OverviewColumns, Profile, SetTarget, WindowLayout, WindowRect};
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
@@ -367,6 +367,90 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
     .map_err(fail)
 }
 
+/// The layout without a single path: what the model sees.
+fn layout_view(wl: &WindowLayout) -> Value {
+    let windows: Vec<Value> = wl.windows.iter().map(|w| json!({
+        "id": w.id, "label": w.label, "name": w.name, "open": w.open, "renderable": w.renderable,
+        "resolution_matches": w.resolution_matches,
+        "geom": w.geom.as_ref().map(|g| json!({ "x": g.x, "y": g.y, "w": g.w, "h": g.h, "screen_w": g.screen_w, "screen_h": g.screen_h })),
+        "flags": w.flags.iter().map(|f| json!({ "name": f.name, "value": f.value, "settable": !matches!(f.set, SetTarget::Unavailable) })).collect::<Vec<_>>(),
+        "stack": w.stack.as_ref().map(|s| json!({ "container_id": s.container_id, "role": s.role })),
+    })).collect();
+    json!({ "reference_w": wl.reference_w, "reference_h": wl.reference_h, "windows": windows, "stacks": wl.stacks })
+}
+
+fn find_window<'a>(wl: &'a WindowLayout, id: &str) -> Result<&'a WindowRect, Value> {
+    wl.windows.iter().find(|w| w.id == id).ok_or_else(|| err("unknown_window", format!("no window `{id}`; ids are layout_get's")))
+}
+
+fn set_int(path: &settings_model::NodePath, v: i64) -> Mutation {
+    Mutation::SetScalar { path: path.clone(), text: v.to_string() }
+}
+
+/// `LayoutView.svelte`'s `geomMutations`, in Rust: one set_scalar per changed
+/// axis, plus the reference screen size when the window's own differs.
+fn geometry_mutations(wl: &WindowLayout, id: &str, x: Option<i64>, y: Option<i64>, w: Option<i64>, h: Option<i64>) -> Result<Vec<Mutation>, Value> {
+    let win = find_window(wl, id)?;
+    let g = win.geom.as_ref().ok_or_else(|| err("no_geometry", format!("window `{id}` has no stored geometry")))?;
+    let mut ms = Vec::new();
+    for (next, cur, path) in [(x, g.x, &g.x_path), (y, g.y, &g.y_path), (w, g.w, &g.w_path), (h, g.h, &g.h_path)] {
+        if let Some(n) = next {
+            if n != cur { ms.push(set_int(path, n)); }
+        }
+    }
+    if !ms.is_empty() && !win.resolution_matches {
+        ms.push(set_int(&g.screen_w_path, wl.reference_w));
+        ms.push(set_int(&g.screen_h_path, wl.reference_h));
+    }
+    Ok(ms)
+}
+
+/// `flagMutation`'s twin.
+fn flag_mutation(wl: &WindowLayout, id: &str, flag: &str, on: bool) -> Result<Mutation, Value> {
+    let win = find_window(wl, id)?;
+    let f = win.flags.iter().find(|f| f.name == flag).ok_or_else(|| {
+        let names: Vec<&str> = win.flags.iter().map(|f| f.name.as_str()).collect();
+        err("unknown_flag", format!("window `{id}` has no flag `{flag}`; it has {}", names.join(", ")))
+    })?;
+    match &f.set {
+        SetTarget::Set { path } => Ok(Mutation::SetScalar { path: path.clone(), text: on.to_string() }),
+        SetTarget::Insert { parent, key } => {
+            // NewValue is not Clone; a serde round trip copies it.
+            let key: NewValue = serde_json::from_value(serde_json::to_value(key).unwrap()).unwrap();
+            Ok(Mutation::InsertDictEntry { parent: parent.clone(), key, value: NewValue::Bool(on) })
+        }
+        SetTarget::Unavailable => Err(err("flag_unavailable", format!("`{flag}` cannot be set on `{id}` in this file"))),
+    }
+}
+
+fn layout_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "set_geometry" => {
+            let id: String = req(a, "window")?;
+            let (x, y, w, h) = (opt(a, "x")?, opt(a, "y")?, opt(a, "w")?, opt(a, "h")?);
+            if x.is_none() && y.is_none() && w.is_none() && h.is_none() {
+                return Err(err("missing_field", "set_geometry needs at least one of x, y, w, h"));
+            }
+            let wl = ops::window_layout(state, Slot::Char).map_err(fail)?;
+            let ms = geometry_mutations(&wl, &id, x, y, w, h)?;
+            if ms.is_empty() { return Ok(()); }
+            ops::apply_mutations(state, Slot::Char, &ms).map(drop).map_err(fail)
+        }
+        "set_flag" => {
+            let wl = ops::window_layout(state, Slot::Char).map_err(fail)?;
+            let m = flag_mutation(&wl, &req::<String>(a, "window")?, &req::<String>(a, "flag")?, req(a, "on")?)?;
+            ops::apply_mutations(state, Slot::Char, &[m]).map(drop).map_err(fail)
+        }
+        "stack_create" => ops::stack_create(state, &req::<String>(a, "a")?, &req::<String>(a, "b")?).map(drop).map_err(fail),
+        "stack_add" => ops::stack_add(state, &req::<String>(a, "window")?, &req::<String>(a, "container")?).map(drop).map_err(fail),
+        "stack_unstack" => ops::stack_unstack(state, &req::<String>(a, "window")?).map(drop).map_err(fail),
+        "stack_reorder" => ops::stack_reorder(state, &req::<String>(a, "container")?, req(a, "members")?).map(drop).map_err(fail),
+        "stack_delete_orphans" => ops::stack_delete_orphans(state).map(drop).map_err(fail),
+        _ => Err(unknown_op(&op)),
+    }
+}
+
 fn lookup_result(r: Result<Option<names::Found>, names::FetchError>) -> ToolResult {
     match r {
         Ok(Some(f)) => Ok(json!({ "id": f.id, "name": f.name })),
@@ -585,6 +669,22 @@ fn tool_defs() -> Vec<ToolDef> {
             schema: || obj(json!({ "name": { "type": "string" }, "value": { "type": "string" } }), &["name", "value"]),
         },
         ToolDef {
+            name: "layout_get",
+            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags: [{name, value, settable}], stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. Needs the character file open. To SEE it, call layout_render.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "layout_edit",
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — and only where settable is true); stack_create {a, b}; stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns layout_get's shape. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans"], json!({
+                "window": { "type": "string" },
+                "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
+                "flag": { "type": "string" }, "on": { "type": "boolean" },
+                "a": { "type": "string" }, "b": { "type": "string" }, "container": { "type": "string" },
+                "members": { "type": "array", "items": { "type": "string" } }
+            })), &["ops"]),
+        },
+        ToolDef {
             name: "autofill_get",
             description: "The account's remembered texts — what EVE autocompletes in search boxes, chat, market, and so on — as [{widget, entries}]. widget is EVE's internal box id. Needs the account file open.",
             schema: || obj(json!({}), &[]),
@@ -723,6 +823,8 @@ impl EveMcp {
                 let h = ops::set_hud_field(&self.state, &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
+            "layout_get" => Ok(layout_view(&ops::window_layout(&self.state, Slot::Char).map_err(fail)?)),
+            "layout_edit" => self.batch(args, layout_op, |s| Ok(layout_view(&ops::window_layout(&s.state, Slot::Char).map_err(fail)?))),
             "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
             "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
@@ -2057,5 +2159,108 @@ mod tests {
         assert_eq!(lookup_result(miss).unwrap_err()["code"], "not_found");
         let down = names::lookup_with(&dir, "Anyone", |_| Ok(vec![]), |_| Err(names::FetchError("timeout".into())));
         assert_eq!(lookup_result(down).unwrap_err()["code"], "esi");
+    }
+
+    /// A character file with three windows — `overview` open at a matching
+    /// resolution, `market` open at a different one (so a move re-stamps the
+    /// screen size), `fitting` closed — and a stack of m1+m2 in container C
+    /// (`ops::tests::stacked_char_bytes`'s shape). Flags: `pinnedWindows` has
+    /// an entry for overview only, so market's pinned flag is an Insert.
+    fn layout_char_bytes() -> Vec<u8> {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let geom = |x: i64, y: i64, w: i64, h: i64, sw: i64, sh: i64| {
+            BmValue::Tuple(vec![BmValue::Int(x), BmValue::Int(y), BmValue::Int(w), BmValue::Int(h), BmValue::Int(sw), BmValue::Int(sh)])
+        };
+        encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
+            (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![
+                (b("overview"), geom(100, 200, 400, 600, 2560, 1440)),
+                (b("market"), geom(10, 10, 300, 300, 1920, 1080)),
+                (b("fitting"), geom(0, 0, 500, 500, 2560, 1440)),
+                (b("m1"), geom(0, 0, 100, 80, 2560, 1440)), (b("m2"), geom(0, 0, 100, 80, 2560, 1440)), (b("C"), geom(0, 0, 100, 80, 2560, 1440)),
+            ])])),
+            (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![
+                (b("overview"), BmValue::Bool(true)), (b("market"), BmValue::Bool(true)), (b("fitting"), BmValue::Bool(false)),
+                (b("m1"), BmValue::Bool(true)), (b("m2"), BmValue::Bool(true)), (b("C"), BmValue::Bool(true)),
+            ])])),
+            (b("pinnedWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), BmValue::Bool(true))])])),
+            (b("stacksWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("m1"), b("C")), (b("m2"), b("C"))])])),
+            (b("preferredIdxInStack3"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("C"), BmValue::Dict(vec![(b("m1"), BmValue::Int(0)), (b("m2"), BmValue::Int(1))]))])])),
+        ]))])).unwrap()
+    }
+
+    fn window<'a>(v: &'a Value, id: &str) -> &'a Value {
+        v["windows"].as_array().unwrap().iter().find(|w| w["id"] == id).unwrap_or_else(|| panic!("window {id}"))
+    }
+
+    #[test]
+    fn layout_get_strips_every_path_and_reports_geometry_flags_and_stacks() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        assert_no_paths(&v, "layout_get");
+        assert_eq!(v["reference_w"], 2560);
+        let ov = window(&v, "overview");
+        assert_eq!(ov["geom"], json!({ "x": 100, "y": 200, "w": 400, "h": 600, "screen_w": 2560, "screen_h": 1440 }));
+        assert_eq!(ov["open"], true);
+        assert_eq!(ov["resolution_matches"], true);
+        assert!(ov["flags"].as_array().unwrap().iter().any(|f| f["name"] == "pinnedWindows" && f["value"] == true && f["settable"] == true));
+        assert!(ov["flags"].as_array().unwrap().iter().any(|f| f["name"] == "lockedWindows" && f["settable"] == false), "no lockedWindows dict in the file → unavailable");
+        assert_eq!(window(&v, "market")["resolution_matches"], false);
+        assert_eq!(window(&v, "fitting")["open"], false);
+        assert_eq!(v["stacks"][0]["members"], json!(["m1", "m2"]));
+    }
+
+    #[test]
+    fn layout_edit_moves_a_window_and_restamps_a_mismatched_resolution() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "set_geometry", "window": "overview", "x": 0, "y": 0 },
+            { "op": "set_geometry", "window": "market", "w": 640 }
+        ]}))).unwrap();
+        assert_eq!(window(&v, "overview")["geom"]["x"], 0);
+        assert_eq!(window(&v, "overview")["geom"]["h"], 600, "untouched axis kept");
+        let m = window(&v, "market");
+        assert_eq!(m["geom"]["w"], 640);
+        assert_eq!(m["geom"]["screen_w"], 2560, "re-stamped to the reference");
+        assert_eq!(m["resolution_matches"], true);
+        assert_eq!(undo::undo_state(&s.state).depth, 1);
+    }
+
+    #[test]
+    fn layout_edit_sets_flags_including_an_insert_and_refuses_the_unknown() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let before = s.call("layout_get", &Args::new()).unwrap();
+        let v = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "set_flag", "window": "market", "flag": "pinnedWindows", "on": true },
+            { "op": "set_flag", "window": "overview", "flag": "openWindows", "on": false }
+        ]}))).unwrap();
+        assert!(window(&v, "market")["flags"].as_array().unwrap().iter().any(|f| f["name"] == "pinnedWindows" && f["value"] == true), "an Insert target minted the key");
+        assert_eq!(window(&v, "overview")["open"], false);
+        let e = s.call("layout_edit", &args(json!({ "ops": [{ "op": "set_flag", "window": "market", "flag": "lockedWindows", "on": true }] }))).unwrap_err();
+        assert_eq!(e["code"], "flag_unavailable");
+        let e = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "set_geometry", "window": "market", "x": 5 },
+            { "op": "set_flag", "window": "market", "flag": "no_such_flag", "on": true }
+        ]}))).unwrap_err();
+        assert_eq!(e["code"], "unknown_flag");
+        assert_eq!(e["op_index"], 1);
+        let e = s.call("layout_edit", &args(json!({ "ops": [{ "op": "set_geometry", "window": "nope", "x": 1 }] }))).unwrap_err();
+        assert_eq!(e["code"], "unknown_window");
+        let e = s.call("layout_edit", &args(json!({ "ops": [{ "op": "set_geometry", "window": "overview" }] }))).unwrap_err();
+        assert_eq!(e["code"], "missing_field");
+        // The two failed batches left nothing behind (the first batch's edits stand).
+        let after = s.call("layout_get", &Args::new()).unwrap();
+        assert_eq!(window(&after, "market")["geom"]["x"], window(&before, "market")["geom"]["x"]);
+    }
+
+    #[test]
+    fn layout_edit_stack_ops_round_trip() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "stack_unstack", "window": "m1" },
+            { "op": "stack_add", "window": "m1", "container": "C" },
+            { "op": "stack_reorder", "container": "C", "members": ["m2", "m1"] }
+        ]}))).unwrap();
+        assert_eq!(v["stacks"][0]["members"], json!(["m2", "m1"]));
+        assert_eq!(undo::undo_state(&s.state).depth, 1, "stack ops open their own group; the batch is still one step");
     }
 }
