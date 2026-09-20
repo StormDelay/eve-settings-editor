@@ -754,6 +754,33 @@ fn tool_defs() -> Vec<ToolDef> {
             description: "Find a character's id by name, or confirm an id, through EVE's ESI (cached afterwards). Returns {id, name}; not_found when ESI knows no such character. Use it for watch-list colours.",
             schema: || obj(json!({ "query": { "type": "string" } }), &["query"]),
         },
+        ToolDef {
+            name: "copy_preview",
+            description: "Plan a copy of one character's settings onto others without changing anything: which files would be written (char_writes, account_writes — an account file is shared by every character on it, so collateral_char_ids names the siblings that change too), which targets are excluded and why, and source_error if the source cannot be used. Source: source_char_id, source_char_file, or source_settings_preset (a saved bundle from settings_presets_list). Targets: target_char_ids and/or target_char_files. aspects: layout, overview, autofill, keybinds, probe_formations, fleet, or everything (whole files). allow_other_folders lets targets in another profile folder in. ALWAYS call this before copy_apply and show the user the plan.",
+            schema: || obj(json!({
+                "source_char_id": { "type": "integer" }, "source_char_file": { "type": "string" }, "source_settings_preset": { "type": "string" },
+                "target_char_ids": { "type": "array", "items": { "type": "integer" } },
+                "target_char_files": { "type": "array", "items": { "type": "string" } },
+                "aspects": { "type": "array", "items": { "type": "string", "enum": ["layout", "overview", "autofill", "keybinds", "probe_formations", "fleet", "everything"] }, "minItems": 1 },
+                "allow_other_folders": { "type": "boolean" }
+            }), &["aspects"]),
+        },
+        ToolDef {
+            name: "copy_apply",
+            description: "Perform the copy copy_preview planned, with the same arguments. WRITES TO DISK IMMEDIATELY: every target file is backed up, then replaced atomically; returns [{path, ok, backup_path, error}] per file. Only copy onto characters that are logged out. If a target file is open here, open it again afterwards — the in-memory copy is stale.",
+            schema: || obj(json!({
+                "source_char_id": { "type": "integer" }, "source_char_file": { "type": "string" }, "source_settings_preset": { "type": "string" },
+                "target_char_ids": { "type": "array", "items": { "type": "integer" } },
+                "target_char_files": { "type": "array", "items": { "type": "string" } },
+                "aspects": { "type": "array", "items": { "type": "string", "enum": ["layout", "overview", "autofill", "keybinds", "probe_formations", "fleet", "everything"] }, "minItems": 1 },
+                "allow_other_folders": { "type": "boolean" }
+            }), &["aspects"]),
+        },
+        ToolDef {
+            name: "copy_files",
+            description: "Copy one settings file's bytes as-is onto other files of the same kind (character onto characters, account onto accounts) — no pairing, no aspects. WRITES TO DISK IMMEDIATELY with a backup per target; returns [{path, ok, backup_path, error}]. Only onto logged-out characters; reopen a target if it was open here.",
+            schema: || obj(json!({ "source": { "type": "string" }, "targets": { "type": "array", "items": { "type": "string" }, "minItems": 1 } }), &["source", "targets"]),
+        },
     ]
 }
 
@@ -856,6 +883,15 @@ impl EveMcp {
                 let q: String = req(args, "query")?;
                 lookup_result(off_runtime(|| names::lookup_blocking(&self.dir, &q)))
             }
+            "copy_preview" => {
+                let c = self.copy_args(args)?;
+                ok(setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders))
+            }
+            "copy_apply" => {
+                let c = self.copy_args(args)?;
+                ok(setup::setup_apply(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders).map_err(fail)?)
+            }
+            "copy_files" => ok(setup::copy_files(&self.roots, &req::<String>(args, "source")?, &req::<Vec<String>>(args, "targets")?).map_err(fail)?),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
         }
     }
@@ -900,6 +936,55 @@ fn locate(char_id: u64, profiles: &[Profile], roster: &AccountRoster) -> Option<
             .map(|f| f.path.clone());
         Some((c.path.clone(), u))
     })
+}
+
+use crate::presets;
+use crate::setup::{self, Aspect, BatchSource};
+
+struct CopyArgs { source: BatchSource, targets: Vec<String>, aspects: Vec<Aspect>, allow_other_folders: bool }
+
+impl EveMcp {
+    /// One source (by char id, char file, or settings-preset name), one or
+    /// more targets (by char id or char file), the aspects, the folder flag.
+    fn copy_args(&self, args: &Args) -> Result<CopyArgs, Value> {
+        let profiles = discover(&self.roots);
+        let roster = accounts::load_roster(&self.roots, &self.dir);
+        let char_path = |id: u64| -> Result<String, Value> {
+            locate(id, &profiles, &roster)
+                .map(|(c, _)| c.to_string_lossy().into_owned())
+                .ok_or_else(|| err("unknown_character", format!("no core_char_{id}.dat in any profile; call list_characters")))
+        };
+
+        let src_id: Option<u64> = opt(args, "source_char_id")?;
+        let src_file: Option<String> = opt(args, "source_char_file")?;
+        let src_preset: Option<String> = opt(args, "source_settings_preset")?;
+        let given = src_id.is_some() as u8 + src_file.is_some() as u8 + src_preset.is_some() as u8;
+        if given == 0 { return Err(err("missing_field", "one of source_char_id, source_char_file, source_settings_preset")); }
+        if given > 1 { return Err(err("bad_arguments", "give exactly one source")); }
+
+        let mut targets: Vec<String> = opt::<Vec<String>>(args, "target_char_files")?.unwrap_or_default();
+        for id in opt::<Vec<u64>>(args, "target_char_ids")?.unwrap_or_default() {
+            targets.push(char_path(id)?);
+        }
+        if targets.is_empty() { return Err(err("missing_field", "target_char_ids and/or target_char_files, at least one target")); }
+
+        let source = if let Some(id) = src_id {
+            BatchSource::Character { path: char_path(id)? }
+        } else if let Some(p) = src_file {
+            BatchSource::Character { path: p }
+        } else {
+            let name = src_preset.expect("checked");
+            let dir = presets::preset_path(&self.dir, &name).map_err(|e| err("unknown_settings_preset", e.0))?;
+            if !dir.is_dir() { return Err(err("unknown_settings_preset", format!("no settings preset `{name}`; call settings_presets_list"))); }
+            let anchor_dir = Path::new(&targets[0]).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            BatchSource::Preset { dir: dir.to_string_lossy().into_owned(), anchor_dir }
+        };
+        Ok(CopyArgs {
+            source, targets,
+            aspects: req(args, "aspects")?,
+            allow_other_folders: opt(args, "allow_other_folders")?.unwrap_or(false),
+        })
+    }
 }
 
 /// The `list_characters` payload, pure: profiles as discovered, pairings as
@@ -2294,5 +2379,81 @@ mod tests {
         let blocks = blocks(v);
         assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[1], ContentBlock::Image(_)));
+    }
+
+    /// A discovery root with one install/profile holding source char 100 on
+    /// account 500 and target char 200 on account 600, paired in accounts.json
+    /// under a separate app dir — `setup::tests`' layout.
+    fn temp_profile() -> (PathBuf, PathBuf, PathBuf) {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!("mcp-copy-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let prof = base.join("root").join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        std::fs::create_dir_all(&prof).unwrap();
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let overview = |c: &str| BmValue::Dict(vec![(b("overview"), BmValue::Dict(vec![(b("overviewColumns"), BmValue::List(vec![b(c)]))]))]);
+        let widths = || BmValue::Dict(vec![(b("ui"), BmValue::Dict(vec![(b("SortHeadersSizes"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![])]))]))]);
+        std::fs::write(prof.join("core_char_100.dat"), encode(&widths()).unwrap()).unwrap();
+        std::fs::write(prof.join("core_user_500.dat"), encode(&overview("SRC")).unwrap()).unwrap();
+        std::fs::write(prof.join("core_char_200.dat"), encode(&widths()).unwrap()).unwrap();
+        std::fs::write(prof.join("core_user_600.dat"), encode(&overview("TGT")).unwrap()).unwrap();
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let mut store = crate::accounts::AccountsStore::default();
+        store.accounts.insert(500, crate::accounts::Account { alias: None, characters: vec![100] });
+        store.accounts.insert(600, crate::accounts::Account { alias: None, characters: vec![200] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+        (base.join("root"), prof, app_dir)
+    }
+
+    fn copy_server() -> (EveMcp, PathBuf) {
+        let (root, prof, app_dir) = temp_profile();
+        (EveMcp::new(app_dir, vec![root]), prof)
+    }
+
+    #[test]
+    fn copy_preview_plans_by_char_id_and_names_the_account_write() {
+        let (s, _) = copy_server();
+        let v = s.call("copy_preview", &args(json!({ "source_char_id": 100, "target_char_ids": [200], "aspects": ["overview"] }))).unwrap();
+        assert_eq!(v["char_writes"][0]["char_id"], 200);
+        assert_eq!(v["account_writes"][0]["user_id"], 600);
+        assert_eq!(v["excluded"], json!([]));
+        assert_eq!(v["source_error"], Value::Null);
+    }
+
+    #[test]
+    fn copy_apply_writes_backs_up_and_a_fresh_open_shows_the_copy() {
+        let (s, prof) = copy_server();
+        let v = s.call("copy_apply", &args(json!({ "source_char_id": 100, "target_char_ids": [200], "aspects": ["overview"] }))).unwrap();
+        let results = v.as_array().unwrap();
+        assert!(results.iter().all(|r| r["ok"] == true), "{v}");
+        let acct = results.iter().find(|r| r["path"].as_str().unwrap().contains("core_user_600")).unwrap();
+        assert!(PathBuf::from(acct["backup_path"].as_str().unwrap()).exists());
+        let bytes = std::fs::read(prof.join("core_user_600.dat")).unwrap();
+        assert!(bytes.windows(3).any(|w| w == b"SRC"), "the source's overview subtree landed in the target file");
+        assert!(!bytes.windows(3).any(|w| w == b"TGT"), "and replaced the target's");
+        s.call("open", &args(json!({ "user_file": prof.join("core_user_600.dat").to_string_lossy() }))).unwrap();
+    }
+
+    #[test]
+    fn copy_args_need_exactly_one_source_and_a_target() {
+        let (s, _) = copy_server();
+        assert_eq!(s.call("copy_preview", &args(json!({ "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err()["code"], "missing_field");
+        assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 100, "source_char_file": "x", "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err()["code"], "bad_arguments");
+        assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 100, "aspects": ["overview"] }))).unwrap_err()["code"], "missing_field");
+        assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 999, "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err()["code"], "unknown_character");
+    }
+
+    #[test]
+    fn copy_files_clones_a_file_onto_another_of_the_same_kind() {
+        let (s, prof) = copy_server();
+        let src = prof.join("core_user_500.dat");
+        let tgt = prof.join("core_user_600.dat");
+        let v = s.call("copy_files", &args(json!({ "source": src.to_string_lossy(), "targets": [tgt.to_string_lossy()] }))).unwrap();
+        assert_eq!(v[0]["ok"], true);
+        assert_eq!(std::fs::read(&src).unwrap(), std::fs::read(&tgt).unwrap());
+        let e = s.call("copy_files", &args(json!({ "source": src.to_string_lossy(), "targets": [prof.join("core_char_200.dat").to_string_lossy()] }))).unwrap();
+        assert_eq!(e[0]["ok"], false, "a different kind is refused per target: {e}");
     }
 }
