@@ -81,8 +81,14 @@ a darker border, and labels from a hand-coded 5×7 bitmap font covering
 tall enough. Encoded with the `png` crate (RGB, default compression); a
 1024-wide flat-colour image is a few KB, ~10–30 KB as base64. Closed windows
 are skipped unless `include_closed`, in which case they draw as an outline
-only. No HUD furniture, no neocom — windows and stacks only, and the
-description says so. The tool result carries the image and the legend as
+only. Screen furniture — the Neocom bar, ship HUD, fighter panel, badge and
+target list — paints beneath the windows in a dark grey veil with a grey
+outline, from a Rust port of `layout.ts`'s `hudRects` (same measured
+constants, same omission rules: an unwritable field omits the element, the
+target list draws only when its anchor is stored, the count comes from the
+`layout.targets` preference), outside the view filter as the canvas draws
+it; the legend lists it under `furniture: [{kind, label, x, y, w, h}]`. The
+tool result carries the image and the legend as
 two content blocks, which means `EveMcp::call`'s return type grows a variant
 for tools that attach images (`Reply { json, images: Vec<Png> }` or the
 like — the plan decides the exact shape; `call_tool` maps it to
