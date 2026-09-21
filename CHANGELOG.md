@@ -4,7 +4,9 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.38.0] - 2026-09-21
+
+An AI assistant can edit your settings: a built-in MCP server covers every editor.
 
 ### Added
 - **AI access.** An MCP server built into the app (`--mcp`) lets an AI assistant edit your overview and probe formations, with the same backups and checks as editing by hand. Register it with Claude Desktop from the new AI access… menu entry, or copy the config snippet for any other MCP client.
