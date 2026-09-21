@@ -27,7 +27,6 @@ use crate::undo;
 pub struct EveMcp {
     /// One workspace per account file, by canonical `core_user` path
     /// (spec §3.1). `Arc` so PR 2 can share it between connections.
-    #[allow(dead_code)] // read by `open` from Task 4 on
     workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
     /// What `open` last selected. `None` until then; `state()` lends a
     /// scratch workspace so an early tool fails with `no_document` as before.
@@ -608,7 +607,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open",
-            description: "Open the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Opening replaces what was open and clears undo. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
+            description: "Select the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Each account keeps its own workspace: opening another account keeps this one, edits and all; opening another character of the same account needs this one saved or undone first. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
             schema: || obj(json!({
                 "char_id": { "type": "integer", "description": "Character id; resolves char_file and, if paired, user_file." },
                 "char_file": { "type": "string", "description": "Path to core_char_<id>.dat. Overrides char_id's lookup." },
@@ -1302,6 +1301,54 @@ fn slot_label(slot: Slot) -> &'static str {
     }
 }
 
+/// The workspace key for a settings file. Canonical, so the spelling the
+/// model chooses and the one `locate` produces name one workspace. A path
+/// that does not exist is the same `io` error `open_file` would give.
+fn canonical(path: &str) -> Result<PathBuf, Value> {
+    std::fs::canonicalize(path).map_err(|e| err("io", format!("{path}: {e}")))
+}
+
+/// `{path, fidelity}` of an open slot — what `open` reports per slot — or
+/// `None` for an empty one.
+fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
+    let guard = match slot {
+        Slot::Char => state.char.lock(),
+        Slot::User => state.user.lock(),
+    }
+    .unwrap();
+    guard.as_ref().map(|d| json!({ "path": d.path.to_string_lossy(), "fidelity": d.fidelity }))
+}
+
+/// Spec §3.3, rule 3: re-read a clean slot whose file changed on disk (the
+/// window saved it, the game client rewrote it, a batch copy landed). A
+/// dirty slot is never re-read — its edits are the point, and `save`'s
+/// conflict check will name the situation.
+///
+/// ponytail: `open_file` clears the undo stack when it reloads, so a dirty
+/// sibling slot keeps its edits but loses undo. Rare (one slot dirty, the
+/// other clean and stale, on a re-open); the edits are what matters.
+fn reload_stale(state: &AppState) {
+    for slot in [Slot::User, Slot::Char] {
+        let path = {
+            let guard = match slot {
+                Slot::Char => state.char.lock(),
+                Slot::User => state.user.lock(),
+            }
+            .unwrap();
+            match guard.as_ref() {
+                Some(d) if d.changed_on_disk() => d.path.to_string_lossy().into_owned(),
+                _ => continue,
+            }
+        };
+        if state.history.lock().unwrap().dirty(slot) {
+            continue;
+        }
+        // A failing re-read leaves the slot as it was (`open_file`'s own
+        // guarantee); the next `save` then reports the conflict.
+        let _ = ops::open_file(state, slot, &path);
+    }
+}
+
 impl EveMcp {
     fn open(&self, args: &Args) -> ToolResult {
         let char_id: Option<u64> = opt(args, "char_id")?;
@@ -1324,20 +1371,59 @@ impl EveMcp {
                 "user_file is required: the account file (core_user_<id>.dat) holds presets and formations. list_characters shows which one pairs with a character, or its unpaired_accounts.",
             ));
         };
-        // Open the user slot FIRST: `open_file` replaces a slot on success
-        // but leaves it untouched on an io error, so a failing open here (a
-        // bad or missing path) returns via `?` with the previous session —
-        // BOTH slots — still intact.
-        let user = open_slot(&self.state(), Slot::User, &user_file)?;
-        // Only once the new account is open do we drop the old character:
-        // clearing it unconditionally before this point would discard a
-        // still-valid pairing if the user open above had failed.
-        ops::close_file(&self.state(), Slot::Char);
-        let char = match char_file {
-            Some(p) => Some(open_slot(&self.state(), Slot::Char, &p)?),
-            None => None,
+        let user_key = canonical(&user_file)?;
+        let char_key = char_file.as_deref().map(canonical).transpose()?;
+
+        let existing = self.workspaces.lock().unwrap().get(&user_key).cloned();
+        let ws = match existing {
+            Some(ws) => {
+                let open_char = ws.char.lock().unwrap().as_ref().map(|d| d.path.clone());
+                // Same character, or none asked for: nothing to load. `open`
+                // never discards a character to satisfy an account-only call.
+                let swap = match (&open_char, &char_key) {
+                    (Some(have), Some(want)) => std::fs::canonicalize(have).ok().as_ref() != Some(want),
+                    (None, Some(_)) => true,
+                    (_, None) => false,
+                };
+                if swap {
+                    let h = ws.history.lock().unwrap();
+                    if h.dirty(Slot::Char) || h.dirty(Slot::User) {
+                        let who = open_char
+                            .as_ref()
+                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                            .unwrap_or_else(|| "the open character".into());
+                        return Err(err(
+                            "unsaved_edits",
+                            format!("{who} or its account has unsaved edits; save or undo them before opening another character of this account"),
+                        ));
+                    }
+                    drop(h);
+                    // Both slots are clean, so closing first loses nothing, and
+                    // a failing open leaves the slot empty rather than pointing
+                    // at the previous sibling.
+                    ops::close_file(&ws, Slot::Char);
+                    if let Some(p) = &char_file {
+                        open_slot(&ws, Slot::Char, p)?;
+                    }
+                }
+                reload_stale(&ws);
+                ws
+            }
+            None => {
+                // A fresh workspace is built aside and inserted only once both
+                // opens succeeded, so a bad path changes nothing — not the map,
+                // not `current`.
+                let ws = AppState::new();
+                open_slot(&ws, Slot::User, &user_file)?;
+                if let Some(p) = &char_file {
+                    open_slot(&ws, Slot::Char, p)?;
+                }
+                self.workspaces.lock().unwrap().insert(user_key, ws.clone());
+                ws
+            }
         };
-        Ok(json!({ "char": char, "user": user }))
+        *self.current.lock().unwrap() = Some(ws.clone());
+        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
     }
 
     fn save(&self, args: &Args) -> ToolResult {
@@ -1745,8 +1831,10 @@ mod tests {
         assert_eq!(st["char"], Value::Null);
     }
 
+    /// A failing open must not touch the workspace it would have changed:
+    /// the character that was open stays open, paired with the same account.
     #[test]
-    fn a_failed_char_reopen_does_not_leave_the_previous_character_paired() {
+    fn a_failed_char_reopen_leaves_the_workspace_untouched() {
         let (s, path) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
         s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
@@ -1757,7 +1845,7 @@ mod tests {
             .call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": missing.to_string_lossy() })))
             .unwrap_err();
         assert_eq!(e["code"], "io");
-        assert_eq!(s.call("status", &Args::new()).unwrap()["char"], Value::Null);
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(cpath.to_string_lossy()));
     }
 
     /// `open_file` leaves a slot untouched on an io error — a failing NEW
@@ -1787,6 +1875,138 @@ mod tests {
         let s = EveMcp::for_tests();
         let e = s.call("open", &args(json!({ "user_file": path.to_string_lossy() }))).unwrap_err();
         assert_eq!(e["code"], "parse_failed");
+    }
+
+    fn open_args(user: &Path, char: Option<&Path>) -> Args {
+        let mut a = Args::new();
+        a.insert("user_file".into(), json!(user.to_string_lossy()));
+        if let Some(c) = char {
+            a.insert("char_file".into(), json!(c.to_string_lossy()));
+        }
+        a
+    }
+
+    fn empty_char_bytes() -> Vec<u8> {
+        encode(&BmValue::Dict(vec![])).unwrap()
+    }
+
+    /// Two accounts are two workspaces: opening the second keeps the first,
+    /// unsaved edits and all, and opening the first again is a switch back,
+    /// not a reload.
+    #[test]
+    fn open_of_a_second_account_keeps_the_first() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let first = s.state();
+
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["user"]["path"], json!(b.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false, "a fresh workspace");
+        assert!(!s.state().ptr_eq(&first));
+
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.state().ptr_eq(&first), "the same workspace, not a reload");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true, "the edit survived");
+    }
+
+    /// Siblings share the account: opening a second character of the same
+    /// account swaps the character slot inside the one workspace.
+    #[test]
+    fn open_of_a_sibling_swaps_the_character_in_the_same_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        let ws = s.state();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(v["user"]["path"], json!(a.to_string_lossy()));
+        assert!(s.state().ptr_eq(&ws));
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c2.to_string_lossy()));
+    }
+
+    /// The forced workflow (spec §3.3): finish one character of an account
+    /// before starting the next. Either dirty slot blocks; save or undo clears.
+    #[test]
+    fn a_sibling_swap_is_blocked_while_either_slot_is_dirty() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+
+        // Account side dirty.
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let e = s.call("open", &open_args(&a, Some(&c2))).unwrap_err();
+        assert_eq!(e["code"], "unsaved_edits");
+        assert!(e["message"].as_str().unwrap().contains("save"));
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c1.to_string_lossy()), "untouched");
+        s.call("save", &Args::new()).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+
+        // Character side dirty; undo clears it too.
+        ops::apply_mutation(
+            &s.state(),
+            Slot::Char,
+            &settings_model::Mutation::InsertDictEntry {
+                parent: vec![],
+                key: settings_model::NewValue::Str("x".into()),
+                value: settings_model::NewValue::Int("1".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(s.call("open", &open_args(&a, Some(&c1))).unwrap_err()["code"], "unsaved_edits");
+        s.call("undo", &Args::new()).unwrap();
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c1.to_string_lossy()));
+    }
+
+    /// Asking for the account alone on a workspace with a character open
+    /// keeps the character: `open` never discards.
+    #[test]
+    fn open_with_only_the_account_keeps_the_open_character() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        let v = s.call("open", &open_args(&a, None)).unwrap();
+        assert_eq!(v["char"]["path"], json!(c1.to_string_lossy()));
+    }
+
+    /// Spec §3.3, rule 3: `open` re-reads a clean slot whose file moved on
+    /// disk (the window saved, the client wrote) and never a dirty one.
+    #[test]
+    fn open_rereads_a_clean_stale_slot_and_never_a_dirty_one() {
+        let (s, a) = open_user(&overview_user_bytes());
+        // Clean: the rewrite is picked up. The fixture's one tab has TYPE hidden;
+        // an empty dict has no tabs at all.
+        std::fs::write(&a, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert!(v["tabs"].as_array().unwrap().is_empty(), "the rewrite (no tabs) was picked up");
+
+        // Dirty: the in-memory edit wins and the later save conflicts, as today.
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        std::fs::write(&a, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert_eq!(visible_count(&v), 2, "the edit is still there");
+        assert_eq!(s.call("save", &Args::new()).unwrap_err()["code"], "conflict");
+    }
+
+    /// The key is the canonical path, so a spelling the model chooses finds
+    /// the workspace a roster lookup created.
+    #[test]
+    fn explicit_paths_with_different_spelling_hit_the_same_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let ws = s.state();
+        let respelled = a.to_string_lossy().replace('\\', "/");
+        let mut args = Args::new();
+        args.insert("user_file".into(), json!(respelled));
+        s.call("open", &args).unwrap();
+        assert!(s.state().ptr_eq(&ws));
     }
 
     #[test]
