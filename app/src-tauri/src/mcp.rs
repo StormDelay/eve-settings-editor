@@ -49,7 +49,10 @@ impl EveMcp {
     }
 
     /// The workspace tools act on: the one `open` last selected, or a scratch
-    /// workspace before any `open`. Cheap — an `Arc` clone.
+    /// workspace before any `open`. Cheap — an `Arc` clone. The scratch is
+    /// never in `workspaces`, so `status.workspaces` and `save {all}` do not
+    /// see it — only tests that call `ops::open_file` on `state()` directly
+    /// ever populate it.
     fn state(&self) -> AppState {
         self.current.lock().unwrap().get_or_insert_with(AppState::new).clone()
     }
@@ -607,11 +610,12 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open",
-            description: "Select the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Each account keeps its own workspace: opening another account keeps this one, edits and all; opening another character of the same account needs this one saved or undone first. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
+            description: "Select the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both, or paths directly. Each account keeps its own workspace: another account opens alongside, edits kept; another character of the same account needs this one saved, undone or discarded first.",
             schema: || obj(json!({
                 "char_id": { "type": "integer", "description": "Character id; resolves char_file and, if paired, user_file." },
                 "char_file": { "type": "string", "description": "Path to core_char_<id>.dat. Overrides char_id's lookup." },
-                "user_file": { "type": "string", "description": "Path to core_user_<id>.dat. Required unless char_id resolves it." }
+                "user_file": { "type": "string", "description": "Path to core_user_<id>.dat. Required unless char_id resolves it." },
+                "discard": { "type": "boolean", "description": "Reload both files from disk, dropping unsaved edits (the window's Discard). Only when the user asks." }
             }), &[]),
         },
         ToolDef {
@@ -1410,6 +1414,7 @@ impl EveMcp {
         let char_id: Option<u64> = opt(args, "char_id")?;
         let mut char_file: Option<String> = opt(args, "char_file")?;
         let mut user_file: Option<String> = opt(args, "user_file")?;
+        let discard: bool = opt(args, "discard")?.unwrap_or(false);
         if let Some(id) = char_id {
             let profiles = discover(&self.roots);
             let roster = accounts::load_roster(&self.roots, &self.dir);
@@ -1438,6 +1443,20 @@ impl EveMcp {
         let ws = match existing {
             Some(ws) => {
                 let open_char = ws.char.lock().unwrap().as_ref().map(|d| d.path.clone());
+                if discard {
+                    // The window's Discard: reload both slots from disk, unsaved
+                    // edits gone. The only exit from a dirty workspace besides
+                    // `undo` (bounded) and `save`. Account first, so a failing
+                    // reload of the character leaves the account fresh and
+                    // the character as it was.
+                    open_slot(&ws, Slot::User, &user_file)?;
+                    let target = char_file.clone().or_else(|| open_char.as_ref().map(|p| p.to_string_lossy().into_owned()));
+                    if let Some(p) = target {
+                        open_slot(&ws, Slot::Char, &p)?;
+                    }
+                    *self.current.lock().unwrap() = Some(ws.clone());
+                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }));
+                }
                 // Same character, or none asked for: nothing to load. `open`
                 // never discards a character to satisfy an account-only call.
                 let swap = match (&open_char, &char_key) {
@@ -2065,13 +2084,58 @@ mod tests {
         assert!(s.call("status", &Args::new()).unwrap()["user"].is_object(), "and the workspace still serves the account");
     }
 
+    /// `discard: true` is the window's Discard: both slots come back from
+    /// disk and the unsaved edits are gone — the one exit from a dirty
+    /// workspace when `undo` cannot reach far enough.
+    #[test]
+    fn open_with_discard_reloads_both_slots_and_drops_unsaved_edits() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        ops::apply_mutation(
+            &s.state(),
+            Slot::Char,
+            &settings_model::Mutation::InsertDictEntry {
+                parent: vec![],
+                key: settings_model::NewValue::Str("x".into()),
+                value: settings_model::NewValue::Int("1".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(s.call("open", &open_args(&a, Some(&c2))).unwrap_err()["code"], "unsaved_edits");
+
+        // Discard while switching: c2 opens, the account edit is gone.
+        let mut args = open_args(&a, Some(&c2));
+        args.insert("discard".into(), json!(true));
+        s.call("open", &args).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false);
+        assert_eq!(st["char"]["dirty"], false);
+        assert_eq!(visible_count(&s.call("overview_get", &Args::new()).unwrap()), 1, "the edit was dropped");
+
+        // Discard without naming a character keeps the open one, re-read.
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let mut args = open_args(&a, None);
+        args.insert("discard".into(), json!(true));
+        s.call("open", &args).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false);
+    }
+
     /// The key is the canonical path, so a spelling the model chooses finds
-    /// the workspace a roster lookup created.
+    /// the workspace a roster lookup created. The `.` segment is what makes
+    /// this meaningful on the ubuntu CI: it is collapsed only by
+    /// `canonicalize`, identically on every OS, where a `\`-vs-`/` swap is
+    /// already a no-op on Linux.
     #[test]
     fn explicit_paths_with_different_spelling_hit_the_same_workspace() {
         let (s, a) = open_user(&overview_user_bytes());
         let ws = s.state();
-        let respelled = a.to_string_lossy().replace('\\', "/");
+        let respelled = a.parent().unwrap().join(".").join(a.file_name().unwrap()).to_string_lossy().replace('\\', "/");
         let mut args = Args::new();
         args.insert("user_file".into(), json!(respelled));
         s.call("open", &args).unwrap();
