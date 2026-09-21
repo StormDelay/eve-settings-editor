@@ -41,8 +41,9 @@
 
 <Sheet title="AI access" width="min(560px, 92vw)" onclose={onClose} data-testid="ai-access-backdrop">
   <p>
-    Let an AI assistant edit your overview and probe formations through this app. Every change goes
-    through the same backups and checks as editing here; nothing is written until the assistant saves.
+    Let an AI assistant edit your settings through this app — overview, probe formations, window
+    layout, keybinds, Neocom, HUD, fleet and chat, plus copy settings and presets. Every change goes
+    through the same backups and checks as editing here.
   </p>
 
   {#if info}
