@@ -383,9 +383,17 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
 /// absent for the whole file, never per window), so it is read off any one
 /// window; empty when the file has none.
 fn layout_view(wl: &WindowLayout, include_closed: bool) -> Value {
-    let settable_flags: Vec<&str> = wl.windows.first().map_or_else(Vec::new, |w| {
-        w.flags.iter().filter(|f| !matches!(f.set, SetTarget::Unavailable)).map(|f| f.name.as_str()).collect()
-    });
+    // A flag is settable per FILE (its dict is present or absent for the
+    // whole file), but one window alone can under-report it: a window whose
+    // own key can't be reconstructed as a mintable dict key reads Unavailable
+    // for every flag regardless of whether the file's dict exists
+    // (`windows.rs`'s `bool_flag`/`key_as_new_value`). The union over every
+    // window is what a single window's flags cannot lie about.
+    let settable_flags: Vec<String> = wl.windows.iter()
+        .flat_map(|w| w.flags.iter().filter(|f| !matches!(f.set, SetTarget::Unavailable)).map(|f| f.name.clone()))
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect();
     let windows: Vec<Value> = wl.windows.iter()
         .filter(|w| include_closed || w.open)
         .map(|w| json!({
@@ -960,22 +968,26 @@ impl EveMcp {
             "copy_preview" => {
                 let c = self.copy_args(args)?;
                 let mut plan = setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders);
-                for char_id in unseen_targets(&c, &plan.char_writes, &plan.excluded) {
-                    plan.excluded.push(setup::ExcludedTarget { char_id, reason: OTHER_FOLDER_REASON.into() });
+                // A target the plan never saw for any other reason (unpaired,
+                // missing file, …) already has its own excluded entry — never
+                // double-list it.
+                if plan.source_error.is_none() {
+                    let already: HashSet<u64> = plan.excluded.iter().map(|e| e.char_id).collect();
+                    for (char_id, _) in &c.other_folder {
+                        if !already.contains(char_id) {
+                            plan.excluded.push(setup::ExcludedTarget { char_id: *char_id, reason: OTHER_FOLDER_REASON.into() });
+                        }
+                    }
                 }
                 ok(plan)
             }
             "copy_apply" => {
                 let c = self.copy_args(args)?;
-                // The same check `copy_preview` makes, run first: a target the
-                // plan never saw would otherwise be missing from the result
-                // list entirely rather than reported `ok: false`.
-                let preview = setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders);
-                let missed = unseen_targets(&c, &preview.char_writes, &preview.excluded);
                 let mut results = setup::setup_apply(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders).map_err(fail)?;
-                for char_id in missed {
-                    let path = c.targets.iter().find(|t| c.target_ids.get(*t) == Some(&char_id)).cloned().unwrap_or_default();
-                    results.push(setup::TargetResult { path, ok: false, backup_path: None, error: Some(OTHER_FOLDER_REASON.into()) });
+                for (_, path) in &c.other_folder {
+                    if !results.iter().any(|r| Path::new(&r.path) == Path::new(path)) {
+                        results.push(setup::TargetResult { path: path.clone(), ok: false, backup_path: None, error: Some(OTHER_FOLDER_REASON.into()) });
+                    }
                 }
                 ok(results)
             }
@@ -1042,13 +1054,62 @@ struct CopyArgs {
     targets: Vec<String>,
     aspects: Vec<Aspect>,
     allow_other_folders: bool,
-    /// A resolved target path's char id, when known — from `target_char_ids`
-    /// directly, or looked up for a `target_char_files` path. Lets
-    /// `unseen_targets` name a target the plan never saw at all.
-    target_ids: HashMap<String, u64>,
-    /// The source's own char file path, when the source is a character —
-    /// never itself an "unseen target".
-    source_path: Option<String>,
+    /// Requested targets whose OWN profile folder differs from the anchor's —
+    /// the exact test `setup::scoped_files` applies (spec §2.8) — computed
+    /// directly from `discover`, never inferred from what a plan happened to
+    /// produce (an account-only aspect's plan carries no `char_writes` at
+    /// all, so "absent from char_writes" is not a safe signal for "wrong
+    /// folder"). Always empty when `allow_other_folders`. `(char_id, path)`,
+    /// deduplicated by id; the source's own id never appears here.
+    other_folder: Vec<(u64, String)>,
+}
+
+/// A target path's discovered profile directory and char id, reached the same
+/// way `locate`/`setup::locate_source` reach across every profile (not
+/// folder-scoped) — `None` when the path names no discovered character file.
+/// Compares as `Path`, not text, so `/` vs `\` in a caller-supplied
+/// `target_char_files` path never causes a false "different folder".
+fn char_file_info(profiles: &[Profile], path: &Path) -> Option<(PathBuf, u64)> {
+    profiles.iter().find_map(|p| {
+        let f = p.files.iter().find(|f| f.kind == FileKind::Char && f.path == path)?;
+        Some((p.dir.clone(), f.id?))
+    })
+}
+
+/// Every requested target whose own profile folder is not the anchor's — the
+/// same test `setup::scoped_files` uses to decide what a plan even sees,
+/// computed independently of any plan output. The anchor is the source
+/// character's own profile folder for a `Character` source (mirroring
+/// `setup::locate_source`), or the first target's parent directory for a
+/// `Preset` source (mirroring `setup`'s own anchor derivation, carried in
+/// `BatchSource::Preset::anchor_dir`). A target that fails to resolve at all,
+/// or an unresolved source, contributes nothing here — those are a
+/// `source_error`/existing-`excluded`-reason concern, not this one's.
+fn other_folder_targets(profiles: &[Profile], source: &BatchSource, targets: &[String]) -> Vec<(u64, String)> {
+    let (anchor_dir, source_char_id) = match source {
+        BatchSource::Character { path } => match char_file_info(profiles, Path::new(path)) {
+            Some((dir, id)) => (dir, Some(id)),
+            None => return Vec::new(),
+        },
+        BatchSource::Preset { anchor_dir, .. } => {
+            if anchor_dir.is_empty() {
+                return Vec::new();
+            }
+            (PathBuf::from(anchor_dir), None)
+        }
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for t in targets {
+        let Some((dir, id)) = char_file_info(profiles, Path::new(t)) else { continue };
+        if Some(id) == source_char_id || !seen.insert(id) {
+            continue;
+        }
+        if dir != anchor_dir {
+            out.push((id, t.clone()));
+        }
+    }
+    out
 }
 
 impl EveMcp {
@@ -1061,14 +1122,6 @@ impl EveMcp {
             locate(id, &profiles, &roster)
                 .map(|(c, _)| c.to_string_lossy().into_owned())
                 .ok_or_else(|| err("unknown_character", format!("no core_char_{id}.dat in any profile; call list_characters")))
-        };
-        // A target path's char id, resolved across every discovered profile
-        // (not folder-scoped) — the same reach `locate` above already has, so
-        // a target in another profile folder is still nameable even though
-        // `setup::setup_preview`'s own folder-scoped lookup will not see it.
-        let id_for_path = |p: &str| -> Option<u64> {
-            let pp = Path::new(p);
-            profiles.iter().find_map(|prof| prof.files.iter().find(|f| f.kind == FileKind::Char && f.path == pp).and_then(|f| f.id))
         };
 
         let src_id: Option<u64> = opt(args, "source_char_id")?;
@@ -1083,49 +1136,35 @@ impl EveMcp {
             targets.push(char_path(id)?);
         }
         if targets.is_empty() { return Err(err("missing_field", "target_char_ids and/or target_char_files, at least one target")); }
-        let target_ids: HashMap<String, u64> = targets.iter().filter_map(|t| id_for_path(t).map(|id| (t.clone(), id))).collect();
 
-        let (source, source_path) = if let Some(id) = src_id {
-            let p = char_path(id)?;
-            (BatchSource::Character { path: p.clone() }, Some(p))
+        let source = if let Some(id) = src_id {
+            BatchSource::Character { path: char_path(id)? }
         } else if let Some(p) = src_file {
-            (BatchSource::Character { path: p.clone() }, Some(p))
+            BatchSource::Character { path: p }
         } else {
             let name = src_preset.expect("checked");
             let dir = presets::preset_path(&self.dir, &name).map_err(|e| err("unknown_settings_preset", e.0))?;
             if !dir.is_dir() { return Err(err("unknown_settings_preset", format!("no settings preset `{name}`; call settings_presets_list"))); }
             let anchor_dir = Path::new(&targets[0]).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            (BatchSource::Preset { dir: dir.to_string_lossy().into_owned(), anchor_dir }, None)
+            BatchSource::Preset { dir: dir.to_string_lossy().into_owned(), anchor_dir }
         };
+
+        let allow_other_folders = opt(args, "allow_other_folders")?.unwrap_or(false);
+        let other_folder = if allow_other_folders { Vec::new() } else { other_folder_targets(&profiles, &source, &targets) };
+
         Ok(CopyArgs {
-            source, targets, target_ids, source_path,
+            source, targets, other_folder, allow_other_folders,
             aspects: req(args, "aspects")?,
-            allow_other_folders: opt(args, "allow_other_folders")?.unwrap_or(false),
         })
     }
 }
 
-/// Why a target the plan never saw is reported this way — `setup::target_ids`
-/// keeps only paths in the source's own profile folder, so a target `locate`
-/// resolved somewhere else silently vanished from both `char_writes` and
-/// `excluded` rather than being reported at all.
+/// A target the plan never saw at all is reported this way — `setup::target_ids`
+/// keeps only paths in the anchor profile folder, so a target resolved
+/// somewhere else would otherwise be silently absent from both `char_writes`
+/// and `excluded` (or, for an account-only aspect, absent from `excluded`
+/// despite never being written) rather than being reported.
 const OTHER_FOLDER_REASON: &str = "in another profile folder; set allow_other_folders to include it";
-
-/// The requested targets the plan gave no verdict on at all: not a
-/// `char_writes` entry (by path), not an `excluded` entry (by char id, once
-/// resolvable), and not the source itself. Almost always a target outside
-/// the anchor profile folder with `allow_other_folders` unset — the plan's
-/// own folder scoping drops it before it ever reaches `plan_setup`.
-fn unseen_targets(c: &CopyArgs, char_writes: &[setup::CharWrite], excluded: &[setup::ExcludedTarget]) -> Vec<u64> {
-    let seen_paths: HashSet<&str> = char_writes.iter().map(|w| w.path.as_str()).collect();
-    let excluded_ids: HashSet<u64> = excluded.iter().map(|e| e.char_id).collect();
-    c.targets
-        .iter()
-        .filter(|t| !seen_paths.contains(t.as_str()) && c.source_path.as_deref() != Some(t.as_str()))
-        .filter_map(|t| c.target_ids.get(t).copied())
-        .filter(|id| !excluded_ids.contains(id))
-        .collect()
-}
 
 /// The `list_characters` payload, pure: profiles as discovered, pairings as
 /// the roster has them, names as the cache has them.
@@ -2251,7 +2290,9 @@ mod tests {
         assert_eq!(v["formations"][0]["name"], "pair");
         let v = s.call("probes_set", &args(json!({ "id": 0, "name": "renamed", "probes": [[1.0, 0.0, 0.0]], "ranges": [1000.0] }))).unwrap();
         assert_eq!(v["formations"].as_array().unwrap().len(), 1);
-        assert_eq!(s.call("probes_get", &Args::new()).unwrap()["formations"][0]["name"], "renamed");
+        let v = s.call("probes_get", &Args::new()).unwrap();
+        assert_eq!(v["formations"][0]["name"], "renamed");
+        assert_no_paths(&v, "probes_get");
     }
 
     #[test]
@@ -2397,6 +2438,7 @@ mod tests {
     fn neocom_get_lists_the_bar_and_the_union_catalog() {
         let (s, _) = open_char(&neocom_char_bytes());
         let v = s.call("neocom_get", &Args::new()).unwrap();
+        assert_no_paths(&v, "neocom_get");
         let ids: Vec<&str> = v["buttons"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["chat", "wallet"]);
         let avail = v["available"].as_array().unwrap();
@@ -2727,6 +2769,60 @@ mod tests {
         assert_eq!(bad["backup_path"], Value::Null);
         assert!(bad["error"].as_str().unwrap().contains("allow_other_folders"), "{bad}");
         assert!(results.iter().any(|r| r["ok"] == true), "200 still applied: {v}");
+    }
+
+    /// `keybinds` is account-only (`setup::aspect_writes`: no `char_categories`
+    /// at all), so a plan for it never populates `char_writes` — the OLD
+    /// plan-inference mechanism read "absent from char_writes" as "another
+    /// folder" and wrongly excluded every in-folder target too. Pins the fix:
+    /// folder membership is now computed directly from `discover`, not from
+    /// what a plan happened to produce.
+    ///
+    /// `copy_server`'s source account file carries only `overview` data, which
+    /// would make a `keybinds` splice extract nothing and get suppressed as a
+    /// no-op by `setup.rs` itself — passing for the wrong reason (no writes at
+    /// all, rather than a correctly-planned in-folder write). This gives the
+    /// source real `cmd` data so the write is genuine.
+    fn keybinds_copy_server() -> (EveMcp, PathBuf) {
+        let (s, prof) = copy_server();
+        let codes = |v: &[i64]| BmValue::Tuple(v.iter().map(|&n| BmValue::Int(n)).collect());
+        let table = BmValue::Dict(vec![(b("CmdToggleAutopilot"), codes(&[81]))]);
+        let cmd = BmValue::Dict(vec![(b("customCmds"), BmValue::Tuple(vec![BmValue::Long(vec![0u8; 8]), table]))]);
+        std::fs::write(prof.join("core_user_500.dat"), encode(&BmValue::Dict(vec![(b("cmd"), cmd)])).unwrap()).unwrap();
+        (s, prof)
+    }
+
+    #[test]
+    fn copy_preview_with_an_account_only_aspect_does_not_exclude_an_in_folder_target() {
+        let (s, _) = keybinds_copy_server();
+        let v = s.call("copy_preview", &args(json!({ "source_char_id": 100, "target_char_ids": [200], "aspects": ["keybinds"] }))).unwrap();
+        assert_eq!(v["excluded"], json!([]), "{v}");
+        assert_eq!(v["account_writes"][0]["user_id"], 600, "{v}");
+    }
+
+    #[test]
+    fn copy_apply_with_an_account_only_aspect_does_not_mark_an_in_folder_target_failed() {
+        let (s, _) = keybinds_copy_server();
+        let v = s.call("copy_apply", &args(json!({ "source_char_id": 100, "target_char_ids": [200], "aspects": ["keybinds"] }))).unwrap();
+        let results = v.as_array().unwrap();
+        assert!(!results.is_empty(), "{v}");
+        assert!(results.iter().all(|r| r["ok"] == true), "{v}");
+        assert!(
+            !results.iter().any(|r| r["error"].as_str().is_some_and(|e| e.contains("allow_other_folders"))),
+            "{v}"
+        );
+    }
+
+    /// A `target_char_files` path spelled with forward slashes must still be
+    /// recognised as the same in-folder file `discover` reports with
+    /// backslashes — folder membership compares as `Path`, not text.
+    #[test]
+    fn copy_preview_is_not_confused_by_a_differently_spelled_in_folder_target_path() {
+        let (s, prof) = copy_server();
+        let spelled = prof.join("core_char_200.dat").to_string_lossy().replace('\\', "/");
+        let v = s.call("copy_preview", &args(json!({ "source_char_id": 100, "target_char_files": [spelled], "aspects": ["overview"] }))).unwrap();
+        assert_eq!(v["excluded"], json!([]), "{v}");
+        assert_eq!(v["char_writes"][0]["char_id"], 200, "{v}");
     }
 
     #[test]
