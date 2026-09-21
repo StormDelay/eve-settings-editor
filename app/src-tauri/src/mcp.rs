@@ -597,7 +597,7 @@ fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "status",
-            description: "What is open right now: the character and account file paths, whether each has unsaved edits, and whether undo is possible. Call it to re-orient in a long conversation.",
+            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible — and every workspace this session holds (one per account) with its unsaved slots, so nothing is left unsaved by mistake. Call it to re-orient in a long conversation.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -616,9 +616,10 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "save",
-            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
+            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. The current workspace only, or every workspace with all: true. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
             schema: || obj(json!({
-                "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." }
+                "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." },
+                "all": { "type": "boolean", "description": "Save every workspace, not just the current one." }
             }), &[]),
         },
         ToolDef {
@@ -1074,13 +1075,33 @@ impl EveMcp {
     }
 
     fn status(&self) -> ToolResult {
+        let st = self.state();
         let slot = |s: Slot| {
-            self.doc_path(s).map(|path| json!({ "path": path, "dirty": self.state().history.lock().unwrap().dirty(s) }))
+            self.doc_path(s).map(|path| json!({ "path": path, "dirty": st.history.lock().unwrap().dirty(s) }))
         };
+        // Lock order `user -> char -> history`: read both slot paths through
+        // `slot_view` before taking `h`, the history lock — never the reverse.
+        let workspaces: Vec<Value> = self
+            .workspaces
+            .lock()
+            .unwrap()
+            .values()
+            .map(|ws| {
+                let char = slot_view(ws, Slot::Char).map(|v| v["path"].clone());
+                let user = slot_view(ws, Slot::User).map(|v| v["path"].clone());
+                let h = ws.history.lock().unwrap();
+                json!({
+                    "char": char,
+                    "user": user,
+                    "dirty": { "char": h.dirty(Slot::Char), "user": h.dirty(Slot::User) },
+                })
+            })
+            .collect();
         Ok(json!({
             "char": slot(Slot::Char),
             "user": slot(Slot::User),
-            "can_undo": undo::undo_state(&self.state()).can_undo,
+            "can_undo": undo::undo_state(&st).can_undo,
+            "workspaces": workspaces,
         }))
     }
 
@@ -1301,6 +1322,40 @@ fn slot_label(slot: Slot) -> &'static str {
     }
 }
 
+/// Save one workspace's dirty slots, account first. `(saved, skipped)` on
+/// success; on failure the error carries `saved` and `skipped` so far, so a
+/// half-saved pair is never mistaken for a save that touched nothing.
+fn save_state(state: &AppState, force: bool) -> Result<(Vec<Value>, Vec<&'static str>), Value> {
+    let mut saved = Vec::new();
+    let mut skipped = Vec::new();
+    for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
+        let Some(path) = slot_view(state, slot).map(|v| v["path"].clone()) else { continue };
+        if !state.history.lock().unwrap().dirty(slot) {
+            skipped.push(name);
+            continue;
+        }
+        match ops::save_document(state, slot, force) {
+            Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
+            Err(e) => {
+                let mut v = match e.code.as_str() {
+                    "conflict" => err(
+                        "conflict",
+                        format!(
+                            "the {} file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
+                            slot_label(slot)
+                        ),
+                    ),
+                    _ => err(&e.code, format!("{} file: {}", slot_label(slot), e.message)),
+                };
+                v["saved"] = json!(saved);
+                v["skipped"] = json!(skipped);
+                return Err(v);
+            }
+        }
+    }
+    Ok((saved, skipped))
+}
+
 /// The workspace key for a settings file. Canonical, so the spelling the
 /// model chooses and the one `locate` produces name one workspace. A path
 /// that does not exist is the same `io` error `open_file` would give.
@@ -1428,37 +1483,29 @@ impl EveMcp {
 
     fn save(&self, args: &Args) -> ToolResult {
         let force: bool = opt(args, "force")?.unwrap_or(false);
+        let all: bool = opt(args, "all")?.unwrap_or(false);
+        if !all {
+            let (saved, skipped) = save_state(&self.state(), force)?;
+            return Ok(json!({ "saved": saved, "skipped": skipped }));
+        }
+        // Every workspace, in map order. A failure stops the loop and carries
+        // what already reached disk, as the single-workspace form does.
+        let all_ws: Vec<AppState> = self.workspaces.lock().unwrap().values().cloned().collect();
         let mut saved = Vec::new();
-        let mut skipped = Vec::new();
-        for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
-            let Some(path) = self.doc_path(slot) else { continue };
-            if !self.state().history.lock().unwrap().dirty(slot) {
-                skipped.push(name);
-                continue;
-            }
-            match ops::save_document(&self.state(), slot, force) {
-                Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
-                // A slot after this one in the loop may never be tried — attach
-                // what already made it to disk, or the caller can't tell a
-                // half-saved batch from a save that touched nothing.
-                Err(e) => {
-                    let mut v = match e.code.as_str() {
-                        "conflict" => err(
-                            "conflict",
-                            format!(
-                                "the {} file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
-                                slot_label(slot)
-                            ),
-                        ),
-                        _ => err(&e.code, format!("{} file: {}", slot_label(slot), e.message)),
-                    };
-                    v["saved"] = json!(saved);
-                    v["skipped"] = json!(skipped);
-                    return Err(v);
+        for ws in &all_ws {
+            match save_state(ws, force) {
+                Ok((mut s, _)) => saved.append(&mut s),
+                Err(mut e) => {
+                    let mut earlier = saved;
+                    if let Some(now) = e["saved"].as_array_mut() {
+                        earlier.append(now);
+                    }
+                    e["saved"] = json!(earlier);
+                    return Err(e);
                 }
             }
         }
-        Ok(json!({ "saved": saved, "skipped": skipped }))
+        Ok(json!({ "saved": saved }))
     }
 
     fn undo(&self) -> ToolResult {
@@ -2032,6 +2079,61 @@ mod tests {
     }
 
     #[test]
+    fn status_lists_every_workspace_with_its_dirty_slots() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+
+        let st = s.call("status", &Args::new()).unwrap();
+        let ws = st["workspaces"].as_array().unwrap();
+        assert_eq!(ws.len(), 2);
+        let by_path = |p: &Path| ws.iter().find(|w| w["user"] == json!(p.to_string_lossy())).unwrap().clone();
+        assert_eq!(by_path(&a)["dirty"], json!({ "char": false, "user": true }));
+        assert_eq!(by_path(&b)["dirty"], json!({ "char": false, "user": false }));
+        assert_eq!(by_path(&b)["char"], Value::Null);
+    }
+
+    #[test]
+    fn save_all_writes_every_dirty_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+
+        let v = s.call("save", &args(json!({ "all": true }))).unwrap();
+        let saved = v["saved"].as_array().unwrap();
+        assert_eq!(saved.len(), 2);
+        for entry in saved {
+            assert!(PathBuf::from(entry["backup_path"].as_str().unwrap()).exists());
+        }
+        let paths: Vec<Value> = saved.iter().map(|e| e["path"].clone()).collect();
+        assert!(paths.contains(&json!(a.to_string_lossy())) && paths.contains(&json!(b.to_string_lossy())));
+
+        let st = s.call("status", &Args::new()).unwrap();
+        assert!(st["workspaces"].as_array().unwrap().iter().all(|w| w["dirty"]["user"] == false));
+    }
+
+    /// Without `all`, `save` is the current workspace only — the other stays
+    /// dirty and is still listed as such.
+    #[test]
+    fn save_without_all_is_the_current_workspace_only() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+
+        let v = s.call("save", &Args::new()).unwrap();
+        assert_eq!(v["saved"].as_array().unwrap().len(), 1);
+        assert_eq!(v["saved"][0]["path"], json!(b.to_string_lossy()));
+        let st = s.call("status", &Args::new()).unwrap();
+        let a_ws = st["workspaces"].as_array().unwrap().iter().find(|w| w["user"] == json!(a.to_string_lossy())).unwrap().clone();
+        assert_eq!(a_ws["dirty"]["user"], true);
+    }
+
+    #[test]
     fn save_skips_a_clean_slot_and_writes_a_dirty_one_with_a_backup() {
         let (s, path) = open_user(&overview_user_bytes());
         let v = s.call("save", &Args::new()).unwrap();
@@ -2135,7 +2237,7 @@ mod tests {
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
         let s = EveMcp::for_tests();
         let v = s.call("status", &Args::new()).unwrap();
-        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false }));
+        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false, "workspaces": [] }));
     }
 
     #[test]
