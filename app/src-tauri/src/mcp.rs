@@ -796,7 +796,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_render",
-            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
+            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Screen furniture — Neocom bar, ship HUD, fighter panel, badge, target list — is drawn in grey beneath the windows, outside the filter, and listed as furniture [{kind, label, x, y, w, h}]; hud_set moves it. Call it before moving anything. Needs the character file open.",
             schema: || obj(json!({
                 "width": { "type": "integer", "minimum": 320, "maximum": 2048, "description": "Image width in pixels, default 1024." },
                 "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." },
@@ -994,7 +994,11 @@ impl EveMcp {
                 let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
                 let filter = window_filter(args)?;
                 let overrides = self.overrides();
-                let (png, legend) = crate::mcp_render::layout_png(&wl, width, &filter, &overrides);
+                // The character file is open (window_layout just needed it), so
+                // this cannot fail on that; the account file is optional and
+                // only costs the account-scoped furniture when absent.
+                let hud = ops::hud_layout(&self.state).map_err(fail)?;
+                let (png, legend) = crate::mcp_render::layout_png(&wl, Some(&hud), width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 Ok(v)
@@ -2708,6 +2712,12 @@ mod tests {
         // Drawn only, by default: overview, market, and C (the stack's anchor)
         // — fitting (closed) and the non-anchor stack members m1/m2 are omitted.
         assert_eq!(v["windows"].as_array().unwrap().len(), 3, "{v}");
+        // No account file and no `notifications` section: of the furniture,
+        // only the ship HUD (character-scoped, with a default) is placeable.
+        let furniture = v["furniture"].as_array().unwrap();
+        assert_eq!(furniture.len(), 1, "{v}");
+        assert_eq!(furniture[0]["kind"], "shipui");
+        assert_eq!(furniture[0]["y"], 1440 - 12 - 176, "bottom-aligned at the file's reference height");
         let png = base64::engine::general_purpose::STANDARD.decode(v["png_base64"].as_str().unwrap()).unwrap();
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         let blocks = blocks(v);

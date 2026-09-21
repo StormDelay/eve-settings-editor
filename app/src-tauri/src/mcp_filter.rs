@@ -44,6 +44,8 @@ pub(crate) enum Env {
 pub(crate) struct Overrides {
     pub clutter: HashSet<String>,
     pub visible: HashSet<String>,
+    /// How many locked targets `layout_render` draws the target list at.
+    pub targets: u8,
 }
 
 impl Overrides {
@@ -51,6 +53,7 @@ impl Overrides {
         Overrides {
             clutter: p.layout.clutter.iter().cloned().collect(),
             visible: p.layout.visible.iter().cloned().collect(),
+            targets: p.layout.targets,
         }
     }
 }
