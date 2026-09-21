@@ -4,6 +4,8 @@ EVE Online keeps each player's client settings in two files this server edits. `
 
 Sequence: `list_characters` (which files exist and who they belong to) → `open` (the account file is required; add the character file for column widths) → `overview_get` or `probes_get` → the edit tools → `save`.
 
+`open` selects: each account keeps its own workspace for the whole conversation, so opening another character keeps the first one's unsaved edits, and reading five characters is five `open` calls with no reloads. An account's settings are edited through whichever of its characters is open; opening another character of the *same* account needs the current one saved (or undone) first — `unsaved_edits` says so. `status` lists every workspace and what is unsaved in it; `save` writes the current workspace, `save {all: true}` all of them.
+
 Rules:
 
 1. The EVE client rewrites its settings when a character logs out. Only edit files of characters that are logged out, or the edit is overwritten.
