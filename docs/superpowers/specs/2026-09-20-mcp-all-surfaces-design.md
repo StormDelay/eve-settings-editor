@@ -207,9 +207,10 @@ that `workflow` names every editor tool prefix.
   to the requested width and the reference aspect ratio; a pixel at the centre
   of an open window's box has that window's fill colour and a pixel outside
   every box has the ground colour; a closed window is absent unless
-  `include_closed`; a stack draws once, at its anchor; the legend lists every
-  window with `drawn` true/false; the bitmap font renders each supported glyph
-  as a non-empty 5×7 pattern and an unsupported character as `.`. Through the
+  `include_closed`; a stack draws once, at its anchor; the legend lists the
+  drawn windows (every window with `include_closed`), each with `drawn`; the
+  bitmap font renders each supported glyph as a non-empty 5×7 pattern and an
+  unsupported character as `.`. Through the
   tool: `layout_render` on the fixture returns one text block and one
   `image/png` block whose base64 decodes to a PNG signature.
 - Keybinds: `"ctrl+q"` → `[17, 81]`; unbind; `unknown_key`; `stolen` populated
