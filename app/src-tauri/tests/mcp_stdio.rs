@@ -59,7 +59,7 @@ fn initialize_then_tools_list() {
             "layout_render", "list_backups", "list_characters", "lookup_character", "neocom_edit", "neocom_get", "open", "overview_appearance_edit", "overview_columns_edit", "overview_get",
             "overview_pack_export", "overview_pack_import", "overview_pack_preview", "overview_presets_edit",
             "overview_tabs_edit", "probes_add_yaml", "probes_export_yaml", "probes_get", "probes_remove",
-            "probes_reorder", "probes_set", "restore_backup", "save", "status", "undo",
+            "probes_reorder", "probes_set", "restore_backup", "save", "settings_preset_edit", "settings_presets_list", "status", "undo",
         ]
     );
 
