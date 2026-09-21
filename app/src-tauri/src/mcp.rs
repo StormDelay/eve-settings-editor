@@ -191,7 +191,8 @@ fn builtin_catalog() -> Vec<BuiltinPreset> {
     out
 }
 
-pub(crate) const TOPICS: [&str; 5] = ["workflow", "overview", "presets", "states", "probes"];
+pub(crate) const TOPICS: [&str; 8] =
+    ["workflow", "overview", "presets", "states", "probes", "layout", "keybinds", "copy"];
 
 /// `(slug, body)` per `## ` heading, in file order.
 fn primer_sections() -> Vec<(&'static str, &'static str)> {
@@ -751,7 +752,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "fleet_get",
-            description: "The fleet settings across both files: fields (broadcast toggles, formation, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
+            description: "The fleet settings across both files: fields (broadcast toggles, formation, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set|unreadable, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -1765,12 +1766,30 @@ mod tests {
     }
 
     #[test]
-    fn primer_has_the_five_topics_in_order_and_none_is_empty() {
+    fn primer_has_every_topic_in_order_and_none_is_empty() {
         let sections = primer_sections();
         let slugs: Vec<&str> = sections.iter().map(|(s, _)| *s).collect();
         assert_eq!(slugs, TOPICS);
         for (slug, body) in &sections {
             assert!(body.len() > 100, "{slug} is too short to be a primer section");
+        }
+    }
+
+    #[test]
+    fn the_workflow_section_names_every_editor() {
+        let w = primer("workflow").unwrap();
+        for prefix in ["layout_", "autofill_", "keybind", "neocom_", "hud_", "fleet_", "chat_", "copy_", "settings_preset"] {
+            assert!(w.contains(prefix), "workflow does not mention {prefix}");
+        }
+        assert!(w.contains("layout_render"));
+    }
+
+    #[test]
+    fn eve_guide_serves_the_three_new_topics() {
+        let s = EveMcp::for_tests();
+        for (t, word) in [("layout", "anchor"), ("keybinds", "stolen"), ("copy", "collateral")] {
+            let v = s.call("eve_guide", &args(json!({ "topic": t }))).unwrap();
+            assert!(v["text"].as_str().unwrap().contains(word), "{t} should mention {word}");
         }
     }
 
