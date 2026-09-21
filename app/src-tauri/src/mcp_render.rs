@@ -6,6 +6,8 @@
 use serde::Serialize;
 use settings_model::WindowLayout;
 
+use crate::mcp_filter::{self, HiddenCounts, Overrides, WindowFilter};
+
 pub(crate) const GROUND: [u8; 3] = [24, 26, 30];
 const GRID: [u8; 3] = [40, 43, 48];
 const BORDER: [u8; 3] = [230, 232, 235];
@@ -29,6 +31,7 @@ pub(crate) struct LegendRow {
 pub(crate) struct Legend {
     pub width: u32, pub height: u32, pub reference_w: i64, pub reference_h: i64, pub scale: f64,
     pub windows: Vec<LegendRow>,
+    pub hidden: HiddenCounts,
 }
 
 struct Canvas { w: u32, h: u32, px: Vec<u8> }
@@ -116,7 +119,10 @@ pub(crate) fn glyph(c: char) -> [u8; 7] {
 
 /// The picture and its legend. `width` is clamped to 320..=2048; the height
 /// follows the file's reference aspect ratio (16:9 when the file has none).
-pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) -> (Vec<u8>, Legend) {
+/// `f`/`o` are `layout_get`'s own view filter — a hidden window is neither
+/// drawn nor listed, and contributes to `hidden` instead; the legend is what
+/// a client without image support reads, so it must agree with the picture.
+pub(crate) fn layout_png(wl: &WindowLayout, width: u32, f: &WindowFilter, o: &Overrides) -> (Vec<u8>, Legend) {
     let width = width.clamp(MIN_W, MAX_W);
     let (rw, rh) = if wl.reference_w > 0 && wl.reference_h > 0 { (wl.reference_w, wl.reference_h) } else { (1920, 1080) };
     let scale = width as f64 / rw as f64;
@@ -141,8 +147,13 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
             .map(|s| (s.container_id.clone(), s.anchor_id.clone(), s.members.clone()))
     };
     let mut rows = Vec::new();
+    let mut hidden = HiddenCounts::default();
     let mut fill_i = 0usize;
     for w in &wl.windows {
+        if let Some(reason) = mcp_filter::hidden_by(w, f, o) {
+            hidden.add(reason);
+            continue;
+        }
         let Some(g) = &w.geom else {
             rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: 0, y: 0, w: 0, h: 0, drawn: false, stack: None });
             continue;
@@ -150,7 +161,7 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
         let stack = stack_of(w);
         let is_anchor_or_free = stack.as_ref().is_none_or(|(_, anchor, _)| anchor == &w.id);
         let open = w.open && w.renderable;
-        let drawn = is_anchor_or_free && (open || include_closed);
+        let drawn = is_anchor_or_free && (open || f.include_closed);
         rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: g.x, y: g.y, w: g.w, h: g.h, drawn, stack: stack.as_ref().map(|(cid, _, _)| cid.clone()) });
         if !drawn { continue; }
         let (x, y, bw, bh) = ((g.x as f64 * scale) as i64, (g.y as f64 * scale) as i64, ((g.w as f64 * scale) as i64).max(2), ((g.h as f64 * scale) as i64).max(2));
@@ -191,10 +202,10 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
     // Same reasoning as `layout_get`: the legend is what a client without
     // image support sees, so a window nothing drew is dead weight unless
     // asked for — `drawn` itself stays on every row that remains.
-    if !include_closed {
+    if !f.include_closed {
         rows.retain(|r| r.drawn);
     }
-    let legend = Legend { width, height, reference_w: rw, reference_h: rh, scale, windows: rows };
+    let legend = Legend { width, height, reference_w: rw, reference_h: rh, scale, windows: rows, hidden };
     (png, legend)
 }
 
@@ -243,9 +254,15 @@ mod tests {
         [img.2[i], img.2[i + 1], img.2[i + 2]]
     }
 
+    /// The pre-filter default: only `include_closed` varies, exactly as
+    /// these tests were written before `layout_png` took the canvas's filter.
+    fn filt(include_closed: bool) -> WindowFilter {
+        WindowFilter { include_closed, hide_clutter: false, env: crate::mcp_filter::Env::All, matches: None }
+    }
+
     #[test]
     fn renders_at_the_requested_width_and_reference_aspect() {
-        let (png, legend) = layout_png(&layout(), 640, false);
+        let (png, legend) = layout_png(&layout(), 640, &filt(false), &Overrides::default());
         let img = decode(&png);
         assert_eq!((img.0, img.1), (640, 360));
         assert_eq!((legend.width, legend.height), (640, 360));
@@ -255,7 +272,7 @@ mod tests {
     #[test]
     fn an_open_window_is_filled_a_closed_one_is_absent_unless_asked_and_a_stack_draws_once() {
         let wl = layout();
-        let (png, legend) = layout_png(&wl, 640, false);
+        let (png, legend) = layout_png(&wl, 640, &filt(false), &Overrides::default());
         let img = decode(&png);
         // overview's centre at scale 0.25: (100+200, 200+300) -> (75, 125).
         let inside = px(&img, 75, 125);
@@ -269,7 +286,7 @@ mod tests {
         assert!(rows.iter().find(|r| r.id == "m1").is_none(), "a non-anchor stack member is never drawn, so it's omitted too");
         assert!(rows.iter().find(|r| r.id == "C").unwrap().drawn, "C is open with geometry, so it is the anchor");
 
-        let (png, legend) = layout_png(&wl, 640, true);
+        let (png, legend) = layout_png(&wl, 640, &filt(true), &Overrides::default());
         let img = decode(&png);
         assert_ne!(px(&img, 0, 62), GROUND, "closed window drawn as an outline when asked");
         let rows = &legend.windows;
@@ -290,9 +307,9 @@ mod tests {
 
     #[test]
     fn width_is_clamped() {
-        let (png, _) = layout_png(&layout(), 10, false);
+        let (png, _) = layout_png(&layout(), 10, &filt(false), &Overrides::default());
         assert_eq!(decode(&png).0, 320);
-        let (png, _) = layout_png(&layout(), 9999, false);
+        let (png, _) = layout_png(&layout(), 9999, &filt(false), &Overrides::default());
         assert_eq!(decode(&png).0, 2048);
     }
 }

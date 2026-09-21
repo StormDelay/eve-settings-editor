@@ -17,8 +17,10 @@ use settings_model::{discover, FileKind, Mutation, NewValue, OverviewColumns, Pr
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
+use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter};
 use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
+use crate::prefs;
 use crate::undo;
 
 pub struct EveMcp {
@@ -29,11 +31,15 @@ pub struct EveMcp {
     /// EVE settings roots to discover profiles under (`default_roots()` in
     /// production; a fixture dir in tests).
     pub roots: Vec<PathBuf>,
+    /// Where preferences.json lives — the user's own clutter overrides
+    /// (`prefs::path_base()` in production; `None`, or a private path a test
+    /// points at, otherwise).
+    pub prefs_path: Option<PathBuf>,
 }
 
 impl EveMcp {
-    pub fn new(dir: PathBuf, roots: Vec<PathBuf>) -> Self {
-        EveMcp { state: AppState::new(), dir, roots }
+    pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
+        EveMcp { state: AppState::new(), dir, roots, prefs_path }
     }
 }
 
@@ -377,12 +383,13 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
 /// The layout without a single path: what the model sees. A real character
 /// file runs to ~381 windows, ~1.3 KB each pretty-printed and most of that
 /// the old per-window `flags` array — ~495 KB total, well past a client's
-/// tool-result cap — so closed windows are dropped unless `include_closed`,
-/// and `flags` is just the names that are ON rather than a {name,value,settable}
-/// triple per flag. `settable_flags` is file-level (a flag dict is present or
-/// absent for the whole file, never per window), so it is read off any one
-/// window; empty when the file has none.
-fn layout_view(wl: &WindowLayout, include_closed: bool) -> Value {
+/// tool-result cap — so closed and clutter windows are dropped by default
+/// (see `mcp_filter`), and `flags` is just the names that are ON rather than
+/// a {name,value,settable} triple per flag. `settable_flags` is file-level (a
+/// flag dict is present or absent for the whole file, never per window), so
+/// it is read off any one window — the UNFILTERED set, a view filter must not
+/// change what a file can set.
+fn layout_view(wl: &WindowLayout, f: &WindowFilter, o: &Overrides) -> Value {
     // A flag is settable per FILE (its dict is present or absent for the
     // whole file), but one window alone can under-report it: a window whose
     // own key can't be reconstructed as a mintable dict key reads Unavailable
@@ -394,8 +401,12 @@ fn layout_view(wl: &WindowLayout, include_closed: bool) -> Value {
         .collect::<std::collections::BTreeSet<String>>()
         .into_iter()
         .collect();
+    let mut hidden = HiddenCounts::default();
     let windows: Vec<Value> = wl.windows.iter()
-        .filter(|w| include_closed || w.open)
+        .filter(|w| match mcp_filter::hidden_by(w, f, o) {
+            Some(reason) => { hidden.add(reason); false }
+            None => true,
+        })
         .map(|w| json!({
             "id": w.id, "label": w.label, "name": w.name, "open": w.open, "renderable": w.renderable,
             "resolution_matches": w.resolution_matches,
@@ -406,6 +417,7 @@ fn layout_view(wl: &WindowLayout, include_closed: bool) -> Value {
     json!({
         "reference_w": wl.reference_w, "reference_h": wl.reference_h,
         "windows": windows, "stacks": wl.stacks, "settable_flags": settable_flags,
+        "hidden": hidden,
     })
 }
 
@@ -531,6 +543,22 @@ impl EveMcp {
         let names = names::load_cache(&self.dir);
         Ok(fleet_view(&f, &names))
     }
+
+    /// The user's own clutter overrides, from preferences.json — empty when
+    /// there is no prefs path (a test that never sets one) or no file yet.
+    fn overrides(&self) -> Overrides {
+        self.prefs_path.as_deref().map(|p| Overrides::from_prefs(&prefs::load_from(p))).unwrap_or_default()
+    }
+}
+
+/// `layout_get`/`layout_render`'s view filter, from tool arguments.
+fn window_filter(args: &Args) -> Result<WindowFilter, Value> {
+    Ok(WindowFilter {
+        include_closed: opt(args, "include_closed")?.unwrap_or(false),
+        hide_clutter: opt(args, "hide_clutter")?.unwrap_or(true),
+        env: opt::<Env>(args, "environment")?.unwrap_or_default(),
+        matches: opt(args, "match")?,
+    })
 }
 
 /// One tool's wire definition. The description is what the model reads —
@@ -746,20 +774,28 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_get",
-            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Needs the character file open. To SEE it, call layout_render.",
-            schema: || obj(json!({ "include_closed": { "type": "boolean", "description": "Include closed windows. Default false." } }), &[]),
+            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Needs the character file open. To SEE it, call layout_render.",
+            schema: || obj(json!({
+                "include_closed": { "type": "boolean", "description": "Include closed windows. Default false." },
+                "hide_clutter": { "type": "boolean", "description": "Default true: omit windows EVE spawns per chat, item or dialog, and dead stack frames." },
+                "environment": { "type": "string", "enum": ["all", "docked", "space"], "description": "Default all. docked hides space-only windows (overview, d-scan, drones); space hides docked-only ones (station services, hangars)." },
+                "match": { "type": "string", "description": "Only windows whose label, detail or id contains this text." }
+            }), &[]),
         },
         ToolDef {
             name: "layout_render",
-            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
+            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
             schema: || obj(json!({
                 "width": { "type": "integer", "minimum": 320, "maximum": 2048, "description": "Image width in pixels, default 1024." },
-                "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." }
+                "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." },
+                "hide_clutter": { "type": "boolean", "description": "Default true: omit windows EVE spawns per chat, item or dialog, and dead stack frames." },
+                "environment": { "type": "string", "enum": ["all", "docked", "space"], "description": "Default all. docked hides space-only windows (overview, d-scan, drones); space hides docked-only ones (station services, hangars)." },
+                "match": { "type": "string", "description": "Only windows whose label, detail or id contains this text." }
             }), &[]),
         },
         ToolDef {
             name: "layout_edit",
-            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns the open windows as layout_get does. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
             schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans"], json!({
                 "window": { "type": "string" },
                 "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
@@ -870,7 +906,7 @@ fn tools() -> Vec<Tool> {
 impl EveMcp {
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        EveMcp::new(std::env::temp_dir().join("eve-mcp-tests"), vec![])
+        EveMcp::new(std::env::temp_dir().join("eve-mcp-tests"), vec![], None)
     }
 
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
@@ -938,20 +974,23 @@ impl EveMcp {
             }
             "layout_get" => {
                 let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
-                let include_closed = opt::<bool>(args, "include_closed")?.unwrap_or(false);
-                Ok(layout_view(&wl, include_closed))
+                Ok(layout_view(&wl, &window_filter(args)?, &self.overrides()))
             }
             "layout_render" => {
                 use base64::Engine as _;
                 let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
                 let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
-                let include_closed = opt::<bool>(args, "include_closed")?.unwrap_or(false);
-                let (png, legend) = crate::mcp_render::layout_png(&wl, width, include_closed);
+                let filter = window_filter(args)?;
+                let overrides = self.overrides();
+                let (png, legend) = crate::mcp_render::layout_png(&wl, width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 Ok(v)
             }
-            "layout_edit" => self.batch(args, layout_op, |s| Ok(layout_view(&ops::window_layout(&s.state, Slot::Char).map_err(fail)?, false))),
+            "layout_edit" => self.batch(args, layout_op, |s| {
+                let wl = ops::window_layout(&s.state, Slot::Char).map_err(fail)?;
+                Ok(layout_view(&wl, &window_filter(&Args::new())?, &s.overrides()))
+            }),
             "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
             "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
@@ -1583,7 +1622,7 @@ pub fn serve() {
         .build()
         .expect("tokio runtime");
     rt.block_on(async {
-        let server = EveMcp::new(dir, settings_model::default_roots());
+        let server = EveMcp::new(dir, settings_model::default_roots(), prefs::path_base());
         let running = server.serve(rmcp::transport::stdio()).await.expect("mcp initialize");
         let _ = running.waiting().await;
     });
@@ -2664,6 +2703,81 @@ mod tests {
         assert!(matches!(blocks[1], ContentBlock::Image(_)));
     }
 
+    /// The layout fixture plus one private chat (clutter), one docked-only
+    /// window and an orphan numeric frame, all open; `fitting` closed.
+    fn cluttered_layout_char_bytes() -> Vec<u8> {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let geom = |x: i64| BmValue::Tuple(vec![BmValue::Int(x), BmValue::Int(0), BmValue::Int(300), BmValue::Int(200), BmValue::Int(2560), BmValue::Int(1440)]);
+        let ids = ["overview", "market", "chatchannel_player_-78564080", "lobbyWnd", "9009", "fitting"];
+        let sizes: Vec<(BmValue, BmValue)> = ids.iter().enumerate().map(|(i, id)| (b(id), geom(i as i64 * 100))).collect();
+        let open: Vec<(BmValue, BmValue)> = ids.iter().map(|id| (b(id), BmValue::Bool(*id != "fitting"))).collect();
+        encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
+            (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(sizes)])),
+            (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(open)])),
+        ]))])).unwrap()
+    }
+
+    fn ids_of(v: &Value) -> Vec<String> {
+        v["windows"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn layout_get_hides_clutter_by_default_and_counts_what_it_hid() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        let ids = ids_of(&v);
+        assert!(ids.contains(&"overview".into()) && ids.contains(&"market".into()) && ids.contains(&"lobbyWnd".into()));
+        assert!(!ids.contains(&"chatchannel_player_-78564080".into()), "a private chat is clutter");
+        assert!(!ids.contains(&"9009".into()), "an orphan frame is clutter");
+        assert!(!ids.contains(&"fitting".into()), "closed by default");
+        assert_eq!(v["hidden"], json!({ "closed": 1, "clutter": 2, "environment": 0, "matched": 0 }));
+        let v = s.call("layout_get", &args(json!({ "hide_clutter": false, "include_closed": true }))).unwrap();
+        assert_eq!(ids_of(&v).len(), 6);
+        assert_eq!(v["hidden"]["clutter"], 0);
+    }
+
+    #[test]
+    fn layout_get_filters_by_environment_and_text() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_get", &args(json!({ "environment": "space" }))).unwrap();
+        let ids = ids_of(&v);
+        assert!(ids.contains(&"overview".into()));
+        assert!(!ids.contains(&"lobbyWnd".into()), "docked-only hidden in space");
+        assert_eq!(v["hidden"]["environment"], 1);
+        let v = s.call("layout_get", &args(json!({ "environment": "docked" }))).unwrap();
+        assert!(!ids_of(&v).contains(&"overview".into()), "space-only hidden when docked");
+        let v = s.call("layout_get", &args(json!({ "match": "MARK" }))).unwrap();
+        assert_eq!(ids_of(&v), vec!["market".to_string()]);
+        assert!(v["hidden"]["matched"].as_u64().unwrap() >= 2);
+        assert_eq!(s.call("layout_get", &args(json!({ "environment": "orbit" }))).unwrap_err()["code"], "bad_arguments");
+    }
+
+    #[test]
+    fn layout_render_legend_and_picture_use_the_same_filter() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
+        let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
+        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-78564080"));
+        assert_eq!(v["hidden"]["clutter"], 2);
+        let v = s.call("layout_render", &args(json!({ "width": 400, "hide_clutter": false, "environment": "docked" }))).unwrap();
+        let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
+        assert!(drawn.contains(&"chatchannel_player_-78564080") && !drawn.contains(&"overview"));
+    }
+
+    #[test]
+    fn the_users_clutter_overrides_are_honoured() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        // A private preferences.json for this server: force market into
+        // clutter and the private chat out of it.
+        let prefs_dir = std::env::temp_dir().join(format!("mcp-prefs-{}", std::process::id()));
+        std::fs::create_dir_all(&prefs_dir).unwrap();
+        let prefs_path = prefs_dir.join("preferences.json");
+        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-78564080"]}}"#).unwrap();
+        let s = EveMcp { prefs_path: Some(prefs_path), ..s };
+        let ids = ids_of(&s.call("layout_get", &Args::new()).unwrap());
+        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-78564080".into()));
+    }
+
     /// A discovery root with one install/profile holding source char 100 on
     /// account 500 and target char 200 on account 600, paired in accounts.json
     /// under a separate app dir — `setup::tests`' layout. Plus a SECOND
@@ -2702,7 +2816,7 @@ mod tests {
 
     fn copy_server() -> (EveMcp, PathBuf) {
         let (root, prof, app_dir) = temp_profile();
-        (EveMcp::new(app_dir, vec![root]), prof)
+        (EveMcp::new(app_dir, vec![root], None), prof)
     }
 
     #[test]
@@ -2837,7 +2951,7 @@ mod tests {
     #[test]
     fn copy_preview_from_a_settings_preset_names_unknown_then_succeeds_with_a_real_one() {
         let (root, prof, app_dir) = temp_profile();
-        let s = EveMcp::new(app_dir, vec![root]);
+        let s = EveMcp::new(app_dir, vec![root], None);
 
         let e = s.call("copy_preview", &args(json!({ "source_settings_preset": "nope", "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err();
         assert_eq!(e["code"], "unknown_settings_preset");
@@ -2868,7 +2982,7 @@ mod tests {
     #[test]
     fn settings_presets_create_from_the_open_files_then_rename_export_import_delete() {
         let (root, prof, app_dir) = temp_profile();
-        let s = EveMcp::new(app_dir.clone(), vec![root]);
+        let s = EveMcp::new(app_dir.clone(), vec![root], None);
         s.call("open", &args(json!({ "user_file": prof.join("core_user_500.dat").to_string_lossy(), "char_file": prof.join("core_char_100.dat").to_string_lossy() }))).unwrap();
         assert_eq!(s.call("settings_presets_list", &Args::new()).unwrap(), json!([]));
 
