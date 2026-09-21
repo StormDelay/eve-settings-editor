@@ -13,6 +13,8 @@
 // through to `pretty()`, which is ugly but never wrong, and the raw id is
 // always shown alongside. Grow CURATED/PARAM lazily as ids show up.
 
+import filters from "./data/window-filters.json" with { type: "json" };
+
 export interface WindowName {
   /** Friendly display name: "Chat", "Market", "Mail message". */
   label: string;
@@ -96,22 +98,7 @@ const CURATED: Record<string, string> = {
  * The id is `<prefix>_<instance>`. Longest matching prefix wins, so adding a
  * shorter overlapping prefix later cannot steal a longer one's ids.
  */
-const PARAM: Record<string, string> = {
-  chatchannel: "Chat",
-  ChannelSettingsDlg: "Chat settings",
-  ChatInvitation: "Chat invitation",
-  mail_readingWnd: "Mail message",
-  contactmanagement: "Contacts",
-  groupInfoWnd: "Info",
-  ShipCargo: "Ship cargo",
-  ShipDroneBay: "Drone bay",
-  StructureShipHangar: "Ship hangar",
-  containerWnd: "Container",
-  containerContentWindow: "Container",
-  overview: "Overview",
-  assembleWindow: "Assemble",
-  bookmarkLocationWindow: "Save Location",
-};
+const PARAM: Record<string, string> = filters.param;
 
 // --- clutter -----------------------------------------------------------
 // EVE spawns some windows per conversation, per item or per dialog — the
@@ -141,82 +128,19 @@ const PARAM: Record<string, string> = {
  * (`describe(id).family`) is not enough; isClutter also checks `detail`.
  * Every entry here must also be a PARAM prefix, or describe() never groups
  * the suffixed id into this family in the first place. */
-const CLUTTER_FAMILIES: ReadonlySet<string> = new Set([
-  "ChatInvitation",
-  "ChannelSettingsDlg",
-  "mail_readingWnd",
-  "groupInfoWnd",
-  "contactmanagement",
-  "ShipCargo",
-  "ShipDroneBay",
-  "containerWnd",
-  "StructureShipHangar",
-  "assembleWindow",
-  "bookmarkLocationWindow",
-]);
+const CLUTTER_FAMILIES: ReadonlySet<string> = new Set(filters.clutter_families);
 
 /** Chat is clutter only for private/direct conversations — defined
  * positively so an unrecognised future channel is kept, not hidden. Standing
  * channels (local/corp/alliance/fleet/incursion/invasion) stay visible. */
-const CLUTTER_CHAT_DETAILS: ReadonlySet<string> = new Set(["player", "private"]);
+const CLUTTER_CHAT_DETAILS: ReadonlySet<string> = new Set(filters.clutter_chat_details);
 
 /** One-off transient dialogs: exact id, never a family (there's only ever
  * one at a time, so there's no parent/spawned distinction to make).
  * `bookmarkLocationWindow` is also in CLUTTER_FAMILIES — a real file carries
  * both the bare id and a suffixed `bookmarkLocationWindow_<itemID>`, and both
  * are transient; the exact-id check runs first so this needs no special case. */
-const CLUTTER_IDS: ReadonlySet<string> = new Set([
-  "setQuantityPopup",
-  "setNewName",
-  "mySearch",
-  "DisconnectNotice",
-  "NewFeatureNotifyWnd",
-  "ScreenshotEditingWnd",
-  "BugReportingWindow",
-  "contractSelectItemTypeDlg",
-  "addressBookSearch",
-  "contractFinishStepSearch",
-  "contractEndpointSearch",
-  "ship_name_dialog",
-  "enterShipPassword",
-  "AddToBlockSearch",
-  "kickCharacterFromChat",
-  "skill_requirement_dialog",
-  "message",
-  "missingSkillbooksWnd",
-  "locationsearch",
-  "newMessageReceiverSearch",
-  "AccessGroupsAddMember",
-  "SellItemsWindow",
-  "CrateWindow",
-  "marketmodifyaction",
-  "marketbuyaction",
-  "createcontract",
-  "contractdetails",
-  "TaskConversationWindow",
-  "WarReportWnd",
-  "StoreFleetSetupWnd",
-  "StoredFleetSetupListWnd",
-  "bookmarkLocationWindow",
-  "previewWnd",
-  "tradeWnd",
-  "MultiBuy",
-  "overviewsettings",
-  "TransferMoney",
-  "EditMemberDialog",
-  "InsuranceTermsWindow",
-  "ActivateMultiTrainingWindow",
-  "CloneUpgradeWindow",
-  "multiFitWnd",
-  "attributerespecification",
-  "EngineTools",
-  "outstandingcalls",
-  "mapspalette",
-  "CtrlTabWindow",
-  "probeScannerFilterEditor",
-  "GroupsWnd",
-  "broadcastsettings",
-]);
+const CLUTTER_IDS: ReadonlySet<string> = new Set(filters.clutter_ids);
 
 /** Per-window user overrides of the built-in clutter tables. The two sets are
  * kept disjoint by the UI; `visible` wins if a hand-edited file lists an id in
@@ -278,18 +202,7 @@ export type Env = "all" | "docked" | "space";
  * `CloneUpgradeWindow` also appears in `CLUTTER_IDS`; that is not an accident
  * colliding with this one, the two tables answer different questions (kind
  * of window vs. environment), and a window can legitimately be in both. */
-const DOCKED_ONLY: ReadonlySet<string> = new Set([
-  "lobbyWnd",
-  "cloneBay",
-  "CloneStationWindow",
-  "CloneUpgradeWindow",
-  "InventoryStation",
-  "InventoryStructure",
-  "StructureItemHangar",
-  "StructureShipHangar",
-  "StructureCorpHangar",
-  "DeliverToStructure",
-]);
+const DOCKED_ONLY: ReadonlySet<string> = new Set(filters.docked_only);
 
 /** Windows that only exist in space. `ShipCargo` and `ShipDroneBay` were
  * considered and deliberately left out: a docked player can open the active
@@ -297,13 +210,7 @@ const DOCKED_ONLY: ReadonlySet<string> = new Set([
  * space-exclusive at all — including them would have hidden a window the
  * player can genuinely have open while docked, the one direction this table
  * must never fail in. */
-const SPACE_ONLY: ReadonlySet<string> = new Set([
-  "InventorySpace",
-  "droneview",
-  "selecteditemview",
-  "directionalScannerWindow",
-  "overview",
-]);
+const SPACE_ONLY: ReadonlySet<string> = new Set(filters.space_only);
 
 /** Whether a window is shown in `env`. An id is a member of a set if EITHER
  * its exact id or its family is listed, so one entry can cover a family's bare
