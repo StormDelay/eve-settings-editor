@@ -50,14 +50,10 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
         Ok(back) if back.bits_eq(&doc.value) => {}
         _ => return Err(SaveError::VerifyMismatch),
     }
-    // 3. Conflict check.
-    let meta = fs::metadata(&doc.path).map_err(|e| SaveError::MissingOriginal(e.to_string()))?;
-    let changed = meta.len() != doc.loaded_len
-        || match (meta.modified().ok(), doc.loaded_mtime) {
-            (Some(now), Some(then)) => now != then,
-            _ => false,
-        };
-    if changed && !force_conflict {
+    // 3. Conflict check. The metadata read doubles as the missing-original
+    // check, which `changed_on_disk` deliberately does not report.
+    fs::metadata(&doc.path).map_err(|e| SaveError::MissingOriginal(e.to_string()))?;
+    if doc.changed_on_disk() && !force_conflict {
         return Err(SaveError::Conflict);
     }
     // 4. Backup — hard requirement.
