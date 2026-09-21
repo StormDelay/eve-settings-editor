@@ -268,13 +268,17 @@ What remains is at the edges:
 |---|---|---|---|
 | `--mcp` on the same exe | works; the one place needing the stdio probe (§2.1) | works; the binary is `EVE Settings Editor.app/Contents/MacOS/…` and `current_exe()` returns that inner path, which is the path the client config must use | `.deb`/`.rpm`: `/usr/bin/…`, stable. **AppImage: `current_exe()` is the per-launch mount (`/tmp/.mount_XXXX/…`), unstable.** Use `$APPIMAGE`, which the runtime sets to the image's own path; fall back to `current_exe()`. |
 | App dir | `dirs::data_dir()` — what Tauri calls (§2.3) | same | same (`$XDG_DATA_HOME` or `~/.local/share`) |
-| Claude Desktop config | `%APPDATA%\Claude\claude_desktop_config.json` | `~/Library/Application Support/Claude/…` | no official Claude Desktop; community builds use `~/.config/Claude/`. |
+| Claude Desktop config | `%APPDATA%\Claude\claude_desktop_config.json`; the Microsoft Store build (MSIX) has it redirected to `%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\…` | `~/Library/Application Support/Claude/…` | no official Claude Desktop; community builds use `~/.config/Claude/`. |
 | stdio framing | Rust does no `\n` → `\r\n` translation; rmcp frames | — | — |
 
 `dirs::config_dir()` is `%APPDATA%` on Windows, `~/Library/Application
 Support` on macOS and `~/.config` on Linux, so the Claude Desktop path is the
 **one expression** `dirs::config_dir()?.join("Claude").join("claude_desktop_config.json")`
-on every OS, with no `cfg`. "Installed" means the `Claude` directory exists.
+on every OS, with no `cfg`. "Installed" means the `Claude` directory exists
+— there, or (found 2026-09-21, after 0.38.0 reported a Store install as
+absent) under a `Packages/Claude_*/LocalCache/Roaming` directory of
+`dirs::data_local_dir()`, which is where Windows redirects an MSIX package's
+%APPDATA%. `Packages` exists only on Windows, so that probe is still `cfg`-free.
 
 The whole OS-specific surface is therefore one env-var lookup (`$APPIMAGE`).
 
