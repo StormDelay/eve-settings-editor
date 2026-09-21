@@ -3,6 +3,8 @@
 //! bitmap font, `png` for the encoding. Windows and stacks only; no HUD
 //! furniture, no neocom. Spec §2.1 of the all-surfaces design.
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 use settings_model::WindowLayout;
 
@@ -146,22 +148,58 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, f: &WindowFilter, o: &Ov
         w.stack.as_ref().and_then(|r| wl.stacks.iter().find(|s| s.container_id == r.container_id))
             .map(|s| (s.container_id.clone(), s.anchor_id.clone(), s.members.clone()))
     };
-    let mut rows = Vec::new();
+
+    // Pass 1: which windows individually pass the filter, and why the rest
+    // don't — computed once, up front, so a window is counted in `hidden`
+    // exactly once regardless of what pass 2 below decides to draw.
     let mut hidden = HiddenCounts::default();
+    let mut visible: HashSet<&str> = HashSet::new();
+    for w in &wl.windows {
+        match mcp_filter::hidden_by(w, f, o) {
+            Some(reason) => hidden.add(reason),
+            None => { visible.insert(w.id.as_str()); }
+        }
+    }
+    // A stack still draws — at its anchor, regardless of the ANCHOR's own
+    // visibility — as long as some window of it (container or a member)
+    // individually passed the filter: mirrors the canvas's `stackUnits`
+    // (layout.ts ~88-121), which never lets a filtered-out anchor hide a
+    // stack whose other tabs still match. Without this, `match: "market"`
+    // with `market` inside a container whose own id/label doesn't match
+    // would drop the whole stack, `market` included.
+    let stack_draws = |container_id: &str, members: &[String]| {
+        visible.contains(container_id) || members.iter().any(|m| visible.contains(m.as_str()))
+    };
+
+    let mut rows = Vec::new();
     let mut fill_i = 0usize;
     for w in &wl.windows {
-        if let Some(reason) = mcp_filter::hidden_by(w, f, o) {
-            hidden.add(reason);
-            continue;
-        }
+        let stack = stack_of(w);
+        let is_anchor = stack.as_ref().is_some_and(|(_, anchor, _)| *anchor == w.id);
+        let is_visible = visible.contains(w.id.as_str());
+
+        // Whether this window gets a legend row at all, and — separately —
+        // whether IT is the one whose geometry paints the rectangle. Only
+        // the anchor (for a stack) or the window itself (when free) ever
+        // paints; a non-anchor member gets a row (so it isn't silently
+        // dropped when it individually matched) but never its own box, same
+        // as before the stack fix.
+        let (has_row, draws_rect) = match &stack {
+            Some((cid, _, members)) if is_anchor => {
+                let draws = stack_draws(cid, members);
+                (draws, draws)
+            }
+            Some(_) => (is_visible, false),
+            None => (is_visible, is_visible),
+        };
+        if !has_row { continue; }
+
         let Some(g) = &w.geom else {
-            rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: 0, y: 0, w: 0, h: 0, drawn: false, stack: None });
+            rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: 0, y: 0, w: 0, h: 0, drawn: false, stack: stack.as_ref().map(|(cid, _, _)| cid.clone()) });
             continue;
         };
-        let stack = stack_of(w);
-        let is_anchor_or_free = stack.as_ref().is_none_or(|(_, anchor, _)| anchor == &w.id);
         let open = w.open && w.renderable;
-        let drawn = is_anchor_or_free && (open || f.include_closed);
+        let drawn = draws_rect && (open || f.include_closed);
         rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: g.x, y: g.y, w: g.w, h: g.h, drawn, stack: stack.as_ref().map(|(cid, _, _)| cid.clone()) });
         if !drawn { continue; }
         let (x, y, bw, bh) = ((g.x as f64 * scale) as i64, (g.y as f64 * scale) as i64, ((g.w as f64 * scale) as i64).max(2), ((g.h as f64 * scale) as i64).max(2));
@@ -173,9 +211,13 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, f: &WindowFilter, o: &Ov
         } else {
             c.rect(x, y, bw, bh, OUTLINE);
         }
-        // Labels: the window's, or every member's for a stack, top-down.
+        // Labels: the window's, or its stack's VISIBLE members, top-down — a
+        // member the filter hid does not get its name painted into the box.
         let labels: Vec<String> = match &stack {
-            Some((_, _, members)) => members.iter().map(|m| wl.windows.iter().find(|x| &x.id == m).map(|x| x.label.clone()).unwrap_or_else(|| m.clone())).collect(),
+            Some((_, _, members)) => members.iter()
+                .filter(|m| visible.contains(m.as_str()))
+                .map(|m| wl.windows.iter().find(|x| &x.id == m).map(|x| x.label.clone()).unwrap_or_else(|| m.clone()))
+                .collect(),
             None => vec![w.label.clone()],
         };
         let s = if bh >= 40 && bw >= 60 { 2 } else { 1 };
@@ -294,6 +336,34 @@ mod tests {
         let in_stack: Vec<&LegendRow> = rows.iter().filter(|r| r.stack.as_deref() == Some("C")).collect();
         assert_eq!(in_stack.len(), 3, "include_closed lists m1, m2 and the container C, all belonging to the stack");
         assert_eq!(in_stack.iter().filter(|r| r.drawn).count(), 1, "a stack draws once, at its anchor");
+    }
+
+    /// A filtered-out anchor must not hide a stack whose OTHER window still
+    /// matches: `C` (the container/anchor) does not itself contain "m1", but
+    /// `m1` does, so the stack must still draw at C's geometry and `m1` must
+    /// still appear in the legend — the bug `layout_render {match: "market"}`
+    /// hit when `market` sat in a container whose own id/label didn't match.
+    /// `include_closed: true` here isolates that from the unrelated
+    /// `!include_closed { rows.retain(|r| r.drawn) }` step (covered by the
+    /// test above): a non-anchor member's row is always `drawn: false`, so
+    /// without `include_closed` this test would be asserting the retain step
+    /// instead of the stack fix.
+    #[test]
+    fn a_filtered_anchor_does_not_hide_a_stack_whose_matched_member_still_shows() {
+        let wl = layout();
+        let matching = WindowFilter { include_closed: true, hide_clutter: false, env: crate::mcp_filter::Env::All, matches: Some("m1".into()) };
+        let (png, legend) = layout_png(&wl, 640, &matching, &Overrides::default());
+        let img = decode(&png);
+        // C's box at scale 0.25: (1000,100,300,200) -> (250,25,75,50); a point inside it.
+        let inside = px(&img, 260, 40);
+        assert!(FILLS.contains(&inside), "the stack still draws at C's geometry, got {inside:?}");
+        assert!(legend.windows.iter().any(|r| r.id == "m1"), "the legend lists m1, even though C (the anchor) did not itself match");
+
+        let none_match = WindowFilter { matches: Some("nothing".into()), ..matching };
+        let (png, legend) = layout_png(&wl, 640, &none_match, &Overrides::default());
+        let img = decode(&png);
+        assert_eq!(px(&img, 260, 40), GROUND, "nothing in the stack matched, so it does not draw at all");
+        assert_eq!(legend.hidden.matched, 5, "every one of the 5 windows in the fixture is counted once as unmatched");
     }
 
     #[test]
