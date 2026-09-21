@@ -121,6 +121,9 @@ On an existing private workspace:
   workflow: finish and save one character of an account before starting the
   next. One rule for both slots, and no state that outlives the character it
   was made under.
+- `discard: true` → both slots re-read from disk, unsaved edits dropped —
+  the window's Discard. The one exit from a dirty workspace besides `undo`
+  (20 entries) and `save`; the primer says to use it only when the user asks.
 - Before returning, **each clean slot whose file changed on disk since it was
   loaded is re-read** (`Document::load` compares mtime and length, the
   conflict check's own reference). A dirty slot is never re-read. This keeps a
