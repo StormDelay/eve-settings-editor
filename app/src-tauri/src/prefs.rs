@@ -92,6 +92,13 @@ pub fn path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("no config directory: {e}"))
 }
 
+/// `path` without a Tauri handle — `dirs::config_dir()` is what Tauri's
+/// `config_dir()` calls — for the MCP server (mcp.rs), which honours the
+/// user's clutter overrides.
+pub(crate) fn path_base() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join(crate::APP_DIR).join("preferences.json"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

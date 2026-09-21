@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - **AI access.** An MCP server built into the app (`--mcp`) lets an AI assistant edit your overview and probe formations, with the same backups and checks as editing by hand. Register it with Claude Desktop from the new AI access… menu entry, or copy the config snippet for any other MCP client.
+- **The assistant can now edit everything the app edits.** Window layout — with a picture of it, Neocom, ship HUD, fighter panel and target list included — autofill, keybinds, the Neocom bar, HUD, fleet and chat settings, plus copy settings and settings presets, over the same MCP server.
 
 ## [0.37.0] - 2026-09-19
 
