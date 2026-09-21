@@ -91,8 +91,9 @@ pub(crate) fn describe(id: &str) -> Family {
     if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
         return Family { family: "stack".into(), detail: id.into() };
     }
-    // 3. A parameterised family, longest prefix first.
-    let best = tables().param.keys().filter(|p| id.starts_with(&format!("{p}_"))).max_by_key(|p| p.len());
+    // 3. A parameterised family, longest prefix first. `strip_prefix` avoids
+    // allocating a `format!("{p}_")` per candidate per call.
+    let best = tables().param.keys().filter(|p| id.strip_prefix(p.as_str()).is_some_and(|r| r.starts_with('_'))).max_by_key(|p| p.len());
     if let Some(prefix) = best {
         return Family { family: prefix.clone(), detail: instance_detail(&id[prefix.len() + 1..]) };
     }
@@ -151,7 +152,12 @@ pub(crate) fn hidden_by(w: &WindowRect, f: &WindowFilter, o: &Overrides) -> Opti
     if !in_env(&w.id, f.env) { return Some(Hidden::Environment); }
     if let Some(q) = f.matches.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
         let q = q.to_lowercase();
-        let hay = format!("{} {} {}", w.label, describe(&w.id).detail, w.id).to_lowercase();
+        // `label` is the backend's raw id (`windows.rs` only fills in `name`
+        // for a resolved chat channel) — search the resolved name when there
+        // is one, same as `nameOf`/`layout_get` shows it, so a chat the user
+        // asks about by its real name is found.
+        let shown_label = w.name.as_deref().unwrap_or(&w.label);
+        let hay = format!("{} {} {}", shown_label, describe(&w.id).detail, w.id).to_lowercase();
         if !hay.contains(&q) { return Some(Hidden::Match); }
     }
     None
@@ -216,5 +222,27 @@ mod tests {
         assert!(in_env("overview_1", Env::Space) && !in_env("overview_1", Env::Docked), "a spawned instance follows its family");
         assert!(in_env("directionalScannerWindow", Env::Space));
         assert!(in_env("market", Env::Docked) && in_env("market", Env::Space), "unlisted shows in both");
+    }
+
+    /// `windows.rs` sets `label` to the raw id and only fills `name` for a
+    /// resolved chat channel — `layout_get` shows `name` when there is one
+    /// (`nameOf`'s rule), so `match` must search it too, not just the raw id.
+    #[test]
+    fn a_match_searches_the_resolved_name_not_just_the_raw_id() {
+        let w = WindowRect {
+            id: "chatchannel_player_123".into(),
+            label: "chatchannel_player_123".into(),
+            name: Some("Fleet Ops".into()),
+            open: true,
+            renderable: true,
+            resolution_matches: true,
+            geom: None,
+            flags: Vec::new(),
+            stack: None,
+        };
+        let f = WindowFilter { include_closed: true, hide_clutter: false, env: Env::All, matches: Some("fleet".into()) };
+        assert_eq!(hidden_by(&w, &f, &Overrides::default()), None, "the resolved name matches, even though the raw id does not contain it");
+        let f = WindowFilter { include_closed: true, hide_clutter: false, env: Env::All, matches: Some("nomatch".into()) };
+        assert_eq!(hidden_by(&w, &f, &Overrides::default()), Some(Hidden::Match));
     }
 }
