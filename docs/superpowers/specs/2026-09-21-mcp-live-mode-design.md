@@ -137,15 +137,17 @@ workspace now has `<C>` (account `<Y>`) open — call `open` again".
 
 ### 3.4 `status` and `save`
 
-`status` grows to:
+`status` keeps today's top-level shape for the current workspace and grows:
 
 ```json
 {
-  "mode": "live" | "headless",
-  "window": { "char": path?, "user": path? } | null,
-  "current": { "char": path?, "user": path, "in_window": bool, "account_read_only": bool,
-               "dirty": { "char": bool, "user": bool }, "can_undo": bool } | null,
-  "workspaces": [ { "char": path?, "user": path, "dirty": { … } }, … ]
+  "char": { "path": …, "dirty": bool } | null,         // the current workspace, as today
+  "user": { "path": …, "dirty": bool } | null,
+  "can_undo": bool,
+  "workspaces": [ { "char": path | null, "user": path, "dirty": { "char": bool, "user": bool } }, … ],
+  "mode": "live" | "headless",                          // PR 2
+  "window": { "char": path?, "user": path? } | null,    // PR 2
+  "in_window": bool, "account_read_only": bool          // PR 2
 }
 ```
 
@@ -347,6 +349,7 @@ exe, once with the window closed (headless, as before) and once with it open
 
 | File | Change |
 |---|---|
+| `crates/settings-model/src/document.rs`, `save.rs` | `Document::changed_on_disk()` — `save`'s conflict check made public, for §3.3's re-read. |
 | `app/src-tauri/src/ops.rs` | `AppState` → `Arc<Inner>` newtype with `Deref`. |
 | `app/src-tauri/src/undo.rs` | `counters()`, `saved()` accessors. |
 | `app/src-tauri/src/mcp.rs` | Workspace map, `Attached`, `open`/`status`/`save` changes, account lock, fingerprint `undo`, `on_change` around `call()`, `serve` split into relay-or-headless. |
