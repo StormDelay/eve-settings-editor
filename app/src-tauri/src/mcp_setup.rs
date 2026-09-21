@@ -38,11 +38,32 @@ pub fn exe_path() -> PathBuf {
 
 /// `dirs::config_dir()` is %APPDATA% on Windows, ~/Library/Application Support
 /// on macOS and ~/.config on Linux — Claude Desktop's config lives under
-/// `Claude/` in each, so this is one expression with no `cfg`. `Some` only
-/// when the `Claude` directory exists ("installed").
+/// `Claude/` in each. `Some` only when a `Claude` directory exists
+/// ("installed"), either there or, for the Microsoft Store build, under the
+/// package's cache (see `config_in`).
 pub fn claude_desktop_config() -> Option<PathBuf> {
-    let dir = dirs::config_dir()?.join("Claude");
-    dir.is_dir().then(|| dir.join("claude_desktop_config.json"))
+    config_in(&dirs::config_dir()?, &dirs::data_local_dir()?)
+}
+
+/// The Store build of Claude Desktop is an MSIX package, and Windows redirects
+/// a packaged app's %APPDATA% to `%LOCALAPPDATA%\Packages\<family>\LocalCache/// Roaming` — so the classic directory never exists for it and its config
+/// sits at the redirected path (verified 2026-09-21 against `Claude_pzs8sxrjxfjjc`,
+/// v2.2553.1). The family name's suffix is a publisher hash, so it is matched
+/// by prefix. `Packages` exists nowhere but Windows, so this needs no `cfg`.
+/// Takes both roots so a test can point it at a temp directory.
+fn config_in(config_dir: &Path, local_dir: &Path) -> Option<PathBuf> {
+    let classic = config_dir.join("Claude");
+    let dir = if classic.is_dir() {
+        classic
+    } else {
+        std::fs::read_dir(local_dir.join("Packages"))
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("Claude_"))
+            .map(|e| e.path().join("LocalCache").join("Roaming").join("Claude"))
+            .find(|d| d.is_dir())?
+    };
+    Some(dir.join("claude_desktop_config.json"))
 }
 
 fn entry(exe: &Path) -> Value {
@@ -122,6 +143,31 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// The Microsoft Store build of Claude Desktop is an MSIX package, and
+    /// Windows redirects its %APPDATA% under the package's LocalCache — the
+    /// classic `Claude` directory never exists for it.
+    #[test]
+    fn the_store_build_is_found_under_its_package_local_cache() {
+        let d = dir("msix");
+        let (config, local) = (d.join("Roaming"), d.join("Local"));
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&local).unwrap();
+        assert_eq!(config_in(&config, &local), None, "nothing installed");
+
+        let msix = local.join("Packages").join("Claude_pzs8sxrjxfjjc").join("LocalCache").join("Roaming").join("Claude");
+        fs::create_dir_all(&msix).unwrap();
+        assert_eq!(config_in(&config, &local), Some(msix.join("claude_desktop_config.json")));
+
+        // Another package whose name merely starts with Claude, with no
+        // Claude directory in its cache, is not it.
+        fs::create_dir_all(local.join("Packages").join("ClaudeSomethingElse_abc").join("LocalCache")).unwrap();
+        assert_eq!(config_in(&config, &local), Some(msix.join("claude_desktop_config.json")));
+
+        // The classic install wins when both exist.
+        fs::create_dir_all(config.join("Claude")).unwrap();
+        assert_eq!(config_in(&config, &local), Some(config.join("Claude").join("claude_desktop_config.json")));
     }
 
     #[test]
