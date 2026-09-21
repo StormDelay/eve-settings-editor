@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
@@ -24,7 +25,12 @@ use crate::prefs;
 use crate::undo;
 
 pub struct EveMcp {
-    pub state: AppState,
+    /// One workspace per account file, by canonical `core_user` path
+    /// (spec §3.1). `Arc` so PR 2 can share it between connections.
+    workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
+    /// What `open` last selected. `None` until then; `state()` lends a
+    /// scratch workspace so an early tool fails with `no_document` as before.
+    current: Mutex<Option<AppState>>,
     /// The app dir — names cache, accounts.json, groups cache. Shared with
     /// the window, read-mostly.
     pub dir: PathBuf,
@@ -39,7 +45,13 @@ pub struct EveMcp {
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { state: AppState::new(), dir, roots, prefs_path }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), dir, roots, prefs_path }
+    }
+
+    /// The workspace tools act on: the one `open` last selected, or a scratch
+    /// workspace before any `open`. Cheap — an `Arc` clone.
+    fn state(&self) -> AppState {
+        self.current.lock().unwrap().get_or_insert_with(AppState::new).clone()
     }
 }
 
@@ -534,7 +546,7 @@ fn lookup_result(r: Result<Option<names::Found>, names::FetchError>) -> ToolResu
 
 impl EveMcp {
     fn fleet_get(&self) -> ToolResult {
-        let f = ops::fleet_settings(&self.state).map_err(fail)?;
+        let f = ops::fleet_settings(&self.state()).map_err(fail)?;
         // Names from the cache only — no network on a read. `resolve_blocking`
         // with an empty id list is NOT "the whole cache": it selects only the
         // ids passed in (here, none), so it always comes back empty regardless
@@ -933,7 +945,7 @@ impl EveMcp {
             "settings_presets_list" => Ok(settings_presets_view(&self.dir)),
             "settings_preset_edit" => self.settings_preset_edit(args),
             "undo" => self.undo(),
-            "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
+            "list_backups" => ok(ops::list_file_backups(&self.state(), req(args, "slot")?).map_err(fail)?),
             "restore_backup" => self.restore_backup(args),
             "list_characters" => self.list_characters(),
             "overview_get" => self.overview_get(),
@@ -945,20 +957,20 @@ impl EveMcp {
             "overview_appearance_edit" => self.batch(args, appearance_op, |s| s.overview_get()),
             "overview_pack_preview" => ok(ops::pack_preview(&req::<String>(args, "path")?).map_err(fail)?),
             "overview_pack_import" => {
-                let r = ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?;
+                let r = ops::pack_import(&self.state(), &req::<String>(args, "path")?).map_err(fail)?;
                 Ok(json!({ "columns": self.overview_with_names(r.columns)?, "report": r.report }))
             }
-            "overview_pack_export" => ok(ops::pack_export(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
-            "probes_get" => ok(ops::probe_formations(&self.state).map_err(fail)?),
-            "probes_set" => ok(ops::set_probe_formation(&self.state, opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
-            "probes_remove" => ok(ops::remove_probe_formation(&self.state, req(args, "id")?).map_err(fail)?),
-            "probes_reorder" => ok(ops::reorder_probe_formations(&self.state, req(args, "order")?).map_err(fail)?),
+            "overview_pack_export" => ok(ops::pack_export(&self.state(), &req::<String>(args, "path")?).map_err(fail)?),
+            "probes_get" => ok(ops::probe_formations(&self.state()).map_err(fail)?),
+            "probes_set" => ok(ops::set_probe_formation(&self.state(), opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
+            "probes_remove" => ok(ops::remove_probe_formation(&self.state(), req(args, "id")?).map_err(fail)?),
+            "probes_reorder" => ok(ops::reorder_probe_formations(&self.state(), req(args, "order")?).map_err(fail)?),
             "probes_add_yaml" => {
                 let specs = ops::probe_parse_yaml(&req::<String>(args, "yaml")?).map_err(fail)?;
-                ok(ops::add_probe_formations(&self.state, specs).map_err(fail)?)
+                ok(ops::add_probe_formations(&self.state(), specs).map_err(fail)?)
             }
             "probes_export_yaml" => {
-                let f = ops::probe_formations(&self.state).map_err(fail)?;
+                let f = ops::probe_formations(&self.state()).map_err(fail)?;
                 let specs: Vec<settings_model::FormationSpec> = f
                     .formations
                     .into_iter()
@@ -966,7 +978,7 @@ impl EveMcp {
                     .collect();
                 Ok(json!({ "yaml": ops::probe_yaml(&specs) }))
             }
-            "chat_get" => ok(ops::chat_panels(&self.state).map_err(fail)?),
+            "chat_get" => ok(ops::chat_panels(&self.state()).map_err(fail)?),
             "chat_set_splits" => {
                 let ids: Vec<String> = req(args, "window_ids")?;
                 let userlist: Option<i64> = opt(args, "userlist_width")?;
@@ -974,46 +986,46 @@ impl EveMcp {
                 if userlist.is_none() && input.is_none() {
                     return Err(err("missing_field", "give userlist_width and/or input_height"));
                 }
-                ok(ops::set_chat_splits(&self.state, ids, userlist, input).map_err(fail)?)
+                ok(ops::set_chat_splits(&self.state(), ids, userlist, input).map_err(fail)?)
             }
             "hud_get" => {
-                let h = ops::hud_layout(&self.state).map_err(fail)?;
+                let h = ops::hud_layout(&self.state()).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "hud_set" => {
-                let h = ops::set_hud_field(&self.state, &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
+                let h = ops::set_hud_field(&self.state(), &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "layout_get" => {
-                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
                 Ok(layout_view(&wl, &window_filter(args)?, &self.overrides()))
             }
             "layout_render" => {
                 use base64::Engine as _;
-                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
                 let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
                 let filter = window_filter(args)?;
                 let overrides = self.overrides();
                 // The character file is open (window_layout just needed it), so
                 // this cannot fail on that; the account file is optional and
                 // only costs the account-scoped furniture when absent.
-                let hud = ops::hud_layout(&self.state).map_err(fail)?;
+                let hud = ops::hud_layout(&self.state()).map_err(fail)?;
                 let (png, legend) = crate::mcp_render::layout_png(&wl, Some(&hud), width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 Ok(v)
             }
             "layout_edit" => self.batch(args, layout_op, |s| {
-                let wl = ops::window_layout(&s.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&s.state(), Slot::Char).map_err(fail)?;
                 Ok(layout_view(&wl, &window_filter(&Args::new())?, &s.overrides()))
             }),
-            "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
-            "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
-            "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
-            "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state).map_err(fail)?)),
+            "autofill_get" => ok(ops::autofill_lists(&self.state()).map_err(fail)?),
+            "autofill_set" => ok(ops::set_autofill_list(&self.state(), &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
+            "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state()).map_err(fail)?),
+            "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state()).map_err(fail)?)),
             "keybind_set" => self.keybind_set(args),
-            "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state).map_err(fail)?))),
-            "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state).map_err(fail)?)),
+            "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state()).map_err(fail)?))),
+            "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state()).map_err(fail)?)),
             "fleet_get" => self.fleet_get(),
             "fleet_edit" => self.batch(args, fleet_op, |s| s.fleet_get()),
             "lookup_character" => {
@@ -1052,9 +1064,10 @@ impl EveMcp {
     }
 
     fn doc_path(&self, slot: Slot) -> Option<String> {
+        let st = self.state();
         let guard = match slot {
-            Slot::Char => self.state.char.lock(),
-            Slot::User => self.state.user.lock(),
+            Slot::Char => st.char.lock(),
+            Slot::User => st.user.lock(),
         }
         .unwrap();
         guard.as_ref().map(|d| d.path.to_string_lossy().into_owned())
@@ -1062,12 +1075,12 @@ impl EveMcp {
 
     fn status(&self) -> ToolResult {
         let slot = |s: Slot| {
-            self.doc_path(s).map(|path| json!({ "path": path, "dirty": self.state.history.lock().unwrap().dirty(s) }))
+            self.doc_path(s).map(|path| json!({ "path": path, "dirty": self.state().history.lock().unwrap().dirty(s) }))
         };
         Ok(json!({
             "char": slot(Slot::Char),
             "user": slot(Slot::User),
-            "can_undo": undo::undo_state(&self.state).can_undo,
+            "can_undo": undo::undo_state(&self.state()).can_undo,
         }))
     }
 
@@ -1314,13 +1327,13 @@ impl EveMcp {
         // but leaves it untouched on an io error, so a failing open here (a
         // bad or missing path) returns via `?` with the previous session —
         // BOTH slots — still intact.
-        let user = open_slot(&self.state, Slot::User, &user_file)?;
+        let user = open_slot(&self.state(), Slot::User, &user_file)?;
         // Only once the new account is open do we drop the old character:
         // clearing it unconditionally before this point would discard a
         // still-valid pairing if the user open above had failed.
-        ops::close_file(&self.state, Slot::Char);
+        ops::close_file(&self.state(), Slot::Char);
         let char = match char_file {
-            Some(p) => Some(open_slot(&self.state, Slot::Char, &p)?),
+            Some(p) => Some(open_slot(&self.state(), Slot::Char, &p)?),
             None => None,
         };
         Ok(json!({ "char": char, "user": user }))
@@ -1332,11 +1345,11 @@ impl EveMcp {
         let mut skipped = Vec::new();
         for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
             let Some(path) = self.doc_path(slot) else { continue };
-            if !self.state.history.lock().unwrap().dirty(slot) {
+            if !self.state().history.lock().unwrap().dirty(slot) {
                 skipped.push(name);
                 continue;
             }
-            match ops::save_document(&self.state, slot, force) {
+            match ops::save_document(&self.state(), slot, force) {
                 Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
                 // A slot after this one in the loop may never be tried — attach
                 // what already made it to disk, or the caller can't tell a
@@ -1362,7 +1375,7 @@ impl EveMcp {
     }
 
     fn undo(&self) -> ToolResult {
-        match undo::undo(&self.state) {
+        match undo::undo(&self.state()) {
             Some(_) => self.status(),
             None => Err(err("nothing_to_undo", "the undo stack is empty")),
         }
@@ -1371,7 +1384,7 @@ impl EveMcp {
     fn restore_backup(&self, args: &Args) -> ToolResult {
         let slot: Slot = req(args, "slot")?;
         let backup: String = req(args, "backup_path")?;
-        match ops::restore_backup(&self.state, slot, &backup).map_err(fail)? {
+        match ops::restore_backup(&self.state(), slot, &backup).map_err(fail)? {
             OpenOutcome::Opened { path, .. } => Ok(json!({ "path": path, "status": self.status()? })),
             // Unreachable in practice: `restore` refuses a backup that does not decode.
             OpenOutcome::ParseFailed { path, message, .. } => Err(err("parse_failed", format!("{path}: {message}"))),
@@ -1391,7 +1404,7 @@ impl EveMcp {
     }
 
     fn overview_get(&self) -> ToolResult {
-        let oc = ops::overview_columns(&self.state).map_err(fail)?;
+        let oc = ops::overview_columns(&self.state()).map_err(fail)?;
         self.overview_with_names(oc)
     }
 
@@ -1534,7 +1547,7 @@ impl EveMcp {
                 let name: String = req(args, "name")?;
                 let aspects: Vec<Aspect> = req(args, "aspects")?;
                 let overwrite = opt::<bool>(args, "overwrite")?.unwrap_or(false);
-                setup::preset_save(&self.state, &self.dir, &name, &aspects, overwrite).map_err(fail)?;
+                setup::preset_save(&self.state(), &self.dir, &name, &aspects, overwrite).map_err(fail)?;
             }
             "rename" => presets::rename(&self.dir, &req::<String>(args, "name")?, &req::<String>(args, "new_name")?).map_err(|e| err("preset", e))?,
             "delete" => presets::delete(&self.dir, &req::<String>(args, "name")?).map_err(|e| err("preset", e))?,
@@ -1560,16 +1573,17 @@ impl EveMcp {
         finish: impl FnOnce(&EveMcp) -> ToolResult,
     ) -> ToolResult {
         let ops_list: Vec<Args> = req(args, "ops")?;
+        let st = self.state();
         {
-            let _group = undo::group(&self.state);
+            let _group = undo::group(&st);
             for (i, op) in ops_list.iter().enumerate() {
-                if let Err(mut e) = apply(&self.state, op) {
+                if let Err(mut e) = apply(&st, op) {
                     // A write failure already rolled the group back inside
                     // `edit_reshared`; a parse failure did not. `rollback_group`
                     // is a no-op when nothing was written, so call it always.
-                    let mut u = self.state.user.lock().unwrap();
-                    let mut c = self.state.char.lock().unwrap();
-                    self.state.history.lock().unwrap().rollback_group(&mut u, &mut c);
+                    let mut u = st.user.lock().unwrap();
+                    let mut c = st.char.lock().unwrap();
+                    st.history.lock().unwrap().rollback_group(&mut u, &mut c);
                     e["op_index"] = json!(i);
                     return Err(e);
                 }
@@ -1594,7 +1608,7 @@ impl EveMcp {
                 Some(keys)
             }
         };
-        let r = ops::set_keybind_cmd(&self.state, &command, keys).map_err(fail)?;
+        let r = ops::set_keybind_cmd(&self.state(), &command, keys).map_err(fail)?;
         Ok(json!({ "keybinds": keybinds_view(&r.keybinds), "stolen": r.stolen }))
     }
 }
@@ -1753,7 +1767,7 @@ mod tests {
         let (s, path) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
         s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
 
         let e = s
             .call("open", &args(json!({ "user_file": "Z:/no/such/core_user_1.dat", "char_file": cpath.to_string_lossy() })))
@@ -1781,7 +1795,7 @@ mod tests {
         assert_eq!(v["saved"], json!([]));
         assert_eq!(v["skipped"], json!(["user"]));
 
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true);
         let v = s.call("save", &Args::new()).unwrap();
         assert_eq!(v["saved"][0]["slot"], "user");
@@ -1793,7 +1807,7 @@ mod tests {
     #[test]
     fn save_conflict_is_an_error_until_forced() {
         let (s, path) = open_user(&overview_user_bytes());
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         std::fs::write(&path, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
         let e = s.call("save", &Args::new()).unwrap_err();
         assert_eq!(e["code"], "conflict");
@@ -1805,11 +1819,11 @@ mod tests {
     fn save_reports_what_was_already_saved_when_a_later_slot_fails() {
         let (s, _) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
 
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         ops::apply_mutation(
-            &s.state,
+            &s.state(),
             Slot::Char,
             &settings_model::Mutation::InsertDictEntry {
                 parent: vec![],
@@ -1839,7 +1853,7 @@ mod tests {
     fn undo_reverts_an_edit_and_errors_on_an_empty_stack() {
         let (s, _) = open_user(&overview_user_bytes());
         assert_eq!(s.call("undo", &Args::new()).unwrap_err()["code"], "nothing_to_undo");
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         let st = s.call("undo", &Args::new()).unwrap();
         assert_eq!(st["user"]["dirty"], false);
         assert_eq!(st["can_undo"], false);
@@ -1848,14 +1862,14 @@ mod tests {
     #[test]
     fn list_backups_then_restore_puts_the_saved_bytes_back() {
         let (s, path) = open_user(&overview_user_bytes());
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         s.call("save", &Args::new()).unwrap();
         let backups = s.call("list_backups", &args(json!({ "slot": "user" }))).unwrap();
         let newest = backups[0]["path"].as_str().unwrap().to_string();
 
         let v = s.call("restore_backup", &args(json!({ "slot": "user", "backup_path": newest }))).unwrap();
         assert_eq!(v["path"], json!(path.to_string_lossy()));
-        let oc = ops::overview_columns(&s.state).unwrap();
+        let oc = ops::overview_columns(&s.state()).unwrap();
         assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 1, "TYPE hidden again");
     }
 
@@ -2032,7 +2046,7 @@ mod tests {
     #[test]
     fn overview_get_inlines_state_labels_and_group_names() {
         let (s, _) = open_user(&overview_user_bytes());
-        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25, 26], vec![11], vec![]).unwrap();
+        ops::preset_fork(&s.state(), 0, "Frigs".into(), vec![25, 26], vec![11], vec![]).unwrap();
         let v = s.call("overview_get", &Args::new()).unwrap();
         assert_eq!(v["tabs"][0]["preset"], "Frigs");
         assert_eq!(v["names"]["states"]["11"], "Pilot is in your fleet");
@@ -2128,17 +2142,18 @@ mod tests {
     #[test]
     fn a_nested_undo_group_rides_the_outer_one() {
         let (s, _) = open_user(&overview_user_bytes());
-        let before = undo::undo_state(&s.state).depth;
+        let st = s.state();
+        let before = undo::undo_state(&st).depth;
         {
-            let _outer = undo::group(&s.state);
-            ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+            let _outer = undo::group(&st);
+            ops::set_overview_visible(&st, 0, "TYPE", true).unwrap();
             {
-                let _inner = undo::group(&s.state);
-                ops::set_overview_order(&s.state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+                let _inner = undo::group(&st);
+                ops::set_overview_order(&st, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
             }
-            ops::set_overview_visible(&s.state, 0, "TYPE", false).unwrap();
+            ops::set_overview_visible(&st, 0, "TYPE", false).unwrap();
         }
-        assert_eq!(undo::undo_state(&s.state).depth, before + 1, "three writes under one group, one entry");
+        assert_eq!(undo::undo_state(&st).depth, before + 1, "three writes under one group, one entry");
     }
 
     fn visible_count(v: &Value) -> usize {
@@ -2148,14 +2163,14 @@ mod tests {
     #[test]
     fn columns_edit_applies_a_batch_as_one_undo_step() {
         let (s, _) = open_user(&overview_user_bytes());
-        let before = undo::undo_state(&s.state).depth;
+        let before = undo::undo_state(&s.state()).depth;
         let v = s.call("overview_columns_edit", &args(json!({ "ops": [
             { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
             { "op": "set_order", "tab": 0, "order": ["TYPE", "NAME"] }
         ]}))).unwrap();
         assert_eq!(visible_count(&v), 2);
         assert_eq!(v["tabs"][0]["columns"][0]["name"], "TYPE");
-        assert_eq!(undo::undo_state(&s.state).depth, before + 1);
+        assert_eq!(undo::undo_state(&s.state()).depth, before + 1);
         assert!(v["names"].is_object(), "edits return the same self-describing shape as overview_get");
     }
 
@@ -2163,7 +2178,7 @@ mod tests {
     fn a_failing_op_rolls_the_whole_batch_back_and_names_its_index() {
         let (s, _) = open_user(&overview_user_bytes());
         let before = s.call("overview_get", &Args::new()).unwrap();
-        let depth = undo::undo_state(&s.state).depth;
+        let depth = undo::undo_state(&s.state()).depth;
         let e = s.call("overview_columns_edit", &args(json!({ "ops": [
             { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
             { "op": "set_visible", "tab": 99, "column": "TYPE", "visible": true }
@@ -2172,7 +2187,7 @@ mod tests {
         // unknown TAB is `NoTab`, so that is the failing op.
         assert_eq!(e["op_index"], 1);
         assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
-        assert_eq!(undo::undo_state(&s.state).depth, depth);
+        assert_eq!(undo::undo_state(&s.state()).depth, depth);
     }
 
     #[test]
@@ -2202,7 +2217,7 @@ mod tests {
     #[test]
     fn tabs_edit_creates_renames_and_deletes_in_one_batch() {
         let (s, _) = open_user(&overview_user_bytes());
-        ops::overview_create_window_mapping(&s.state).unwrap();
+        ops::overview_create_window_mapping(&s.state()).unwrap();
         let v = s.call("overview_tabs_edit", &args(json!({ "ops": [
             { "op": "create", "window": 0, "name": "Mining", "from_tab": 0 },
             { "op": "rename", "tab": 1, "name": "Rocks" }
@@ -2257,7 +2272,7 @@ mod tests {
     fn open_char(bytes: &[u8]) -> (EveMcp, PathBuf) {
         let path = temp_file("mcp-char", bytes);
         let s = EveMcp::for_tests();
-        ops::open_file(&s.state, Slot::Char, path.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, path.to_str().unwrap()).unwrap();
         (s, path)
     }
 
@@ -2288,9 +2303,9 @@ mod tests {
     fn every_get_result_carries_no_paths() {
         let s = EveMcp::for_tests();
         let cpath = temp_file("mcp-nopaths-char", &layout_char_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let upath = temp_file("mcp-nopaths-user", &overview_user_bytes());
-        ops::open_file(&s.state, Slot::User, upath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::User, upath.to_str().unwrap()).unwrap();
 
         for tool in [
             "layout_get", "hud_get", "fleet_get", "neocom_get", "chat_get", "autofill_get",
@@ -2385,7 +2400,7 @@ mod tests {
     fn pack_preview_of_a_missing_file_is_an_error_and_export_then_preview_round_trips() {
         let (s, _) = open_user(&overview_user_bytes());
         assert!(s.call("overview_pack_preview", &args(json!({ "path": "Z:/nope.yaml" }))).is_err());
-        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25], vec![], vec![]).unwrap();
+        ops::preset_fork(&s.state(), 0, "Frigs".into(), vec![25], vec![], vec![]).unwrap();
         let out = std::env::temp_dir().join(format!("mcp-pack-{}.yaml", std::process::id()));
         s.call("overview_pack_export", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
         let preview = s.call("overview_pack_preview", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
@@ -2526,7 +2541,7 @@ mod tests {
     fn fleet_get_projects_both_sides_and_strips_paths() {
         let (s, _) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char", &empty_ui_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let v = s.call("fleet_get", &Args::new()).unwrap();
         assert_no_paths(&v, "fleet_get");
         assert_eq!(v["user_open"], true);
@@ -2540,7 +2555,7 @@ mod tests {
     fn fleet_edit_sets_a_field_a_colour_and_a_watchlist_entry_then_clears_the_colour() {
         let (s, _) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char2", &empty_ui_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let v = s.call("fleet_edit", &args(json!({ "ops": [
             { "op": "set_field", "name": "listen_show_own", "value": "1" },
             { "op": "set_colour", "broadcast": "Target", "rgb": [0.2, 0.5, 1.0] },
@@ -2556,7 +2571,7 @@ mod tests {
         let v = s.call("fleet_edit", &args(json!({ "ops": [{ "op": "set_colour", "broadcast": "Target" }] }))).unwrap();
         let c = v["colours"].as_array().unwrap().iter().find(|c| c["broadcast"] == "Target").unwrap();
         assert_eq!(c["state"], "cleared");
-        assert_eq!(undo::undo_state(&s.state).depth, 2, "two batches, two undo steps");
+        assert_eq!(undo::undo_state(&s.state()).depth, 2, "two batches, two undo steps");
     }
 
     #[test]
@@ -2644,7 +2659,7 @@ mod tests {
         assert_eq!(m["geom"]["w"], 640);
         assert_eq!(m["geom"]["screen_w"], 2560, "re-stamped to the reference");
         assert_eq!(m["resolution_matches"], true);
-        assert_eq!(undo::undo_state(&s.state).depth, 1);
+        assert_eq!(undo::undo_state(&s.state()).depth, 1);
     }
 
     #[test]
@@ -2686,7 +2701,7 @@ mod tests {
             { "op": "stack_reorder", "container": "C", "members": ["m2", "m1"] }
         ]}))).unwrap();
         assert_eq!(v["stacks"][0]["members"], json!(["m2", "m1"]));
-        assert_eq!(undo::undo_state(&s.state).depth, 1, "stack ops open their own group; the batch is still one step");
+        assert_eq!(undo::undo_state(&s.state()).depth, 1, "stack ops open their own group; the batch is still one step");
     }
 
     /// EVE keeps a stack's container and every member at one identical rect
