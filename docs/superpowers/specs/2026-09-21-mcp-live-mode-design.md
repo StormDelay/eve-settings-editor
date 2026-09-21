@@ -113,12 +113,14 @@ Headless, `window` is `None` and only branch 2 exists.
 On an existing private workspace:
 
 - Same character → no load. Both slots stay as they are.
-- A sibling → `open_file(Char, sibling)` into the same `AppState`. The account
-  slot and its unsaved edits **carry over**; `open_file` clears the undo stack
-  (its existing rule: an entry holds both slots' trees). **A dirty character
-  slot blocks the swap**: error `unsaved_character` — "`<A>` has unsaved edits;
-  `save` or `undo` them before opening `<B>`". This is the forced workflow:
-  finish one character of an account before starting the next.
+- A sibling → **blocked while either slot is dirty**: error `unsaved_edits` —
+  "`<A>` (or its account) has unsaved edits; `save` or `undo` them before
+  opening `<B>`". Clean → `open_file(Char, sibling)` into the same `AppState`;
+  the account slot stays loaded, and `open_file` clears the undo stack (its
+  existing rule: an entry holds both slots' trees). This is the forced
+  workflow: finish and save one character of an account before starting the
+  next. One rule for both slots, and no state that outlives the character it
+  was made under.
 - Before returning, **each clean slot whose file changed on disk since it was
   loaded is re-read** (`Document::load` compares mtime and length, the
   conflict check's own reference). A dirty slot is never re-read. This keeps a
@@ -265,8 +267,8 @@ Private workspaces keep today's unrestricted `undo`.
 
 The `## workflow` section gains three sentences: `open` selects a character
 and keeps others open; an account's settings are edited through whichever of
-its characters is open, and an unsaved character must be saved before opening
-a sibling; when the window is open, `status` says so, edits to the window's
+its characters is open, and unsaved edits must be saved (or undone) before
+opening a sibling; when the window is open, `status` says so, edits to the window's
 character appear there, and account-side edits for the window's account go
 through the window's character.
 
@@ -307,9 +309,9 @@ Each caught by an existing check, none needing code now:
 
 **Workspaces** (`mcp.rs` unit tests, `for_tests` + fixture files):
 - Open A, then sibling B: same `AppState` (`Arc::ptr_eq`), char slot is B,
-  an unsaved account-side edit made under A is still present.
-- A dirty character slot blocks the swap with `unsaved_character`; after
-  `save` it swaps.
+  the account slot is the same `Document` (no reload).
+- A dirty slot — character or account — blocks the swap with `unsaved_edits`;
+  after `save` (and after `undo`) it swaps.
 - Two accounts → two workspaces; `status.workspaces` lists both with dirty
   flags; `save {all}` writes both.
 - A clean slot whose file was rewritten on disk is re-read on `open`; a dirty
