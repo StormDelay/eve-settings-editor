@@ -5,7 +5,7 @@
 //!
 //! stdout IS the protocol here. Nothing in this process may print to it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rmcp::model::*;
@@ -64,15 +64,21 @@ const VK_LABELS_JSON: &str = include_str!("../../src/lib/data/vk-labels.json");
 /// the UI unions with a file's stale `Original` snapshot.
 const NEOCOM_JSON: &str = include_str!("../../src/lib/data/neocom-buttons.json");
 
-fn vk_labels() -> HashMap<i64, String> {
-    let raw: HashMap<String, String> = serde_json::from_str(VK_LABELS_JSON).expect("vk-labels.json");
-    raw.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect()
+/// Parsed once per process — every call reads the same JSON — and cached
+/// behind a `OnceLock` rather than re-parsed on every `combo_label`/`vk_code`
+/// call, which `keybinds_get` makes once per bound command in the file.
+fn vk_labels() -> &'static HashMap<i64, String> {
+    static CACHE: std::sync::OnceLock<HashMap<i64, String>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let raw: HashMap<String, String> = serde_json::from_str(VK_LABELS_JSON).expect("vk-labels.json");
+        raw.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect()
+    })
 }
 
 /// A key by the name a person types — "Q", "f1", "page up" — or `None`.
 fn vk_code(name: &str) -> Option<i64> {
     let want = name.trim();
-    vk_labels().into_iter().find(|(_, label)| label.eq_ignore_ascii_case(want)).map(|(code, _)| code)
+    vk_labels().iter().find(|(_, label)| label.eq_ignore_ascii_case(want)).map(|(&code, _)| code)
 }
 
 /// Command → (label, group), the UI's `command-names.json`.
@@ -290,7 +296,7 @@ fn op_item(ops: &[&str], fields: Value) -> Value {
     })
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 struct NeocomEntry { id: String, btn_type: i64, icon_path: String }
 
@@ -368,16 +374,31 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
     .map_err(fail)
 }
 
-/// The layout without a single path: what the model sees.
-fn layout_view(wl: &WindowLayout) -> Value {
-    let windows: Vec<Value> = wl.windows.iter().map(|w| json!({
-        "id": w.id, "label": w.label, "name": w.name, "open": w.open, "renderable": w.renderable,
-        "resolution_matches": w.resolution_matches,
-        "geom": w.geom.as_ref().map(|g| json!({ "x": g.x, "y": g.y, "w": g.w, "h": g.h, "screen_w": g.screen_w, "screen_h": g.screen_h })),
-        "flags": w.flags.iter().map(|f| json!({ "name": f.name, "value": f.value, "settable": !matches!(f.set, SetTarget::Unavailable) })).collect::<Vec<_>>(),
-        "stack": w.stack.as_ref().map(|s| json!({ "container_id": s.container_id, "role": s.role })),
-    })).collect();
-    json!({ "reference_w": wl.reference_w, "reference_h": wl.reference_h, "windows": windows, "stacks": wl.stacks })
+/// The layout without a single path: what the model sees. A real character
+/// file runs to ~381 windows, ~1.3 KB each pretty-printed and most of that
+/// the old per-window `flags` array — ~495 KB total, well past a client's
+/// tool-result cap — so closed windows are dropped unless `include_closed`,
+/// and `flags` is just the names that are ON rather than a {name,value,settable}
+/// triple per flag. `settable_flags` is file-level (a flag dict is present or
+/// absent for the whole file, never per window), so it is read off any one
+/// window; empty when the file has none.
+fn layout_view(wl: &WindowLayout, include_closed: bool) -> Value {
+    let settable_flags: Vec<&str> = wl.windows.first().map_or_else(Vec::new, |w| {
+        w.flags.iter().filter(|f| !matches!(f.set, SetTarget::Unavailable)).map(|f| f.name.as_str()).collect()
+    });
+    let windows: Vec<Value> = wl.windows.iter()
+        .filter(|w| include_closed || w.open)
+        .map(|w| json!({
+            "id": w.id, "label": w.label, "name": w.name, "open": w.open, "renderable": w.renderable,
+            "resolution_matches": w.resolution_matches,
+            "geom": w.geom.as_ref().map(|g| json!({ "x": g.x, "y": g.y, "w": g.w, "h": g.h, "screen_w": g.screen_w, "screen_h": g.screen_h })),
+            "flags": w.flags.iter().filter(|f| f.value).map(|f| &f.name).collect::<Vec<_>>(),
+            "stack": w.stack.as_ref().map(|s| json!({ "container_id": s.container_id, "role": s.role })),
+        })).collect();
+    json!({
+        "reference_w": wl.reference_w, "reference_h": wl.reference_h,
+        "windows": windows, "stacks": wl.stacks, "settable_flags": settable_flags,
+    })
 }
 
 fn find_window<'a>(wl: &'a WindowLayout, id: &str) -> Result<&'a WindowRect, Value> {
@@ -388,11 +409,13 @@ fn set_int(path: &settings_model::NodePath, v: i64) -> Mutation {
     Mutation::SetScalar { path: path.clone(), text: v.to_string() }
 }
 
-/// `LayoutView.svelte`'s `geomMutations`, in Rust: one set_scalar per changed
-/// axis, plus the reference screen size when the window's own differs.
-fn geometry_mutations(wl: &WindowLayout, id: &str, x: Option<i64>, y: Option<i64>, w: Option<i64>, h: Option<i64>) -> Result<Vec<Mutation>, Value> {
-    let win = find_window(wl, id)?;
-    let g = win.geom.as_ref().ok_or_else(|| err("no_geometry", format!("window `{id}` has no stored geometry")))?;
+/// One window's share of a `set_geometry`: a `set_scalar` per changed axis,
+/// plus the reference screen size when its own differs. `None` (no `geom`)
+/// contributes nothing — a stack member the file never gave a rect is simply
+/// skipped, not an error, since it is the target window's own `no_geometry`
+/// check that gates the op.
+fn one_window_geometry_mutations(wl: &WindowLayout, win: &WindowRect, x: Option<i64>, y: Option<i64>, w: Option<i64>, h: Option<i64>) -> Vec<Mutation> {
+    let Some(g) = win.geom.as_ref() else { return Vec::new() };
     let mut ms = Vec::new();
     for (next, cur, path) in [(x, g.x, &g.x_path), (y, g.y, &g.y_path), (w, g.w, &g.w_path), (h, g.h, &g.h_path)] {
         if let Some(n) = next {
@@ -402,6 +425,35 @@ fn geometry_mutations(wl: &WindowLayout, id: &str, x: Option<i64>, y: Option<i64
     if !ms.is_empty() && !win.resolution_matches {
         ms.push(set_int(&g.screen_w_path, wl.reference_w));
         ms.push(set_int(&g.screen_h_path, wl.reference_h));
+    }
+    ms
+}
+
+/// `LayoutView.svelte`'s `geomMutations`, in Rust — fanned out over a stack.
+/// EVE keeps a stack's container and every member at one identical rect
+/// (docs/format-notes.md ~line 735: the canvas drags one rectangle over all
+/// three), so moving a stacked window must write the same axes to the whole
+/// stack — members plus the container id, deduplicated, the target included —
+/// not just the window asked for.
+fn geometry_mutations(wl: &WindowLayout, id: &str, x: Option<i64>, y: Option<i64>, w: Option<i64>, h: Option<i64>) -> Result<Vec<Mutation>, Value> {
+    let win = find_window(wl, id)?;
+    if win.geom.is_none() {
+        return Err(err("no_geometry", format!("window `{id}` has no stored geometry")));
+    }
+    let mut ids = vec![id.to_string()];
+    if let Some(sref) = &win.stack {
+        if let Some(stack) = wl.stacks.iter().find(|s| s.container_id == sref.container_id) {
+            ids.push(stack.container_id.clone());
+            ids.extend(stack.members.iter().cloned());
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut ms = Vec::new();
+    for wid in ids {
+        if !seen.insert(wid.clone()) { continue; }
+        if let Some(target) = wl.windows.iter().find(|w| w.id == wid) {
+            ms.extend(one_window_geometry_mutations(wl, target, x, y, w, h));
+        }
     }
     Ok(ms)
 }
@@ -490,12 +542,12 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "eve_guide",
-            description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML). Call it before your first edit of a kind you have not done in this conversation.",
+            description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML), layout (windows, geometry, stacks, flags), keybinds (combos, key names, stealing), copy (aspects, collateral characters, settings presets). Call it before your first edit of a kind you have not done in this conversation.",
             schema: || obj(json!({ "topic": { "type": "string", "enum": TOPICS } }), &["topic"]),
         },
         ToolDef {
             name: "open",
-            description: "Open the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file adds column widths. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Opening replaces what was open and clears undo. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
+            description: "Open the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Opening replaces what was open and clears undo. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
             schema: || obj(json!({
                 "char_id": { "type": "integer", "description": "Character id; resolves char_file and, if paired, user_file." },
                 "char_file": { "type": "string", "description": "Path to core_char_<id>.dat. Overrides char_id's lookup." },
@@ -686,12 +738,12 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_get",
-            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags: [{name, value, settable}], stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. Needs the character file open. To SEE it, call layout_render.",
-            schema: || obj(json!({}), &[]),
+            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Needs the character file open. To SEE it, call layout_render.",
+            schema: || obj(json!({ "include_closed": { "type": "boolean", "description": "Include closed windows. Default false." } }), &[]),
         },
         ToolDef {
             name: "layout_render",
-            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]}. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
+            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Windows and stacks only — no HUD, no Neocom. Call it before moving anything. Needs the character file open.",
             schema: || obj(json!({
                 "width": { "type": "integer", "minimum": 320, "maximum": 2048, "description": "Image width in pixels, default 1024." },
                 "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." }
@@ -699,7 +751,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_edit",
-            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — and only where settable is true); stack_create {a, b}; stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns layout_get's shape. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns the open windows as layout_get does. Nothing reaches disk until save. Unsure: eve_guide layout.",
             schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans"], json!({
                 "window": { "type": "string" },
                 "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
@@ -725,7 +777,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "keybinds_get",
-            description: "The account's key bindings: [{command, label, group, keys, combo, malformed}] where combo reads like \"Ctrl+Q\" and keys are the stored codes; available is false when the account never opened the in-game keybinding screen. Needs the account file open. Key names for keybind_set are the ones you see in combo.",
+            description: "Returns {entries: [...], available}: each entry is {command, label, group, keys, combo, malformed} where combo reads like \"Ctrl+Q\" and keys are the stored codes; available is false when the account never opened the in-game keybinding screen. Needs the account file open. Key names for keybind_set are the ones you see in combo.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -772,7 +824,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "copy_preview",
-            description: "Plan a copy of one character's settings onto others without changing anything: which files would be written (char_writes, account_writes — an account file is shared by every character on it, so collateral_char_ids names the siblings that change too), which targets are excluded and why, and source_error if the source cannot be used. Source: source_char_id, source_char_file, or source_settings_preset (a saved bundle from settings_presets_list). Targets: target_char_ids and/or target_char_files. aspects: layout, overview, autofill, keybinds, probe_formations, fleet, or everything (whole files). allow_other_folders lets targets in another profile folder in. ALWAYS call this before copy_apply and show the user the plan.",
+            description: "Plan a copy of one character's settings onto others without changing anything: which files would be written (char_writes, account_writes — an account file is shared by every character on it, so collateral_char_ids names the siblings that change too), which targets are excluded and why, and source_error if the source cannot be used. Source: source_char_id, source_char_file, or source_settings_preset (a saved bundle from settings_presets_list). Targets: target_char_ids and/or target_char_files. aspects: layout, overview, autofill, keybinds, probe_formations, fleet, or everything (whole files). allow_other_folders lets targets in another profile folder in — without it they land in excluded. ALWAYS call this before copy_apply and show the user the plan. With several profile folders, ids resolve in the first one list_characters shows; use source_char_file/target_char_files for another.",
             schema: || obj(json!({
                 "source_char_id": { "type": "integer" }, "source_char_file": { "type": "string" }, "source_settings_preset": { "type": "string" },
                 "target_char_ids": { "type": "array", "items": { "type": "integer" } },
@@ -783,7 +835,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "copy_apply",
-            description: "Perform the copy copy_preview planned, with the same arguments. WRITES TO DISK IMMEDIATELY: every target file is backed up, then replaced atomically; returns [{path, ok, backup_path, error}] per file. Only copy onto characters that are logged out. If a target file is open here, open it again afterwards — the in-memory copy is stale.",
+            description: "Perform the copy copy_preview planned, with the same arguments. WRITES TO DISK IMMEDIATELY: every target file is backed up, then replaced atomically; returns [{path, ok, backup_path, error}] per file — a target copy_preview would have excluded reports ok: false instead. Only copy onto characters that are logged out. If a target file is open here, open it again afterwards — the in-memory copy is stale. With several profile folders, ids resolve in the first one list_characters shows; use source_char_file/target_char_files for another.",
             schema: || obj(json!({
                 "source_char_id": { "type": "integer" }, "source_char_file": { "type": "string" }, "source_settings_preset": { "type": "string" },
                 "target_char_ids": { "type": "array", "items": { "type": "integer" } },
@@ -876,7 +928,11 @@ impl EveMcp {
                 let h = ops::set_hud_field(&self.state, &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
-            "layout_get" => Ok(layout_view(&ops::window_layout(&self.state, Slot::Char).map_err(fail)?)),
+            "layout_get" => {
+                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let include_closed = opt::<bool>(args, "include_closed")?.unwrap_or(false);
+                Ok(layout_view(&wl, include_closed))
+            }
             "layout_render" => {
                 use base64::Engine as _;
                 let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
@@ -887,7 +943,7 @@ impl EveMcp {
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 Ok(v)
             }
-            "layout_edit" => self.batch(args, layout_op, |s| Ok(layout_view(&ops::window_layout(&s.state, Slot::Char).map_err(fail)?))),
+            "layout_edit" => self.batch(args, layout_op, |s| Ok(layout_view(&ops::window_layout(&s.state, Slot::Char).map_err(fail)?, false))),
             "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
             "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
@@ -903,11 +959,25 @@ impl EveMcp {
             }
             "copy_preview" => {
                 let c = self.copy_args(args)?;
-                ok(setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders))
+                let mut plan = setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders);
+                for char_id in unseen_targets(&c, &plan.char_writes, &plan.excluded) {
+                    plan.excluded.push(setup::ExcludedTarget { char_id, reason: OTHER_FOLDER_REASON.into() });
+                }
+                ok(plan)
             }
             "copy_apply" => {
                 let c = self.copy_args(args)?;
-                ok(setup::setup_apply(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders).map_err(fail)?)
+                // The same check `copy_preview` makes, run first: a target the
+                // plan never saw would otherwise be missing from the result
+                // list entirely rather than reported `ok: false`.
+                let preview = setup::setup_preview(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders);
+                let missed = unseen_targets(&c, &preview.char_writes, &preview.excluded);
+                let mut results = setup::setup_apply(&self.roots, &self.dir, &c.source, &c.targets, &c.aspects, c.allow_other_folders).map_err(fail)?;
+                for char_id in missed {
+                    let path = c.targets.iter().find(|t| c.target_ids.get(*t) == Some(&char_id)).cloned().unwrap_or_default();
+                    results.push(setup::TargetResult { path, ok: false, backup_path: None, error: Some(OTHER_FOLDER_REASON.into()) });
+                }
+                ok(results)
             }
             "copy_files" => ok(setup::copy_files(&self.roots, &req::<String>(args, "source")?, &req::<Vec<String>>(args, "targets")?).map_err(fail)?),
             _ => Err(err("unknown_tool", format!("no tool named `{name}`"))),
@@ -967,7 +1037,19 @@ fn settings_presets_view(dir: &Path) -> Value {
     Value::Array(list)
 }
 
-struct CopyArgs { source: BatchSource, targets: Vec<String>, aspects: Vec<Aspect>, allow_other_folders: bool }
+struct CopyArgs {
+    source: BatchSource,
+    targets: Vec<String>,
+    aspects: Vec<Aspect>,
+    allow_other_folders: bool,
+    /// A resolved target path's char id, when known — from `target_char_ids`
+    /// directly, or looked up for a `target_char_files` path. Lets
+    /// `unseen_targets` name a target the plan never saw at all.
+    target_ids: HashMap<String, u64>,
+    /// The source's own char file path, when the source is a character —
+    /// never itself an "unseen target".
+    source_path: Option<String>,
+}
 
 impl EveMcp {
     /// One source (by char id, char file, or settings-preset name), one or
@@ -979,6 +1061,14 @@ impl EveMcp {
             locate(id, &profiles, &roster)
                 .map(|(c, _)| c.to_string_lossy().into_owned())
                 .ok_or_else(|| err("unknown_character", format!("no core_char_{id}.dat in any profile; call list_characters")))
+        };
+        // A target path's char id, resolved across every discovered profile
+        // (not folder-scoped) — the same reach `locate` above already has, so
+        // a target in another profile folder is still nameable even though
+        // `setup::setup_preview`'s own folder-scoped lookup will not see it.
+        let id_for_path = |p: &str| -> Option<u64> {
+            let pp = Path::new(p);
+            profiles.iter().find_map(|prof| prof.files.iter().find(|f| f.kind == FileKind::Char && f.path == pp).and_then(|f| f.id))
         };
 
         let src_id: Option<u64> = opt(args, "source_char_id")?;
@@ -993,24 +1083,48 @@ impl EveMcp {
             targets.push(char_path(id)?);
         }
         if targets.is_empty() { return Err(err("missing_field", "target_char_ids and/or target_char_files, at least one target")); }
+        let target_ids: HashMap<String, u64> = targets.iter().filter_map(|t| id_for_path(t).map(|id| (t.clone(), id))).collect();
 
-        let source = if let Some(id) = src_id {
-            BatchSource::Character { path: char_path(id)? }
+        let (source, source_path) = if let Some(id) = src_id {
+            let p = char_path(id)?;
+            (BatchSource::Character { path: p.clone() }, Some(p))
         } else if let Some(p) = src_file {
-            BatchSource::Character { path: p }
+            (BatchSource::Character { path: p.clone() }, Some(p))
         } else {
             let name = src_preset.expect("checked");
             let dir = presets::preset_path(&self.dir, &name).map_err(|e| err("unknown_settings_preset", e.0))?;
             if !dir.is_dir() { return Err(err("unknown_settings_preset", format!("no settings preset `{name}`; call settings_presets_list"))); }
             let anchor_dir = Path::new(&targets[0]).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            BatchSource::Preset { dir: dir.to_string_lossy().into_owned(), anchor_dir }
+            (BatchSource::Preset { dir: dir.to_string_lossy().into_owned(), anchor_dir }, None)
         };
         Ok(CopyArgs {
-            source, targets,
+            source, targets, target_ids, source_path,
             aspects: req(args, "aspects")?,
             allow_other_folders: opt(args, "allow_other_folders")?.unwrap_or(false),
         })
     }
+}
+
+/// Why a target the plan never saw is reported this way — `setup::target_ids`
+/// keeps only paths in the source's own profile folder, so a target `locate`
+/// resolved somewhere else silently vanished from both `char_writes` and
+/// `excluded` rather than being reported at all.
+const OTHER_FOLDER_REASON: &str = "in another profile folder; set allow_other_folders to include it";
+
+/// The requested targets the plan gave no verdict on at all: not a
+/// `char_writes` entry (by path), not an `excluded` entry (by char id, once
+/// resolvable), and not the source itself. Almost always a target outside
+/// the anchor profile folder with `allow_other_folders` unset — the plan's
+/// own folder scoping drops it before it ever reaches `plan_setup`.
+fn unseen_targets(c: &CopyArgs, char_writes: &[setup::CharWrite], excluded: &[setup::ExcludedTarget]) -> Vec<u64> {
+    let seen_paths: HashSet<&str> = char_writes.iter().map(|w| w.path.as_str()).collect();
+    let excluded_ids: HashSet<u64> = excluded.iter().map(|e| e.char_id).collect();
+    c.targets
+        .iter()
+        .filter(|t| !seen_paths.contains(t.as_str()) && c.source_path.as_deref() != Some(t.as_str()))
+        .filter_map(|t| c.target_ids.get(t).copied())
+        .filter(|id| !excluded_ids.contains(id))
+        .collect()
 }
 
 /// The `list_characters` payload, pure: profiles as discovered, pairings as
@@ -2057,12 +2171,44 @@ mod tests {
         match v {
             Value::Object(m) => {
                 for (k, c) in m {
-                    assert!(!k.ends_with("_path") && k != "set" && k != "path" || tool.starts_with("copy") || tool == "save" || tool == "open", "{tool}: key `{k}` leaks a path");
+                    // icon_path is a neocom entry's EVE resource path (res:/ui/…), not
+                    // a filesystem path — it is meant to reach the model.
+                    let is_path_key = (k.ends_with("_path") && k != "icon_path") || k == "set" || k == "path";
+                    assert!(!is_path_key || tool.starts_with("copy") || tool == "save" || tool == "open", "{tool}: key `{k}` leaks a path");
                     assert_no_paths(c, tool);
                 }
             }
             Value::Array(a) => a.iter().for_each(|c| assert_no_paths(c, tool)),
             _ => {}
+        }
+    }
+
+    /// Every read-only `*_get` tool, over one document open in both slots at
+    /// once (`layout_char_bytes` in char, `overview_user_bytes` in user) — a
+    /// single fixture wide enough to sweep the whole `_get` surface without a
+    /// document per tool. A tool this fixture has nothing for is allowed to
+    /// error `no_document` (a slot genuinely absent) or `no_ui` (neither
+    /// fixture carries a `ui` section, which `probes_get`/`neocom_get`
+    /// require) and nothing else.
+    #[test]
+    fn every_get_result_carries_no_paths() {
+        let s = EveMcp::for_tests();
+        let cpath = temp_file("mcp-nopaths-char", &layout_char_bytes());
+        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        let upath = temp_file("mcp-nopaths-user", &overview_user_bytes());
+        ops::open_file(&s.state, Slot::User, upath.to_str().unwrap()).unwrap();
+
+        for tool in [
+            "layout_get", "hud_get", "fleet_get", "neocom_get", "chat_get", "autofill_get",
+            "keybinds_get", "overview_get", "probes_get", "settings_presets_list",
+        ] {
+            match s.call(tool, &Args::new()) {
+                Ok(v) => assert_no_paths(&v, tool),
+                Err(e) => assert!(
+                    matches!(e["code"].as_str(), Some("no_document") | Some("no_ui")),
+                    "{tool} failed unexpectedly: {e}"
+                ),
+            }
         }
     }
 
@@ -2373,11 +2519,19 @@ mod tests {
         assert_eq!(ov["geom"], json!({ "x": 100, "y": 200, "w": 400, "h": 600, "screen_w": 2560, "screen_h": 1440 }));
         assert_eq!(ov["open"], true);
         assert_eq!(ov["resolution_matches"], true);
-        assert!(ov["flags"].as_array().unwrap().iter().any(|f| f["name"] == "pinnedWindows" && f["value"] == true && f["settable"] == true));
-        assert!(ov["flags"].as_array().unwrap().iter().any(|f| f["name"] == "lockedWindows" && f["settable"] == false), "no lockedWindows dict in the file → unavailable");
+        // flags is now just the names that are ON for this window.
+        assert!(ov["flags"].as_array().unwrap().contains(&json!("pinnedWindows")), "{ov}");
+        // settable_flags is file-level: pinnedWindows has a dict in the file,
+        // lockedWindows does not.
+        let settable = v["settable_flags"].as_array().unwrap();
+        assert!(settable.contains(&json!("pinnedWindows")), "{settable:?}");
+        assert!(!settable.contains(&json!("lockedWindows")), "no lockedWindows dict in the file → not settable: {settable:?}");
         assert_eq!(window(&v, "market")["resolution_matches"], false);
-        assert_eq!(window(&v, "fitting")["open"], false);
+        assert!(v["windows"].as_array().unwrap().iter().all(|w| w["id"] != "fitting"), "closed window omitted by default: {v}");
         assert_eq!(v["stacks"][0]["members"], json!(["m1", "m2"]));
+
+        let v = s.call("layout_get", &args(json!({ "include_closed": true }))).unwrap();
+        assert_eq!(window(&v, "fitting")["open"], false, "present once include_closed is true");
     }
 
     #[test]
@@ -2404,8 +2558,11 @@ mod tests {
             { "op": "set_flag", "window": "market", "flag": "pinnedWindows", "on": true },
             { "op": "set_flag", "window": "overview", "flag": "openWindows", "on": false }
         ]}))).unwrap();
-        assert!(window(&v, "market")["flags"].as_array().unwrap().iter().any(|f| f["name"] == "pinnedWindows" && f["value"] == true), "an Insert target minted the key");
-        assert_eq!(window(&v, "overview")["open"], false);
+        assert!(window(&v, "market")["flags"].as_array().unwrap().contains(&json!("pinnedWindows")), "an Insert target minted the key");
+        // overview is now closed, so the open-only result no longer lists it.
+        assert!(v["windows"].as_array().unwrap().iter().all(|w| w["id"] != "overview"), "{v}");
+        let full = s.call("layout_get", &args(json!({ "include_closed": true }))).unwrap();
+        assert_eq!(window(&full, "overview")["open"], false);
         let e = s.call("layout_edit", &args(json!({ "ops": [{ "op": "set_flag", "window": "market", "flag": "lockedWindows", "on": true }] }))).unwrap_err();
         assert_eq!(e["code"], "flag_unavailable");
         let e = s.call("layout_edit", &args(json!({ "ops": [
@@ -2435,13 +2592,29 @@ mod tests {
         assert_eq!(undo::undo_state(&s.state).depth, 1, "stack ops open their own group; the batch is still one step");
     }
 
+    /// EVE keeps a stack's container and every member at one identical rect
+    /// (docs/format-notes.md ~line 735), so moving one member must move the
+    /// whole stack, not just the window asked for.
+    #[test]
+    fn set_geometry_on_a_stacked_window_moves_the_whole_stack() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "set_geometry", "window": "m1", "x": 500 }
+        ]}))).unwrap();
+        for id in ["m1", "m2", "C"] {
+            assert_eq!(window(&v, id)["geom"]["x"], 500, "{id} should have moved with the stack: {v}");
+        }
+    }
+
     #[test]
     fn layout_render_returns_a_png_and_a_legend_through_the_tool() {
         use base64::Engine as _;
         let (s, _) = open_char(&layout_char_bytes());
         let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
         assert_eq!(v["width"], 400);
-        assert_eq!(v["windows"].as_array().unwrap().len(), 6);
+        // Drawn only, by default: overview, market, and C (the stack's anchor)
+        // — fitting (closed) and the non-anchor stack members m1/m2 are omitted.
+        assert_eq!(v["windows"].as_array().unwrap().len(), 3, "{v}");
         let png = base64::engine::general_purpose::STANDARD.decode(v["png_base64"].as_str().unwrap()).unwrap();
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         let blocks = blocks(v);
@@ -2451,7 +2624,10 @@ mod tests {
 
     /// A discovery root with one install/profile holding source char 100 on
     /// account 500 and target char 200 on account 600, paired in accounts.json
-    /// under a separate app dir — `setup::tests`' layout.
+    /// under a separate app dir — `setup::tests`' layout. Plus a SECOND
+    /// install/profile folder (char 300 on account 700) for the "target in
+    /// another profile folder" cases — `locate` (all profiles) resolves it,
+    /// but `setup::target_ids` (folder-scoped) does not, unless asked.
     fn temp_profile() -> (PathBuf, PathBuf, PathBuf) {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2466,11 +2642,18 @@ mod tests {
         std::fs::write(prof.join("core_user_500.dat"), encode(&overview("SRC")).unwrap()).unwrap();
         std::fs::write(prof.join("core_char_200.dat"), encode(&widths()).unwrap()).unwrap();
         std::fs::write(prof.join("core_user_600.dat"), encode(&overview("TGT")).unwrap()).unwrap();
+
+        let other = base.join("root").join("c_eve_sharedcache_tq_other").join("settings_Default");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("core_char_300.dat"), encode(&widths()).unwrap()).unwrap();
+        std::fs::write(other.join("core_user_700.dat"), encode(&overview("OTH")).unwrap()).unwrap();
+
         let app_dir = base.join("appdata");
         std::fs::create_dir_all(&app_dir).unwrap();
         let mut store = crate::accounts::AccountsStore::default();
         store.accounts.insert(500, crate::accounts::Account { alias: None, characters: vec![100] });
         store.accounts.insert(600, crate::accounts::Account { alias: None, characters: vec![200] });
+        store.accounts.insert(700, crate::accounts::Account { alias: None, characters: vec![300] });
         std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
         (base.join("root"), prof, app_dir)
     }
@@ -2511,6 +2694,67 @@ mod tests {
         assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 100, "source_char_file": "x", "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err()["code"], "bad_arguments");
         assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 100, "aspects": ["overview"] }))).unwrap_err()["code"], "missing_field");
         assert_eq!(s.call("copy_preview", &args(json!({ "source_char_id": 999, "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err()["code"], "unknown_character");
+    }
+
+    /// `copy_args` resolves `target_char_ids` across every profile (`locate`),
+    /// but `setup::target_ids` only keeps paths in the source's own folder —
+    /// without the fix, char 300 (a different install/profile) would vanish
+    /// from both `char_writes` and `excluded` and `copy_apply` would silently
+    /// skip it.
+    #[test]
+    fn copy_preview_names_a_target_in_another_profile_folder_and_allow_other_folders_includes_it() {
+        let (s, _) = copy_server();
+        let v = s.call("copy_preview", &args(json!({ "source_char_id": 100, "target_char_ids": [200, 300], "aspects": ["overview"] }))).unwrap();
+        assert_eq!(v["char_writes"].as_array().unwrap().len(), 1, "300 is outside the anchor folder: {v}");
+        assert_eq!(v["char_writes"][0]["char_id"], 200);
+        let excl = v["excluded"].as_array().unwrap().iter().find(|e| e["char_id"] == 300).unwrap_or_else(|| panic!("300 named in excluded: {v}"));
+        assert!(excl["reason"].as_str().unwrap().contains("allow_other_folders"), "{excl}");
+
+        let v = s.call("copy_preview", &args(json!({
+            "source_char_id": 100, "target_char_ids": [200, 300], "aspects": ["overview"], "allow_other_folders": true
+        }))).unwrap();
+        assert!(v["char_writes"].as_array().unwrap().iter().any(|w| w["char_id"] == 300), "{v}");
+        assert!(!v["excluded"].as_array().unwrap().iter().any(|e| e["char_id"] == 300), "{v}");
+    }
+
+    #[test]
+    fn copy_apply_reports_a_target_in_another_profile_folder_as_not_ok() {
+        let (s, _) = copy_server();
+        let v = s.call("copy_apply", &args(json!({ "source_char_id": 100, "target_char_ids": [200, 300], "aspects": ["overview"] }))).unwrap();
+        let results = v.as_array().unwrap();
+        let bad = results.iter().find(|r| r["path"].as_str().unwrap().contains("core_char_300")).unwrap_or_else(|| panic!("300 in results: {v}"));
+        assert_eq!(bad["ok"], false);
+        assert_eq!(bad["backup_path"], Value::Null);
+        assert!(bad["error"].as_str().unwrap().contains("allow_other_folders"), "{bad}");
+        assert!(results.iter().any(|r| r["ok"] == true), "200 still applied: {v}");
+    }
+
+    #[test]
+    fn copy_preview_from_a_non_settings_file_is_a_source_error() {
+        let (s, prof) = copy_server();
+        let bad = prof.join("not-settings.txt");
+        std::fs::write(&bad, b"hello").unwrap();
+        let v = s.call("copy_preview", &args(json!({ "source_char_file": bad.to_string_lossy(), "target_char_ids": [200], "aspects": ["overview"] }))).unwrap();
+        assert!(v["source_error"].is_string(), "{v}");
+    }
+
+    #[test]
+    fn copy_preview_from_a_settings_preset_names_unknown_then_succeeds_with_a_real_one() {
+        let (root, prof, app_dir) = temp_profile();
+        let s = EveMcp::new(app_dir, vec![root]);
+
+        let e = s.call("copy_preview", &args(json!({ "source_settings_preset": "nope", "target_char_ids": [200], "aspects": ["overview"] }))).unwrap_err();
+        assert_eq!(e["code"], "unknown_settings_preset");
+
+        s.call("open", &args(json!({
+            "user_file": prof.join("core_user_500.dat").to_string_lossy(),
+            "char_file": prof.join("core_char_100.dat").to_string_lossy()
+        }))).unwrap();
+        s.call("settings_preset_edit", &args(json!({ "op": "create", "name": "PvP kit", "aspects": ["overview"] }))).unwrap();
+
+        let v = s.call("copy_preview", &args(json!({ "source_settings_preset": "PvP kit", "target_char_ids": [200], "aspects": ["overview"] }))).unwrap();
+        assert_eq!(v["account_writes"][0]["user_id"], 600, "{v}");
+        assert_eq!(v["source_error"], Value::Null);
     }
 
     #[test]
