@@ -12,7 +12,9 @@ Rules:
 4. Every save is backed up first. `list_backups` and `restore_backup` undo a save; `undo` reverts an unsaved edit.
 5. Group ids come from `groups_search`; state ids and labels come from `overview_get` under `names.states`; EVE's built-in presets come from `builtin_presets`.
 
-Unsure about a concept: `eve_guide` with `overview`, `presets`, `states` or `probes`.
+Beyond the overview and probes, the same files hold: the window **layout** (`layout_get`, `layout_render` for a picture, `layout_edit`), the **Neocom** bar (`neocom_get`/`neocom_edit`) and **HUD** (`hud_get`/`hud_set`) — character file; **autofill** (`autofill_get`/`autofill_set`/`autofill_clear_all`), **keybinds** (`keybinds_get`/`keybind_set`) and **chat** splits (`chat_get`/`chat_set_splits`) — account file; **fleet** settings (`fleet_get`/`fleet_edit`, `lookup_character`) — both. Two operations work across files and WRITE IMMEDIATELY rather than through `save`: **copy settings** (`copy_preview`, then `copy_apply`; `copy_files` for a whole file) and **settings presets** (`settings_presets_list`, `settings_preset_edit`) — saved bundles this app keeps, unrelated to overview presets.
+
+Unsure about a concept: `eve_guide` with `overview`, `presets`, `states`, `probes`, `layout`, `keybinds` or `copy`.
 
 ## overview
 
@@ -84,3 +86,19 @@ Formations live in the account file. `probes_set` without `id` creates one at th
           - [0, -598391482800, 0]
 
 `ranges: [...]` (one per probe) replaces `range:` when probes differ.
+
+## layout
+
+Call `layout_render` first — look before moving anything. The picture shows every open window as a labelled box on the screen at the file's reference size (`reference_w` × `reference_h`, the resolution the settings were saved at); the legend carries each window's id and pixel geometry. Window ids are EVE's internal names (`overview`, `market`, `fitting`, `chatchannel_local`, …); `label` is the readable one. Geometry is `x, y, w, h` in pixels from the top-left, and `layout_edit`'s `set_geometry` takes any subset of the four. A window saved at a different resolution (`resolution_matches` false) is re-stamped to the reference when you move it, so the client places it where you put it.
+
+By default `layout_get` and `layout_render` hide closed windows and clutter — the windows EVE spawns per chat, item or dialog, and dead stack frames — which is most of a real file. `hidden` counts what was left out. `environment: docked` or `space` narrows to what can be on screen there; `match` finds a window by name. A window that is not listed is usually filtered, not missing: relax the filter before concluding. Filters never limit `layout_edit`.
+
+A **stack** is a tabbed container: its `members` are windows shown as tabs, drawn at the `anchor_id` window's geometry — moving any window in a stack moves the whole stack, since EVE keeps the container and every member at one identical rect. `stack_create {a, b}` starts one, `stack_add` / `stack_unstack` change membership, `stack_reorder` sets the tab order (list every member), `stack_delete_orphans` removes containers with no members. Flags per window are the file's own keys — `openWindows`, `pinnedWindows`, `lockedWindows`, `compactWindows`, `collapsedWindows`, `minimizedWindows`, … — `layout_get`'s per-window `flags` names the ones that are on, and its top-level `settable_flags` names every flag this file has a table for; a flag missing from `settable_flags` cannot be set. Closed windows are left out of `layout_get` and `layout_render`'s legend unless `include_closed`; `layout_render` outlines a closed window when asked. The picture shows windows and stacks only — not the HUD or the Neocom.
+
+## keybinds
+
+A binding is optional modifiers plus one key, shown as `Ctrl+Alt+Q`. `keybinds_get` lists every command with a label and group; `combo` is what the player reads, `keys` the stored codes. `keybind_set` takes the key by name (`Q`, `F1`, `Num 5`, `Page Up` — the names that appear in `combo`) and `ctrl` / `alt` / `shift` flags; omit the key to unbind. A combo another command already holds moves to the new command and `stolen` names the losers — tell the user, since that command is now unbound. `available` false means the account never opened the in-game keybinding screen and has no table to edit yet.
+
+## copy
+
+Copy settings moves aspects from one source onto other characters. Aspects: `layout` (windows, stacks, Neocom, HUD), `overview` (presets and appearance — account side — plus column widths — character side), `autofill`, `keybinds`, `probe_formations`, `fleet`, or `everything` (whole files). Character-side aspects write the target's `core_char` file; account-side aspects write the target's `core_user` file — and an account file is shared by every character on that account, so `collateral_char_ids` lists the siblings that change too. Always `copy_preview` first and show the user the plan: which files, which collateral characters, which targets are excluded and why (an unpaired target, a file in another profile folder unless `allow_other_folders`). `copy_apply` then writes each target with a backup; it does not go through `save`, so a target that was open here must be opened again. The source can be a character or a **settings preset** — a bundle saved by `settings_preset_edit` from the open files, listed by `settings_presets_list`, exportable as a file; not an overview preset.
