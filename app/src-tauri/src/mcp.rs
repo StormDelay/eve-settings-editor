@@ -545,9 +545,21 @@ impl EveMcp {
     }
 
     /// The user's own clutter overrides, from preferences.json — empty when
-    /// there is no prefs path (a test that never sets one) or no file yet.
+    /// there is no prefs path (a test that never sets one), no file yet, or
+    /// the file doesn't parse. Deliberately NOT `prefs::load_from`: that
+    /// renames an unparsable file to `.bad`, which is the right recovery for
+    /// the GUI's OWN writes (a hand-edit gone wrong should be recoverable)
+    /// but wrong for this read-only consumer — the GUI's `save_to` is a
+    /// plain `fs::write`, so a read racing it could see a torn file and
+    /// quarantine config the GUI never actually corrupted. A view filter must
+    /// not have that side effect; falling back to no overrides is enough.
     fn overrides(&self) -> Overrides {
-        self.prefs_path.as_deref().map(|p| Overrides::from_prefs(&prefs::load_from(p))).unwrap_or_default()
+        self.prefs_path
+            .as_deref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str::<prefs::Preferences>(&s).ok())
+            .map(|p| Overrides::from_prefs(&p))
+            .unwrap_or_default()
     }
 }
 
@@ -2764,6 +2776,17 @@ mod tests {
         assert!(drawn.contains(&"chatchannel_player_-78564080") && !drawn.contains(&"overview"));
     }
 
+    /// The stack bug: `C` (the anchor of m1+m2) does not itself contain "m1"
+    /// in its id/label, so under `match: "m1"` the anchor alone would be
+    /// filtered out — the fix must still draw and list the stack because a
+    /// member (m1) matched.
+    #[test]
+    fn layout_render_draws_a_stack_whose_anchor_did_not_match_but_a_member_did() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_render", &args(json!({ "match": "m1" }))).unwrap();
+        assert_eq!(window(&v, "C")["drawn"], true, "{v}");
+    }
+
     #[test]
     fn the_users_clutter_overrides_are_honoured() {
         let (s, _) = open_char(&cluttered_layout_char_bytes());
@@ -2776,6 +2799,27 @@ mod tests {
         let s = EveMcp { prefs_path: Some(prefs_path), ..s };
         let ids = ids_of(&s.call("layout_get", &Args::new()).unwrap());
         assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-78564080".into()));
+    }
+
+    /// `overrides()` must read `preferences.json` without `prefs::load_from`'s
+    /// quarantine behaviour: that rename-to-`.bad` recovery is right for the
+    /// GUI's own writes but wrong for this read-only consumer, which could
+    /// otherwise race the GUI's plain `fs::write` and quarantine a file the
+    /// GUI never actually corrupted.
+    #[test]
+    fn a_corrupt_preferences_file_reads_as_defaults_and_is_left_untouched() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let prefs_dir = std::env::temp_dir().join(format!("mcp-prefs-corrupt-{}", std::process::id()));
+        std::fs::create_dir_all(&prefs_dir).unwrap();
+        let prefs_path = prefs_dir.join("preferences.json");
+        std::fs::write(&prefs_path, b"not json {").unwrap();
+        let s = EveMcp { prefs_path: Some(prefs_path.clone()), ..s };
+        let v = s.call("layout_get", &args(json!({ "hide_clutter": false, "include_closed": true }))).unwrap();
+        // No overrides applied: layout_get succeeds and lists every window,
+        // as if preferences.json were simply absent.
+        assert_eq!(ids_of(&v).len(), 6, "{v}");
+        assert_eq!(std::fs::read(&prefs_path).unwrap(), b"not json {", "must not be quarantined");
+        assert!(!prefs_path.with_extension("json.bad").exists(), "must not create a .bad file");
     }
 
     /// A discovery root with one install/profile holding source char 100 on
