@@ -2064,3 +2064,432 @@ Then `superpowers:finishing-a-development-branch` — branch `feat/mcp-all-surfa
 - Counts: 24 + 3 (layout) + 3 (autofill) + 2 (keybinds) + 2 (neocom) + 2 (HUD) + 2 (chat) + 3 (fleet) + 3 (copy) + 2 (presets) = 46; the smoke list in Task 11 has 46 entries.
 - Type consistency: `batch(args, apply, finish)` from Task 1 is what Tasks 5, 6, 7 call; `open_char`/`assert_no_paths` (Task 4) used by 5, 6, 7, 8; `hud_entry_view` (Task 4) used by `fleet_view` (Task 6); `temp_profile` (Task 9) used by Task 10; `PNG_KEY`/`blocks` (Task 1) used by Task 8; `vk_code`/`vk_labels` (Task 2) used by Task 3.
 - Known soft spots called out inside the tasks, each with what to do: flag names from `windows.rs` (Task 7), the `png` API names and one outline pixel (Task 8), `copy_files`' mixed-kind error shape (Task 9), the `exists` code from `preset_save` (Task 10), `TextContent`/`ImageContent` field names (Task 1).
+
+---
+
+### Task 12: Layout view filters — clutter, environment, text, with counts
+
+Agreed 2026-09-21 after the branch's final review: `layout_get` and `layout_render` gain the canvas's own filters so a real file's picture is the player's layout, not every spawned window. View filters only — `layout_edit` still reaches any window.
+
+**Files:**
+- Create: `app/src/lib/data/window-filters.json` (the five tables + the parameterised-family prefixes, moved out of `windowLabels.ts`)
+- Modify: `app/src/lib/windowLabels.ts` (build `PARAM`, `CLUTTER_FAMILIES`, `CLUTTER_CHAT_DETAILS`, `CLUTTER_IDS`, `DOCKED_ONLY`, `SPACE_ONLY` from the JSON; behaviour identical; `windowLabels.test.ts` untouched)
+- Create: `app/src-tauri/src/mcp_filter.rs` (the Rust twin of `isClutter`/`inEnv`/`isOrphanFrame`/`windowMatches`, + tests)
+- Modify: `app/src-tauri/src/prefs.rs` (`pub(crate) fn path_base() -> Option<PathBuf>` = `dirs::config_dir()/APP_DIR/preferences.json`, the handle-free twin of `path`)
+- Modify: `app/src-tauri/src/lib.rs` (`mod mcp_filter;`)
+- Modify: `app/src-tauri/src/mcp.rs` (args, `layout_view` filtering, `hidden` counts, descriptions, tests), `app/src-tauri/src/mcp_render.rs` (legend filtered the same way), `mcp_primer.md` (`## layout` paragraph), spec §2.1
+
+**Interfaces:**
+- Produces: in `mcp_filter.rs` — `pub(crate) enum Env { All, Docked, Space }` (serde snake_case, `Default = All`), `pub(crate) struct Overrides { clutter: HashSet<String>, visible: HashSet<String> }` + `Overrides::from_prefs(&Preferences)`, `pub(crate) struct Family { family: String, detail: String }`, `pub(crate) fn describe(id: &str) -> Family`, `pub(crate) fn is_clutter(id: &str, o: &Overrides) -> bool`, `pub(crate) fn is_orphan_frame(w: &WindowRect) -> bool`, `pub(crate) fn in_env(id: &str, env: Env) -> bool`, `pub(crate) struct WindowFilter { include_closed, hide_clutter, env, matches: Option<String> }`, `pub(crate) enum Hidden { Closed, Clutter, Environment, Match }`, `pub(crate) fn hidden_by(w: &WindowRect, f: &WindowFilter, o: &Overrides) -> Option<Hidden>` (first reason, in that order), `pub(crate) struct HiddenCounts { closed, clutter, environment, matched: usize }` (Serialize) with `add(Hidden)`. In `prefs.rs`: `pub(crate) fn path_base() -> Option<PathBuf>`. `EveMcp` gains `pub prefs_path: Option<PathBuf>`.
+
+- [ ] **Step 1: The shared JSON**
+
+Create `app/src/lib/data/window-filters.json` with exactly the entries of the six TS tables in `windowLabels.ts` (`PARAM` ~line 99, `CLUTTER_FAMILIES` ~144, `CLUTTER_CHAT_DETAILS` ~161, `CLUTTER_IDS` ~168–210, `DOCKED_ONLY` ~281, `SPACE_ONLY` ~300) — copy every string, in order, as:
+
+```json
+{
+  "param": { "chatchannel": "Chat", "ChannelSettingsDlg": "Chat settings", "...": "..." },
+  "clutter_families": ["ChatInvitation", "..."],
+  "clutter_chat_details": ["player", "private"],
+  "clutter_ids": ["setQuantityPopup", "..."],
+  "docked_only": ["lobbyWnd", "..."],
+  "space_only": ["InventorySpace", "droneview", "selecteditemview", "directionalScannerWindow", "overview"]
+}
+```
+
+In `windowLabels.ts`, `import filters from "./data/window-filters.json" with { type: "json" };` (the form `keybinds.ts` uses) and replace the six literals: `const PARAM: Record<string, string> = filters.param;`, `const CLUTTER_FAMILIES: ReadonlySet<string> = new Set(filters.clutter_families);` and likewise for the other four. Keep every doc comment where it is. Run `npx vitest run src/lib/windowLabels.test.ts` (from `app/`) — unchanged and green; `npm run check` — 0.
+
+- [ ] **Step 2: Failing Rust tests**
+
+Create `app/src-tauri/src/mcp_filter.rs` with the module doc and the tests first (mirroring `windowLabels.test.ts`):
+
+```rust
+//! The canvas's view filters, for `layout_get`/`layout_render`: clutter (windows
+//! EVE spawns per conversation, item or dialog), environment (docked vs in
+//! space), open-only, and text — over the same tables `windowLabels.ts` reads
+//! from `data/window-filters.json`. View filters only: `layout_edit` reaches
+//! any window. Mirrors `isClutter`, `inEnv`, `isOrphanFrame`, `windowMatches`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describe_splits_families_details_tuples_and_stacks() {
+        assert_eq!(describe("ShipCargo_1033391582929"), Family { family: "ShipCargo".into(), detail: "1033391582929".into() });
+        assert_eq!(describe("chatchannel_player_-78564080").family, "chatchannel");
+        assert_eq!(describe("chatchannel_player_-78564080").detail, "player");
+        assert_eq!(describe("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483").detail, "private");
+        assert_eq!(describe("ShipCargo").detail, "");
+        assert_eq!(describe("('corpassets', 1037014783783L)").family, "corpassets");
+        assert_eq!(describe("7001"), Family { family: "stack".into(), detail: "7001".into() });
+        assert_eq!(describe("market").family, "market");
+    }
+
+    #[test]
+    fn clutter_matches_the_frontend_rules() {
+        let o = Overrides::default();
+        for id in ["ChatInvitation_1111922349", "ChannelSettingsDlg_fleet_1038711647935", "mail_readingWnd_380729425", "groupInfoWnd_494332", "contactmanagement_98477766", "ShipCargo_1033391582929", "ShipDroneBay_1033391582929", "StructureShipHangar_1033391582929", "containerWnd_1033391582929", "chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", "chatchannel_player_-78564080", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1039455460976"] {
+            assert!(is_clutter(id, &o), "{id} should be clutter");
+        }
+        for id in ["ShipCargo", "InventoryStation", "InventorySpace", "InventoryStructure", "containerContentWindow", "chatchannel_local", "chatchannel_corp", "chatchannel_alliance", "chatchannel_fleet", "chatchannel_incursion", "chatchannel_invasion", "chatchannel_newthing", "market", "overview", "probeScannerWindow", "assembleWindow"] {
+            assert!(!is_clutter(id, &o), "{id} should not be clutter");
+        }
+    }
+
+    #[test]
+    fn overrides_win_in_both_directions() {
+        let mut o = Overrides::default();
+        o.visible.insert("ShipCargo_1033391582929".into());
+        o.clutter.insert("market".into());
+        assert!(!is_clutter("ShipCargo_1033391582929", &o), "forced visible");
+        assert!(is_clutter("market", &o), "forced into the clutter set");
+    }
+
+    #[test]
+    fn environments_hide_only_the_exclusives() {
+        assert!(in_env("lobbyWnd", Env::All) && in_env("overview", Env::All));
+        assert!(in_env("lobbyWnd", Env::Docked) && !in_env("lobbyWnd", Env::Space));
+        assert!(in_env("StructureItemHangar", Env::Docked) && !in_env("StructureItemHangar", Env::Space));
+        assert!(in_env("overview", Env::Space) && !in_env("overview", Env::Docked));
+        assert!(in_env("overview_1", Env::Space) && !in_env("overview_1", Env::Docked), "a spawned instance follows its family");
+        assert!(in_env("directionalScannerWindow", Env::Space));
+        assert!(in_env("market", Env::Docked) && in_env("market", Env::Space), "unlisted shows in both");
+    }
+}
+```
+
+`Family` derives `Debug, PartialEq, Eq`. Add `mod mcp_filter;` to `lib.rs`. Run: `cargo test -p app --lib mcp_filter::` — expected: compile errors.
+
+- [ ] **Step 3: Implement the filter module**
+
+Above the tests:
+
+```rust
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+use serde::{Deserialize, Serialize};
+use settings_model::WindowRect;
+
+use crate::prefs::Preferences;
+
+/// The tables `windowLabels.ts` also reads. One file, two readers.
+const FILTERS_JSON: &str = include_str!("../../src/lib/data/window-filters.json");
+
+#[derive(Deserialize)]
+struct Tables {
+    param: HashMap<String, String>,
+    clutter_families: Vec<String>,
+    clutter_chat_details: Vec<String>,
+    clutter_ids: Vec<String>,
+    docked_only: Vec<String>,
+    space_only: Vec<String>,
+}
+
+fn tables() -> &'static Tables {
+    static T: OnceLock<Tables> = OnceLock::new();
+    T.get_or_init(|| serde_json::from_str(FILTERS_JSON).expect("window-filters.json"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Env {
+    #[default]
+    All,
+    Docked,
+    Space,
+}
+
+/// The user's own clutter decisions, from preferences.json.
+#[derive(Debug, Default)]
+pub(crate) struct Overrides {
+    pub clutter: HashSet<String>,
+    pub visible: HashSet<String>,
+}
+
+impl Overrides {
+    pub(crate) fn from_prefs(p: &Preferences) -> Self {
+        Overrides {
+            clutter: p.layout.clutter.iter().cloned().collect(),
+            visible: p.layout.visible.iter().cloned().collect(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Family {
+    pub family: String,
+    pub detail: String,
+}
+
+/// `windowLabels.ts`'s OPAQUE: an id, a hash, a GUID — a suffix segment that
+/// carries no meaning for a reader.
+fn opaque(seg: &str) -> bool {
+    let s = seg.strip_prefix('-').unwrap_or(seg);
+    let s = s.strip_suffix('L').unwrap_or(s);
+    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        || (seg.len() >= 16 && seg.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// `instanceDetail`: the leading non-opaque segments of a suffix, or the
+/// suffix itself when every segment is opaque.
+fn instance_detail(rest: &str) -> String {
+    let kept: Vec<&str> = rest.split('_').take_while(|seg| !opaque(seg)).collect();
+    if kept.is_empty() { rest.to_string() } else { kept.join(" ") }
+}
+
+/// `describe()`'s family and detail — the label is the projection's job.
+pub(crate) fn describe(id: &str) -> Family {
+    // 1. A stringified Python tuple: ('corpassets', 1037014783783L).
+    if let Some(rest) = id.strip_prefix("('") {
+        if let Some(end) = rest.find('\'') {
+            let family = &rest[..end];
+            let detail = rest[end + 1..].trim_start_matches([',', ' ']).trim_end_matches(')').trim();
+            return Family { family: family.into(), detail: detail.into() };
+        }
+    }
+    // 2. All digits: a stack container EVE minted.
+    if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+        return Family { family: "stack".into(), detail: id.into() };
+    }
+    // 3. A parameterised family, longest prefix first.
+    let best = tables().param.keys().filter(|p| id.starts_with(&format!("{p}_"))).max_by_key(|p| p.len());
+    if let Some(prefix) = best {
+        return Family { family: prefix.clone(), detail: instance_detail(&id[prefix.len() + 1..]) };
+    }
+    // 4/5. A singleton.
+    Family { family: id.into(), detail: String::new() }
+}
+
+/// `isClutter`: overrides first, then exact ids, then chat by detail, then a
+/// spawned instance of a clutter family (a bare parent stays visible).
+pub(crate) fn is_clutter(id: &str, o: &Overrides) -> bool {
+    if o.visible.contains(id) { return false; }
+    if o.clutter.contains(id) { return true; }
+    let t = tables();
+    if t.clutter_ids.iter().any(|c| c == id) { return true; }
+    let f = describe(id);
+    if f.family == "chatchannel" {
+        return t.clutter_chat_details.iter().any(|d| *d == f.detail);
+    }
+    t.clutter_families.iter().any(|c| *c == f.family) && !f.detail.is_empty()
+}
+
+/// A minted numeric container that belongs to no stack — a dead frame.
+pub(crate) fn is_orphan_frame(w: &WindowRect) -> bool {
+    w.stack.is_none() && !w.id.is_empty() && w.id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `inEnv`: only the exclusives hide; an id is in a set by exact id or family.
+pub(crate) fn in_env(id: &str, env: Env) -> bool {
+    if env == Env::All { return true; }
+    let family = describe(id).family;
+    let t = tables();
+    let has = |set: &[String]| set.iter().any(|s| *s == id || *s == family);
+    match env {
+        Env::Docked => !has(&t.space_only),
+        Env::Space => !has(&t.docked_only),
+        Env::All => true,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WindowFilter {
+    pub include_closed: bool,
+    pub hide_clutter: bool,
+    pub env: Env,
+    pub matches: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Hidden { Closed, Clutter, Environment, Match }
+
+/// Why a window is left out of the view, or `None` if it is shown. The order
+/// is the canvas's `windowMatches`: open, clutter, environment, text.
+pub(crate) fn hidden_by(w: &WindowRect, f: &WindowFilter, o: &Overrides) -> Option<Hidden> {
+    if !f.include_closed && !w.open { return Some(Hidden::Closed); }
+    if f.hide_clutter && (is_clutter(&w.id, o) || is_orphan_frame(w)) { return Some(Hidden::Clutter); }
+    if !in_env(&w.id, f.env) { return Some(Hidden::Environment); }
+    if let Some(q) = f.matches.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        let q = q.to_lowercase();
+        let hay = format!("{} {} {}", w.label, describe(&w.id).detail, w.id).to_lowercase();
+        if !hay.contains(&q) { return Some(Hidden::Match); }
+    }
+    None
+}
+
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub(crate) struct HiddenCounts { pub closed: usize, pub clutter: usize, pub environment: usize, pub matched: usize }
+
+impl HiddenCounts {
+    pub(crate) fn add(&mut self, h: Hidden) {
+        match h {
+            Hidden::Closed => self.closed += 1,
+            Hidden::Clutter => self.clutter += 1,
+            Hidden::Environment => self.environment += 1,
+            Hidden::Match => self.matched += 1,
+        }
+    }
+}
+```
+
+In `prefs.rs`, next to `path`:
+
+```rust
+/// `path` without a Tauri handle — `dirs::config_dir()` is what Tauri's
+/// `config_dir()` calls — for the MCP server (mcp.rs), which honours the
+/// user's clutter overrides.
+pub(crate) fn path_base() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join(crate::APP_DIR).join("preferences.json"))
+}
+```
+
+Run: `cargo test -p app --lib mcp_filter::` — expected 4 passed. If the tuple case needs a different trim, match `windowLabels.ts` (`TUPLE_ID = /^\('([^']*)'\s*,?\s*/`, then strip a trailing `)`).
+
+- [ ] **Step 4: Failing MCP tests**
+
+Add to `mod tests` in `mcp.rs`:
+
+```rust
+    /// The layout fixture plus one private chat (clutter), one docked-only
+    /// window and an orphan numeric frame, all open; `fitting` closed.
+    fn cluttered_layout_char_bytes() -> Vec<u8> {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let geom = |x: i64| BmValue::Tuple(vec![BmValue::Int(x), BmValue::Int(0), BmValue::Int(300), BmValue::Int(200), BmValue::Int(2560), BmValue::Int(1440)]);
+        let ids = ["overview", "market", "chatchannel_player_-78564080", "lobbyWnd", "9009", "fitting"];
+        let sizes: Vec<(BmValue, BmValue)> = ids.iter().enumerate().map(|(i, id)| (b(id), geom(i as i64 * 100))).collect();
+        let open: Vec<(BmValue, BmValue)> = ids.iter().map(|id| (b(id), BmValue::Bool(*id != "fitting"))).collect();
+        encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
+            (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(sizes)])),
+            (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(open)])),
+        ]))])).unwrap()
+    }
+
+    fn ids_of(v: &Value) -> Vec<String> {
+        v["windows"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn layout_get_hides_clutter_by_default_and_counts_what_it_hid() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        let ids = ids_of(&v);
+        assert!(ids.contains(&"overview".into()) && ids.contains(&"market".into()) && ids.contains(&"lobbyWnd".into()));
+        assert!(!ids.contains(&"chatchannel_player_-78564080".into()), "a private chat is clutter");
+        assert!(!ids.contains(&"9009".into()), "an orphan frame is clutter");
+        assert!(!ids.contains(&"fitting".into()), "closed by default");
+        assert_eq!(v["hidden"], json!({ "closed": 1, "clutter": 2, "environment": 0, "matched": 0 }));
+        let v = s.call("layout_get", &args(json!({ "hide_clutter": false, "include_closed": true }))).unwrap();
+        assert_eq!(ids_of(&v).len(), 6);
+        assert_eq!(v["hidden"]["clutter"], 0);
+    }
+
+    #[test]
+    fn layout_get_filters_by_environment_and_text() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_get", &args(json!({ "environment": "space" }))).unwrap();
+        let ids = ids_of(&v);
+        assert!(ids.contains(&"overview".into()));
+        assert!(!ids.contains(&"lobbyWnd".into()), "docked-only hidden in space");
+        assert_eq!(v["hidden"]["environment"], 1);
+        let v = s.call("layout_get", &args(json!({ "environment": "docked" }))).unwrap();
+        assert!(!ids_of(&v).contains(&"overview".into()), "space-only hidden when docked");
+        let v = s.call("layout_get", &args(json!({ "match": "MARK" }))).unwrap();
+        assert_eq!(ids_of(&v), vec!["market".to_string()]);
+        assert!(v["hidden"]["matched"].as_u64().unwrap() >= 2);
+        assert_eq!(s.call("layout_get", &args(json!({ "environment": "orbit" }))).unwrap_err()["code"], "bad_arguments");
+    }
+
+    #[test]
+    fn layout_render_legend_and_picture_use_the_same_filter() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
+        let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
+        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-78564080"));
+        assert_eq!(v["hidden"]["clutter"], 2);
+        let v = s.call("layout_render", &args(json!({ "width": 400, "hide_clutter": false, "environment": "docked" }))).unwrap();
+        let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
+        assert!(drawn.contains(&"chatchannel_player_-78564080") && !drawn.contains(&"overview"));
+    }
+
+    #[test]
+    fn the_users_clutter_overrides_are_honoured() {
+        let (s, _) = open_char(&cluttered_layout_char_bytes());
+        // A private preferences.json for this server: force market into
+        // clutter and the private chat out of it.
+        let prefs_dir = std::env::temp_dir().join(format!("mcp-prefs-{}", std::process::id()));
+        std::fs::create_dir_all(&prefs_dir).unwrap();
+        let prefs_path = prefs_dir.join("preferences.json");
+        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-78564080"]}}"#).unwrap();
+        let s = EveMcp { prefs_path: Some(prefs_path), ..s };
+        let ids = ids_of(&s.call("layout_get", &Args::new()).unwrap());
+        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-78564080".into()));
+    }
+```
+
+`EveMcp` gains `pub prefs_path: Option<PathBuf>` — `serve()` sets it from `prefs::path_base()`, `EveMcp::new` takes it as a third argument (update the two other constructors: `for_tests()` passes `None`, the copy tests' `EveMcp::new(app_dir, vec![root])` calls gain `None`). `Preferences`/`LayoutPrefs` carry `#[serde(default)]`, so the partial JSON above loads.
+
+Run: `cargo test -p app --lib mcp::layout_get_hides mcp::layout_get_filters mcp::layout_render_legend mcp::the_users` — expected: failures (no `hidden`, no filtering).
+
+- [ ] **Step 5: Wire the filters**
+
+In `mcp.rs`:
+
+```rust
+use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter};
+use crate::prefs;
+```
+
+Replace `layout_view(wl, include_closed)` with `layout_view(wl: &WindowLayout, f: &WindowFilter, o: &Overrides) -> Value`: for each window, `mcp_filter::hidden_by(w, f, o)` — `Some(reason)` increments a `HiddenCounts` and skips the window, `None` emits it as before; the result gains `"hidden": counts`. `settable_flags` stays the union over ALL windows (a filter must not change it). Helpers:
+
+```rust
+impl EveMcp {
+    fn overrides(&self) -> Overrides {
+        self.prefs_path.as_deref().map(|p| Overrides::from_prefs(&prefs::load_from(p))).unwrap_or_default()
+    }
+}
+
+fn window_filter(args: &Args) -> Result<WindowFilter, Value> {
+    Ok(WindowFilter {
+        include_closed: opt(args, "include_closed")?.unwrap_or(false),
+        hide_clutter: opt(args, "hide_clutter")?.unwrap_or(true),
+        env: opt::<Env>(args, "environment")?.unwrap_or_default(),
+        matches: opt(args, "match")?,
+    })
+}
+```
+
+`layout_get` → `Ok(layout_view(&wl, &window_filter(args)?, &self.overrides()))`. `layout_edit`'s `finish` closure uses the default filter (`window_filter(&Args::new())`) — the batch's args are ops, not view args. `layout_render`: `mcp_render::layout_png(&wl, width, &filter, &overrides)` — the renderer takes the filter and overrides, calls `mcp_filter::hidden_by` per window (a hidden window is neither drawn nor listed; a closed window that survives the filter — only possible with `include_closed` — draws as an outline as before), and returns `HiddenCounts` in the `Legend` as `hidden`. Update `layout_png`'s two existing test call sites to pass `&WindowFilter { include_closed: false, hide_clutter: false, env: Env::All, matches: None }` (or `true` where the old `include_closed` argument was `true`) and `&Overrides::default()`, so their pixel assertions stay exactly as they are.
+
+Schemas — both tools gain:
+
+```rust
+"hide_clutter": { "type": "boolean", "description": "Default true: omit windows EVE spawns per chat, item or dialog, and dead stack frames." },
+"environment": { "type": "string", "enum": ["all", "docked", "space"], "description": "Default all. docked hides space-only windows (overview, d-scan, drones); space hides docked-only ones (station services, hangars)." },
+"match": { "type": "string", "description": "Only windows whose label, detail or id contains this text." }
+```
+
+Descriptions — `layout_get`: after the sentence about closed windows, add "Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding." `layout_render`: the same sentence. `layout_edit`: "returns the open, non-clutter windows as layout_get does by default".
+
+Primer `## layout`, after its first paragraph, add: "By default `layout_get` and `layout_render` hide closed windows and clutter — the windows EVE spawns per chat, item or dialog, and dead stack frames — which is most of a real file. `hidden` counts what was left out. `environment: docked` or `space` narrows to what can be on screen there; `match` finds a window by name. A window that is not listed is usually filtered, not missing: relax the filter before concluding. Filters never limit `layout_edit`."
+
+Spec §2.1: add the three arguments to the `layout_get`/`layout_render` rows and `hidden: {closed, clutter, environment, matched}` to their shapes.
+
+- [ ] **Step 6: Run everything**
+
+`cargo test -p app --lib mcp_filter:: mcp:: mcp_render::` green; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`; from `app/`: `npm run check`, `npm test` — all exit 0. The stdio smoke list is unchanged (no new tools).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/src/lib/data/window-filters.json app/src/lib/windowLabels.ts app/src-tauri/src/mcp_filter.rs app/src-tauri/src/prefs.rs app/src-tauri/src/lib.rs app/src-tauri/src/mcp.rs app/src-tauri/src/mcp_render.rs app/src-tauri/src/mcp_primer.md docs/superpowers/specs/2026-09-20-mcp-all-surfaces-design.md
+git commit -m "MCP: layout_get and layout_render take the canvas's filters — clutter, environment, text
+
+The clutter and environment tables move to data/window-filters.json,
+read by windowLabels.ts and by the new mcp_filter.rs; the user's own
+clutter overrides in preferences.json are honoured; hidden counts say
+what a view left out.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
