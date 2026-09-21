@@ -2,6 +2,7 @@ mod accounts;
 mod groups;
 mod launcher;
 pub mod mcp;
+mod mcp_filter;
 mod mcp_render;
 mod mcp_setup;
 mod names;
