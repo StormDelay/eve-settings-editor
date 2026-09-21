@@ -1311,11 +1311,7 @@ fn canonical(path: &str) -> Result<PathBuf, Value> {
 /// `{path, fidelity}` of an open slot — what `open` reports per slot — or
 /// `None` for an empty one.
 fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
-    let guard = match slot {
-        Slot::Char => state.char.lock(),
-        Slot::User => state.user.lock(),
-    }
-    .unwrap();
+    let guard = state.doc(slot).lock().unwrap();
     guard.as_ref().map(|d| json!({ "path": d.path.to_string_lossy(), "fidelity": d.fidelity }))
 }
 
@@ -1324,28 +1320,33 @@ fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
 /// dirty slot is never re-read — its edits are the point, and `save`'s
 /// conflict check will name the situation.
 ///
-/// ponytail: `open_file` clears the undo stack when it reloads, so a dirty
-/// sibling slot keeps its edits but loses undo. Rare (one slot dirty, the
-/// other clean and stale, on a re-open); the edits are what matters.
+/// Reads straight through `Document::load` rather than `ops::open_file`:
+/// `open_file` empties the slot on a decode failure (the window's contract
+/// for a fresh `open`), but here the file merely changed since the LAST
+/// load — a partial client write is exactly the case this function exists
+/// for — so a file that no longer decodes is left alone: the old document is
+/// still a coherent snapshot, and the next `save` will report the conflict.
+///
+/// ponytail: a successful re-read clears the undo stack (same as
+/// `open_file`), so a dirty sibling slot keeps its edits but loses undo.
+/// Rare (one slot dirty, the other clean and stale, on a re-open); the edits
+/// are what matters.
 fn reload_stale(state: &AppState) {
     for slot in [Slot::User, Slot::Char] {
         let path = {
-            let guard = match slot {
-                Slot::Char => state.char.lock(),
-                Slot::User => state.user.lock(),
-            }
-            .unwrap();
+            let guard = state.doc(slot).lock().unwrap();
             match guard.as_ref() {
-                Some(d) if d.changed_on_disk() => d.path.to_string_lossy().into_owned(),
+                Some(d) if d.changed_on_disk() => d.path.clone(),
                 _ => continue,
             }
         };
         if state.history.lock().unwrap().dirty(slot) {
             continue;
         }
-        // A failing re-read leaves the slot as it was (`open_file`'s own
-        // guarantee); the next `save` then reports the conflict.
-        let _ = ops::open_file(state, slot, &path);
+        if let Ok(doc) = settings_model::Document::load(&path) {
+            *state.doc(slot).lock().unwrap() = Some(doc);
+            state.history.lock().unwrap().clear_for(slot);
+        }
     }
 }
 
@@ -1374,6 +1375,10 @@ impl EveMcp {
         let user_key = canonical(&user_file)?;
         let char_key = char_file.as_deref().map(canonical).transpose()?;
 
+        // ponytail: check-then-insert across file IO. One connection today;
+        // when PR 2 shares the map between connections, two first opens of
+        // one account race and the loser's workspace is not the map's — take
+        // the map lock around the whole None branch then.
         let existing = self.workspaces.lock().unwrap().get(&user_key).cloned();
         let ws = match existing {
             Some(ws) => {
@@ -1388,20 +1393,15 @@ impl EveMcp {
                 if swap {
                     let h = ws.history.lock().unwrap();
                     if h.dirty(Slot::Char) || h.dirty(Slot::User) {
-                        let who = open_char
-                            .as_ref()
-                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                            .unwrap_or_else(|| "the open character".into());
-                        return Err(err(
-                            "unsaved_edits",
-                            format!("{who} or its account has unsaved edits; save or undo them before opening another character of this account"),
-                        ));
+                        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned());
+                        let want = char_key.as_deref().map(name).unwrap_or_default();
+                        let message = match &open_char {
+                            Some(have) => format!("{} or its account has unsaved edits; save or undo them before opening {want}", name(have)),
+                            None => format!("the account has unsaved edits; save or undo them before opening {want}"),
+                        };
+                        return Err(err("unsaved_edits", message));
                     }
                     drop(h);
-                    // Both slots are clean, so closing first loses nothing, and
-                    // a failing open leaves the slot empty rather than pointing
-                    // at the previous sibling.
-                    ops::close_file(&ws, Slot::Char);
                     if let Some(p) = &char_file {
                         open_slot(&ws, Slot::Char, p)?;
                     }
@@ -1846,6 +1846,15 @@ mod tests {
             .unwrap_err();
         assert_eq!(e["code"], "io");
         assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(cpath.to_string_lossy()));
+
+        // A directory canonicalizes fine but fails to read: the same "leave
+        // the slot as it was" contract, reached without an intervening close.
+        let dir = cpath.parent().unwrap();
+        let e = s
+            .call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": dir.to_string_lossy() })))
+            .unwrap_err();
+        assert_eq!(e["code"], "io");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(cpath.to_string_lossy()));
     }
 
     /// `open_file` leaves a slot untouched on an io error — a failing NEW
@@ -1994,6 +2003,19 @@ mod tests {
         let v = s.call("overview_get", &Args::new()).unwrap();
         assert_eq!(visible_count(&v), 2, "the edit is still there");
         assert_eq!(s.call("save", &Args::new()).unwrap_err()["code"], "conflict");
+    }
+
+    /// A changed file that no longer decodes — the client mid-write — is left
+    /// alone: the old document stays, and the workspace stays usable.
+    #[test]
+    fn open_keeps_a_clean_slot_whose_changed_file_no_longer_decodes() {
+        let (s, a) = open_user(&overview_user_bytes());
+        std::fs::write(&a, [0x7E, 0, 0, 0, 0, 0x3D]).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert_eq!(v["tabs"].as_array().unwrap().len(), 1, "the old document is still there");
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.call("status", &Args::new()).unwrap()["user"].is_object(), "and the workspace still serves the account");
     }
 
     /// The key is the canonical path, so a spelling the model chooses finds

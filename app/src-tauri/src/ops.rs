@@ -96,7 +96,7 @@ impl AppState {
     pub fn ptr_eq(&self, other: &AppState) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
-    fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
+    pub(crate) fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
         match slot {
             Slot::Char => &self.char,
             Slot::User => &self.user,
