@@ -4,11 +4,6 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-- **Claude Desktop from the Microsoft Store is now detected.** The AI access sheet said it was not installed and could not register the server; the Store build keeps its config in a different place.
-
 ## [0.38.0] - 2026-09-21
 
 An AI assistant can edit your settings: a built-in MCP server covers every editor.
