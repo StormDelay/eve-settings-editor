@@ -92,6 +92,7 @@ impl AppState {
         }))
     }
     /// Whether two handles are one workspace.
+    #[cfg(test)]
     pub fn ptr_eq(&self, other: &AppState) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
