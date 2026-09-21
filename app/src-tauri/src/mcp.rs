@@ -27,6 +27,7 @@ use crate::undo;
 pub struct EveMcp {
     /// One workspace per account file, by canonical `core_user` path
     /// (spec §3.1). `Arc` so PR 2 can share it between connections.
+    #[allow(dead_code)] // read by `open` from Task 4 on
     workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
     /// What `open` last selected. `None` until then; `state()` lends a
     /// scratch workspace so an early tool fails with `no_document` as before.
