@@ -33,8 +33,9 @@ The app can be driven by an AI assistant through the
 started with `--mcp` is an MCP server exposing every editor — overview, probe
 formations, window layout (with a rendered picture), autofill, keybinds, Neocom,
 HUD, fleet and chat — plus copy settings and settings presets. Every edit goes
-through the same backup → verify → atomic-write chain as the app itself, and
-nothing is written until the assistant saves.
+through the same backup → verify → atomic-write chain as the app itself:
+in-file edits are written only when the assistant saves; copy settings and
+settings presets write immediately, with backups.
 
 Open **AI access…** from the app menu. With Claude Desktop installed, **Register**
 adds the server to its config (restart Claude Desktop afterwards). For any other

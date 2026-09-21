@@ -120,7 +120,9 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
     let width = width.clamp(MIN_W, MAX_W);
     let (rw, rh) = if wl.reference_w > 0 && wl.reference_h > 0 { (wl.reference_w, wl.reference_h) } else { (1920, 1080) };
     let scale = width as f64 / rw as f64;
-    let height = ((rh as f64 * scale).round() as u32).max(1);
+    // A pathological reference_h (or a near-zero reference_w blowing up scale)
+    // must not overflow the `width * height * 3` buffer arithmetic below.
+    let height = ((rh as f64 * scale).round() as u32).clamp(1, MAX_W * 2);
     let mut c = Canvas::new(width, height);
     c.fill(0, 0, width as i64, height as i64, GROUND);
     for i in 1..10 {
@@ -185,6 +187,12 @@ pub(crate) fn layout_png(wl: &WindowLayout, width: u32, include_closed: bool) ->
         enc.set_depth(png::BitDepth::Eight);
         let mut writer = enc.write_header().expect("png header");
         writer.write_image_data(&c.px).expect("png data");
+    }
+    // Same reasoning as `layout_get`: the legend is what a client without
+    // image support sees, so a window nothing drew is dead weight unless
+    // asked for — `drawn` itself stays on every row that remains.
+    if !include_closed {
+        rows.retain(|r| r.drawn);
     }
     let legend = Legend { width, height, reference_w: rw, reference_h: rh, scale, windows: rows };
     (png, legend)
@@ -256,16 +264,19 @@ mod tests {
         assert_eq!(px(&img, 5, 100), GROUND, "closed window not drawn");
         let rows = &legend.windows;
         assert!(rows.iter().find(|r| r.id == "overview").unwrap().drawn);
-        assert!(!rows.iter().find(|r| r.id == "fitting").unwrap().drawn);
-        let in_stack: Vec<&LegendRow> = rows.iter().filter(|r| r.stack.as_deref() == Some("C")).collect();
-        assert_eq!(in_stack.len(), 3, "m1, m2 and the container C all belong to the stack");
-        assert_eq!(in_stack.iter().filter(|r| r.drawn).count(), 1, "a stack draws once, at its anchor");
+        assert!(rows.iter().all(|r| r.drawn), "the legend lists only drawn windows by default");
+        assert!(rows.iter().find(|r| r.id == "fitting").is_none(), "closed window omitted from the legend unless asked");
+        assert!(rows.iter().find(|r| r.id == "m1").is_none(), "a non-anchor stack member is never drawn, so it's omitted too");
         assert!(rows.iter().find(|r| r.id == "C").unwrap().drawn, "C is open with geometry, so it is the anchor");
 
         let (png, legend) = layout_png(&wl, 640, true);
         let img = decode(&png);
         assert_ne!(px(&img, 0, 62), GROUND, "closed window drawn as an outline when asked");
-        assert!(legend.windows.iter().find(|r| r.id == "fitting").unwrap().drawn);
+        let rows = &legend.windows;
+        assert!(rows.iter().find(|r| r.id == "fitting").unwrap().drawn, "include_closed draws it as an outline");
+        let in_stack: Vec<&LegendRow> = rows.iter().filter(|r| r.stack.as_deref() == Some("C")).collect();
+        assert_eq!(in_stack.len(), 3, "include_closed lists m1, m2 and the container C, all belonging to the stack");
+        assert_eq!(in_stack.iter().filter(|r| r.drawn).count(), 1, "a stack draws once, at its anchor");
     }
 
     #[test]
