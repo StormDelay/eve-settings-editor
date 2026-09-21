@@ -513,10 +513,12 @@ mod tests {
     /// The spec derives this list "over the non-test half of ops.rs", and the
     /// half matters: the test module's own fixtures are named `ts`, `bb` and
     /// `geom`, and letting the closure pull those into the writer set turns
-    /// every fixture builder into a "multi-write command".
+    /// every fixture builder into a "multi-write command". The slice ends at
+    /// the test module header — a `#[cfg(test)]` helper above it (such as
+    /// `AppState::ptr_eq`) is not the test module.
     fn ops_src() -> &'static str {
         const OPS_FULL: &str = include_str!("ops.rs");
-        match OPS_FULL.find("#[cfg(test)]") {
+        match OPS_FULL.find("mod tests {") {
             Some(i) => &OPS_FULL[..i],
             None => OPS_FULL,
         }
