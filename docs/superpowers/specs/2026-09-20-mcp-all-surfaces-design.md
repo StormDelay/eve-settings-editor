@@ -55,15 +55,18 @@ Decisions taken on 2026-09-20, with what they beat:
 
 | Tool | Input | Backed by | Returns |
 |---|---|---|---|
-| `layout_get` | — | `ops::window_layout(state, Slot::Char)` | `{reference_w, reference_h, windows: [{id, label, name?, open, renderable, resolution_matches, geom?: {x, y, w, h, screen_w, screen_h}, flags: [{name, value, settable}], stack?: {container_id, index?}}], stacks: [{container_id, container_label, anchor_id, members}]}` — the projection minus every path; `settable` is `set != Unavailable`. Units are pixels at the file's reference resolution. |
-| `layout_edit` | `ops: [...]` | see below | `layout_get`'s shape |
-| `layout_render` | `width?` (px, default 1024, 320–2048), `include_closed?` (default false) | `layout_get`'s data → `mcp_render::layout_png` | **Two content blocks**: a PNG image (base64, `image/png`) of the screen at the file's reference aspect ratio, every open renderable window drawn as a filled box with a 1-px border and its `label` in a 5×7 bitmap font (uppercased, truncated to the box), stacks drawn once at their anchor with a tab strip and the member labels; plus a text block `{width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack?}]}` — the legend, which is also what a client without image support sees. |
+| `layout_get` | `include_closed?` (default false) | `ops::window_layout(state, Slot::Char)` | `{reference_w, reference_h, windows: [{id, label, name?, open, renderable, resolution_matches, geom?: {x, y, w, h, screen_w, screen_h}, flags: [names that are on], stack?: {container_id, role}}], stacks: [{container_id, container_label, anchor_id, members}], settable_flags: [names this file can set at all]}` — the projection minus every path; windows with `open == false` are omitted unless `include_closed`. Units are pixels at the file's reference resolution. |
+| `layout_edit` | `ops: [...]` | see below | `layout_get`'s shape, `include_closed` false (open windows only) |
+| `layout_render` | `width?` (px, default 1024, 320–2048), `include_closed?` (default false) | `layout_get`'s data → `mcp_render::layout_png` | **Two content blocks**: a PNG image (base64, `image/png`) of the screen at the file's reference aspect ratio, every open renderable window drawn as a filled box with a 1-px border and its `label` in a 5×7 bitmap font (uppercased, truncated to the box), stacks drawn once at their anchor with a tab strip and the member labels; plus a text block `{width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack?}]}` — the legend, which is also what a client without image support sees; the legend lists drawn windows unless `include_closed`. |
 
 Ops of `layout_edit`, each one flat object with `op` plus the union of fields:
 
 - `set_geometry {window, x?, y?, w?, h?}` — at least one of x/y/w/h (`missing_field` otherwise). Builds exactly what `LayoutView.svelte`'s `geomMutations` builds: one `set_scalar` per changed axis on the projection's `x_path`/`y_path`/`w_path`/`h_path`, plus `set_scalar` on `screen_w_path`/`screen_h_path` with the layout's `reference_w`/`reference_h` when `resolution_matches` is false and something changed. A window with no `geom` → error `no_geometry`. Unknown id → `unknown_window`.
 - `set_flag {window, flag, on}` — `flagMutation`'s twin: `Set{path}` → `set_scalar` `"true"`/`"false"`; `Insert{parent, key}` → `insert_dict_entry` with `NewValue::Bool`; `Unavailable` → error `flag_unavailable`. Unknown flag name → `unknown_flag` listing the window's flag names.
 - `stack_create {a, b}` → `ops::stack_create(state, a, b)`; `stack_add {window, container}` → `ops::stack_add`; `stack_unstack {window}` → `ops::stack_unstack`; `stack_reorder {container, members}` → `ops::stack_reorder`; `stack_delete_orphans {}` → `ops::stack_delete_orphans`.
+
+`set_geometry` on a stacked window applies the geometry to every window of
+the stack (members and container), as EVE keeps them identical.
 
 The geometry and flag ops collect their mutations and apply them with one
 `ops::apply_mutations(state, Slot::Char, &mutations)` per op — inside the
@@ -147,6 +150,8 @@ Resolution: exactly one source and at least one target (`missing_field` /
 `locate` (already in `mcp.rs`); unknown → `unknown_character`.
 `source_settings_preset` → `BatchSource::Preset { dir: presets::preset_path(app_dir, name), anchor_dir: <the first target's parent directory> }`; the others → `BatchSource::Character { path }`.
 `aspects` enum: `layout, overview, autofill, keybinds, probe_formations, fleet, everything` (`setup::Aspect`'s serde names). Descriptions explain `collateral_char_ids` (an account file is shared by every character on it — copying an account-side aspect onto one alt changes its siblings too) and `allow_other_folders` (targets in a different profile folder are excluded unless set).
+
+A requested target the plan never saw (another profile folder) is reported as excluded (preview) or `ok: false` (apply) with the `allow_other_folders` hint.
 
 ### 2.9 Settings presets (2) — app-owned bundles, not overview presets
 
