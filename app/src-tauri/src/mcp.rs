@@ -509,6 +509,21 @@ fn tool_defs() -> Vec<ToolDef> {
             }), &[]),
         },
         ToolDef {
+            name: "settings_presets_list",
+            description: "A settings preset is a saved bundle of one character's settings kept by this app — not an overview preset (see overview_presets_edit). Lists them: [{name, aspects, full, modified_unix, error}]. full means whole files were saved (aspects: everything).",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "settings_preset_edit",
+            description: "A settings preset is a saved bundle of one character's settings kept by this app — not an overview preset. One op per call. create {name, aspects, overwrite?} saves the OPEN files' chosen aspects (open the character and its account first); rename {name, new_name}; delete {name}; export {name, path} writes a shareable file; import {path} adds one (returns imported_as). WRITES TO DISK IMMEDIATELY — the app's own preset folders, never a settings file. Returns {presets: [...]}. To put a preset onto characters, use copy_preview/copy_apply with source_settings_preset.",
+            schema: || obj(json!({
+                "op": { "type": "string", "enum": ["create", "rename", "delete", "export", "import"] },
+                "name": { "type": "string" }, "new_name": { "type": "string" }, "path": { "type": "string" },
+                "aspects": { "type": "array", "items": { "type": "string", "enum": ["layout", "overview", "autofill", "keybinds", "probe_formations", "fleet", "everything"] } },
+                "overwrite": { "type": "boolean" }
+            }), &["op"]),
+        },
+        ToolDef {
             name: "undo",
             description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
             schema: || obj(json!({}), &[]),
@@ -806,6 +821,8 @@ impl EveMcp {
             "eve_guide" => self.eve_guide(args),
             "open" => self.open(args),
             "save" => self.save(args),
+            "settings_presets_list" => Ok(settings_presets_view(&self.dir)),
+            "settings_preset_edit" => self.settings_preset_edit(args),
             "undo" => self.undo(),
             "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
             "restore_backup" => self.restore_backup(args),
@@ -940,6 +957,14 @@ fn locate(char_id: u64, profiles: &[Profile], roster: &AccountRoster) -> Option<
 
 use crate::presets;
 use crate::setup::{self, Aspect, BatchSource};
+
+/// The app's saved bundles, without their folder paths.
+fn settings_presets_view(dir: &Path) -> Value {
+    let list: Vec<Value> = presets::list(dir).into_iter().map(|p| json!({
+        "name": p.name, "aspects": p.aspects, "full": p.full, "modified_unix": p.modified_unix, "error": p.error,
+    })).collect();
+    Value::Array(list)
+}
 
 struct CopyArgs { source: BatchSource, targets: Vec<String>, aspects: Vec<Aspect>, allow_other_folders: bool }
 
@@ -1292,6 +1317,30 @@ fn appearance_op(state: &AppState, a: &Args) -> Result<(), Value> {
 }
 
 impl EveMcp {
+    fn settings_preset_edit(&self, args: &Args) -> ToolResult {
+        let op: String = req(args, "op")?;
+        let mut extra = Map::new();
+        match op.as_str() {
+            "create" => {
+                let name: String = req(args, "name")?;
+                let aspects: Vec<Aspect> = req(args, "aspects")?;
+                let overwrite = opt::<bool>(args, "overwrite")?.unwrap_or(false);
+                setup::preset_save(&self.state, &self.dir, &name, &aspects, overwrite).map_err(fail)?;
+            }
+            "rename" => presets::rename(&self.dir, &req::<String>(args, "name")?, &req::<String>(args, "new_name")?).map_err(|e| err("preset", e))?,
+            "delete" => presets::delete(&self.dir, &req::<String>(args, "name")?).map_err(|e| err("preset", e))?,
+            "export" => presets::export_to(&self.dir, &req::<String>(args, "name")?, Path::new(&req::<String>(args, "path")?)).map_err(|e| err("preset", e))?,
+            "import" => {
+                let name = presets::import_from(&self.dir, Path::new(&req::<String>(args, "path")?)).map_err(|e| err("preset", e))?;
+                extra.insert("imported_as".into(), json!(name));
+            }
+            _ => return Err(unknown_op(&op)),
+        }
+        let mut v = json!({ "presets": settings_presets_view(&self.dir) });
+        v.as_object_mut().unwrap().extend(extra);
+        Ok(v)
+    }
+
     /// Apply `ops` in order under one undo group, so the batch is one undo
     /// step and — because `edit_reshared` rolls an open group back on any
     /// failing write — atomic. A failure carries the op's index.
@@ -2455,5 +2504,31 @@ mod tests {
         assert_eq!(std::fs::read(&src).unwrap(), std::fs::read(&tgt).unwrap());
         let e = s.call("copy_files", &args(json!({ "source": src.to_string_lossy(), "targets": [prof.join("core_char_200.dat").to_string_lossy()] }))).unwrap();
         assert_eq!(e[0]["ok"], false, "a different kind is refused per target: {e}");
+    }
+
+    #[test]
+    fn settings_presets_create_from_the_open_files_then_rename_export_import_delete() {
+        let (root, prof, app_dir) = temp_profile();
+        let s = EveMcp::new(app_dir.clone(), vec![root]);
+        s.call("open", &args(json!({ "user_file": prof.join("core_user_500.dat").to_string_lossy(), "char_file": prof.join("core_char_100.dat").to_string_lossy() }))).unwrap();
+        assert_eq!(s.call("settings_presets_list", &Args::new()).unwrap(), json!([]));
+
+        let v = s.call("settings_preset_edit", &args(json!({ "op": "create", "name": "PvP kit", "aspects": ["overview"] }))).unwrap();
+        assert_eq!(v["presets"][0]["name"], "PvP kit");
+        assert_eq!(v["presets"][0]["aspects"], json!(["overview"]));
+        assert_no_paths(&v, "settings_preset_edit");
+        assert_eq!(s.call("settings_preset_edit", &args(json!({ "op": "create", "name": "PvP kit", "aspects": ["overview"] }))).unwrap_err()["code"], "preset");
+
+        let v = s.call("settings_preset_edit", &args(json!({ "op": "rename", "name": "PvP kit", "new_name": "Fleet kit" }))).unwrap();
+        assert_eq!(v["presets"][0]["name"], "Fleet kit");
+
+        let out = app_dir.join("fleet-kit.esp");
+        s.call("settings_preset_edit", &args(json!({ "op": "export", "name": "Fleet kit", "path": out.to_string_lossy() }))).unwrap();
+        assert!(out.exists());
+        s.call("settings_preset_edit", &args(json!({ "op": "delete", "name": "Fleet kit" }))).unwrap();
+        assert_eq!(s.call("settings_presets_list", &Args::new()).unwrap(), json!([]));
+        let v = s.call("settings_preset_edit", &args(json!({ "op": "import", "path": out.to_string_lossy() }))).unwrap();
+        assert_eq!(v["imported_as"], "Fleet kit");
+        assert_eq!(v["presets"].as_array().unwrap().len(), 1);
     }
 }
