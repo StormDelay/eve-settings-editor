@@ -1279,6 +1279,7 @@ impl EveMcp {
             })),
             "in_window": self.attached().is_some_and(|a| a.in_window),
             "account_read_only": self.account_read_only(),
+            "window_available": self.window.is_none() && crate::mcp_live::window_listening(&crate::mcp_live::endpoint()),
         }))
     }
 
@@ -2078,7 +2079,8 @@ impl ServerHandler for EveMcp {
     }
 }
 
-/// Run until the client closes the pipe. Never builds a Tauri app.
+/// `--mcp`: relay to the window when one is listening (spec §4.1), else run
+/// headless until the client closes the pipe. Never builds a Tauri app.
 pub fn serve() {
     let dir = crate::app_dir_base().unwrap_or_else(std::env::temp_dir);
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -2086,6 +2088,11 @@ pub fn serve() {
         .build()
         .expect("tokio runtime");
     rt.block_on(async {
+        let endpoint = crate::mcp_live::endpoint();
+        if let Some(stream) = crate::mcp_live::connect(&endpoint).await {
+            let _ = crate::mcp_live::relay(stream).await;
+            return;
+        }
         let server = EveMcp::new(dir, settings_model::default_roots(), prefs::path_base());
         let running = server.serve(rmcp::transport::stdio()).await.expect("mcp initialize");
         let _ = running.waiting().await;
@@ -2623,14 +2630,24 @@ mod tests {
         assert!(u.unwrap().ends_with("core_user_80000001.dat"));
     }
 
+    // `window_available` depends on whether a real window happens to be
+    // listening on this machine's endpoint, and `EVE_MCP_ENDPOINT` is
+    // process-global — unsafe to pin in a test that runs alongside others.
+    // Every other field stays an exact check; `window_available` only gets
+    // its type asserted here. The relay integration test proves it `true`.
     #[test]
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
         let s = EveMcp::for_tests();
         let v = s.call("status", &Args::new()).unwrap();
-        assert_eq!(v, json!({
-            "char": null, "user": null, "can_undo": false, "workspaces": [],
-            "mode": "headless", "window": null, "in_window": false, "account_read_only": false,
-        }));
+        assert_eq!(v["char"], Value::Null);
+        assert_eq!(v["user"], Value::Null);
+        assert_eq!(v["can_undo"], false);
+        assert_eq!(v["workspaces"], json!([]));
+        assert_eq!(v["mode"], "headless");
+        assert_eq!(v["window"], Value::Null);
+        assert_eq!(v["in_window"], false);
+        assert_eq!(v["account_read_only"], false);
+        assert!(v["window_available"].is_boolean());
     }
 
     #[test]
