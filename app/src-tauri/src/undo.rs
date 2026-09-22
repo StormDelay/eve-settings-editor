@@ -121,6 +121,9 @@ pub struct Entry {
     /// Restored with the trees, which is what makes the unsaved badge exact
     /// across an undo rather than merely plausible.
     counters: [u64; 2],
+    /// Unique across the process, never reused: undo/redo move entries, a new
+    /// edit after an undo is a new entry. What live mode's `undo` gate keys on.
+    serial: u64,
 }
 
 impl Entry {
@@ -175,6 +178,8 @@ pub struct History {
     /// entry yet, `Some(true)` inside one that has — after which further writes
     /// in the same command bump counters but push nothing.
     group: Option<bool>,
+    /// The next `Entry::serial`. Monotone; never restored by undo.
+    next_serial: u64,
 }
 
 /// What a write found when it looked for a before-state. Three outcomes rather
@@ -222,6 +227,7 @@ impl History {
                 None => None,
             },
             counters: self.counters,
+            serial: 0,
         })
     }
 
@@ -238,6 +244,9 @@ impl History {
                 return;
             }
         };
+        let mut entry = entry;
+        self.next_serial += 1;
+        entry.serial = self.next_serial;
         self.redo.clear();
         // The dropped entry's trees are owned with no sharing, so its memory is
         // freed here: the stack is flat at the cap, not merely bounded by it.
@@ -278,8 +287,11 @@ impl History {
         let Some(entry) = self.undo.pop_back() else { return false };
         // The current state becomes the redo step. If it will not encode there
         // is no redo to offer, which is strictly better than offering one that
-        // would restore nothing.
-        if let Some(now) = self.capture(u, c) {
+        // would restore nothing. Stamped with the popped entry's OWN serial:
+        // undo/redo move an entry between the two stacks, they do not retire
+        // it, so a later redo must land back with the same identity.
+        if let Some(mut now) = self.capture(u, c) {
+            now.serial = entry.serial;
             self.redo.push(now);
         }
         entry.restore_into(u, c, &mut self.counters);
@@ -288,7 +300,8 @@ impl History {
 
     pub fn redo(&mut self, u: &mut Option<Document>, c: &mut Option<Document>) -> bool {
         let Some(entry) = self.redo.pop() else { return false };
-        if let Some(now) = self.capture(u, c) {
+        if let Some(mut now) = self.capture(u, c) {
+            now.serial = entry.serial;
             self.undo.push_back(now);
         }
         entry.restore_into(u, c, &mut self.counters);
@@ -327,6 +340,20 @@ impl History {
     }
     pub fn depth(&self) -> usize {
         self.undo.len()
+    }
+
+    /// Per-slot edit counters `[char, user]`, and the values they had at the
+    /// last load or save: together with `depth` and `top_serial`, the
+    /// fingerprint live mode compares before and after a tool call.
+    pub fn counters(&self) -> [u64; 2] {
+        self.counters
+    }
+    pub fn saved(&self) -> [u64; 2] {
+        self.saved
+    }
+    /// The serial of the entry on top of the undo stack, `None` when empty.
+    pub fn top_serial(&self) -> Option<u64> {
+        self.undo.back().map(|e| e.serial)
     }
 }
 
@@ -448,6 +475,15 @@ pub fn redo(state: &AppState) -> Option<UndoOutcome> {
 pub fn undo_state(state: &AppState) -> UndoState {
     let h = state.history.lock().unwrap();
     UndoState { can_undo: h.can_undo(), can_redo: h.can_redo(), depth: h.depth() }
+}
+
+/// The projection the window lands after a change it did not make (live
+/// mode) — the same shape `undo`/`redo` return, without a step.
+pub fn outcome_of(state: &AppState) -> UndoOutcome {
+    let u = state.user.lock().unwrap();
+    let c = state.char.lock().unwrap();
+    let h = state.history.lock().unwrap();
+    outcome(&u, &c, &h)
 }
 
 #[cfg(test)]

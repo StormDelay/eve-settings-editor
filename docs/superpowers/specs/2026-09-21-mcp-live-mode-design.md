@@ -195,11 +195,11 @@ AI client ──stdio──▶ app.exe --mcp ──named pipe──▶ running w
 ```
 
 - **Endpoint**: Windows `\\.\pipe\eve-settings-editor-<username>`; elsewhere
-  `<app dir>/mcp.sock` created `0600`. Both are reachable only by the same
-  user, which is the trust boundary the exe already has.
+  `<app dir>/mcp.sock` created `0600`. The socket is `0600`; the pipe's default DACL lets other local users open it read-only, and the protocol says nothing without a request — so both are writable only by this user, which is the trust boundary the exe already has. `EVE_MCP_ENDPOINT` overrides the name (tests).
 - **`--mcp`** (`mcp::serve`): try to connect once. Connected → copy stdin to
   the pipe and the pipe to stdout until either side closes, then exit. Not
   connected → serve headless as today. The relay never parses a byte of MCP.
+  Windows named pipes have no half-close (tokio's `poll_shutdown` on a pipe is a flush), so the relay does not use `copy_bidirectional`: it races the two copy directions and ends when either does, then shuts the runtime down without waiting for the parked stdin read.
 - **Window** (`lib.rs` `setup`): spawn a listener on `tauri::async_runtime`.
   Per connection: `EveMcp { window: Some(state.clone()), workspaces: shared,
   on_change: Some(emit), … }.serve((reader, writer))` — rmcp's `IntoTransport`
@@ -248,20 +248,14 @@ mid-interaction re-reads exactly as it does after a Ctrl+Z today.
 
 ### 4.4 Undo
 
-On the window's workspace the connection records the fingerprint
-`(counters, depth)` after each of its own calls. `undo` proceeds only if the
-current fingerprint equals the recorded one — the top of the stack is this
-connection's own step — otherwise error `window_edited`: "the window changed
-the document since your last edit; undo there (Ctrl+Z), or make a new edit".
-A user Ctrl+Z followed by Ctrl+Y restores the fingerprint, and the
-assistant's `undo` works again, which is correct: its step is back on top.
-Private workspaces keep today's unrestricted `undo`.
+Every undo entry carries a **serial** (monotone, never reused; undo and redo move entries, a new edit after an undo is a new entry). On the window's workspace the connection keeps the serials of the steps its own calls pushed; `undo` proceeds only if the top entry's serial is one of them — then pops it and forgets any of its steps that were above it — otherwise error `window_edited`: "the top of the undo stack is not your step — the user edited in the window since. Undo there (Ctrl+Z) or make a new edit". A user Ctrl+Z followed by Ctrl+Y puts the same entry back, and the assistant's `undo` works again. Edit counters would not do: undo a step and make another edit on the same slot and the counters read the same as before, while the entry on top is somebody else's. Private workspaces keep today's unrestricted `undo`.
 
 ### 4.5 Window UX
 
-- **Toast** per assistant tool call that changed the document, "Claude:
+- **Toast** per assistant tool call that changed the document, "Assistant:
   `overview_tabs_edit`", with the Undo action. One call is one toast — a
-  ten-op `overview_tabs_edit` batch is one call.
+  ten-op `overview_tabs_edit` batch is one call — except `undo` itself and
+  any outcome that leaves nothing to undo, which get no Undo button.
 - **Indicator**: a dot in the context bar while at least one connection is
   attached, tooltip "AI assistant connected". Driven by `ai-connected`.
 - **AI access sheet**: one added sentence — "While this app is open, the
@@ -289,11 +283,11 @@ Each caught by an existing check, none needing code now:
 - **Workspace memory**: one parsed `AppState` per account the assistant has
   opened, for the process lifetime. A twenty-character roster is a few tens of
   MB. No `close` tool; add one if it bites.
-- **`ai-wrote` from a private workspace's `save`** is not emitted: by rule 2
-  a private workspace can only save a *character* file the window does not
-  have open, or an account file the window does not hold — except the rule 3
-  case above, where the window's own changed-on-disk check answers at its
-  next save.
+- **A private workspace's `save`** can write a file the window has open —
+  the user switched the window to that character after the private edit —
+  so `save` announces every written path that is not the current
+  attachment's own slot, and the window re-reads it or flags it as after a
+  batch.
 
 ## 6. Safety
 
@@ -302,6 +296,11 @@ Each caught by an existing check, none needing code now:
   reach the disk.
 - The pipe is same-user only. Anything that can connect could already run the
   exe.
+- A different local user account can create the pipe name first; the
+  window's `first_pipe_instance(true)` then fails silently and this user's
+  `--mcp` would relay to the squatter. It needs a second interactive user on
+  the machine; the cheap hardening — checking the pipe server's owning
+  process on connect — is deferred.
 - The assistant can never replace the window's document: `open` attaches or
   serves a private workspace; the window's slots are only ever changed by the
   window's own commands.

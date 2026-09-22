@@ -13,6 +13,36 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => calls.dispatch(cmd, args),
 }));
 
+// Tauri events, the other boundary a browser test cannot cross. `listen`
+// registers; `events.fire` plays a backend push — the in-window MCP server's
+// `ai-edit` / `ai-wrote` / `ai-connected` — so a test drives the shell the
+// way the backend does.
+type Handler = (event: { payload: unknown }) => void;
+class Events {
+  private handlers = new Map<string, Set<Handler>>();
+  on(name: string, cb: Handler) {
+    if (!this.handlers.has(name)) this.handlers.set(name, new Set());
+    this.handlers.get(name)!.add(cb);
+  }
+  off(name: string, cb: Handler) {
+    this.handlers.get(name)?.delete(cb);
+  }
+  fire(name: string, payload: unknown) {
+    for (const cb of this.handlers.get(name) ?? []) cb({ payload });
+  }
+  reset() {
+    this.handlers.clear();
+  }
+}
+export const events = new Events();
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (name: string, cb: Handler) => {
+    events.on(name, cb);
+    return Promise.resolve(() => events.off(name, cb));
+  },
+}));
+
 // jsdom implements pointer EVENTS but not pointer CAPTURE, so any component
 // that captures a drag — the layout canvas, the probe viewer — throws the
 // moment a test presses on it.
@@ -77,6 +107,7 @@ afterEach(() => {
   // dismissable now, so these deliberately outlive an unmount — which is exactly
   // what makes them leak between tests without this.
   resetAccountsSession();
+  events.reset();
 });
 
 export interface InvokeCall {
