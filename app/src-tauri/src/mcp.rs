@@ -1083,8 +1083,8 @@ impl EveMcp {
                 if let Some(serial) = after.top {
                     let mut own = self.own_steps.lock().unwrap();
                     own.push(serial);
-                    // The stack itself holds twenty; older serials can never match.
-                    if own.len() > 32 {
+                    // The stack itself holds `CAP`; older serials can never match.
+                    if own.len() > undo::CAP {
                         own.remove(0);
                     }
                 }
@@ -1792,12 +1792,14 @@ impl EveMcp {
     fn undo(&self) -> ToolResult {
         let st = self.state();
         if self.attached().is_some_and(|a| a.in_window) {
+            let Some(top) = st.history.lock().unwrap().top_serial() else {
+                return Err(err("nothing_to_undo", "the undo stack is empty"));
+            };
             // Spec §4.4: only this connection's own step, only while it is on
             // top. `rposition` lets a user Ctrl+Z that exposed an earlier own
             // step count as "on top" and forgets the steps above it.
-            let top = st.history.lock().unwrap().top_serial();
             let mut own = self.own_steps.lock().unwrap();
-            match top.and_then(|t| own.iter().rposition(|s| *s == t)) {
+            match own.iter().rposition(|s| *s == top) {
                 Some(pos) => own.truncate(pos),
                 None => {
                     return Err(err(
@@ -4174,5 +4176,16 @@ mod tests {
         s.call_observed("open", &open_args(&a, None)).unwrap();
         ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         s.call_observed("undo", &Args::new()).unwrap();
+    }
+
+    /// An empty stack in the window is `nothing_to_undo`, not a claim that
+    /// the user edited.
+    #[test]
+    fn undo_in_the_window_on_an_empty_stack_is_nothing_to_undo() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "nothing_to_undo");
     }
 }
