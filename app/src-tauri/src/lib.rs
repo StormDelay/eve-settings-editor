@@ -2,6 +2,7 @@ mod accounts;
 mod groups;
 mod launcher;
 pub mod mcp;
+pub mod mcp_live;
 mod mcp_filter;
 mod mcp_render;
 mod mcp_setup;
@@ -17,7 +18,8 @@ mod update;
 #[cfg(test)]
 mod testkit;
 
-use ops::{AppState, ErrDto, OpenOutcome};
+pub use ops::AppState;
+use ops::{ErrDto, OpenOutcome};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -714,6 +716,13 @@ pub fn run() {
                 }
                 builder.build()?;
             }
+
+            // Live mode (MCP spec §4): serve MCP over the same-user endpoint,
+            // one server per connection, over this window's own state.
+            let handle = app.handle().clone();
+            let state = app.state::<AppState>().inner().clone();
+            tauri::async_runtime::spawn(mcp_live::serve_in_window(handle, state));
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

@@ -14,15 +14,36 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt};
 use serde_json::{json, Map, Value};
 
-use settings_model::{discover, FileKind, Mutation, NewValue, OverviewColumns, Profile, SetTarget, WindowLayout, WindowRect};
+use settings_model::{discover, Fidelity, FileKind, Mutation, NewValue, OverviewColumns, Profile, SetTarget, WindowLayout, WindowRect};
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
 use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter};
+use crate::mcp_live::{Change, OnChange};
 use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::prefs;
 use crate::undo;
+
+/// What a connection is attached to (spec §3.1): the workspace `open` last
+/// selected and the canonical paths its slots held then, so a later call can
+/// tell when the workspace no longer holds those files (§3.3 `switched`).
+/// `in_window` marks the window's own state (PR 2, live mode).
+#[derive(Clone)]
+struct Attached {
+    state: AppState,
+    char: Option<PathBuf>,
+    user: Option<PathBuf>,
+    in_window: bool,
+}
+
+impl Attached {
+    /// Before any `open`: an empty state nothing is compared against, so an
+    /// early tool fails with `no_document` exactly as it always did.
+    fn scratch() -> Self {
+        Attached { state: AppState::new(), char: None, user: None, in_window: false }
+    }
+}
 
 pub struct EveMcp {
     /// One workspace per account file, by canonical `core_user` path
@@ -30,7 +51,10 @@ pub struct EveMcp {
     workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
     /// What `open` last selected. `None` until then; `state()` lends a
     /// scratch workspace so an early tool fails with `no_document` as before.
-    current: Mutex<Option<AppState>>,
+    current: Mutex<Option<Attached>>,
+    /// Live mode (spec §4): the window's own state, the workspace for whatever
+    /// the window has open. `None` headless.
+    pub window: Option<AppState>,
     /// The app dir — names cache, accounts.json, groups cache. Shared with
     /// the window, read-mostly.
     pub dir: PathBuf,
@@ -41,11 +65,36 @@ pub struct EveMcp {
     /// (`prefs::path_base()` in production; `None`, or a private path a test
     /// points at, otherwise).
     pub prefs_path: Option<PathBuf>,
+    /// Live mode: told after a call that changed the window's document or
+    /// wrote files on disk (spec §4.3). `None` headless.
+    pub on_change: Option<OnChange>,
+    /// Live mode, per connection: serials of the undo entries this connection
+    /// pushed onto the WINDOW's stack, in order (spec §4.4). `undo` pops only
+    /// while its own step is on top. Reset by `open`.
+    own_steps: Mutex<Vec<u64>>,
 }
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), dir, roots, prefs_path }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path, on_change: None, own_steps: Mutex::new(Vec::new()) }
+    }
+
+    /// The in-window server (spec §4.2): one per connection, over the window's
+    /// state and a workspace map shared by every connection of the process.
+    pub fn in_window(
+        dir: PathBuf,
+        roots: Vec<PathBuf>,
+        prefs_path: Option<PathBuf>,
+        window: AppState,
+        workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
+        on_change: OnChange,
+    ) -> Self {
+        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path, on_change: Some(on_change), own_steps: Mutex::new(Vec::new()) }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_live_tests(window: AppState) -> Self {
+        EveMcp::in_window(std::env::temp_dir().join("eve-mcp-tests"), vec![], None, window, Arc::default(), Arc::new(|_| {}))
     }
 
     /// The workspace tools act on: the one `open` last selected, or a scratch
@@ -54,7 +103,12 @@ impl EveMcp {
     /// see it — only tests that call `ops::open_file` on `state()` directly
     /// ever populate it.
     fn state(&self) -> AppState {
-        self.current.lock().unwrap().get_or_insert_with(AppState::new).clone()
+        self.current.lock().unwrap().get_or_insert_with(Attached::scratch).state.clone()
+    }
+
+    /// The attachment, or `None` before any `open`.
+    fn attached(&self) -> Option<Attached> {
+        self.current.lock().unwrap().clone()
     }
 }
 
@@ -600,7 +654,7 @@ fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "status",
-            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible — and every workspace this session holds (one per account) with its unsaved slots, so nothing is left unsaved by mistake. Call it to re-orient in a long conversation.",
+            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible, every workspace this session holds (one per account) with its unsaved slots — and, with the app window open, mode: live plus what the window has open. Call it to re-orient in a long conversation.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -643,7 +697,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "undo",
-            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
+            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert, and — in the window's workspace — with `window_edited` when the top step is the user's. For a saved change, use list_backups and restore_backup instead.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -938,10 +992,154 @@ impl EveMcp {
         EveMcp::new(std::env::temp_dir().join("eve-mcp-tests"), vec![], None)
     }
 
+    /// Spec §3.3: refuse to act on a workspace whose slots no longer hold the
+    /// files this connection attached to. Live mode makes this real — the
+    /// window switches files under an attached connection — and a second
+    /// connection swapping a shared private workspace does the same.
+    fn check_attached(&self, tool: &str) -> Result<(), Value> {
+        if WORKSPACE_FREE.contains(&tool) {
+            return Ok(());
+        }
+        let Some(a) = self.attached() else { return Ok(()) };
+        if a.user.is_none() {
+            return Ok(()); // the scratch: nothing was attached to
+        }
+        if let Some(win) = &self.window {
+            if !a.in_window && attached_paths(win) == (a.char.clone(), a.user.clone()) {
+                return Err(err(
+                    "switched",
+                    format!("the window now has {} open — call open again to work in it", file_label(a.char.as_deref())),
+                ));
+            }
+        }
+        let (char_now, user_now) = attached_paths(&a.state);
+        if char_now == a.char && user_now == a.user {
+            return Ok(());
+        }
+        Err(err(
+            "switched",
+            format!(
+                "this workspace now has {} open (account {}) — call open again",
+                file_label(char_now.as_deref()),
+                file_label(user_now.as_deref()),
+            ),
+        ))
+    }
+
+    /// Spec §3.5 rule 2, re-evaluated per call: a private workspace whose
+    /// account the window has open gets a read-only account slot, lifted
+    /// when the window leaves. Only a slot this code locked is unlocked, and a
+    /// dirty slot is never locked (rule 3) — locking it would strand its edits.
+    fn sync_account_lock(&self) {
+        let Some(win) = &self.window else { return };
+        let Some(a) = self.attached() else { return };
+        if a.in_window || a.user.is_none() {
+            return;
+        }
+        let (win_char, win_user) = attached_paths(win);
+        let held = win_user == a.user;
+        let reason = || match win_char.as_deref() {
+            Some(_) => {
+                let who = file_label(win_char.as_deref());
+                format!("{ACCOUNT_LOCK}as {who} — open {who} to edit account-side settings")
+            }
+            None => format!("{ACCOUNT_LOCK}with no character — open one of its characters there to edit account-side settings"),
+        };
+        // Slot lock first, history read under it: `user → char → history`
+        // permits taking history under the slot lock but not the reverse, so
+        // the dirty check must happen while the user guard is already held —
+        // otherwise an edit landing in the gap between two separate locks
+        // could lock a slot that went dirty in between (rule 3).
+        let mut guard = a.state.user.lock().unwrap();
+        let Some(doc) = guard.as_mut() else { return };
+        let dirty = a.state.history.lock().unwrap().dirty(Slot::User);
+        match (&doc.fidelity, held) {
+            (Fidelity::Editable, true) if !dirty => doc.fidelity = Fidelity::ReadOnly { reason: reason() },
+            // The window kept the account but changed character: the reason
+            // still names whoever it had before — re-stamp it.
+            (Fidelity::ReadOnly { reason: r }, true) if r.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::ReadOnly { reason: reason() },
+            (Fidelity::ReadOnly { reason: r }, false) if r.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::Editable,
+            _ => {}
+        }
+    }
+
+    /// Whether the current attachment's account slot carries this code's lock.
+    fn account_read_only(&self) -> bool {
+        let Some(a) = self.attached() else { return false };
+        let guard = a.state.user.lock().unwrap();
+        matches!(guard.as_ref().map(|d| &d.fidelity), Some(Fidelity::ReadOnly { reason }) if reason.starts_with(ACCOUNT_LOCK))
+    }
+
+    /// `call`, plus what the window hears about it (spec §4.3). Decided by
+    /// measuring the window's history before and after — not by a list of
+    /// mutating tools — so a new tool cannot ship without the window
+    /// refreshing. `restore_backup` replaces the document and resets the
+    /// counters, which can land on the same fingerprint, so it always emits.
+    pub(crate) fn call_observed(&self, name: &str, args: &Args) -> ToolResult {
+        let before = self.window.as_ref().map(Fingerprint::of);
+        let result = self.call(name, args);
+        if let Some(win) = &self.window {
+            let after = Fingerprint::of(win);
+            let attached = self.attached();
+            let in_window = attached.as_ref().is_some_and(|a| a.in_window);
+            // A workspace-free tool (`WORKSPACE_FREE`) never touches the
+            // attached workspace, so any movement the window shows around it
+            // is somebody else's — a user edit while `list_characters` was
+            // resolving names, say — never this connection's own step, and
+            // never this connection's toast to take credit for.
+            //
+            // ponytail: the fingerprint is still only snapshotted before and
+            // after the WHOLE call, so a user edit landing in the
+            // microseconds a genuine read spends between those two snapshots
+            // is still misattributed to this connection. Author-tagged undo
+            // entries (spec §11) would close it for good; not worth the
+            // accounting for a race this narrow.
+            let workspace_free = WORKSPACE_FREE.contains(&name);
+            // A new entry on top after this connection's own call is its step.
+            if in_window && !workspace_free && name != "undo" && after.top != before.and_then(|b| b.top) {
+                if let Some(serial) = after.top {
+                    let mut own_steps = self.own_steps.lock().unwrap();
+                    own_steps.push(serial);
+                    // The stack itself holds `CAP`; older serials can never match.
+                    if own_steps.len() > undo::CAP {
+                        own_steps.remove(0);
+                    }
+                }
+            }
+            if let Some(cb) = &self.on_change {
+                let moved = Some(after) != before;
+                if !workspace_free && (moved || (name == "restore_backup" && in_window && result.is_ok())) {
+                    cb(Change::Edited { tool: name.to_string(), outcome: Box::new(undo::outcome_of(win)) });
+                }
+                // `save {all: true}` never writes through the window's own
+                // slots — `self.workspaces` (what it sweeps) never holds the
+                // window's state — so nothing it reports can be this
+                // connection's own write to exclude, even when a private
+                // leftover's file happens to be the very one the window has
+                // SINCE opened (spec §5): that write did not come from the
+                // window's own copy, and must still reach it. `own` only
+                // matters for the single-workspace save, where `self.state()`
+                // (what actually gets saved) is exactly the attachment.
+                let all_save = name == "save" && args.get("all").and_then(Value::as_bool).unwrap_or(false);
+                let own: Vec<PathBuf> = if all_save {
+                    Vec::new()
+                } else {
+                    attached.map(|a| [a.char, a.user].into_iter().flatten().collect()).unwrap_or_default()
+                };
+                if let Some(paths) = written_paths(name, &result, in_window, &own) {
+                    cb(Change::Wrote(paths));
+                }
+            }
+        }
+        result
+    }
+
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
     /// finish in microseconds. (`list_characters` may block on ESI once for
     /// unknown names, exactly as the window's first launch does.)
     fn call(&self, name: &str, args: &Args) -> ToolResult {
+        self.check_attached(name)?;
+        self.sync_account_lock();
         match name {
             "status" => self.status(),
             "eve_guide" => self.eve_guide(args),
@@ -1106,6 +1304,14 @@ impl EveMcp {
             "user": slot(Slot::User),
             "can_undo": undo::undo_state(&st).can_undo,
             "workspaces": workspaces,
+            "mode": if self.window.is_some() { "live" } else { "headless" },
+            "window": self.window.as_ref().map(|w| json!({
+                "char": slot_view(w, Slot::Char).map(|v| v["path"].clone()),
+                "user": slot_view(w, Slot::User).map(|v| v["path"].clone()),
+            })),
+            "in_window": self.attached().is_some_and(|a| a.in_window),
+            "account_read_only": self.account_read_only(),
+            "window_available": self.window.is_none() && crate::mcp_live::window_listening(&crate::mcp_live::endpoint()),
         }))
     }
 
@@ -1367,6 +1573,92 @@ fn canonical(path: &str) -> Result<PathBuf, Value> {
     std::fs::canonicalize(path).map_err(|e| err("io", format!("{path}: {e}")))
 }
 
+/// The canonical paths a workspace's slots hold right now — `None` for an
+/// empty slot or a path that no longer canonicalizes.
+fn attached_paths(state: &AppState) -> (Option<PathBuf>, Option<PathBuf>) {
+    let path = |slot: Slot| {
+        let guard = state.doc(slot).lock().unwrap();
+        guard.as_ref().and_then(|d| std::fs::canonicalize(&d.path).ok())
+    };
+    (path(Slot::Char), path(Slot::User))
+}
+
+/// Where the window's history stands. Compared before and after a call: if
+/// it moved, the window has something to land. Serials make a new entry
+/// after an undo distinct from the one it replaced; `saved` catches a save,
+/// which moves no entry.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct Fingerprint {
+    counters: [u64; 2],
+    saved: [u64; 2],
+    depth: usize,
+    top: Option<u64>,
+}
+
+impl Fingerprint {
+    fn of(state: &AppState) -> Self {
+        let h = state.history.lock().unwrap();
+        Fingerprint { counters: h.counters(), saved: h.saved(), depth: h.depth(), top: h.top_serial() }
+    }
+}
+
+/// The settings files a tool wrote behind the open documents, from its own
+/// result: `copy_apply`/`copy_files` report each target with `ok`;
+/// `restore_backup` reports its `path` — on a private workspace that file may
+/// be one the window has open (a sibling character), so it is announced;
+/// `save` reports `saved[i].path` per slot — `own` (the attachment's own
+/// canonical slot paths) excludes an in-window save's own file (which would
+/// otherwise trigger a pointless self re-read, clearing the user's undo
+/// stack) while still announcing what `save {all: true}` wrote for a
+/// different, leftover workspace.
+fn written_paths(tool: &str, result: &ToolResult, in_window: bool, own: &[PathBuf]) -> Option<Vec<PathBuf>> {
+    let Ok(v) = result else { return None };
+    match tool {
+        "copy_apply" | "copy_files" => {
+            let paths: Vec<PathBuf> = v
+                .as_array()?
+                .iter()
+                .filter(|r| r["ok"] == true)
+                .filter_map(|r| r["path"].as_str().map(PathBuf::from))
+                .collect();
+            (!paths.is_empty()).then_some(paths)
+        }
+        "restore_backup" if !in_window => v["path"].as_str().map(|p| vec![PathBuf::from(p)]),
+        "save" => {
+            let paths: Vec<PathBuf> = v["saved"]
+                .as_array()?
+                .iter()
+                .filter_map(|r| r["path"].as_str().map(PathBuf::from))
+                // A reported path is whatever string the slot was opened
+                // with; compare canonical forms against `own` so a different
+                // spelling of the attachment's own file is still excluded.
+                .filter(|p| std::fs::canonicalize(p).map(|c| !own.contains(&c)).unwrap_or(true))
+                .collect();
+            (!paths.is_empty()).then_some(paths)
+        }
+        _ => None,
+    }
+}
+
+/// The name a person recognises a settings file by.
+fn file_label(p: Option<&Path>) -> String {
+    p.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "no character".into())
+}
+
+/// Tools that do not read the current workspace, so a stale attachment must
+/// not stop them: `open` and `status` are how a connection re-orients.
+const WORKSPACE_FREE: &[&str] = &[
+    "open", "status", "eve_guide", "list_characters", "groups_search", "builtin_presets",
+    "settings_presets_list", "lookup_character", "overview_pack_preview", "copy_preview", "copy_apply", "copy_files",
+];
+
+/// How the account lock (spec §3.5 rule 2) introduces itself in a
+/// `read_only` reason — shared by both of `sync_account_lock`'s `reason()`
+/// texts (naming the window's character, or "with no character" when it has
+/// none open). The prefix is also how `sync_account_lock` recognises a lock
+/// it set, as opposed to a slot that was read-only from load.
+const ACCOUNT_LOCK: &str = "the account is open in the window ";
+
 /// `{path, fidelity}` of an open slot — what `open` reports per slot — or
 /// `None` for an empty one.
 fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
@@ -1435,10 +1727,27 @@ impl EveMcp {
         let user_key = canonical(&user_file)?;
         let char_key = char_file.as_deref().map(canonical).transpose()?;
 
-        // ponytail: check-then-insert across file IO. One connection today;
-        // when PR 2 shares the map between connections, two first opens of
-        // one account race and the loser's workspace is not the map's — take
-        // the map lock around the whole None branch then.
+        // Live mode (spec §3.2 branch 1): the window's own state is the
+        // workspace for whatever the window has open. A sibling of the
+        // window's character falls through to a private workspace whose
+        // account slot `sync_account_lock` makes read-only.
+        if let Some(win) = &self.window {
+            let (win_char, win_user) = attached_paths(win);
+            if win_user.as_ref() == Some(&user_key) && (char_key.is_none() || win_char == char_key) {
+                if discard {
+                    return Err(err("in_window", "the window holds this account; its unsaved edits are the user's — Discard is theirs to press, in the window"));
+                }
+                self.own_steps.lock().unwrap().clear();
+                *self.current.lock().unwrap() = Some(Attached { state: win.clone(), char: win_char, user: win_user, in_window: true });
+                return Ok(json!({ "char": slot_view(win, Slot::Char), "user": slot_view(win, Slot::User), "in_window": true }));
+            }
+        }
+
+        // The map is shared between connections (live mode): two first opens
+        // of one account can race the None branch below. It re-checks under
+        // the lock it takes for the insert, and — if another connection won
+        // — drops the lock and recurses into `open` once, so the second pass
+        // takes the `Some` branch here, whose swap/dirty rules apply.
         let existing = self.workspaces.lock().unwrap().get(&user_key).cloned();
         let ws = match existing {
             Some(ws) => {
@@ -1454,8 +1763,11 @@ impl EveMcp {
                     if let Some(p) = target {
                         open_slot(&ws, Slot::Char, &p)?;
                     }
-                    *self.current.lock().unwrap() = Some(ws.clone());
-                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }));
+                    let (char, user) = attached_paths(&ws);
+                    self.own_steps.lock().unwrap().clear();
+                    *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
+                    self.sync_account_lock();
+                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }));
                 }
                 // Same character, or none asked for: nothing to load. `open`
                 // never discards a character to satisfy an account-only call.
@@ -1492,12 +1804,26 @@ impl EveMcp {
                 if let Some(p) = &char_file {
                     open_slot(&ws, Slot::Char, p)?;
                 }
-                self.workspaces.lock().unwrap().insert(user_key, ws.clone());
+                let mut map = self.workspaces.lock().unwrap();
+                if map.contains_key(&user_key) {
+                    // Lost the race: another connection inserted this
+                    // account while this one was doing file IO. Drop the
+                    // freshly built (and now discarded) workspace and
+                    // recurse once — the second pass sees the map entry and
+                    // takes the `Some` branch above.
+                    drop(map);
+                    return self.open(args);
+                }
+                map.insert(user_key, ws.clone());
+                drop(map);
                 ws
             }
         };
-        *self.current.lock().unwrap() = Some(ws.clone());
-        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
+        let (char, user) = attached_paths(&ws);
+        self.own_steps.lock().unwrap().clear();
+        *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
+        self.sync_account_lock();
+        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }))
     }
 
     fn save(&self, args: &Args) -> ToolResult {
@@ -1528,7 +1854,26 @@ impl EveMcp {
     }
 
     fn undo(&self) -> ToolResult {
-        match undo::undo(&self.state()) {
+        let st = self.state();
+        if self.attached().is_some_and(|a| a.in_window) {
+            let Some(top) = st.history.lock().unwrap().top_serial() else {
+                return Err(err("nothing_to_undo", "the undo stack is empty"));
+            };
+            // Spec §4.4: only this connection's own step, only while it is on
+            // top. `rposition` lets a user Ctrl+Z that exposed an earlier own
+            // step count as "on top" and forgets the steps above it.
+            let mut own = self.own_steps.lock().unwrap();
+            match own.iter().rposition(|s| *s == top) {
+                Some(pos) => own.truncate(pos),
+                None => {
+                    return Err(err(
+                        "window_edited",
+                        "the top of the undo stack is not your step — the user edited in the window since. Undo there (Ctrl+Z) or make a new edit; only your own steps can be undone from here.",
+                    ))
+                }
+            }
+        }
+        match undo::undo(&st) {
             Some(_) => self.status(),
             None => Err(err("nothing_to_undo", "the undo stack is empty")),
         }
@@ -1537,7 +1882,18 @@ impl EveMcp {
     fn restore_backup(&self, args: &Args) -> ToolResult {
         let slot: Slot = req(args, "slot")?;
         let backup: String = req(args, "backup_path")?;
-        match ops::restore_backup(&self.state(), slot, &backup).map_err(fail)? {
+        let state = self.state();
+        // The account lock (spec §3.5 rule 2) guards every account-side write
+        // tool through `ops`'s own fidelity check — but `restore_backup`
+        // replaces the document directly rather than routing through
+        // `ops::apply_mutation*`, so it needs its own read of the same
+        // fidelity, before touching any file.
+        if let Some(Fidelity::ReadOnly { reason }) = state.doc(slot).lock().unwrap().as_ref().map(|d| d.fidelity.clone()) {
+            if reason.starts_with(ACCOUNT_LOCK) {
+                return Err(err("read_only", reason));
+            }
+        }
+        match ops::restore_backup(&state, slot, &backup).map_err(fail)? {
             OpenOutcome::Opened { path, .. } => Ok(json!({ "path": path, "status": self.status()? })),
             // Unreachable in practice: `restore` refuses a backup that does not decode.
             OpenOutcome::ParseFailed { path, message, .. } => Err(err("parse_failed", format!("{path}: {message}"))),
@@ -1789,7 +2145,7 @@ impl ServerHandler for EveMcp {
         let args = request.arguments.unwrap_or_default();
         // Both outcomes are *results*, not protocol errors: the model must be
         // able to read a domain failure and react to it.
-        let result = match self.call(&request.name, &args) {
+        let result = match self.call_observed(&request.name, &args) {
             Ok(v) => CallToolResult::success(blocks(v)),
             Err(e) => CallToolResult::error(vec![ContentBlock::text(pretty(&e))]),
         };
@@ -1797,7 +2153,8 @@ impl ServerHandler for EveMcp {
     }
 }
 
-/// Run until the client closes the pipe. Never builds a Tauri app.
+/// `--mcp`: relay to the window when one is listening (spec §4.1), else run
+/// headless until the client closes the pipe. Never builds a Tauri app.
 pub fn serve() {
     let dir = crate::app_dir_base().unwrap_or_else(std::env::temp_dir);
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1805,10 +2162,23 @@ pub fn serve() {
         .build()
         .expect("tokio runtime");
     rt.block_on(async {
+        let endpoint = crate::mcp_live::endpoint();
+        if let Some(stream) = crate::mcp_live::connect(&endpoint).await {
+            let _ = crate::mcp_live::relay(stream).await;
+            return;
+        }
         let server = EveMcp::new(dir, settings_model::default_roots(), prefs::path_base());
         let running = server.serve(rmcp::transport::stdio()).await.expect("mcp initialize");
         let _ = running.waiting().await;
     });
+    // When the WINDOW side ends the relay first, `select!` drops the
+    // stdin->pipe `copy` future — but the blocking-pool task under it
+    // (tokio's `Stdin` read cannot be cancelled) is still parked waiting
+    // for a line. A plain runtime drop calls `BlockingPool::shutdown(None)`,
+    // which waits for that task, so the process would hang here until the
+    // client wrote to stdin again (and that write would then be silently
+    // swallowed). `shutdown_background` drops the runtime without waiting.
+    rt.shutdown_background();
 }
 
 #[cfg(test)]
@@ -2126,6 +2496,51 @@ mod tests {
         assert_eq!(st["user"]["dirty"], false);
     }
 
+    /// Spec §3.3: the workspace a connection selected can change under it —
+    /// the window switches files, another connection swaps a shared
+    /// workspace. The model is told, never silently redirected.
+    #[test]
+    fn a_workspace_that_changed_under_the_connection_reports_switched() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+
+        // Something else — here: a direct open on the shared state — moves the
+        // character slot to c2.
+        ops::open_file(&s.state(), Slot::Char, c2.to_str().unwrap()).unwrap();
+        let e = s.call("layout_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains(c2.file_name().unwrap().to_str().unwrap()), "{e}");
+
+        // `status`, `open` and the workspace-free tools still answer.
+        s.call("status", &Args::new()).unwrap();
+        s.call("eve_guide", &args(json!({ "topic": "workflow" }))).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+    }
+
+    /// A slot closing under the connection is a switch too.
+    #[test]
+    fn a_slot_closed_under_the_connection_reports_switched() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        ops::close_file(&s.state(), Slot::Char);
+        let e = s.call("hud_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains("no character"), "{e}");
+    }
+
+    /// Before any `open` there is nothing attached to check: tools fail with
+    /// `no_document` as they always did, never `switched`.
+    #[test]
+    fn the_scratch_workspace_is_never_switched() {
+        let s = EveMcp::for_tests();
+        assert_eq!(s.call("layout_get", &Args::new()).unwrap_err()["code"], "no_document");
+    }
+
     /// The key is the canonical path, so a spelling the model chooses finds
     /// the workspace a roster lookup created. The `.` segment is what makes
     /// this meaningful on the ubuntu CI: it is collapsed only by
@@ -2226,9 +2641,9 @@ mod tests {
 
     #[test]
     fn save_reports_what_was_already_saved_when_a_later_slot_fails() {
-        let (s, _) = open_user(&overview_user_bytes());
+        let (s, upath) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
 
         ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         ops::apply_mutation(
@@ -2297,11 +2712,24 @@ mod tests {
         assert!(u.unwrap().ends_with("core_user_80000001.dat"));
     }
 
+    // `window_available` depends on whether a real window happens to be
+    // listening on this machine's endpoint, and `EVE_MCP_ENDPOINT` is
+    // process-global — unsafe to pin in a test that runs alongside others.
+    // Every other field stays an exact check; `window_available` only gets
+    // its type asserted here. The relay integration test proves it `true`.
     #[test]
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
         let s = EveMcp::for_tests();
         let v = s.call("status", &Args::new()).unwrap();
-        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false, "workspaces": [] }));
+        assert_eq!(v["char"], Value::Null);
+        assert_eq!(v["user"], Value::Null);
+        assert_eq!(v["can_undo"], false);
+        assert_eq!(v["workspaces"], json!([]));
+        assert_eq!(v["mode"], "headless");
+        assert_eq!(v["window"], Value::Null);
+        assert_eq!(v["in_window"], false);
+        assert_eq!(v["account_read_only"], false);
+        assert!(v["window_available"].is_boolean());
     }
 
     #[test]
@@ -2948,9 +3376,9 @@ mod tests {
 
     #[test]
     fn fleet_get_projects_both_sides_and_strips_paths() {
-        let (s, _) = open_user(&empty_ui_bytes());
+        let (s, upath) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char", &empty_ui_bytes());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
         let v = s.call("fleet_get", &Args::new()).unwrap();
         assert_no_paths(&v, "fleet_get");
         assert_eq!(v["user_open"], true);
@@ -2962,9 +3390,9 @@ mod tests {
 
     #[test]
     fn fleet_edit_sets_a_field_a_colour_and_a_watchlist_entry_then_clears_the_colour() {
-        let (s, _) = open_user(&empty_ui_bytes());
+        let (s, upath) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char2", &empty_ui_bytes());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
         let v = s.call("fleet_edit", &args(json!({ "ops": [
             { "op": "set_field", "name": "listen_show_own", "value": "1" },
             { "op": "set_colour", "broadcast": "Target", "rgb": [0.2, 0.5, 1.0] },
@@ -3481,5 +3909,510 @@ mod tests {
         let v = s.call("settings_preset_edit", &args(json!({ "op": "import", "path": out.to_string_lossy() }))).unwrap();
         assert_eq!(v["imported_as"], "Fleet kit");
         assert_eq!(v["presets"].as_array().unwrap().len(), 1);
+    }
+
+    /// A server inside the window (spec §3.2 branch 1): `window` is the
+    /// window's own state. Tests build one over a fresh `AppState` and open
+    /// files into it directly, standing in for the window's commands.
+    fn live_server() -> (EveMcp, AppState) {
+        let win = AppState::new();
+        (EveMcp::for_live_tests(win.clone()), win)
+    }
+
+    #[test]
+    fn open_of_the_windows_character_attaches_to_the_windows_state() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        assert_eq!(v["in_window"], true);
+        assert!(s.state().ptr_eq(&win), "the window's state, not a copy");
+        // An edit through the server is an edit in the window's document.
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert!(win.history.lock().unwrap().dirty(Slot::User));
+
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["mode"], "live");
+        assert_eq!(st["in_window"], true);
+        assert_eq!(st["window"]["char"], json!(c1.to_string_lossy()));
+        assert_eq!(st["account_read_only"], false);
+        assert!(st["workspaces"].as_array().unwrap().is_empty(), "the window's state is not a private workspace");
+    }
+
+    /// The account-only form attaches too: nothing was asked that the window
+    /// does not already have open.
+    #[test]
+    fn open_of_the_windows_account_alone_attaches() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.state().ptr_eq(&win));
+    }
+
+    /// `discard` on the window's workspace would throw the USER's edits away.
+    #[test]
+    fn discard_is_refused_on_the_windows_workspace() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        let mut args = open_args(&a, None);
+        args.insert("discard".into(), json!(true));
+        assert_eq!(s.call("open", &args).unwrap_err()["code"], "in_window");
+    }
+
+    /// Spec §3.5 rule 2: a sibling of the window's character is a private
+    /// workspace whose account slot is read-only — reads work, character-side
+    /// edits work, account-side edits name the window's character.
+    #[test]
+    fn a_sibling_of_the_windows_character_gets_a_read_only_account_slot() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &layout_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert!(!s.state().ptr_eq(&win), "a private workspace");
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+        let reason = v["user"]["fidelity"]["reason"].as_str().unwrap();
+        assert!(reason.contains(c1.file_name().unwrap().to_str().unwrap()), "{reason}");
+
+        s.call("overview_get", &Args::new()).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap_err();
+        assert_eq!(e["code"], "read_only");
+        assert!(e["message"].as_str().unwrap().contains(c1.file_name().unwrap().to_str().unwrap()), "{e}");
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["in_window"], false);
+        assert_eq!(st["account_read_only"], true);
+
+        // The window moves to another account: the lock lifts on the next call.
+        let b = temp_file("mcp-live-b", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, b.to_str().unwrap()).unwrap();
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert_eq!(s.call("status", &Args::new()).unwrap()["account_read_only"], false);
+    }
+
+    /// A slot that was read-only from load stays read-only when the window
+    /// leaves: only a lock this code set is ever lifted.
+    #[test]
+    fn a_genuinely_read_only_account_slot_is_not_unlocked_by_the_window_leaving() {
+        let (s, win) = live_server();
+        // The document.rs fixture: a valid stream the encoder re-emits differently.
+        let a = temp_file("mcp-live-ro", &[0x7E, 0, 0, 0, 0, 0x06, 0x01]);
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert!(v["user"]["fidelity"]["reason"].as_str().unwrap().contains("re-encode"));
+        ops::close_file(&win, Slot::User);
+        s.call("status", &Args::new()).unwrap();
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+    }
+
+    /// Spec §3.5 rule 3: a private account slot that is already dirty when the
+    /// window opens that account is left writable — locking it would strand
+    /// the edits. The conflict check at save time answers instead.
+    #[test]
+    fn a_dirty_private_account_slot_is_not_locked_when_the_window_arrives() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        // Still writable: a second account-side edit goes through.
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": false }] }))).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["account_read_only"], false);
+        assert_eq!(st["user"]["dirty"], true);
+    }
+
+    /// Finding 1: `discard` on a private workspace re-evaluates the account
+    /// lock before answering, so a reply is never truthful for a moment and
+    /// wrong the next — and it names its own attachment, not the window's.
+    #[test]
+    fn discard_on_a_locked_private_workspace_reapplies_the_lock_and_says_so() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only", "a private, locked sibling");
+
+        let mut reopen = open_args(&a, Some(&c2));
+        reopen.insert("discard".into(), json!(true));
+        let v = s.call("open", &reopen).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only", "discard reloads from disk, then the lock re-applies");
+        assert_eq!(v["in_window"], false);
+    }
+
+    /// The window opens the very character a private workspace holds: the
+    /// private copy is no longer where the model should be.
+    #[test]
+    fn the_window_taking_the_private_character_reports_switched() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        ops::open_file(&win, Slot::Char, c2.to_str().unwrap()).unwrap();
+        let e = s.call("layout_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains("the window"), "{e}");
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["in_window"], true);
+    }
+
+    /// A live server whose `on_change` collects into a shared Vec.
+    fn observed_live_server() -> (EveMcp, AppState, Arc<Mutex<Vec<Change>>>) {
+        let win = AppState::new();
+        let seen: Arc<Mutex<Vec<Change>>> = Arc::default();
+        let sink = seen.clone();
+        let s = EveMcp::in_window(
+            std::env::temp_dir().join("eve-mcp-tests"),
+            vec![],
+            None,
+            win.clone(),
+            Arc::default(),
+            Arc::new(move |c| sink.lock().unwrap().push(c)),
+        );
+        (s, win, seen)
+    }
+
+    fn edited_tools(seen: &Arc<Mutex<Vec<Change>>>) -> Vec<String> {
+        seen.lock().unwrap().iter().filter_map(|c| match c { Change::Edited { tool, .. } => Some(tool.clone()), _ => None }).collect()
+    }
+
+    /// Spec §4.3: after a call that moved the window's history, one `Edited`
+    /// with the fresh projection and dirty flags; a read emits nothing; a
+    /// save emits (the flags changed); `undo` emits.
+    #[test]
+    fn a_call_that_changes_the_windows_document_emits_one_edited() {
+        let (s, win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_get", &Args::new()).unwrap();
+        assert!(seen.lock().unwrap().is_empty(), "reads and attaching emit nothing");
+
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert_eq!(edited_tools(&seen), ["overview_columns_edit"]);
+        match &seen.lock().unwrap()[0] {
+            Change::Edited { outcome, .. } => {
+                assert!(outcome.dirty.user && !outcome.dirty.char);
+                assert!(outcome.user_tree.is_some() && outcome.char_tree.is_none());
+                assert!(outcome.state.can_undo);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        s.call_observed("save", &Args::new()).unwrap();
+        assert_eq!(edited_tools(&seen), ["overview_columns_edit", "save"]);
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(edited_tools(&seen).len(), 3);
+    }
+
+    /// A private workspace is not the window: its edits emit nothing.
+    #[test]
+    fn a_private_workspace_edit_emits_nothing() {
+        let (s, _win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// `copy_files` writes settings files on disk behind the open documents: a `Wrote`
+    /// with the targets that succeeded.
+    ///
+    /// Deviation from the brief: `copy_files` validates source/targets against
+    /// `setup::all_settings_files(roots)`, which needs `discover()`'s
+    /// `<install>_<server>/settings_<profile>/core_*.dat` layout — a bare
+    /// `observed_live_server()` (`roots: vec![]`) can never populate it, and
+    /// `testkit::temp_file`'s flat temp dir can't satisfy that layout at any
+    /// root. Built the server directly over `temp_profile()`'s discoverable
+    /// files instead, the same fixture `copy_files_clones_a_file_onto_another_of_the_same_kind`
+    /// already uses for this file kind.
+    #[test]
+    fn copy_files_emits_wrote_with_the_written_targets() {
+        let (root, prof, _app_dir) = temp_profile();
+        let win = AppState::new();
+        let seen: Arc<Mutex<Vec<Change>>> = Arc::default();
+        let sink = seen.clone();
+        let s = EveMcp::in_window(
+            std::env::temp_dir().join("eve-mcp-tests"),
+            vec![root],
+            None,
+            win,
+            Arc::default(),
+            Arc::new(move |c| sink.lock().unwrap().push(c)),
+        );
+        let src = prof.join("core_user_500.dat");
+        let dst = prof.join("core_user_600.dat");
+        s.call_observed("copy_files", &args(json!({ "source": src.to_string_lossy(), "targets": [dst.to_string_lossy()] }))).unwrap();
+        let wrote: Vec<PathBuf> = seen.lock().unwrap().iter().filter_map(|c| match c { Change::Wrote(p) => Some(p.clone()), _ => None }).flatten().collect();
+        assert_eq!(wrote, vec![dst]);
+    }
+
+    /// `restore_backup` replaces the document; on the window's workspace it
+    /// emits `Edited` whatever the counters say, on a private one `Wrote`.
+    #[test]
+    fn restore_backup_emits_edited_in_the_window_and_wrote_privately() {
+        let (s, win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        s.call_observed("save", &Args::new()).unwrap();
+        let backups = s.call_observed("list_backups", &args(json!({ "slot": "user" }))).unwrap();
+        let backup = backups[0]["path"].as_str().unwrap().to_string();
+        seen.lock().unwrap().clear();
+        s.call_observed("restore_backup", &args(json!({ "slot": "user", "backup_path": backup }))).unwrap();
+        assert_eq!(edited_tools(&seen), ["restore_backup"]);
+
+        let (s, _win, seen) = observed_live_server();
+        let b = temp_file("mcp-live-b", &overview_user_bytes());
+        s.call_observed("open", &open_args(&b, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        s.call_observed("save", &Args::new()).unwrap();
+        let backups = s.call_observed("list_backups", &args(json!({ "slot": "user" }))).unwrap();
+        let backup = backups[0]["path"].as_str().unwrap().to_string();
+        seen.lock().unwrap().clear();
+        s.call_observed("restore_backup", &args(json!({ "slot": "user", "backup_path": backup }))).unwrap();
+        assert!(matches!(&seen.lock().unwrap()[..], [Change::Wrote(p)] if p == &vec![b.clone()]));
+    }
+
+    fn set_type_visible(s: &EveMcp, visible: bool) -> ToolResult {
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": visible }] })))
+    }
+
+    /// Spec §4.4: in the window's workspace, `undo` pops only this connection's
+    /// own step, and only while it is on top. The user's step beneath it is
+    /// never reachable; a user Ctrl+Z / Ctrl+Y that puts the assistant's
+    /// step back on top makes `undo` work again.
+    #[test]
+    fn undo_in_the_window_is_gated_on_the_assistants_own_step_being_on_top() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        // The user's own edit, before the assistant arrives.
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+
+        // Nothing of the assistant's on the stack yet: refused, and the user's
+        // step is untouched.
+        let e = s.call_observed("undo", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "window_edited");
+        assert_eq!(undo::undo_state(&win).depth, 1);
+
+        // Two assistant steps: both undoable, in order; then the user's is not.
+        set_type_visible(&s, false).unwrap();
+        set_type_visible(&s, true).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 3);
+        s.call_observed("undo", &Args::new()).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 1);
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+
+        // The user edits after the assistant: the assistant's step is buried.
+        set_type_visible(&s, false).unwrap();
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+        // The user undoes their own step: the assistant's is on top again.
+        undo::undo(&win).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+    }
+
+    /// Redo puts the same entry back: the gate recognises it.
+    #[test]
+    fn undo_in_the_window_survives_a_user_undo_redo_of_the_assistants_step() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        set_type_visible(&s, true).unwrap();
+        undo::undo(&win).unwrap();
+        undo::redo(&win).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 0);
+    }
+
+    /// A counters-only fingerprint would be fooled here: undo the assistant's
+    /// step, make a user edit on the same slot, and the counters read the
+    /// same. The serial does not.
+    #[test]
+    fn undo_in_the_window_is_not_fooled_by_a_user_edit_with_the_same_counters() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        set_type_visible(&s, true).unwrap();
+        undo::undo(&win).unwrap();
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+    }
+
+    /// Private workspaces keep today's unrestricted undo.
+    #[test]
+    fn undo_in_a_private_workspace_is_unrestricted() {
+        let (s, _win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+    }
+
+    /// An empty stack in the window is `nothing_to_undo`, not a claim that
+    /// the user edited.
+    #[test]
+    fn undo_in_the_window_on_an_empty_stack_is_nothing_to_undo() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "nothing_to_undo");
+    }
+
+    /// Final review, item 1: a workspace-free tool (`list_characters`) never
+    /// touches the attached workspace, so movement the window already shows
+    /// around it — a user edit that landed before this call — is never this
+    /// connection's own step: no toast, and `own_steps` unchanged (checked
+    /// through behaviour, since it is private: a following `undo` still
+    /// answers `window_edited` rather than popping the user's edit).
+    #[test]
+    fn movement_during_a_workspace_free_tool_is_not_this_connections() {
+        let (s, win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+
+        // The user's own edit in the window — nothing to do with this connection.
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+
+        s.call_observed("list_characters", &Args::new()).unwrap();
+        assert!(seen.lock().unwrap().is_empty(), "a workspace-free tool must not toast the user's own edit");
+        assert_eq!(
+            s.call_observed("undo", &Args::new()).unwrap_err()["code"],
+            "window_edited",
+            "own_steps did not grow: the user's step is still not this connection's to pop"
+        );
+    }
+
+    /// Final review, item 3: `save {all: true}` can write a leftover PRIVATE
+    /// workspace's dirty file that the window has since opened. That write
+    /// never touched the window's own in-memory document, so it must be
+    /// announced — the window's copy of that file is now stale on disk —
+    /// while the window's OWN account path (never dirtied here) is not
+    /// reported at all.
+    #[test]
+    fn save_all_announces_a_private_leftovers_write_the_window_has_since_opened() {
+        let (s, win, seen) = observed_live_server();
+        let x = temp_file("mcp-live-x", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, x.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        // A sibling of the window's character: a private workspace for X, char c2.
+        s.call_observed("open", &open_args(&x, Some(&c2))).unwrap();
+        ops::apply_mutation(
+            &s.state(),
+            Slot::Char,
+            &Mutation::InsertDictEntry { parent: vec![], key: NewValue::Str("probe".into()), value: NewValue::Int("1".into()) },
+        )
+        .unwrap();
+
+        // The user switches the window itself to c2.
+        ops::open_file(&win, Slot::Char, c2.to_str().unwrap()).unwrap();
+        // The assistant's next `open` of the same pair now attaches to the window.
+        let v = s.call_observed("open", &open_args(&x, Some(&c2))).unwrap();
+        assert_eq!(v["in_window"], true);
+        seen.lock().unwrap().clear();
+
+        s.call_observed("save", &args(json!({ "all": true }))).unwrap();
+        let wrote: Vec<PathBuf> = seen.lock().unwrap().iter().filter_map(|c| match c { Change::Wrote(p) => Some(p.clone()), _ => None }).flatten().collect();
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap();
+        assert!(wrote.iter().any(|p| canon(p) == canon(&c2)), "the private leftover's write to c2 is announced: {wrote:?}");
+        assert!(!wrote.iter().any(|p| canon(p) == canon(&x)), "the window's own account path is never reported: {wrote:?}");
+    }
+
+    /// Final review, item 4: two connections racing the first `open` of one
+    /// account must end up sharing a single workspace — the loser drops its
+    /// own attempt and recurses onto the winner's.
+    #[test]
+    fn two_connections_racing_the_first_open_of_an_account_share_one_workspace() {
+        let win = AppState::new();
+        let workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>> = Arc::default();
+        let a = temp_file("mcp-race-a", &overview_user_bytes());
+        let make = || EveMcp::in_window(std::env::temp_dir().join("eve-mcp-tests"), vec![], None, win.clone(), workspaces.clone(), Arc::new(|_| {}));
+        let (s1, s2) = (make(), make());
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let (a1, a2) = (a.clone(), a.clone());
+        let (b1, b2) = (barrier.clone(), barrier.clone());
+        let t1 = std::thread::spawn(move || {
+            b1.wait();
+            s1.call("open", &open_args(&a1, None)).unwrap();
+            s1
+        });
+        let t2 = std::thread::spawn(move || {
+            b2.wait();
+            s2.call("open", &open_args(&a2, None)).unwrap();
+            s2
+        });
+        let s1 = t1.join().unwrap();
+        let s2 = t2.join().unwrap();
+        assert!(s1.state().ptr_eq(&s2.state()), "both connections attached to the same workspace");
+        assert_eq!(workspaces.lock().unwrap().len(), 1, "exactly one workspace inserted for the account");
+    }
+
+    /// Final review, item 5: `restore_backup` on a locked account slot is
+    /// refused before any file access — the guard runs even for a backup
+    /// path that does not exist.
+    #[test]
+    fn restore_backup_respects_the_account_lock() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &layout_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        let e = s.call("restore_backup", &args(json!({ "slot": "user", "backup_path": "Z:/nope.dat" }))).unwrap_err();
+        assert_eq!(e["code"], "read_only");
+        assert!(e["message"].as_str().unwrap().contains(c1.file_name().unwrap().to_str().unwrap()), "{e}");
+    }
+
+    /// Final review, item 7: when the window holds the account with no
+    /// character open, the lock reason says so plainly instead of naming
+    /// "no character" as if it were a filename.
+    #[test]
+    fn account_lock_reason_names_no_character_when_the_window_has_none() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        // No character open in the window.
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+        let reason = v["user"]["fidelity"]["reason"].as_str().unwrap();
+        assert!(reason.contains("with no character"), "{reason}");
+        assert!(reason.starts_with(ACCOUNT_LOCK), "{reason}");
     }
 }

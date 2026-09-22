@@ -39,7 +39,9 @@
   import { accel } from "$lib/keys";
   import type { Ctx } from "$lib/commands";
   import { handleKey } from "$lib/keymap";
-  import { noteEdit } from "$lib/undo.svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { landUndo, noteEdit, undoAction } from "$lib/undo.svelte";
+  import type { UndoOutcome } from "$lib/api";
   import { resolveView, type View } from "$lib/views";
   import {
     subject,
@@ -151,6 +153,23 @@
 
   void rescanProfiles();
   void loadPrefs();
+  // Live mode (MCP spec §4.3): an assistant working inside this window sends
+  // what it changed. `ai-edit` is the shape undo lands; `ai-wrote` is a batch
+  // copy behind the open documents, which the batch view's handler already
+  // covers; `ai-connected` drives the context-bar indicator.
+  let aiConnections = $state(0);
+  void listen<{ tool: string; outcome: UndoOutcome }>("ai-edit", (e) => {
+    landUndo(e.payload.outcome);
+    // No Undo button on a toast that is itself an undo, or on one that left
+    // nothing to undo — there would be nothing for the button to do.
+    toast(`Assistant: ${e.payload.tool}`, {
+      action: e.payload.tool === "undo" || !e.payload.outcome.state.can_undo ? undefined : undoAction(),
+    });
+  });
+  void listen<{ paths: string[] }>("ai-wrote", (e) => void onBatchApplied(e.payload.paths));
+  void listen<{ connections: number }>("ai-connected", (e) => {
+    aiConnections = e.payload.connections;
+  });
   // Sticky: a version number is something you read, not glance at. A failed
   // check is silent — offline must never nag.
   api
@@ -505,6 +524,7 @@
     onOpenPreset={openPresetPair}
     onGoto={ctx.goto}
     {ctx}
+    aiConnected={aiConnections > 0}
     onRestored={(slot, outcome) => {
       subject.slots[slot] = outcome;
       subject.dirty[slot] = false;
