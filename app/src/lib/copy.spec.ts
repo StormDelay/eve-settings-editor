@@ -171,6 +171,11 @@ describe("the undo boundary (05b §8)", () => {
     // watch-list add is exactly as undoable as a mutation.
     "FleetView.svelte",
     "undo.svelte.ts",
+    // The shell's `ai-edit` listener lands the in-window assistant's own
+    // document edit through `landUndo`, the same outcome shape `doUndo` and
+    // `doRedo` apply — so the toast it raises is exactly as undoable as one of
+    // theirs.
+    "+page.svelte",
   ];
 
   test("only files that edit an open document mint an Undo action", () => {

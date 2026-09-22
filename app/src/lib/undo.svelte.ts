@@ -17,14 +17,15 @@ import { toast, type ToastAction } from "./ui/toasts.svelte";
 export const undoState = $state({ canUndo: false, canRedo: false });
 
 /**
- * Apply one step's outcome to the shell.
+ * Apply one step's outcome to the shell — ours, or one the in-window assistant
+ * made (`ai-edit`).
  *
  * `dirty` comes from the response and REPLACES whatever the frontend thought:
  * after edit → save → edit → undo the file is clean, and one more undo makes it
  * dirty again. No frontend-only scheme can tell those apart, so the frontend
  * does not try.
  */
-function land(r: Awaited<ReturnType<typeof api.undo>>): boolean {
+export function landUndo(r: Awaited<ReturnType<typeof api.undo>>): boolean {
   if (r === null) return false;
   for (const [slot, tree] of [
     ["char", r.char_tree],
@@ -51,11 +52,11 @@ function land(r: Awaited<ReturnType<typeof api.undo>>): boolean {
  * is exactly how a user concludes the undo did something they cannot see.
  */
 export async function doUndo(): Promise<void> {
-  if (!land(await api.undo())) toast("Nothing to undo.");
+  if (!landUndo(await api.undo())) toast("Nothing to undo.");
 }
 
 export async function doRedo(): Promise<void> {
-  if (!land(await api.redo())) toast("Nothing to redo.");
+  if (!landUndo(await api.redo())) toast("Nothing to redo.");
 }
 
 /** Re-read the stack's state after something that clears it — open, close,
