@@ -69,6 +69,13 @@ fn open_file(state: tauri::State<'_, AppState>, slot: ops::Slot, path: String) -
     ops::open_file(&state, slot, &path)
 }
 
+/// The Layout view's filter and selection, for the assistant (`status`,
+/// `layout_get`); `None` when the user leaves that view.
+#[tauri::command]
+fn set_layout_view(state: tauri::State<'_, AppState>, view: Option<mcp_filter::WindowView>) {
+    *state.view.lock().unwrap() = view;
+}
+
 #[tauri::command]
 fn close_file(state: tauri::State<'_, AppState>, slot: ops::Slot) {
     ops::close_file(&state, slot)
@@ -730,7 +737,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
-            discover_profiles, open_file, close_file,
+            discover_profiles, open_file, close_file, set_layout_view,
             apply_mutation, apply_mutations, save_document, list_file_backups, restore_backup,
             undo, redo, undo_state,
             window_layout, resolve_character_names, refresh_character_names, lookup_character, sync_group_catalog,
