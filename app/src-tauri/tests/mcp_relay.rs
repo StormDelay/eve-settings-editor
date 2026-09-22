@@ -81,6 +81,19 @@ fn the_exe_relays_to_a_listening_window() {
         .stderr(Stdio::inherit())
         .spawn()
         .expect("spawn --mcp");
+    // A relay that never exits hangs `child.wait()` forever — this test once
+    // did, for 6.5 hours, before that bug was found. A watchdog turns a
+    // regression into a fast failure instead of a stuck CI job. Harmless
+    // when the test passes: the child is long gone by the time this fires,
+    // so the kill just errors, which is ignored.
+    let pid = child.id();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(30));
+        #[cfg(windows)]
+        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).status();
+        #[cfg(not(windows))]
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    });
     let mut stdin = child.stdin.take().unwrap();
     let mut out = BufReader::new(child.stdout.take().unwrap());
 

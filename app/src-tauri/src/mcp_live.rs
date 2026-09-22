@@ -93,6 +93,12 @@ pub async fn listen(endpoint: &str, on_conn: impl Fn(Stream)) -> std::io::Result
 #[cfg(not(windows))]
 pub async fn listen(endpoint: &str, on_conn: impl Fn(Stream)) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
+    // A fresh install has no app dir yet — `accounts.rs`/`groups.rs` only
+    // create it lazily on first write — so `bind` would fail ENOENT and live
+    // mode would be silently off.
+    if let Some(parent) = std::path::Path::new(endpoint).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let _ = std::fs::remove_file(endpoint);
     let listener = tokio::net::UnixListener::bind(endpoint)?;
     std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;

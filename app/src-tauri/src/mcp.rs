@@ -2097,6 +2097,14 @@ pub fn serve() {
         let running = server.serve(rmcp::transport::stdio()).await.expect("mcp initialize");
         let _ = running.waiting().await;
     });
+    // When the WINDOW side ends the relay first, `select!` drops the
+    // stdin->pipe `copy` future — but the blocking-pool task under it
+    // (tokio's `Stdin` read cannot be cancelled) is still parked waiting
+    // for a line. A plain runtime drop calls `BlockingPool::shutdown(None)`,
+    // which waits for that task, so the process would hang here until the
+    // client wrote to stdin again (and that write would then be silently
+    // swallowed). `shutdown_background` drops the runtime without waiting.
+    rt.shutdown_background();
 }
 
 #[cfg(test)]
