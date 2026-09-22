@@ -4,6 +4,7 @@
   // client takes the snippet below it. Spec §6 of the MCP design.
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { api, errMessage, type McpSetup } from "./api";
+  import { accel } from "./keys";
   import Button from "./ui/Button.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import Sheet from "./ui/Sheet.svelte";
@@ -44,6 +45,8 @@
     Let an AI assistant edit your settings through this app — overview, probe formations, window
     layout, keybinds, Neocom, HUD, fleet and chat, plus copy settings and presets. Every change goes
     through the same backups and checks as editing here.
+    While this app is open, the assistant works in your window: its changes appear as if you'd made
+    them, each with an Undo, and {accel("Z")} reverts them.
   </p>
 
   {#if info}
