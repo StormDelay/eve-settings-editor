@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { api, errMessage, errText } from "$lib/api";
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
@@ -92,6 +93,14 @@
   // · reset" counter is what keeps a carried-over filter visible instead of
   // silently misleading.
   let filter = $state<WindowFilter>({ ...DEFAULT_FILTER });
+
+  // The assistant reads this through `status`/`layout_get`, so "this window"
+  // means the same one to both. Best effort: it is a view hint, never an edit.
+  $effect(() => {
+    if (readOnly) return;
+    api.setLayoutView({ ...filter, selected: selectedId }).catch(() => {});
+  });
+  onDestroy(() => api.setLayoutView(null).catch(() => {}));
 
   // ?./?? sidestep a TS limitation: narrowing `layout` doesn't carry across
   // separate reads inside a $derived expression (each read goes through its

@@ -67,6 +67,9 @@ pub struct AppStateInner {
     pub user: Mutex<Option<Document>>,
     pub capture: Mutex<Option<accounts::Snapshot>>,
     pub history: Mutex<crate::undo::History>,
+    /// What the Layout view shows right now, pushed by the window on every
+    /// change so the assistant sees what the user sees. `None` off that view.
+    pub view: Mutex<Option<crate::mcp_filter::WindowView>>,
 }
 
 impl std::ops::Deref for AppState {
@@ -89,6 +92,7 @@ impl AppState {
             user: Mutex::new(None),
             capture: Mutex::new(None),
             history: Mutex::new(crate::undo::History::default()),
+            view: Mutex::new(None),
         }))
     }
     /// Whether two handles are one workspace.
