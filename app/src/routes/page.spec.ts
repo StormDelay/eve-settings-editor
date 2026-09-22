@@ -839,6 +839,19 @@ describe("live mode: the in-window assistant", () => {
     expect(t?.action?.label).toBe("Undo");
   });
 
+  test("ai-edit for undo itself, or an outcome with nothing left to undo, toasts with no Undo action", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([both]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(subject.slots.char?.status).toBe("opened"));
+
+    events.fire("ai-edit", { tool: "undo", outcome: outcome(false) });
+
+    const t = toasts.find((t) => t.message === "Assistant: undo");
+    expect(t).toBeTruthy();
+    expect(t?.action).toBeUndefined();
+  });
+
   test("ai-wrote re-reads a clean slot the assistant wrote behind the window", async () => {
     calls.stub("open_file", opened("core_char_950.dat"));
     await mount([both]);

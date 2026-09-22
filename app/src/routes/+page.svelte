@@ -160,7 +160,11 @@
   let aiConnections = $state(0);
   void listen<{ tool: string; outcome: UndoOutcome }>("ai-edit", (e) => {
     landUndo(e.payload.outcome);
-    toast(`Assistant: ${e.payload.tool}`, { action: undoAction() });
+    // No Undo button on a toast that is itself an undo, or on one that left
+    // nothing to undo — there would be nothing for the button to do.
+    toast(`Assistant: ${e.payload.tool}`, {
+      action: e.payload.tool === "undo" || !e.payload.outcome.state.can_undo ? undefined : undoAction(),
+    });
   });
   void listen<{ paths: string[] }>("ai-wrote", (e) => void onBatchApplied(e.payload.paths));
   void listen<{ connections: number }>("ai-connected", (e) => {
