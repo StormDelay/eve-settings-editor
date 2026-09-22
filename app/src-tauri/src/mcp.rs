@@ -24,13 +24,36 @@ use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::prefs;
 use crate::undo;
 
+/// What a connection is attached to (spec §3.1): the workspace `open` last
+/// selected and the canonical paths its slots held then, so a later call can
+/// tell when the workspace no longer holds those files (§3.3 `switched`).
+/// `in_window` marks the window's own state (PR 2, live mode).
+#[derive(Clone)]
+struct Attached {
+    state: AppState,
+    char: Option<PathBuf>,
+    user: Option<PathBuf>,
+    // Written now, read starting Task 2 (live mode) — clippy would otherwise
+    // flag it dead before that connects.
+    #[allow(dead_code)]
+    in_window: bool,
+}
+
+impl Attached {
+    /// Before any `open`: an empty state nothing is compared against, so an
+    /// early tool fails with `no_document` exactly as it always did.
+    fn scratch() -> Self {
+        Attached { state: AppState::new(), char: None, user: None, in_window: false }
+    }
+}
+
 pub struct EveMcp {
     /// One workspace per account file, by canonical `core_user` path
     /// (spec §3.1). `Arc` so PR 2 can share it between connections.
     workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
     /// What `open` last selected. `None` until then; `state()` lends a
     /// scratch workspace so an early tool fails with `no_document` as before.
-    current: Mutex<Option<AppState>>,
+    current: Mutex<Option<Attached>>,
     /// The app dir — names cache, accounts.json, groups cache. Shared with
     /// the window, read-mostly.
     pub dir: PathBuf,
@@ -54,7 +77,12 @@ impl EveMcp {
     /// see it — only tests that call `ops::open_file` on `state()` directly
     /// ever populate it.
     fn state(&self) -> AppState {
-        self.current.lock().unwrap().get_or_insert_with(AppState::new).clone()
+        self.current.lock().unwrap().get_or_insert_with(Attached::scratch).state.clone()
+    }
+
+    /// The attachment, or `None` before any `open`.
+    fn attached(&self) -> Option<Attached> {
+        self.current.lock().unwrap().clone()
     }
 }
 
@@ -938,10 +966,37 @@ impl EveMcp {
         EveMcp::new(std::env::temp_dir().join("eve-mcp-tests"), vec![], None)
     }
 
+    /// Spec §3.3: refuse to act on a workspace whose slots no longer hold the
+    /// files this connection attached to. Live mode makes this real — the
+    /// window switches files under an attached connection — and a second
+    /// connection swapping a shared private workspace does the same.
+    fn check_attached(&self, tool: &str) -> Result<(), Value> {
+        if WORKSPACE_FREE.contains(&tool) {
+            return Ok(());
+        }
+        let Some(a) = self.attached() else { return Ok(()) };
+        if a.user.is_none() {
+            return Ok(()); // the scratch: nothing was attached to
+        }
+        let (char_now, user_now) = attached_paths(&a.state);
+        if char_now == a.char && user_now == a.user {
+            return Ok(());
+        }
+        Err(err(
+            "switched",
+            format!(
+                "this workspace now has {} open (account {}) — call open again",
+                file_label(char_now.as_deref()),
+                file_label(user_now.as_deref()),
+            ),
+        ))
+    }
+
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
     /// finish in microseconds. (`list_characters` may block on ESI once for
     /// unknown names, exactly as the window's first launch does.)
     fn call(&self, name: &str, args: &Args) -> ToolResult {
+        self.check_attached(name)?;
         match name {
             "status" => self.status(),
             "eve_guide" => self.eve_guide(args),
@@ -1367,6 +1422,28 @@ fn canonical(path: &str) -> Result<PathBuf, Value> {
     std::fs::canonicalize(path).map_err(|e| err("io", format!("{path}: {e}")))
 }
 
+/// The canonical paths a workspace's slots hold right now — `None` for an
+/// empty slot or a path that no longer canonicalizes.
+fn attached_paths(state: &AppState) -> (Option<PathBuf>, Option<PathBuf>) {
+    let path = |slot: Slot| {
+        let guard = state.doc(slot).lock().unwrap();
+        guard.as_ref().and_then(|d| std::fs::canonicalize(&d.path).ok())
+    };
+    (path(Slot::Char), path(Slot::User))
+}
+
+/// The name a person recognises a settings file by.
+fn file_label(p: Option<&Path>) -> String {
+    p.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "no character".into())
+}
+
+/// Tools that do not read the current workspace, so a stale attachment must
+/// not stop them: `open` and `status` are how a connection re-orients.
+const WORKSPACE_FREE: &[&str] = &[
+    "open", "status", "eve_guide", "list_characters", "groups_search", "builtin_presets",
+    "settings_presets_list", "lookup_character", "overview_pack_preview", "copy_preview", "copy_apply", "copy_files",
+];
+
 /// `{path, fidelity}` of an open slot — what `open` reports per slot — or
 /// `None` for an empty one.
 fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
@@ -1454,7 +1531,8 @@ impl EveMcp {
                     if let Some(p) = target {
                         open_slot(&ws, Slot::Char, &p)?;
                     }
-                    *self.current.lock().unwrap() = Some(ws.clone());
+                    let (char, user) = attached_paths(&ws);
+                    *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
                     return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }));
                 }
                 // Same character, or none asked for: nothing to load. `open`
@@ -1496,7 +1574,8 @@ impl EveMcp {
                 ws
             }
         };
-        *self.current.lock().unwrap() = Some(ws.clone());
+        let (char, user) = attached_paths(&ws);
+        *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
         Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
     }
 
@@ -2126,6 +2205,51 @@ mod tests {
         assert_eq!(st["user"]["dirty"], false);
     }
 
+    /// Spec §3.3: the workspace a connection selected can change under it —
+    /// the window switches files, another connection swaps a shared
+    /// workspace. The model is told, never silently redirected.
+    #[test]
+    fn a_workspace_that_changed_under_the_connection_reports_switched() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+
+        // Something else — here: a direct open on the shared state — moves the
+        // character slot to c2.
+        ops::open_file(&s.state(), Slot::Char, c2.to_str().unwrap()).unwrap();
+        let e = s.call("layout_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains(c2.file_name().unwrap().to_str().unwrap()), "{e}");
+
+        // `status`, `open` and the workspace-free tools still answer.
+        s.call("status", &Args::new()).unwrap();
+        s.call("eve_guide", &args(json!({ "topic": "workflow" }))).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+    }
+
+    /// A slot closing under the connection is a switch too.
+    #[test]
+    fn a_slot_closed_under_the_connection_reports_switched() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        ops::close_file(&s.state(), Slot::Char);
+        let e = s.call("hud_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains("no character"), "{e}");
+    }
+
+    /// Before any `open` there is nothing attached to check: tools fail with
+    /// `no_document` as they always did, never `switched`.
+    #[test]
+    fn the_scratch_workspace_is_never_switched() {
+        let s = EveMcp::for_tests();
+        assert_eq!(s.call("layout_get", &Args::new()).unwrap_err()["code"], "no_document");
+    }
+
     /// The key is the canonical path, so a spelling the model chooses finds
     /// the workspace a roster lookup created. The `.` segment is what makes
     /// this meaningful on the ubuntu CI: it is collapsed only by
@@ -2226,9 +2350,9 @@ mod tests {
 
     #[test]
     fn save_reports_what_was_already_saved_when_a_later_slot_fails() {
-        let (s, _) = open_user(&overview_user_bytes());
+        let (s, upath) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
 
         ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         ops::apply_mutation(
@@ -2948,9 +3072,9 @@ mod tests {
 
     #[test]
     fn fleet_get_projects_both_sides_and_strips_paths() {
-        let (s, _) = open_user(&empty_ui_bytes());
+        let (s, upath) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char", &empty_ui_bytes());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
         let v = s.call("fleet_get", &Args::new()).unwrap();
         assert_no_paths(&v, "fleet_get");
         assert_eq!(v["user_open"], true);
@@ -2962,9 +3086,9 @@ mod tests {
 
     #[test]
     fn fleet_edit_sets_a_field_a_colour_and_a_watchlist_entry_then_clears_the_colour() {
-        let (s, _) = open_user(&empty_ui_bytes());
+        let (s, upath) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char2", &empty_ui_bytes());
-        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&upath, Some(&cpath))).unwrap();
         let v = s.call("fleet_edit", &args(json!({ "ops": [
             { "op": "set_field", "name": "listen_show_own", "value": "1" },
             { "op": "set_colour", "broadcast": "Target", "rgb": [0.2, 0.5, 1.0] },
