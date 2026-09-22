@@ -68,11 +68,15 @@ pub struct EveMcp {
     /// Live mode: told after a call that changed the window's document or
     /// wrote files on disk (spec §4.3). `None` headless.
     pub on_change: Option<OnChange>,
+    /// Live mode, per connection: serials of the undo entries this connection
+    /// pushed onto the WINDOW's stack, in order (spec §4.4). `undo` pops only
+    /// while its own step is on top. Reset by `open`.
+    own_steps: Mutex<Vec<u64>>,
 }
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path, on_change: None }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path, on_change: None, own_steps: Mutex::new(Vec::new()) }
     }
 
     /// The in-window server (spec §4.2): one per connection, over the window's
@@ -85,7 +89,7 @@ impl EveMcp {
         workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
         on_change: OnChange,
     ) -> Self {
-        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path, on_change: Some(on_change) }
+        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path, on_change: Some(on_change), own_steps: Mutex::new(Vec::new()) }
     }
 
     #[cfg(test)]
@@ -693,7 +697,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "undo",
-            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert. For a saved change, use list_backups and restore_backup instead.",
+            description: "Revert the last edit. The stack survives a save, so undoing past one re-dirties the slot; status shows it. One tool call is one step and a batch is one step. Returns status. Fails with `nothing_to_undo` when there is nothing to revert, and — in the window's workspace — with `window_edited` when the top step is the user's. For a saved change, use list_backups and restore_backup instead.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -1071,14 +1075,28 @@ impl EveMcp {
     pub(crate) fn call_observed(&self, name: &str, args: &Args) -> ToolResult {
         let before = self.window.as_ref().map(Fingerprint::of);
         let result = self.call(name, args);
-        if let (Some(cb), Some(win)) = (&self.on_change, &self.window) {
+        if let Some(win) = &self.window {
+            let after = Fingerprint::of(win);
             let in_window = self.attached().is_some_and(|a| a.in_window);
-            let moved = Some(Fingerprint::of(win)) != before;
-            if moved || (name == "restore_backup" && in_window && result.is_ok()) {
-                cb(Change::Edited { tool: name.to_string(), outcome: Box::new(undo::outcome_of(win)) });
+            // A new entry on top after this connection's own call is its step.
+            if in_window && name != "undo" && after.top != before.and_then(|b| b.top) {
+                if let Some(serial) = after.top {
+                    let mut own = self.own_steps.lock().unwrap();
+                    own.push(serial);
+                    // The stack itself holds twenty; older serials can never match.
+                    if own.len() > 32 {
+                        own.remove(0);
+                    }
+                }
             }
-            if let Some(paths) = written_paths(name, &result, in_window) {
-                cb(Change::Wrote(paths));
+            if let Some(cb) = &self.on_change {
+                let moved = Some(after) != before;
+                if moved || (name == "restore_backup" && in_window && result.is_ok()) {
+                    cb(Change::Edited { tool: name.to_string(), outcome: Box::new(undo::outcome_of(win)) });
+                }
+                if let Some(paths) = written_paths(name, &result, in_window) {
+                    cb(Change::Wrote(paths));
+                }
             }
         }
         result
@@ -1667,6 +1685,7 @@ impl EveMcp {
                 if discard {
                     return Err(err("in_window", "the window holds this account; its unsaved edits are the user's — Discard is theirs to press, in the window"));
                 }
+                self.own_steps.lock().unwrap().clear();
                 *self.current.lock().unwrap() = Some(Attached { state: win.clone(), char: win_char, user: win_user, in_window: true });
                 return Ok(json!({ "char": slot_view(win, Slot::Char), "user": slot_view(win, Slot::User), "in_window": true }));
             }
@@ -1692,6 +1711,7 @@ impl EveMcp {
                         open_slot(&ws, Slot::Char, &p)?;
                     }
                     let (char, user) = attached_paths(&ws);
+                    self.own_steps.lock().unwrap().clear();
                     *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
                     self.sync_account_lock();
                     return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }));
@@ -1736,6 +1756,7 @@ impl EveMcp {
             }
         };
         let (char, user) = attached_paths(&ws);
+        self.own_steps.lock().unwrap().clear();
         *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
         self.sync_account_lock();
         Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }))
@@ -1769,7 +1790,24 @@ impl EveMcp {
     }
 
     fn undo(&self) -> ToolResult {
-        match undo::undo(&self.state()) {
+        let st = self.state();
+        if self.attached().is_some_and(|a| a.in_window) {
+            // Spec §4.4: only this connection's own step, only while it is on
+            // top. `rposition` lets a user Ctrl+Z that exposed an earlier own
+            // step count as "on top" and forgets the steps above it.
+            let top = st.history.lock().unwrap().top_serial();
+            let mut own = self.own_steps.lock().unwrap();
+            match top.and_then(|t| own.iter().rposition(|s| *s == t)) {
+                Some(pos) => own.truncate(pos),
+                None => {
+                    return Err(err(
+                        "window_edited",
+                        "the top of the undo stack is not your step — the user edited in the window since. Undo there (Ctrl+Z) or make a new edit; only your own steps can be undone from here.",
+                    ))
+                }
+            }
+        }
+        match undo::undo(&st) {
             Some(_) => self.status(),
             None => Err(err("nothing_to_undo", "the undo stack is empty")),
         }
@@ -4056,5 +4094,85 @@ mod tests {
         seen.lock().unwrap().clear();
         s.call_observed("restore_backup", &args(json!({ "slot": "user", "backup_path": backup }))).unwrap();
         assert!(matches!(&seen.lock().unwrap()[..], [Change::Wrote(p)] if p == &vec![b.clone()]));
+    }
+
+    fn set_type_visible(s: &EveMcp, visible: bool) -> ToolResult {
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": visible }] })))
+    }
+
+    /// Spec §4.4: in the window's workspace, `undo` pops only this connection's
+    /// own step, and only while it is on top. The user's step beneath it is
+    /// never reachable; a user Ctrl+Z / Ctrl+Y that puts the assistant's
+    /// step back on top makes `undo` work again.
+    #[test]
+    fn undo_in_the_window_is_gated_on_the_assistants_own_step_being_on_top() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        // The user's own edit, before the assistant arrives.
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+
+        // Nothing of the assistant's on the stack yet: refused, and the user's
+        // step is untouched.
+        let e = s.call_observed("undo", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "window_edited");
+        assert_eq!(undo::undo_state(&win).depth, 1);
+
+        // Two assistant steps: both undoable, in order; then the user's is not.
+        set_type_visible(&s, false).unwrap();
+        set_type_visible(&s, true).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 3);
+        s.call_observed("undo", &Args::new()).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 1);
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+
+        // The user edits after the assistant: the assistant's step is buried.
+        set_type_visible(&s, false).unwrap();
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+        // The user undoes their own step: the assistant's is on top again.
+        undo::undo(&win).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+    }
+
+    /// Redo puts the same entry back: the gate recognises it.
+    #[test]
+    fn undo_in_the_window_survives_a_user_undo_redo_of_the_assistants_step() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        set_type_visible(&s, true).unwrap();
+        undo::undo(&win).unwrap();
+        undo::redo(&win).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(undo::undo_state(&win).depth, 0);
+    }
+
+    /// A counters-only fingerprint would be fooled here: undo the assistant's
+    /// step, make a user edit on the same slot, and the counters read the
+    /// same. The serial does not.
+    #[test]
+    fn undo_in_the_window_is_not_fooled_by_a_user_edit_with_the_same_counters() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        set_type_visible(&s, true).unwrap();
+        undo::undo(&win).unwrap();
+        ops::set_overview_visible(&win, 0, "TYPE", true).unwrap();
+        assert_eq!(s.call_observed("undo", &Args::new()).unwrap_err()["code"], "window_edited");
+    }
+
+    /// Private workspaces keep today's unrestricted undo.
+    #[test]
+    fn undo_in_a_private_workspace_is_unrestricted() {
+        let (s, _win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        s.call_observed("undo", &Args::new()).unwrap();
     }
 }
