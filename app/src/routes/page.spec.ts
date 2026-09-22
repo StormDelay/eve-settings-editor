@@ -11,7 +11,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import Page from "./+page.svelte";
-import { calls } from "$lib/test/setup";
+import { calls, events } from "$lib/test/setup";
 import { subject } from "$lib/subject.svelte";
 import { names } from "$lib/names.svelte";
 import { accountsStore } from "$lib/accounts.svelte";
@@ -802,5 +802,61 @@ describe("which views get an inspector", () => {
     await mount([profile(file("core_char_950.dat", "char", 950))]);
     expect(shellAside()).toBeNull();
     expect(work().classList.contains("wide")).toBe(true);
+  });
+});
+
+describe("live mode: the in-window assistant", () => {
+  // `core_user_<id>.dat` is the account file; everything else is the char slot,
+  // which is the generic editing one. The sidebar only lists character files,
+  // so both fixtures carry one.
+  const both = profile(
+    file("core_char_950.dat", "char", 950),
+    file("core_user_140.dat", "user", 140),
+  );
+
+  const tree2: TreeNodeData = { ...tree, display: "{edited}" };
+  const outcome = (dirtyChar: boolean) => ({
+    char_tree: tree2,
+    user_tree: null,
+    dirty: { char: dirtyChar, user: false },
+    state: { can_undo: dirtyChar, can_redo: false, depth: dirtyChar ? 1 : 0 },
+  });
+
+  test("ai-edit lands the fresh projection, marks the slot dirty and toasts with Undo", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    calls.stub("undo_state", { can_undo: true, can_redo: false, depth: 1 });
+    await mount([both]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(subject.slots.char?.status).toBe("opened"));
+    const before = subject.savedAt;
+
+    events.fire("ai-edit", { tool: "layout_edit", outcome: outcome(true) });
+
+    await waitFor(() => expect(subject.dirty.char).toBe(true));
+    expect(subject.slots.char?.status === "opened" && subject.slots.char.tree.display).toBe("{edited}");
+    expect(subject.savedAt).toBe(before + 1);
+    const t = toasts.find((t) => t.message === "Assistant: layout_edit");
+    expect(t?.action?.label).toBe("Undo");
+  });
+
+  test("ai-wrote re-reads a clean slot the assistant wrote behind the window", async () => {
+    calls.stub("open_file", opened("core_char_950.dat"));
+    await mount([both]);
+    await openFile("core_char_950.dat");
+    await waitFor(() => expect(calls.of("open_file").length).toBe(1));
+
+    events.fire("ai-wrote", { paths: ["/eve/core_char_950.dat"] });
+
+    await waitFor(() => expect(calls.of("open_file").length).toBe(2));
+    expect(calls.of("open_file")[1].args).toMatchObject({ slot: "char", path: "/eve/core_char_950.dat" });
+  });
+
+  test("ai-connected shows the indicator while a connection is attached", async () => {
+    await mount([both]);
+    expect(screen.queryByTitle("AI assistant connected")).toBeNull();
+    events.fire("ai-connected", { connections: 1 });
+    expect(await screen.findByTitle("AI assistant connected")).toBeTruthy();
+    events.fire("ai-connected", { connections: 0 });
+    await waitFor(() => expect(screen.queryByTitle("AI assistant connected")).toBeNull());
   });
 });
