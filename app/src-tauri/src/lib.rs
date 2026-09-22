@@ -716,6 +716,13 @@ pub fn run() {
                 }
                 builder.build()?;
             }
+
+            // Live mode (MCP spec §4): serve MCP over the same-user endpoint,
+            // one server per connection, over this window's own state.
+            let handle = app.handle().clone();
+            let state = app.state::<AppState>().inner().clone();
+            tauri::async_runtime::spawn(mcp_live::serve_in_window(handle, state));
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
