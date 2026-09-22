@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.39.0] - 2026-09-22
+
+The assistant works in your open window, and keeps every account it opens.
+
+### Added
+- **The assistant works in your open window.** While the app is running, an AI assistant's changes land in the window as if you had made them — each announced with an Undo, and Ctrl+Z reverts them. Nothing changes in your MCP client's setup.
+- **The assistant keeps every account it opens.** Opening a second character no longer drops the first: each account has its own workspace, reading across the roster needs no reloads, and `save all: true` writes them all. One character of an account at a time — the next one opens once the current is saved (or its edits discarded).
+
 ## [0.38.0] - 2026-09-21
 
 An AI assistant can edit your settings: a built-in MCP server covers every editor.
@@ -11,8 +19,6 @@ An AI assistant can edit your settings: a built-in MCP server covers every edito
 ### Added
 - **AI access.** An MCP server built into the app (`--mcp`) lets an AI assistant edit your overview and probe formations, with the same backups and checks as editing by hand. Register it with Claude Desktop from the new AI access… menu entry, or copy the config snippet for any other MCP client.
 - **The assistant can now edit everything the app edits.** Window layout — with a picture of it, Neocom, ship HUD, fighter panel and target list included — autofill, keybinds, the Neocom bar, HUD, fleet and chat settings, plus copy settings and settings presets, over the same MCP server.
-- **The assistant keeps every account it opens.** Opening a second character no longer drops the first: each account has its own workspace, reading across the roster needs no reloads, and `save all: true` writes them all. One character of an account at a time — the next one opens once the current is saved (or its edits discarded).
-- **The assistant works in your open window.** While the app is running, an AI assistant's changes land in the window as if you had made them — each announced with an Undo, and Ctrl+Z reverts them. Nothing changes in your MCP client's setup.
 
 ## [0.37.0] - 2026-09-19
 
