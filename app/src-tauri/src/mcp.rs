@@ -14,7 +14,7 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler, ServiceExt};
 use serde_json::{json, Map, Value};
 
-use settings_model::{discover, FileKind, Mutation, NewValue, OverviewColumns, Profile, SetTarget, WindowLayout, WindowRect};
+use settings_model::{discover, Fidelity, FileKind, Mutation, NewValue, OverviewColumns, Profile, SetTarget, WindowLayout, WindowRect};
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
@@ -33,9 +33,6 @@ struct Attached {
     state: AppState,
     char: Option<PathBuf>,
     user: Option<PathBuf>,
-    // Written now, read starting Task 2 (live mode) — clippy would otherwise
-    // flag it dead before that connects.
-    #[allow(dead_code)]
     in_window: bool,
 }
 
@@ -54,6 +51,9 @@ pub struct EveMcp {
     /// What `open` last selected. `None` until then; `state()` lends a
     /// scratch workspace so an early tool fails with `no_document` as before.
     current: Mutex<Option<Attached>>,
+    /// Live mode (spec §4): the window's own state, the workspace for whatever
+    /// the window has open. `None` headless.
+    pub window: Option<AppState>,
     /// The app dir — names cache, accounts.json, groups cache. Shared with
     /// the window, read-mostly.
     pub dir: PathBuf,
@@ -68,7 +68,24 @@ pub struct EveMcp {
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), dir, roots, prefs_path }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path }
+    }
+
+    /// The in-window server (spec §4.2): one per connection, over the window's
+    /// state and a workspace map shared by every connection of the process.
+    pub fn in_window(
+        dir: PathBuf,
+        roots: Vec<PathBuf>,
+        prefs_path: Option<PathBuf>,
+        window: AppState,
+        workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
+    ) -> Self {
+        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_live_tests(window: AppState) -> Self {
+        EveMcp::in_window(std::env::temp_dir().join("eve-mcp-tests"), vec![], None, window, Arc::default())
     }
 
     /// The workspace tools act on: the one `open` last selected, or a scratch
@@ -628,7 +645,7 @@ fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "status",
-            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible — and every workspace this session holds (one per account) with its unsaved slots, so nothing is left unsaved by mistake. Call it to re-orient in a long conversation.",
+            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible, every workspace this session holds (one per account) with its unsaved slots — and, with the app window open, mode: live plus what the window has open. Call it to re-orient in a long conversation.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -978,6 +995,14 @@ impl EveMcp {
         if a.user.is_none() {
             return Ok(()); // the scratch: nothing was attached to
         }
+        if let Some(win) = &self.window {
+            if !a.in_window && attached_paths(win) == (a.char.clone(), a.user.clone()) {
+                return Err(err(
+                    "switched",
+                    format!("the window now has {} open — call open again to work in it", file_label(a.char.as_deref())),
+                ));
+            }
+        }
         let (char_now, user_now) = attached_paths(&a.state);
         if char_now == a.char && user_now == a.user {
             return Ok(());
@@ -992,11 +1017,46 @@ impl EveMcp {
         ))
     }
 
+    /// Spec §3.5 rule 2, re-evaluated per call: a private workspace whose
+    /// account the window has open gets a read-only account slot, lifted
+    /// when the window leaves. Only a slot this code locked is unlocked, and a
+    /// dirty slot is never locked (rule 3) — locking it would strand its edits.
+    fn sync_account_lock(&self) {
+        let Some(win) = &self.window else { return };
+        let Some(a) = self.attached() else { return };
+        if a.in_window || a.user.is_none() {
+            return;
+        }
+        let (win_char, win_user) = attached_paths(win);
+        let held = win_user == a.user;
+        // History first, released before the slot lock: `user → char → history`
+        // forbids the reverse, and nothing here needs both at once.
+        let dirty = a.state.history.lock().unwrap().dirty(Slot::User);
+        let mut guard = a.state.user.lock().unwrap();
+        let Some(doc) = guard.as_mut() else { return };
+        match (&doc.fidelity, held) {
+            (Fidelity::Editable, true) if !dirty => {
+                let who = file_label(win_char.as_deref());
+                doc.fidelity = Fidelity::ReadOnly { reason: format!("{ACCOUNT_LOCK}{who} — open {who} to edit account-side settings") };
+            }
+            (Fidelity::ReadOnly { reason }, false) if reason.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::Editable,
+            _ => {}
+        }
+    }
+
+    /// Whether the current attachment's account slot carries this code's lock.
+    fn account_read_only(&self) -> bool {
+        let Some(a) = self.attached() else { return false };
+        let guard = a.state.user.lock().unwrap();
+        matches!(guard.as_ref().map(|d| &d.fidelity), Some(Fidelity::ReadOnly { reason }) if reason.starts_with(ACCOUNT_LOCK))
+    }
+
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
     /// finish in microseconds. (`list_characters` may block on ESI once for
     /// unknown names, exactly as the window's first launch does.)
     fn call(&self, name: &str, args: &Args) -> ToolResult {
         self.check_attached(name)?;
+        self.sync_account_lock();
         match name {
             "status" => self.status(),
             "eve_guide" => self.eve_guide(args),
@@ -1161,6 +1221,13 @@ impl EveMcp {
             "user": slot(Slot::User),
             "can_undo": undo::undo_state(&st).can_undo,
             "workspaces": workspaces,
+            "mode": if self.window.is_some() { "live" } else { "headless" },
+            "window": self.window.as_ref().map(|w| json!({
+                "char": slot_view(w, Slot::Char).map(|v| v["path"].clone()),
+                "user": slot_view(w, Slot::User).map(|v| v["path"].clone()),
+            })),
+            "in_window": self.attached().is_some_and(|a| a.in_window),
+            "account_read_only": self.account_read_only(),
         }))
     }
 
@@ -1444,6 +1511,11 @@ const WORKSPACE_FREE: &[&str] = &[
     "settings_presets_list", "lookup_character", "overview_pack_preview", "copy_preview", "copy_apply", "copy_files",
 ];
 
+/// How the account lock (spec §3.5 rule 2) introduces itself in a
+/// `read_only` reason. The prefix is also how `sync_account_lock` recognises
+/// a lock it set, as opposed to a slot that was read-only from load.
+const ACCOUNT_LOCK: &str = "the account is open in the window as ";
+
 /// `{path, fidelity}` of an open slot — what `open` reports per slot — or
 /// `None` for an empty one.
 fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
@@ -1512,6 +1584,21 @@ impl EveMcp {
         let user_key = canonical(&user_file)?;
         let char_key = char_file.as_deref().map(canonical).transpose()?;
 
+        // Live mode (spec §3.2 branch 1): the window's own state is the
+        // workspace for whatever the window has open. A sibling of the
+        // window's character falls through to a private workspace whose
+        // account slot `sync_account_lock` makes read-only.
+        if let Some(win) = &self.window {
+            let (win_char, win_user) = attached_paths(win);
+            if win_user.as_ref() == Some(&user_key) && (char_key.is_none() || win_char == char_key) {
+                if discard {
+                    return Err(err("in_window", "the window holds this account; its unsaved edits are the user's — Discard is theirs to press, in the window"));
+                }
+                *self.current.lock().unwrap() = Some(Attached { state: win.clone(), char: win_char, user: win_user, in_window: true });
+                return Ok(json!({ "char": slot_view(win, Slot::Char), "user": slot_view(win, Slot::User), "in_window": true }));
+            }
+        }
+
         // ponytail: check-then-insert across file IO. One connection today;
         // when PR 2 shares the map between connections, two first opens of
         // one account race and the loser's workspace is not the map's — take
@@ -1576,6 +1663,7 @@ impl EveMcp {
         };
         let (char, user) = attached_paths(&ws);
         *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
+        self.sync_account_lock();
         Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
     }
 
@@ -2425,7 +2513,10 @@ mod tests {
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
         let s = EveMcp::for_tests();
         let v = s.call("status", &Args::new()).unwrap();
-        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false, "workspaces": [] }));
+        assert_eq!(v, json!({
+            "char": null, "user": null, "can_undo": false, "workspaces": [],
+            "mode": "headless", "window": null, "in_window": false, "account_read_only": false,
+        }));
     }
 
     #[test]
@@ -3605,5 +3696,130 @@ mod tests {
         let v = s.call("settings_preset_edit", &args(json!({ "op": "import", "path": out.to_string_lossy() }))).unwrap();
         assert_eq!(v["imported_as"], "Fleet kit");
         assert_eq!(v["presets"].as_array().unwrap().len(), 1);
+    }
+
+    /// A server inside the window (spec §3.2 branch 1): `window` is the
+    /// window's own state. Tests build one over a fresh `AppState` and open
+    /// files into it directly, standing in for the window's commands.
+    fn live_server() -> (EveMcp, AppState) {
+        let win = AppState::new();
+        (EveMcp::for_live_tests(win.clone()), win)
+    }
+
+    #[test]
+    fn open_of_the_windows_character_attaches_to_the_windows_state() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        assert_eq!(v["in_window"], true);
+        assert!(s.state().ptr_eq(&win), "the window's state, not a copy");
+        // An edit through the server is an edit in the window's document.
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert!(win.history.lock().unwrap().dirty(Slot::User));
+
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["mode"], "live");
+        assert_eq!(st["in_window"], true);
+        assert_eq!(st["window"]["char"], json!(c1.to_string_lossy()));
+        assert_eq!(st["account_read_only"], false);
+        assert!(st["workspaces"].as_array().unwrap().is_empty(), "the window's state is not a private workspace");
+    }
+
+    /// The account-only form attaches too: nothing was asked that the window
+    /// does not already have open.
+    #[test]
+    fn open_of_the_windows_account_alone_attaches() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.state().ptr_eq(&win));
+    }
+
+    /// `discard` on the window's workspace would throw the USER's edits away.
+    #[test]
+    fn discard_is_refused_on_the_windows_workspace() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        let mut args = open_args(&a, None);
+        args.insert("discard".into(), json!(true));
+        assert_eq!(s.call("open", &args).unwrap_err()["code"], "in_window");
+    }
+
+    /// Spec §3.5 rule 2: a sibling of the window's character is a private
+    /// workspace whose account slot is read-only — reads work, character-side
+    /// edits work, account-side edits name the window's character.
+    #[test]
+    fn a_sibling_of_the_windows_character_gets_a_read_only_account_slot() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &layout_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert!(!s.state().ptr_eq(&win), "a private workspace");
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+        let reason = v["user"]["fidelity"]["reason"].as_str().unwrap();
+        assert!(reason.contains(c1.file_name().unwrap().to_str().unwrap()), "{reason}");
+
+        s.call("overview_get", &Args::new()).unwrap();
+        s.call("layout_get", &Args::new()).unwrap();
+        let e = s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap_err();
+        assert_eq!(e["code"], "read_only");
+        assert!(e["message"].as_str().unwrap().contains(c1.file_name().unwrap().to_str().unwrap()), "{e}");
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["in_window"], false);
+        assert_eq!(st["account_read_only"], true);
+
+        // The window moves to another account: the lock lifts on the next call.
+        let b = temp_file("mcp-live-b", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, b.to_str().unwrap()).unwrap();
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert_eq!(s.call("status", &Args::new()).unwrap()["account_read_only"], false);
+    }
+
+    /// A slot that was read-only from load stays read-only when the window
+    /// leaves: only a lock this code set is ever lifted.
+    #[test]
+    fn a_genuinely_read_only_account_slot_is_not_unlocked_by_the_window_leaving() {
+        let (s, win) = live_server();
+        // The document.rs fixture: a valid stream the encoder re-emits differently.
+        let a = temp_file("mcp-live-ro", &[0x7E, 0, 0, 0, 0, 0x06, 0x01]);
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert!(v["user"]["fidelity"]["reason"].as_str().unwrap().contains("re-encode"));
+        ops::close_file(&win, Slot::User);
+        s.call("status", &Args::new()).unwrap();
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+    }
+
+    /// The window opens the very character a private workspace holds: the
+    /// private copy is no longer where the model should be.
+    #[test]
+    fn the_window_taking_the_private_character_reports_switched() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        ops::open_file(&win, Slot::Char, c2.to_str().unwrap()).unwrap();
+        let e = s.call("layout_get", &Args::new()).unwrap_err();
+        assert_eq!(e["code"], "switched");
+        assert!(e["message"].as_str().unwrap().contains("the window"), "{e}");
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["in_window"], true);
     }
 }

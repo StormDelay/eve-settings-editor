@@ -17,7 +17,8 @@ mod update;
 #[cfg(test)]
 mod testkit;
 
-use ops::{AppState, ErrDto, OpenOutcome};
+pub use ops::AppState;
+use ops::{ErrDto, OpenOutcome};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
