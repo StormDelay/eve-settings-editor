@@ -7,8 +7,15 @@
 use blue_marshal::Value;
 use serde::Serialize;
 
-use crate::treewalk::{inline_all, is_bytes as is_b};
+use crate::treewalk::{inline_all, key_is};
 use crate::windows::{decode_id, BOOL_FLAGS};
+
+/// A dict key is this id in any string shape. Window ids are `Bytes` or `Str`
+/// interchangeably — every chat window id in real files is `Str` — so a
+/// `Bytes`-only match made chats unstackable.
+fn is_b(k: &Value, name: &[u8]) -> bool {
+    std::str::from_utf8(name).is_ok_and(|n| key_is(k, n))
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -640,6 +647,44 @@ mod tests {
             ])])),
         ]))]);
         assert_eq!(delete_orphan_frames(&mut v), Vec::<String>::new());
+    }
+
+    /// Real files store chat window ids as `Str` in `stacksWindows` and the
+    /// geometry dict (every `chatchannel_*` in the local corpus) — matching
+    /// only `Bytes` made every chat unstackable (`NotStacked`,
+    /// `MissingGeometry`) and made add/create write a duplicate `Bytes` key.
+    #[test]
+    fn str_keyed_chat_windows_stack_and_unstack() {
+        let chat = "chatchannel_player_-63306645";
+        let geom = |x: i64| Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)]);
+        let root = || Value::Dict(vec![(b("windows"), Value::Dict(vec![
+            (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Str(chat.into()), geom(5)), (b("C"), geom(1)), (b("market"), geom(9)),
+            ])])),
+            (b("stacksWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![(Value::Str(chat.into()), b("C"))])])),
+            (b("preferredIdxInStack3"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (b("C"), Value::Dict(vec![(Value::Str(chat.into()), Value::Int(0))])),
+            ])])),
+        ]))]);
+        let count = |d: &[(Value, Value)], id: &str| d.iter().filter(|(k, _)| crate::windows::decode_id(k) == id).count();
+
+        let mut v = root();
+        unstack(&mut v, chat).expect("a Str-keyed member is stacked");
+        assert_eq!(count(sw(&v), chat), 0);
+
+        let mut v = root();
+        add_to_stack(&mut v, chat, "C").unwrap();
+        assert_eq!(count(sw(&v), chat), 1, "re-stacking must replace the Str key, not add a Bytes twin");
+        assert_eq!(count(inner(win(&v), b"windowSizesAndPositions_1"), chat), 1);
+
+        let mut v = root();
+        let c = create_stack(&mut v, chat, "market").expect("a Str-keyed window has geometry");
+        assert_eq!(geom_of(&v, b"market")[0], 5, "market lands on the chat's rect");
+        assert_eq!(count(sw(&v), chat), 1);
+        let mut v2 = root();
+        create_stack(&mut v2, "market", chat).unwrap();
+        assert_eq!(count(inner(win(&v2), b"windowSizesAndPositions_1"), chat), 1, "no duplicate geometry key");
+        assert!(!c.is_empty());
     }
 
     #[test]
