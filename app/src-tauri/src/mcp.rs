@@ -1029,17 +1029,24 @@ impl EveMcp {
         }
         let (win_char, win_user) = attached_paths(win);
         let held = win_user == a.user;
-        // History first, released before the slot lock: `user → char → history`
-        // forbids the reverse, and nothing here needs both at once.
-        let dirty = a.state.history.lock().unwrap().dirty(Slot::User);
+        let reason = || {
+            let who = file_label(win_char.as_deref());
+            format!("{ACCOUNT_LOCK}{who} — open {who} to edit account-side settings")
+        };
+        // Slot lock first, history read under it: `user → char → history`
+        // permits taking history under the slot lock but not the reverse, so
+        // the dirty check must happen while the user guard is already held —
+        // otherwise an edit landing in the gap between two separate locks
+        // could lock a slot that went dirty in between (rule 3).
         let mut guard = a.state.user.lock().unwrap();
         let Some(doc) = guard.as_mut() else { return };
+        let dirty = a.state.history.lock().unwrap().dirty(Slot::User);
         match (&doc.fidelity, held) {
-            (Fidelity::Editable, true) if !dirty => {
-                let who = file_label(win_char.as_deref());
-                doc.fidelity = Fidelity::ReadOnly { reason: format!("{ACCOUNT_LOCK}{who} — open {who} to edit account-side settings") };
-            }
-            (Fidelity::ReadOnly { reason }, false) if reason.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::Editable,
+            (Fidelity::Editable, true) if !dirty => doc.fidelity = Fidelity::ReadOnly { reason: reason() },
+            // The window kept the account but changed character: the reason
+            // still names whoever it had before — re-stamp it.
+            (Fidelity::ReadOnly { reason: r }, true) if r.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::ReadOnly { reason: reason() },
+            (Fidelity::ReadOnly { reason: r }, false) if r.starts_with(ACCOUNT_LOCK) => doc.fidelity = Fidelity::Editable,
             _ => {}
         }
     }
@@ -1620,7 +1627,8 @@ impl EveMcp {
                     }
                     let (char, user) = attached_paths(&ws);
                     *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
-                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }));
+                    self.sync_account_lock();
+                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }));
                 }
                 // Same character, or none asked for: nothing to load. `open`
                 // never discards a character to satisfy an account-only call.
@@ -1664,7 +1672,7 @@ impl EveMcp {
         let (char, user) = attached_paths(&ws);
         *self.current.lock().unwrap() = Some(Attached { state: ws.clone(), char, user, in_window: false });
         self.sync_account_lock();
-        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
+        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User), "in_window": false }))
     }
 
     fn save(&self, args: &Args) -> ToolResult {
@@ -3802,6 +3810,48 @@ mod tests {
         s.call("status", &Args::new()).unwrap();
         let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
         assert_eq!(v["user"]["fidelity"]["state"], "read_only");
+    }
+
+    /// Spec §3.5 rule 3: a private account slot that is already dirty when the
+    /// window opens that account is left writable — locking it would strand
+    /// the edits. The conflict check at save time answers instead.
+    #[test]
+    fn a_dirty_private_account_slot_is_not_locked_when_the_window_arrives() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+        // Still writable: a second account-side edit goes through.
+        s.call("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": false }] }))).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["account_read_only"], false);
+        assert_eq!(st["user"]["dirty"], true);
+    }
+
+    /// Finding 1: `discard` on a private workspace re-evaluates the account
+    /// lock before answering, so a reply is never truthful for a moment and
+    /// wrong the next — and it names its own attachment, not the window's.
+    #[test]
+    fn discard_on_a_locked_private_workspace_reapplies_the_lock_and_says_so() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c1 = temp_file("mcp-live-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-live-c2", &empty_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c1.to_str().unwrap()).unwrap();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only", "a private, locked sibling");
+
+        let mut reopen = open_args(&a, Some(&c2));
+        reopen.insert("discard".into(), json!(true));
+        let v = s.call("open", &reopen).unwrap();
+        assert_eq!(v["user"]["fidelity"]["state"], "read_only", "discard reloads from disk, then the lock re-applies");
+        assert_eq!(v["in_window"], false);
     }
 
     /// The window opens the very character a private workspace holds: the
