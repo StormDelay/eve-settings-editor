@@ -36,7 +36,7 @@ yaml-rust2 = "0.10"
 # MCP server (`--mcp`, mcp.rs): a second adapter over `ops`, beside the Tauri
 # commands. Hand-written schemas, so rmcp's macros and schemars are unused.
 rmcp = { version = "3", features = ["server", "transport-io"] }
-tokio = { version = "1", features = ["rt", "time", "io-std"] }
+tokio = { version = "1", features = ["rt", "time", "io-std", "io-util", "net"] }
 # What Tauri's `data_dir()` calls, so the MCP process resolves the same app dir
 # without a Tauri handle (lib.rs `app_dir_base`).
 dirs = "6"
