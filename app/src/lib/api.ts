@@ -639,6 +639,9 @@ export const api = {
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
   stackDeleteOrphans: () => invoke<WindowLayout>("stack_delete_orphans"),
+  /** Tell the assistant what the Layout view shows; `null` on leaving it. */
+  setLayoutView: (view: { text: string; openOnly: boolean; hideClutter: boolean; env: string; selected: string | null } | null) =>
+    invoke<void>("set_layout_view", { view }),
   neocomBar: () => invoke<NeocomBar>("neocom_bar"),
   chatPanels: () => invoke<ChatPanel[]>("chat_panels"),
   setChatSplits: (ids: string[], userlistWidth: number | null, inputHeight: number | null) =>
