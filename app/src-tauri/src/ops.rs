@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use blue_marshal::Value;
 use serde::Serialize;
@@ -36,6 +36,10 @@ use crate::undo;
 /// Two open documents (char + user, for the two-file overview category) plus a
 /// transient guided-capture baseline. Each document keeps its own save chain.
 ///
+/// A cloneable handle: every clone shares the same slots and history. The
+/// window's Tauri state and the in-window MCP server (mcp.rs) edit one
+/// document through two handles, and `EveMcp` holds one handle per account.
+///
 /// # Lock order
 ///
 /// **`user` → `char` → `history`. Always. No function takes a slot lock while
@@ -53,23 +57,46 @@ use crate::undo;
 /// `edit_reshared`, `undo` and `redo`, the three functions that need all three,
 /// take them in one identical sequence with no case analysis. Skipping a level
 /// is safe; reordering is not.
-pub struct AppState {
+#[derive(Clone)]
+pub struct AppState(Arc<AppStateInner>);
+
+/// The slots behind an `AppState` handle. Public only so `Deref` can name it;
+/// nothing constructs one outside `AppState::new`.
+pub struct AppStateInner {
     pub char: Mutex<Option<Document>>,
     pub user: Mutex<Option<Document>>,
     pub capture: Mutex<Option<accounts::Snapshot>>,
     pub history: Mutex<crate::undo::History>,
 }
 
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+    fn deref(&self) -> &AppStateInner {
+        &self.0
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
-        AppState {
+        AppState(Arc::new(AppStateInner {
             char: Mutex::new(None),
             user: Mutex::new(None),
             capture: Mutex::new(None),
             history: Mutex::new(crate::undo::History::default()),
-        }
+        }))
     }
-    fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
+    /// Whether two handles are one workspace.
+    #[cfg(test)]
+    pub fn ptr_eq(&self, other: &AppState) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+    pub(crate) fn doc(&self, slot: Slot) -> &Mutex<Option<Document>> {
         match slot {
             Slot::Char => &self.char,
             Slot::User => &self.user,
@@ -1234,6 +1261,19 @@ mod tests {
         let state = AppState::new();
         let err = open_file(&state, Slot::Char, "Z:/no/such/file.dat").unwrap_err();
         assert_eq!(err.code, "io");
+    }
+
+    /// Every clone is the same workspace: the window's Tauri state and the
+    /// in-window MCP server (mcp.rs) must edit one document, not two copies.
+    #[test]
+    fn clones_share_the_documents() {
+        let a = AppState::new();
+        let b = a.clone();
+        let path = temp_file("shared", &encode(&Value::Dict(vec![])).unwrap());
+        open_file(&a, Slot::Char, path.to_str().unwrap()).unwrap();
+        assert!(b.char.lock().unwrap().is_some(), "opened through one handle, visible through the other");
+        assert!(a.ptr_eq(&b));
+        assert!(!a.ptr_eq(&AppState::new()));
     }
 
     use settings_model::Mutation;
