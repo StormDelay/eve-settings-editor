@@ -39,6 +39,8 @@ settings presets write immediately, with backups.
 
 Each account the assistant opens keeps its own workspace for the conversation, so it can read and edit across your characters without reloading.
 
+While the app is open, the assistant works inside it: its edits appear in the window at once, each with an Undo, and the window's own Ctrl+Z reverts them. The assistant's `undo` only ever reverts its own steps.
+
 Open **AI access…** from the app menu. With Claude Desktop installed, **Register**
 adds the server to its config (restart Claude Desktop afterwards). For any other
 MCP client, copy the snippet shown there into the client's config — it is the
