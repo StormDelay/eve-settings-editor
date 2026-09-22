@@ -254,7 +254,8 @@ Every undo entry carries a **serial** (monotone, never reused; undo and redo mov
 
 - **Toast** per assistant tool call that changed the document, "Assistant:
   `overview_tabs_edit`", with the Undo action. One call is one toast — a
-  ten-op `overview_tabs_edit` batch is one call.
+  ten-op `overview_tabs_edit` batch is one call — except `undo` itself and
+  any outcome that leaves nothing to undo, which get no Undo button.
 - **Indicator**: a dot in the context bar while at least one connection is
   attached, tooltip "AI assistant connected". Driven by `ai-connected`.
 - **AI access sheet**: one added sentence — "While this app is open, the
@@ -282,11 +283,11 @@ Each caught by an existing check, none needing code now:
 - **Workspace memory**: one parsed `AppState` per account the assistant has
   opened, for the process lifetime. A twenty-character roster is a few tens of
   MB. No `close` tool; add one if it bites.
-- **`ai-wrote` from a private workspace's `save`** is not emitted: by rule 2
-  a private workspace can only save a *character* file the window does not
-  have open, or an account file the window does not hold — except the rule 3
-  case above, where the window's own changed-on-disk check answers at its
-  next save.
+- **A private workspace's `save`** can write a file the window has open —
+  the user switched the window to that character after the private edit —
+  so `save` announces every written path that is not the current
+  attachment's own slot, and the window re-reads it or flags it as after a
+  batch.
 
 ## 6. Safety
 
@@ -295,6 +296,11 @@ Each caught by an existing check, none needing code now:
   reach the disk.
 - The pipe is same-user only. Anything that can connect could already run the
   exe.
+- A different local user account can create the pipe name first; the
+  window's `first_pipe_instance(true)` then fails silently and this user's
+  `--mcp` would relay to the squatter. It needs a second interactive user on
+  the machine; the cheap hardening — checking the pipe server's owning
+  process on connect — is deferred.
 - The assistant can never replace the window's document: `open` attaches or
   serves a private workspace; the window's slots are only ever changed by the
   window's own commands.

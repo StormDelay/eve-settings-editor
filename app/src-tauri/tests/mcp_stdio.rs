@@ -24,6 +24,10 @@ fn request(stdin: &mut impl Write, out: &mut impl BufRead, body: &str) -> serde_
 fn initialize_then_tools_list() {
     let mut child = Command::new(exe())
         .arg("--mcp")
+        // Pin headless: with a window open on a dev machine this would
+        // otherwise relay to it and prove nothing about the headless path.
+        // Nothing listens at this name on Unix either.
+        .env("EVE_MCP_ENDPOINT", r"\\.\pipe\eve-settings-editor-nobody-listens")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

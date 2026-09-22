@@ -79,14 +79,18 @@ pub type Stream = tokio::net::UnixStream;
 #[cfg(windows)]
 pub async fn listen(endpoint: &str, on_conn: impl Fn(Stream)) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
-    // tokio's pattern: create the next instance before serving the connected
-    // one, so a client that arrives meanwhile finds an instance to open.
     let mut server = ServerOptions::new().first_pipe_instance(true).create(endpoint)?;
     loop {
         server.connect().await?;
         let connected = server;
-        server = ServerOptions::new().create(endpoint)?;
+        // Hand the connected client off before creating the next instance —
+        // tokio's pattern is to create it first so a client that arrives
+        // meanwhile finds one to open, but doing that ahead of `on_conn`
+        // means a failing `create` (the pipe instance limit, say) would
+        // return before this client is ever handed off, dropping a
+        // connection this loop already accepted.
         on_conn(connected);
+        server = ServerOptions::new().create(endpoint)?;
     }
 }
 
