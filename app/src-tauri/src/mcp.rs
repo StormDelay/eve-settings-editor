@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
@@ -24,7 +25,12 @@ use crate::prefs;
 use crate::undo;
 
 pub struct EveMcp {
-    pub state: AppState,
+    /// One workspace per account file, by canonical `core_user` path
+    /// (spec §3.1). `Arc` so PR 2 can share it between connections.
+    workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
+    /// What `open` last selected. `None` until then; `state()` lends a
+    /// scratch workspace so an early tool fails with `no_document` as before.
+    current: Mutex<Option<AppState>>,
     /// The app dir — names cache, accounts.json, groups cache. Shared with
     /// the window, read-mostly.
     pub dir: PathBuf,
@@ -39,7 +45,16 @@ pub struct EveMcp {
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { state: AppState::new(), dir, roots, prefs_path }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), dir, roots, prefs_path }
+    }
+
+    /// The workspace tools act on: the one `open` last selected, or a scratch
+    /// workspace before any `open`. Cheap — an `Arc` clone. The scratch is
+    /// never in `workspaces`, so `status.workspaces` and `save {all}` do not
+    /// see it — only tests that call `ops::open_file` on `state()` directly
+    /// ever populate it.
+    fn state(&self) -> AppState {
+        self.current.lock().unwrap().get_or_insert_with(AppState::new).clone()
     }
 }
 
@@ -534,7 +549,7 @@ fn lookup_result(r: Result<Option<names::Found>, names::FetchError>) -> ToolResu
 
 impl EveMcp {
     fn fleet_get(&self) -> ToolResult {
-        let f = ops::fleet_settings(&self.state).map_err(fail)?;
+        let f = ops::fleet_settings(&self.state()).map_err(fail)?;
         // Names from the cache only — no network on a read. `resolve_blocking`
         // with an empty id list is NOT "the whole cache": it selects only the
         // ids passed in (here, none), so it always comes back empty regardless
@@ -585,7 +600,7 @@ fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "status",
-            description: "What is open right now: the character and account file paths, whether each has unsaved edits, and whether undo is possible. Call it to re-orient in a long conversation.",
+            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible — and every workspace this session holds (one per account) with its unsaved slots, so nothing is left unsaved by mistake. Call it to re-orient in a long conversation.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -595,18 +610,20 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open",
-            description: "Open the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both from the roster, or paths directly. Opening replaces what was open and clears undo. Only edit a character that is logged out: the EVE client overwrites its settings on logout.",
+            description: "Select the files to edit. The account file (core_user_<id>.dat) is required: overview presets, appearance and probe formations live there. The character file holds the window layout, Neocom, HUD and the fleet watch list; open it too unless you only need account-side editors. Give char_id (from list_characters) to resolve both, or paths directly. Each account keeps its own workspace: another account opens alongside, edits kept; another character of the same account needs this one saved, undone or discarded first.",
             schema: || obj(json!({
                 "char_id": { "type": "integer", "description": "Character id; resolves char_file and, if paired, user_file." },
                 "char_file": { "type": "string", "description": "Path to core_char_<id>.dat. Overrides char_id's lookup." },
-                "user_file": { "type": "string", "description": "Path to core_user_<id>.dat. Required unless char_id resolves it." }
+                "user_file": { "type": "string", "description": "Path to core_user_<id>.dat. Required unless char_id resolves it." },
+                "discard": { "type": "boolean", "description": "Reload both files from disk, dropping unsaved edits (the window's Discard). Only when the user asks." }
             }), &[]),
         },
         ToolDef {
             name: "save",
-            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
+            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. The current workspace only, or every workspace with all: true. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
             schema: || obj(json!({
-                "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." }
+                "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." },
+                "all": { "type": "boolean", "description": "Save every workspace, not just the current one." }
             }), &[]),
         },
         ToolDef {
@@ -933,7 +950,7 @@ impl EveMcp {
             "settings_presets_list" => Ok(settings_presets_view(&self.dir)),
             "settings_preset_edit" => self.settings_preset_edit(args),
             "undo" => self.undo(),
-            "list_backups" => ok(ops::list_file_backups(&self.state, req(args, "slot")?).map_err(fail)?),
+            "list_backups" => ok(ops::list_file_backups(&self.state(), req(args, "slot")?).map_err(fail)?),
             "restore_backup" => self.restore_backup(args),
             "list_characters" => self.list_characters(),
             "overview_get" => self.overview_get(),
@@ -945,20 +962,20 @@ impl EveMcp {
             "overview_appearance_edit" => self.batch(args, appearance_op, |s| s.overview_get()),
             "overview_pack_preview" => ok(ops::pack_preview(&req::<String>(args, "path")?).map_err(fail)?),
             "overview_pack_import" => {
-                let r = ops::pack_import(&self.state, &req::<String>(args, "path")?).map_err(fail)?;
+                let r = ops::pack_import(&self.state(), &req::<String>(args, "path")?).map_err(fail)?;
                 Ok(json!({ "columns": self.overview_with_names(r.columns)?, "report": r.report }))
             }
-            "overview_pack_export" => ok(ops::pack_export(&self.state, &req::<String>(args, "path")?).map_err(fail)?),
-            "probes_get" => ok(ops::probe_formations(&self.state).map_err(fail)?),
-            "probes_set" => ok(ops::set_probe_formation(&self.state, opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
-            "probes_remove" => ok(ops::remove_probe_formation(&self.state, req(args, "id")?).map_err(fail)?),
-            "probes_reorder" => ok(ops::reorder_probe_formations(&self.state, req(args, "order")?).map_err(fail)?),
+            "overview_pack_export" => ok(ops::pack_export(&self.state(), &req::<String>(args, "path")?).map_err(fail)?),
+            "probes_get" => ok(ops::probe_formations(&self.state()).map_err(fail)?),
+            "probes_set" => ok(ops::set_probe_formation(&self.state(), opt(args, "id")?, &req::<String>(args, "name")?, req(args, "probes")?, req(args, "ranges")?).map_err(fail)?),
+            "probes_remove" => ok(ops::remove_probe_formation(&self.state(), req(args, "id")?).map_err(fail)?),
+            "probes_reorder" => ok(ops::reorder_probe_formations(&self.state(), req(args, "order")?).map_err(fail)?),
             "probes_add_yaml" => {
                 let specs = ops::probe_parse_yaml(&req::<String>(args, "yaml")?).map_err(fail)?;
-                ok(ops::add_probe_formations(&self.state, specs).map_err(fail)?)
+                ok(ops::add_probe_formations(&self.state(), specs).map_err(fail)?)
             }
             "probes_export_yaml" => {
-                let f = ops::probe_formations(&self.state).map_err(fail)?;
+                let f = ops::probe_formations(&self.state()).map_err(fail)?;
                 let specs: Vec<settings_model::FormationSpec> = f
                     .formations
                     .into_iter()
@@ -966,7 +983,7 @@ impl EveMcp {
                     .collect();
                 Ok(json!({ "yaml": ops::probe_yaml(&specs) }))
             }
-            "chat_get" => ok(ops::chat_panels(&self.state).map_err(fail)?),
+            "chat_get" => ok(ops::chat_panels(&self.state()).map_err(fail)?),
             "chat_set_splits" => {
                 let ids: Vec<String> = req(args, "window_ids")?;
                 let userlist: Option<i64> = opt(args, "userlist_width")?;
@@ -974,46 +991,46 @@ impl EveMcp {
                 if userlist.is_none() && input.is_none() {
                     return Err(err("missing_field", "give userlist_width and/or input_height"));
                 }
-                ok(ops::set_chat_splits(&self.state, ids, userlist, input).map_err(fail)?)
+                ok(ops::set_chat_splits(&self.state(), ids, userlist, input).map_err(fail)?)
             }
             "hud_get" => {
-                let h = ops::hud_layout(&self.state).map_err(fail)?;
+                let h = ops::hud_layout(&self.state()).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "hud_set" => {
-                let h = ops::set_hud_field(&self.state, &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
+                let h = ops::set_hud_field(&self.state(), &req::<String>(args, "name")?, &req::<String>(args, "value")?).map_err(fail)?;
                 Ok(json!({ "entries": h.entries.iter().map(hud_entry_view).collect::<Vec<_>>() }))
             }
             "layout_get" => {
-                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
                 Ok(layout_view(&wl, &window_filter(args)?, &self.overrides()))
             }
             "layout_render" => {
                 use base64::Engine as _;
-                let wl = ops::window_layout(&self.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
                 let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
                 let filter = window_filter(args)?;
                 let overrides = self.overrides();
                 // The character file is open (window_layout just needed it), so
                 // this cannot fail on that; the account file is optional and
                 // only costs the account-scoped furniture when absent.
-                let hud = ops::hud_layout(&self.state).map_err(fail)?;
+                let hud = ops::hud_layout(&self.state()).map_err(fail)?;
                 let (png, legend) = crate::mcp_render::layout_png(&wl, Some(&hud), width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 Ok(v)
             }
             "layout_edit" => self.batch(args, layout_op, |s| {
-                let wl = ops::window_layout(&s.state, Slot::Char).map_err(fail)?;
+                let wl = ops::window_layout(&s.state(), Slot::Char).map_err(fail)?;
                 Ok(layout_view(&wl, &window_filter(&Args::new())?, &s.overrides()))
             }),
-            "autofill_get" => ok(ops::autofill_lists(&self.state).map_err(fail)?),
-            "autofill_set" => ok(ops::set_autofill_list(&self.state, &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
-            "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state).map_err(fail)?),
-            "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state).map_err(fail)?)),
+            "autofill_get" => ok(ops::autofill_lists(&self.state()).map_err(fail)?),
+            "autofill_set" => ok(ops::set_autofill_list(&self.state(), &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
+            "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state()).map_err(fail)?),
+            "keybinds_get" => Ok(keybinds_view(&ops::keybinds(&self.state()).map_err(fail)?)),
             "keybind_set" => self.keybind_set(args),
-            "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state).map_err(fail)?))),
-            "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state).map_err(fail)?)),
+            "neocom_edit" => self.batch(args, neocom_op, |s| Ok(neocom_view(&ops::neocom_bar(&s.state()).map_err(fail)?))),
+            "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state()).map_err(fail)?)),
             "fleet_get" => self.fleet_get(),
             "fleet_edit" => self.batch(args, fleet_op, |s| s.fleet_get()),
             "lookup_character" => {
@@ -1052,22 +1069,43 @@ impl EveMcp {
     }
 
     fn doc_path(&self, slot: Slot) -> Option<String> {
+        let st = self.state();
         let guard = match slot {
-            Slot::Char => self.state.char.lock(),
-            Slot::User => self.state.user.lock(),
+            Slot::Char => st.char.lock(),
+            Slot::User => st.user.lock(),
         }
         .unwrap();
         guard.as_ref().map(|d| d.path.to_string_lossy().into_owned())
     }
 
     fn status(&self) -> ToolResult {
+        let st = self.state();
         let slot = |s: Slot| {
-            self.doc_path(s).map(|path| json!({ "path": path, "dirty": self.state.history.lock().unwrap().dirty(s) }))
+            self.doc_path(s).map(|path| json!({ "path": path, "dirty": st.history.lock().unwrap().dirty(s) }))
         };
+        // Lock order `user -> char -> history`: read both slot paths through
+        // `slot_view` before taking `h`, the history lock — never the reverse.
+        let workspaces: Vec<Value> = self
+            .workspaces
+            .lock()
+            .unwrap()
+            .values()
+            .map(|ws| {
+                let char = slot_view(ws, Slot::Char).map(|v| v["path"].clone());
+                let user = slot_view(ws, Slot::User).map(|v| v["path"].clone());
+                let h = ws.history.lock().unwrap();
+                json!({
+                    "char": char,
+                    "user": user,
+                    "dirty": { "char": h.dirty(Slot::Char), "user": h.dirty(Slot::User) },
+                })
+            })
+            .collect();
         Ok(json!({
             "char": slot(Slot::Char),
             "user": slot(Slot::User),
-            "can_undo": undo::undo_state(&self.state).can_undo,
+            "can_undo": undo::undo_state(&st).can_undo,
+            "workspaces": workspaces,
         }))
     }
 
@@ -1288,11 +1326,95 @@ fn slot_label(slot: Slot) -> &'static str {
     }
 }
 
+/// Save one workspace's dirty slots, account first. `(saved, skipped)` on
+/// success; on failure the error carries `saved` and `skipped` so far, so a
+/// half-saved pair is never mistaken for a save that touched nothing.
+fn save_state(state: &AppState, force: bool) -> Result<(Vec<Value>, Vec<&'static str>), Value> {
+    let mut saved = Vec::new();
+    let mut skipped = Vec::new();
+    for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
+        let Some(path) = slot_view(state, slot).map(|v| v["path"].clone()) else { continue };
+        if !state.history.lock().unwrap().dirty(slot) {
+            skipped.push(name);
+            continue;
+        }
+        match ops::save_document(state, slot, force) {
+            Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
+            Err(e) => {
+                let mut v = match e.code.as_str() {
+                    "conflict" => err(
+                        "conflict",
+                        format!(
+                            "the {} file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
+                            slot_label(slot)
+                        ),
+                    ),
+                    _ => err(&e.code, format!("{} file: {}", slot_label(slot), e.message)),
+                };
+                v["saved"] = json!(saved);
+                v["skipped"] = json!(skipped);
+                return Err(v);
+            }
+        }
+    }
+    Ok((saved, skipped))
+}
+
+/// The workspace key for a settings file. Canonical, so the spelling the
+/// model chooses and the one `locate` produces name one workspace. A path
+/// that does not exist is the same `io` error `open_file` would give.
+fn canonical(path: &str) -> Result<PathBuf, Value> {
+    std::fs::canonicalize(path).map_err(|e| err("io", format!("{path}: {e}")))
+}
+
+/// `{path, fidelity}` of an open slot — what `open` reports per slot — or
+/// `None` for an empty one.
+fn slot_view(state: &AppState, slot: Slot) -> Option<Value> {
+    let guard = state.doc(slot).lock().unwrap();
+    guard.as_ref().map(|d| json!({ "path": d.path.to_string_lossy(), "fidelity": d.fidelity }))
+}
+
+/// Spec §3.3, rule 3: re-read a clean slot whose file changed on disk (the
+/// window saved it, the game client rewrote it, a batch copy landed). A
+/// dirty slot is never re-read — its edits are the point, and `save`'s
+/// conflict check will name the situation.
+///
+/// Reads straight through `Document::load` rather than `ops::open_file`:
+/// `open_file` empties the slot on a decode failure (the window's contract
+/// for a fresh `open`), but here the file merely changed since the LAST
+/// load — a partial client write is exactly the case this function exists
+/// for — so a file that no longer decodes is left alone: the old document is
+/// still a coherent snapshot, and the next `save` will report the conflict.
+///
+/// ponytail: a successful re-read clears the undo stack (same as
+/// `open_file`), so a dirty sibling slot keeps its edits but loses undo.
+/// Rare (one slot dirty, the other clean and stale, on a re-open); the edits
+/// are what matters.
+fn reload_stale(state: &AppState) {
+    for slot in [Slot::User, Slot::Char] {
+        let path = {
+            let guard = state.doc(slot).lock().unwrap();
+            match guard.as_ref() {
+                Some(d) if d.changed_on_disk() => d.path.clone(),
+                _ => continue,
+            }
+        };
+        if state.history.lock().unwrap().dirty(slot) {
+            continue;
+        }
+        if let Ok(doc) = settings_model::Document::load(&path) {
+            *state.doc(slot).lock().unwrap() = Some(doc);
+            state.history.lock().unwrap().clear_for(slot);
+        }
+    }
+}
+
 impl EveMcp {
     fn open(&self, args: &Args) -> ToolResult {
         let char_id: Option<u64> = opt(args, "char_id")?;
         let mut char_file: Option<String> = opt(args, "char_file")?;
         let mut user_file: Option<String> = opt(args, "user_file")?;
+        let discard: bool = opt(args, "discard")?.unwrap_or(false);
         if let Some(id) = char_id {
             let profiles = discover(&self.roots);
             let roster = accounts::load_roster(&self.roots, &self.dir);
@@ -1310,59 +1432,103 @@ impl EveMcp {
                 "user_file is required: the account file (core_user_<id>.dat) holds presets and formations. list_characters shows which one pairs with a character, or its unpaired_accounts.",
             ));
         };
-        // Open the user slot FIRST: `open_file` replaces a slot on success
-        // but leaves it untouched on an io error, so a failing open here (a
-        // bad or missing path) returns via `?` with the previous session —
-        // BOTH slots — still intact.
-        let user = open_slot(&self.state, Slot::User, &user_file)?;
-        // Only once the new account is open do we drop the old character:
-        // clearing it unconditionally before this point would discard a
-        // still-valid pairing if the user open above had failed.
-        ops::close_file(&self.state, Slot::Char);
-        let char = match char_file {
-            Some(p) => Some(open_slot(&self.state, Slot::Char, &p)?),
-            None => None,
+        let user_key = canonical(&user_file)?;
+        let char_key = char_file.as_deref().map(canonical).transpose()?;
+
+        // ponytail: check-then-insert across file IO. One connection today;
+        // when PR 2 shares the map between connections, two first opens of
+        // one account race and the loser's workspace is not the map's — take
+        // the map lock around the whole None branch then.
+        let existing = self.workspaces.lock().unwrap().get(&user_key).cloned();
+        let ws = match existing {
+            Some(ws) => {
+                let open_char = ws.char.lock().unwrap().as_ref().map(|d| d.path.clone());
+                if discard {
+                    // The window's Discard: reload both slots from disk, unsaved
+                    // edits gone. The only exit from a dirty workspace besides
+                    // `undo` (bounded) and `save`. Account first, so a failing
+                    // reload of the character leaves the account fresh and
+                    // the character as it was.
+                    open_slot(&ws, Slot::User, &user_file)?;
+                    let target = char_file.clone().or_else(|| open_char.as_ref().map(|p| p.to_string_lossy().into_owned()));
+                    if let Some(p) = target {
+                        open_slot(&ws, Slot::Char, &p)?;
+                    }
+                    *self.current.lock().unwrap() = Some(ws.clone());
+                    return Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }));
+                }
+                // Same character, or none asked for: nothing to load. `open`
+                // never discards a character to satisfy an account-only call.
+                let swap = match (&open_char, &char_key) {
+                    (Some(have), Some(want)) => std::fs::canonicalize(have).ok().as_ref() != Some(want),
+                    (None, Some(_)) => true,
+                    (_, None) => false,
+                };
+                if swap {
+                    let h = ws.history.lock().unwrap();
+                    if h.dirty(Slot::Char) || h.dirty(Slot::User) {
+                        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned());
+                        let want = char_key.as_deref().map(name).unwrap_or_default();
+                        let message = match &open_char {
+                            Some(have) => format!("{} or its account has unsaved edits; save or undo them before opening {want}", name(have)),
+                            None => format!("the account has unsaved edits; save or undo them before opening {want}"),
+                        };
+                        return Err(err("unsaved_edits", message));
+                    }
+                    drop(h);
+                    if let Some(p) = &char_file {
+                        open_slot(&ws, Slot::Char, p)?;
+                    }
+                }
+                reload_stale(&ws);
+                ws
+            }
+            None => {
+                // A fresh workspace is built aside and inserted only once both
+                // opens succeeded, so a bad path changes nothing — not the map,
+                // not `current`.
+                let ws = AppState::new();
+                open_slot(&ws, Slot::User, &user_file)?;
+                if let Some(p) = &char_file {
+                    open_slot(&ws, Slot::Char, p)?;
+                }
+                self.workspaces.lock().unwrap().insert(user_key, ws.clone());
+                ws
+            }
         };
-        Ok(json!({ "char": char, "user": user }))
+        *self.current.lock().unwrap() = Some(ws.clone());
+        Ok(json!({ "char": slot_view(&ws, Slot::Char), "user": slot_view(&ws, Slot::User) }))
     }
 
     fn save(&self, args: &Args) -> ToolResult {
         let force: bool = opt(args, "force")?.unwrap_or(false);
+        let all: bool = opt(args, "all")?.unwrap_or(false);
+        if !all {
+            let (saved, skipped) = save_state(&self.state(), force)?;
+            return Ok(json!({ "saved": saved, "skipped": skipped }));
+        }
+        // Every workspace, in map order. A failure stops the loop and carries
+        // what already reached disk, as the single-workspace form does.
+        let all_ws: Vec<AppState> = self.workspaces.lock().unwrap().values().cloned().collect();
         let mut saved = Vec::new();
-        let mut skipped = Vec::new();
-        for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
-            let Some(path) = self.doc_path(slot) else { continue };
-            if !self.state.history.lock().unwrap().dirty(slot) {
-                skipped.push(name);
-                continue;
-            }
-            match ops::save_document(&self.state, slot, force) {
-                Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
-                // A slot after this one in the loop may never be tried — attach
-                // what already made it to disk, or the caller can't tell a
-                // half-saved batch from a save that touched nothing.
-                Err(e) => {
-                    let mut v = match e.code.as_str() {
-                        "conflict" => err(
-                            "conflict",
-                            format!(
-                                "the {} file changed on disk since it was opened (the EVE client or the editor wrote it). Ask the user before retrying with force: true.",
-                                slot_label(slot)
-                            ),
-                        ),
-                        _ => err(&e.code, format!("{} file: {}", slot_label(slot), e.message)),
-                    };
-                    v["saved"] = json!(saved);
-                    v["skipped"] = json!(skipped);
-                    return Err(v);
+        for ws in &all_ws {
+            match save_state(ws, force) {
+                Ok((mut s, _)) => saved.append(&mut s),
+                Err(mut e) => {
+                    let mut earlier = saved;
+                    if let Some(now) = e["saved"].as_array_mut() {
+                        earlier.append(now);
+                    }
+                    e["saved"] = json!(earlier);
+                    return Err(e);
                 }
             }
         }
-        Ok(json!({ "saved": saved, "skipped": skipped }))
+        Ok(json!({ "saved": saved }))
     }
 
     fn undo(&self) -> ToolResult {
-        match undo::undo(&self.state) {
+        match undo::undo(&self.state()) {
             Some(_) => self.status(),
             None => Err(err("nothing_to_undo", "the undo stack is empty")),
         }
@@ -1371,7 +1537,7 @@ impl EveMcp {
     fn restore_backup(&self, args: &Args) -> ToolResult {
         let slot: Slot = req(args, "slot")?;
         let backup: String = req(args, "backup_path")?;
-        match ops::restore_backup(&self.state, slot, &backup).map_err(fail)? {
+        match ops::restore_backup(&self.state(), slot, &backup).map_err(fail)? {
             OpenOutcome::Opened { path, .. } => Ok(json!({ "path": path, "status": self.status()? })),
             // Unreachable in practice: `restore` refuses a backup that does not decode.
             OpenOutcome::ParseFailed { path, message, .. } => Err(err("parse_failed", format!("{path}: {message}"))),
@@ -1391,7 +1557,7 @@ impl EveMcp {
     }
 
     fn overview_get(&self) -> ToolResult {
-        let oc = ops::overview_columns(&self.state).map_err(fail)?;
+        let oc = ops::overview_columns(&self.state()).map_err(fail)?;
         self.overview_with_names(oc)
     }
 
@@ -1534,7 +1700,7 @@ impl EveMcp {
                 let name: String = req(args, "name")?;
                 let aspects: Vec<Aspect> = req(args, "aspects")?;
                 let overwrite = opt::<bool>(args, "overwrite")?.unwrap_or(false);
-                setup::preset_save(&self.state, &self.dir, &name, &aspects, overwrite).map_err(fail)?;
+                setup::preset_save(&self.state(), &self.dir, &name, &aspects, overwrite).map_err(fail)?;
             }
             "rename" => presets::rename(&self.dir, &req::<String>(args, "name")?, &req::<String>(args, "new_name")?).map_err(|e| err("preset", e))?,
             "delete" => presets::delete(&self.dir, &req::<String>(args, "name")?).map_err(|e| err("preset", e))?,
@@ -1560,16 +1726,17 @@ impl EveMcp {
         finish: impl FnOnce(&EveMcp) -> ToolResult,
     ) -> ToolResult {
         let ops_list: Vec<Args> = req(args, "ops")?;
+        let st = self.state();
         {
-            let _group = undo::group(&self.state);
+            let _group = undo::group(&st);
             for (i, op) in ops_list.iter().enumerate() {
-                if let Err(mut e) = apply(&self.state, op) {
+                if let Err(mut e) = apply(&st, op) {
                     // A write failure already rolled the group back inside
                     // `edit_reshared`; a parse failure did not. `rollback_group`
                     // is a no-op when nothing was written, so call it always.
-                    let mut u = self.state.user.lock().unwrap();
-                    let mut c = self.state.char.lock().unwrap();
-                    self.state.history.lock().unwrap().rollback_group(&mut u, &mut c);
+                    let mut u = st.user.lock().unwrap();
+                    let mut c = st.char.lock().unwrap();
+                    st.history.lock().unwrap().rollback_group(&mut u, &mut c);
                     e["op_index"] = json!(i);
                     return Err(e);
                 }
@@ -1594,7 +1761,7 @@ impl EveMcp {
                 Some(keys)
             }
         };
-        let r = ops::set_keybind_cmd(&self.state, &command, keys).map_err(fail)?;
+        let r = ops::set_keybind_cmd(&self.state(), &command, keys).map_err(fail)?;
         Ok(json!({ "keybinds": keybinds_view(&r.keybinds), "stolen": r.stolen }))
     }
 }
@@ -1730,8 +1897,10 @@ mod tests {
         assert_eq!(st["char"], Value::Null);
     }
 
+    /// A failing open must not touch the workspace it would have changed:
+    /// the character that was open stays open, paired with the same account.
     #[test]
-    fn a_failed_char_reopen_does_not_leave_the_previous_character_paired() {
+    fn a_failed_char_reopen_leaves_the_workspace_untouched() {
         let (s, path) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
         s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
@@ -1742,7 +1911,16 @@ mod tests {
             .call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": missing.to_string_lossy() })))
             .unwrap_err();
         assert_eq!(e["code"], "io");
-        assert_eq!(s.call("status", &Args::new()).unwrap()["char"], Value::Null);
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(cpath.to_string_lossy()));
+
+        // A directory canonicalizes fine but fails to read: the same "leave
+        // the slot as it was" contract, reached without an intervening close.
+        let dir = cpath.parent().unwrap();
+        let e = s
+            .call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": dir.to_string_lossy() })))
+            .unwrap_err();
+        assert_eq!(e["code"], "io");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(cpath.to_string_lossy()));
     }
 
     /// `open_file` leaves a slot untouched on an io error — a failing NEW
@@ -1753,7 +1931,7 @@ mod tests {
         let (s, path) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
         s.call("open", &args(json!({ "user_file": path.to_string_lossy(), "char_file": cpath.to_string_lossy() }))).unwrap();
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
 
         let e = s
             .call("open", &args(json!({ "user_file": "Z:/no/such/core_user_1.dat", "char_file": cpath.to_string_lossy() })))
@@ -1774,6 +1952,251 @@ mod tests {
         assert_eq!(e["code"], "parse_failed");
     }
 
+    fn open_args(user: &Path, char: Option<&Path>) -> Args {
+        let mut a = Args::new();
+        a.insert("user_file".into(), json!(user.to_string_lossy()));
+        if let Some(c) = char {
+            a.insert("char_file".into(), json!(c.to_string_lossy()));
+        }
+        a
+    }
+
+    fn empty_char_bytes() -> Vec<u8> {
+        encode(&BmValue::Dict(vec![])).unwrap()
+    }
+
+    /// Two accounts are two workspaces: opening the second keeps the first,
+    /// unsaved edits and all, and opening the first again is a switch back,
+    /// not a reload.
+    #[test]
+    fn open_of_a_second_account_keeps_the_first() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let first = s.state();
+
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["user"]["path"], json!(b.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false, "a fresh workspace");
+        assert!(!s.state().ptr_eq(&first));
+
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.state().ptr_eq(&first), "the same workspace, not a reload");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true, "the edit survived");
+    }
+
+    /// Siblings share the account: opening a second character of the same
+    /// account swaps the character slot inside the one workspace.
+    #[test]
+    fn open_of_a_sibling_swaps_the_character_in_the_same_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        let ws = s.state();
+
+        let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
+        assert_eq!(v["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(v["user"]["path"], json!(a.to_string_lossy()));
+        assert!(s.state().ptr_eq(&ws));
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c2.to_string_lossy()));
+    }
+
+    /// The forced workflow (spec §3.3): finish one character of an account
+    /// before starting the next. Either dirty slot blocks; save or undo clears.
+    #[test]
+    fn a_sibling_swap_is_blocked_while_either_slot_is_dirty() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+
+        // Account side dirty.
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let e = s.call("open", &open_args(&a, Some(&c2))).unwrap_err();
+        assert_eq!(e["code"], "unsaved_edits");
+        assert!(e["message"].as_str().unwrap().contains("save"));
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c1.to_string_lossy()), "untouched");
+        s.call("save", &Args::new()).unwrap();
+        s.call("open", &open_args(&a, Some(&c2))).unwrap();
+
+        // Character side dirty; undo clears it too.
+        ops::apply_mutation(
+            &s.state(),
+            Slot::Char,
+            &settings_model::Mutation::InsertDictEntry {
+                parent: vec![],
+                key: settings_model::NewValue::Str("x".into()),
+                value: settings_model::NewValue::Int("1".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(s.call("open", &open_args(&a, Some(&c1))).unwrap_err()["code"], "unsaved_edits");
+        s.call("undo", &Args::new()).unwrap();
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        assert_eq!(s.call("status", &Args::new()).unwrap()["char"]["path"], json!(c1.to_string_lossy()));
+    }
+
+    /// Asking for the account alone on a workspace with a character open
+    /// keeps the character: `open` never discards.
+    #[test]
+    fn open_with_only_the_account_keeps_the_open_character() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        let v = s.call("open", &open_args(&a, None)).unwrap();
+        assert_eq!(v["char"]["path"], json!(c1.to_string_lossy()));
+    }
+
+    /// Spec §3.3, rule 3: `open` re-reads a clean slot whose file moved on
+    /// disk (the window saved, the client wrote) and never a dirty one.
+    #[test]
+    fn open_rereads_a_clean_stale_slot_and_never_a_dirty_one() {
+        let (s, a) = open_user(&overview_user_bytes());
+        // Clean: the rewrite is picked up. The fixture's one tab has TYPE hidden;
+        // an empty dict has no tabs at all.
+        std::fs::write(&a, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert!(v["tabs"].as_array().unwrap().is_empty(), "the rewrite (no tabs) was picked up");
+
+        // Dirty: the in-memory edit wins and the later save conflicts, as today.
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        std::fs::write(&a, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert_eq!(visible_count(&v), 2, "the edit is still there");
+        assert_eq!(s.call("save", &Args::new()).unwrap_err()["code"], "conflict");
+    }
+
+    /// A changed file that no longer decodes — the client mid-write — is left
+    /// alone: the old document stays, and the workspace stays usable.
+    #[test]
+    fn open_keeps_a_clean_slot_whose_changed_file_no_longer_decodes() {
+        let (s, a) = open_user(&overview_user_bytes());
+        std::fs::write(&a, [0x7E, 0, 0, 0, 0, 0x3D]).unwrap();
+        s.call("open", &open_args(&a, None)).unwrap();
+        let v = s.call("overview_get", &Args::new()).unwrap();
+        assert_eq!(v["tabs"].as_array().unwrap().len(), 1, "the old document is still there");
+        s.call("open", &open_args(&a, None)).unwrap();
+        assert!(s.call("status", &Args::new()).unwrap()["user"].is_object(), "and the workspace still serves the account");
+    }
+
+    /// `discard: true` is the window's Discard: both slots come back from
+    /// disk and the unsaved edits are gone — the one exit from a dirty
+    /// workspace when `undo` cannot reach far enough.
+    #[test]
+    fn open_with_discard_reloads_both_slots_and_drops_unsaved_edits() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let c1 = temp_file("mcp-c1", &empty_char_bytes());
+        let c2 = temp_file("mcp-c2", &empty_char_bytes());
+        s.call("open", &open_args(&a, Some(&c1))).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        ops::apply_mutation(
+            &s.state(),
+            Slot::Char,
+            &settings_model::Mutation::InsertDictEntry {
+                parent: vec![],
+                key: settings_model::NewValue::Str("x".into()),
+                value: settings_model::NewValue::Int("1".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(s.call("open", &open_args(&a, Some(&c2))).unwrap_err()["code"], "unsaved_edits");
+
+        // Discard while switching: c2 opens, the account edit is gone.
+        let mut args = open_args(&a, Some(&c2));
+        args.insert("discard".into(), json!(true));
+        s.call("open", &args).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false);
+        assert_eq!(st["char"]["dirty"], false);
+        assert_eq!(visible_count(&s.call("overview_get", &Args::new()).unwrap()), 1, "the edit was dropped");
+
+        // Discard without naming a character keeps the open one, re-read.
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let mut args = open_args(&a, None);
+        args.insert("discard".into(), json!(true));
+        s.call("open", &args).unwrap();
+        let st = s.call("status", &Args::new()).unwrap();
+        assert_eq!(st["char"]["path"], json!(c2.to_string_lossy()));
+        assert_eq!(st["user"]["dirty"], false);
+    }
+
+    /// The key is the canonical path, so a spelling the model chooses finds
+    /// the workspace a roster lookup created. The `.` segment is what makes
+    /// this meaningful on the ubuntu CI: it is collapsed only by
+    /// `canonicalize`, identically on every OS, where a `\`-vs-`/` swap is
+    /// already a no-op on Linux.
+    #[test]
+    fn explicit_paths_with_different_spelling_hit_the_same_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        let ws = s.state();
+        let respelled = a.parent().unwrap().join(".").join(a.file_name().unwrap()).to_string_lossy().replace('\\', "/");
+        let mut args = Args::new();
+        args.insert("user_file".into(), json!(respelled));
+        s.call("open", &args).unwrap();
+        assert!(s.state().ptr_eq(&ws));
+    }
+
+    #[test]
+    fn status_lists_every_workspace_with_its_dirty_slots() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+
+        let st = s.call("status", &Args::new()).unwrap();
+        let ws = st["workspaces"].as_array().unwrap();
+        assert_eq!(ws.len(), 2);
+        let by_path = |p: &Path| ws.iter().find(|w| w["user"] == json!(p.to_string_lossy())).unwrap().clone();
+        assert_eq!(by_path(&a)["dirty"], json!({ "char": false, "user": true }));
+        assert_eq!(by_path(&b)["dirty"], json!({ "char": false, "user": false }));
+        assert_eq!(by_path(&b)["char"], Value::Null);
+    }
+
+    #[test]
+    fn save_all_writes_every_dirty_workspace() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+
+        let v = s.call("save", &args(json!({ "all": true }))).unwrap();
+        let saved = v["saved"].as_array().unwrap();
+        assert_eq!(saved.len(), 2);
+        for entry in saved {
+            assert!(PathBuf::from(entry["backup_path"].as_str().unwrap()).exists());
+        }
+        let paths: Vec<Value> = saved.iter().map(|e| e["path"].clone()).collect();
+        assert!(paths.contains(&json!(a.to_string_lossy())) && paths.contains(&json!(b.to_string_lossy())));
+
+        let st = s.call("status", &Args::new()).unwrap();
+        assert!(st["workspaces"].as_array().unwrap().iter().all(|w| w["dirty"]["user"] == false));
+    }
+
+    /// Without `all`, `save` is the current workspace only — the other stays
+    /// dirty and is still listed as such.
+    #[test]
+    fn save_without_all_is_the_current_workspace_only() {
+        let (s, a) = open_user(&overview_user_bytes());
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+        let b = temp_file("mcp-b", &overview_user_bytes());
+        s.call("open", &open_args(&b, None)).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
+
+        let v = s.call("save", &Args::new()).unwrap();
+        assert_eq!(v["saved"].as_array().unwrap().len(), 1);
+        assert_eq!(v["saved"][0]["path"], json!(b.to_string_lossy()));
+        let st = s.call("status", &Args::new()).unwrap();
+        let a_ws = st["workspaces"].as_array().unwrap().iter().find(|w| w["user"] == json!(a.to_string_lossy())).unwrap().clone();
+        assert_eq!(a_ws["dirty"]["user"], true);
+    }
+
     #[test]
     fn save_skips_a_clean_slot_and_writes_a_dirty_one_with_a_backup() {
         let (s, path) = open_user(&overview_user_bytes());
@@ -1781,7 +2204,7 @@ mod tests {
         assert_eq!(v["saved"], json!([]));
         assert_eq!(v["skipped"], json!(["user"]));
 
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         assert_eq!(s.call("status", &Args::new()).unwrap()["user"]["dirty"], true);
         let v = s.call("save", &Args::new()).unwrap();
         assert_eq!(v["saved"][0]["slot"], "user");
@@ -1793,7 +2216,7 @@ mod tests {
     #[test]
     fn save_conflict_is_an_error_until_forced() {
         let (s, path) = open_user(&overview_user_bytes());
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         std::fs::write(&path, encode(&BmValue::Dict(vec![])).unwrap()).unwrap();
         let e = s.call("save", &Args::new()).unwrap_err();
         assert_eq!(e["code"], "conflict");
@@ -1805,11 +2228,11 @@ mod tests {
     fn save_reports_what_was_already_saved_when_a_later_slot_fails() {
         let (s, _) = open_user(&overview_user_bytes());
         let cpath = temp_file("mcp-char", &encode(&BmValue::Dict(vec![])).unwrap());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
 
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         ops::apply_mutation(
-            &s.state,
+            &s.state(),
             Slot::Char,
             &settings_model::Mutation::InsertDictEntry {
                 parent: vec![],
@@ -1839,7 +2262,7 @@ mod tests {
     fn undo_reverts_an_edit_and_errors_on_an_empty_stack() {
         let (s, _) = open_user(&overview_user_bytes());
         assert_eq!(s.call("undo", &Args::new()).unwrap_err()["code"], "nothing_to_undo");
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         let st = s.call("undo", &Args::new()).unwrap();
         assert_eq!(st["user"]["dirty"], false);
         assert_eq!(st["can_undo"], false);
@@ -1848,14 +2271,14 @@ mod tests {
     #[test]
     fn list_backups_then_restore_puts_the_saved_bytes_back() {
         let (s, path) = open_user(&overview_user_bytes());
-        ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+        ops::set_overview_visible(&s.state(), 0, "TYPE", true).unwrap();
         s.call("save", &Args::new()).unwrap();
         let backups = s.call("list_backups", &args(json!({ "slot": "user" }))).unwrap();
         let newest = backups[0]["path"].as_str().unwrap().to_string();
 
         let v = s.call("restore_backup", &args(json!({ "slot": "user", "backup_path": newest }))).unwrap();
         assert_eq!(v["path"], json!(path.to_string_lossy()));
-        let oc = ops::overview_columns(&s.state).unwrap();
+        let oc = ops::overview_columns(&s.state()).unwrap();
         assert_eq!(oc.tabs[0].columns.iter().filter(|c| c.visible).count(), 1, "TYPE hidden again");
     }
 
@@ -1878,7 +2301,7 @@ mod tests {
     fn status_with_nothing_open_is_empty_and_cannot_undo() {
         let s = EveMcp::for_tests();
         let v = s.call("status", &Args::new()).unwrap();
-        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false }));
+        assert_eq!(v, json!({ "char": null, "user": null, "can_undo": false, "workspaces": [] }));
     }
 
     #[test]
@@ -2032,7 +2455,7 @@ mod tests {
     #[test]
     fn overview_get_inlines_state_labels_and_group_names() {
         let (s, _) = open_user(&overview_user_bytes());
-        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25, 26], vec![11], vec![]).unwrap();
+        ops::preset_fork(&s.state(), 0, "Frigs".into(), vec![25, 26], vec![11], vec![]).unwrap();
         let v = s.call("overview_get", &Args::new()).unwrap();
         assert_eq!(v["tabs"][0]["preset"], "Frigs");
         assert_eq!(v["names"]["states"]["11"], "Pilot is in your fleet");
@@ -2128,17 +2551,18 @@ mod tests {
     #[test]
     fn a_nested_undo_group_rides_the_outer_one() {
         let (s, _) = open_user(&overview_user_bytes());
-        let before = undo::undo_state(&s.state).depth;
+        let st = s.state();
+        let before = undo::undo_state(&st).depth;
         {
-            let _outer = undo::group(&s.state);
-            ops::set_overview_visible(&s.state, 0, "TYPE", true).unwrap();
+            let _outer = undo::group(&st);
+            ops::set_overview_visible(&st, 0, "TYPE", true).unwrap();
             {
-                let _inner = undo::group(&s.state);
-                ops::set_overview_order(&s.state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
+                let _inner = undo::group(&st);
+                ops::set_overview_order(&st, 0, vec!["TYPE".into(), "NAME".into()]).unwrap();
             }
-            ops::set_overview_visible(&s.state, 0, "TYPE", false).unwrap();
+            ops::set_overview_visible(&st, 0, "TYPE", false).unwrap();
         }
-        assert_eq!(undo::undo_state(&s.state).depth, before + 1, "three writes under one group, one entry");
+        assert_eq!(undo::undo_state(&st).depth, before + 1, "three writes under one group, one entry");
     }
 
     fn visible_count(v: &Value) -> usize {
@@ -2148,14 +2572,14 @@ mod tests {
     #[test]
     fn columns_edit_applies_a_batch_as_one_undo_step() {
         let (s, _) = open_user(&overview_user_bytes());
-        let before = undo::undo_state(&s.state).depth;
+        let before = undo::undo_state(&s.state()).depth;
         let v = s.call("overview_columns_edit", &args(json!({ "ops": [
             { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
             { "op": "set_order", "tab": 0, "order": ["TYPE", "NAME"] }
         ]}))).unwrap();
         assert_eq!(visible_count(&v), 2);
         assert_eq!(v["tabs"][0]["columns"][0]["name"], "TYPE");
-        assert_eq!(undo::undo_state(&s.state).depth, before + 1);
+        assert_eq!(undo::undo_state(&s.state()).depth, before + 1);
         assert!(v["names"].is_object(), "edits return the same self-describing shape as overview_get");
     }
 
@@ -2163,7 +2587,7 @@ mod tests {
     fn a_failing_op_rolls_the_whole_batch_back_and_names_its_index() {
         let (s, _) = open_user(&overview_user_bytes());
         let before = s.call("overview_get", &Args::new()).unwrap();
-        let depth = undo::undo_state(&s.state).depth;
+        let depth = undo::undo_state(&s.state()).depth;
         let e = s.call("overview_columns_edit", &args(json!({ "ops": [
             { "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true },
             { "op": "set_visible", "tab": 99, "column": "TYPE", "visible": true }
@@ -2172,7 +2596,7 @@ mod tests {
         // unknown TAB is `NoTab`, so that is the failing op.
         assert_eq!(e["op_index"], 1);
         assert_eq!(s.call("overview_get", &Args::new()).unwrap(), before);
-        assert_eq!(undo::undo_state(&s.state).depth, depth);
+        assert_eq!(undo::undo_state(&s.state()).depth, depth);
     }
 
     #[test]
@@ -2202,7 +2626,7 @@ mod tests {
     #[test]
     fn tabs_edit_creates_renames_and_deletes_in_one_batch() {
         let (s, _) = open_user(&overview_user_bytes());
-        ops::overview_create_window_mapping(&s.state).unwrap();
+        ops::overview_create_window_mapping(&s.state()).unwrap();
         let v = s.call("overview_tabs_edit", &args(json!({ "ops": [
             { "op": "create", "window": 0, "name": "Mining", "from_tab": 0 },
             { "op": "rename", "tab": 1, "name": "Rocks" }
@@ -2257,7 +2681,7 @@ mod tests {
     fn open_char(bytes: &[u8]) -> (EveMcp, PathBuf) {
         let path = temp_file("mcp-char", bytes);
         let s = EveMcp::for_tests();
-        ops::open_file(&s.state, Slot::Char, path.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, path.to_str().unwrap()).unwrap();
         (s, path)
     }
 
@@ -2288,9 +2712,9 @@ mod tests {
     fn every_get_result_carries_no_paths() {
         let s = EveMcp::for_tests();
         let cpath = temp_file("mcp-nopaths-char", &layout_char_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let upath = temp_file("mcp-nopaths-user", &overview_user_bytes());
-        ops::open_file(&s.state, Slot::User, upath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::User, upath.to_str().unwrap()).unwrap();
 
         for tool in [
             "layout_get", "hud_get", "fleet_get", "neocom_get", "chat_get", "autofill_get",
@@ -2385,7 +2809,7 @@ mod tests {
     fn pack_preview_of_a_missing_file_is_an_error_and_export_then_preview_round_trips() {
         let (s, _) = open_user(&overview_user_bytes());
         assert!(s.call("overview_pack_preview", &args(json!({ "path": "Z:/nope.yaml" }))).is_err());
-        ops::preset_fork(&s.state, 0, "Frigs".into(), vec![25], vec![], vec![]).unwrap();
+        ops::preset_fork(&s.state(), 0, "Frigs".into(), vec![25], vec![], vec![]).unwrap();
         let out = std::env::temp_dir().join(format!("mcp-pack-{}.yaml", std::process::id()));
         s.call("overview_pack_export", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
         let preview = s.call("overview_pack_preview", &args(json!({ "path": out.to_string_lossy() }))).unwrap();
@@ -2526,7 +2950,7 @@ mod tests {
     fn fleet_get_projects_both_sides_and_strips_paths() {
         let (s, _) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char", &empty_ui_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let v = s.call("fleet_get", &Args::new()).unwrap();
         assert_no_paths(&v, "fleet_get");
         assert_eq!(v["user_open"], true);
@@ -2540,7 +2964,7 @@ mod tests {
     fn fleet_edit_sets_a_field_a_colour_and_a_watchlist_entry_then_clears_the_colour() {
         let (s, _) = open_user(&empty_ui_bytes());
         let cpath = temp_file("mcp-fleet-char2", &empty_ui_bytes());
-        ops::open_file(&s.state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        ops::open_file(&s.state(), Slot::Char, cpath.to_str().unwrap()).unwrap();
         let v = s.call("fleet_edit", &args(json!({ "ops": [
             { "op": "set_field", "name": "listen_show_own", "value": "1" },
             { "op": "set_colour", "broadcast": "Target", "rgb": [0.2, 0.5, 1.0] },
@@ -2556,7 +2980,7 @@ mod tests {
         let v = s.call("fleet_edit", &args(json!({ "ops": [{ "op": "set_colour", "broadcast": "Target" }] }))).unwrap();
         let c = v["colours"].as_array().unwrap().iter().find(|c| c["broadcast"] == "Target").unwrap();
         assert_eq!(c["state"], "cleared");
-        assert_eq!(undo::undo_state(&s.state).depth, 2, "two batches, two undo steps");
+        assert_eq!(undo::undo_state(&s.state()).depth, 2, "two batches, two undo steps");
     }
 
     #[test]
@@ -2644,7 +3068,7 @@ mod tests {
         assert_eq!(m["geom"]["w"], 640);
         assert_eq!(m["geom"]["screen_w"], 2560, "re-stamped to the reference");
         assert_eq!(m["resolution_matches"], true);
-        assert_eq!(undo::undo_state(&s.state).depth, 1);
+        assert_eq!(undo::undo_state(&s.state()).depth, 1);
     }
 
     #[test]
@@ -2686,7 +3110,7 @@ mod tests {
             { "op": "stack_reorder", "container": "C", "members": ["m2", "m1"] }
         ]}))).unwrap();
         assert_eq!(v["stacks"][0]["members"], json!(["m2", "m1"]));
-        assert_eq!(undo::undo_state(&s.state).depth, 1, "stack ops open their own group; the batch is still one step");
+        assert_eq!(undo::undo_state(&s.state()).depth, 1, "stack ops open their own group; the batch is still one step");
     }
 
     /// EVE keeps a stack's container and every member at one identical rect

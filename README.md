@@ -37,6 +37,8 @@ through the same backup → verify → atomic-write chain as the app itself:
 in-file edits are written only when the assistant saves; copy settings and
 settings presets write immediately, with backups.
 
+Each account the assistant opens keeps its own workspace for the conversation, so it can read and edit across your characters without reloading.
+
 Open **AI access…** from the app menu. With Claude Desktop installed, **Register**
 adds the server to its config (restart Claude Desktop afterwards). For any other
 MCP client, copy the snippet shown there into the client's config — it is the

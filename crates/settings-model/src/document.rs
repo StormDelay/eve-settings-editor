@@ -69,6 +69,19 @@ impl Document {
             loaded_len: meta.len(),
         })
     }
+
+    /// Whether the file differs from what this document was loaded from (or
+    /// last saved as): length or mtime moved. `save`'s conflict check, exposed
+    /// so a caller can re-read a clean document before it is too late to.
+    /// A missing file is not a change — `save` reports that on its own.
+    pub fn changed_on_disk(&self) -> bool {
+        let Ok(meta) = fs::metadata(&self.path) else { return false };
+        meta.len() != self.loaded_len
+            || match (meta.modified().ok(), self.loaded_mtime) {
+                (Some(now), Some(then)) => now != then,
+                _ => false,
+            }
+    }
 }
 
 #[cfg(test)]
@@ -98,6 +111,19 @@ mod tests {
         let doc = Document::load(&temp_file("editable", &bytes)).unwrap();
         assert_eq!(doc.fidelity, Fidelity::Editable);
         assert_eq!(doc.loaded_len, bytes.len() as u64);
+    }
+
+    #[test]
+    fn changed_on_disk_follows_the_file_not_the_document() {
+        let bytes = encode(&Value::Dict(vec![(Value::Bytes(b"k".to_vec()), Value::Int(5))])).unwrap();
+        let path = temp_file("changed", &bytes);
+        let doc = Document::load(&path).unwrap();
+        assert!(!doc.changed_on_disk(), "freshly loaded");
+        // A different length is a change whatever the clock says.
+        fs::write(&path, encode(&Value::Dict(vec![])).unwrap()).unwrap();
+        assert!(doc.changed_on_disk(), "rewritten with other content");
+        fs::remove_file(&path).unwrap();
+        assert!(!doc.changed_on_disk(), "a missing original is save's error, not a change");
     }
 
     #[test]
