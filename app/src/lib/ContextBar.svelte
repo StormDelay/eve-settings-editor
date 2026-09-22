@@ -33,6 +33,7 @@
     onGoto,
     ctx,
     onRestored,
+    aiConnected = false,
   }: {
     switcherOpen?: boolean;
     historyOpen?: boolean;
@@ -45,6 +46,7 @@
      *  three one-off `onShowX` props with the thing they were approximating. */
     ctx: Ctx;
     onRestored: (slot: Slot, outcome: OpenOutcome) => void;
+    aiConnected?: boolean;
   } = $props();
 
   let menuEl: HTMLElement | undefined = $state();
@@ -107,6 +109,9 @@
   {/if}
   {#if subject.preset !== null}
     <Chip tone="info" size="sm">preset</Chip>
+  {/if}
+  {#if aiConnected}
+    <Chip tone="info" size="sm" title="AI assistant connected">AI</Chip>
   {/if}
 
   <span class="spacer"></span>
