@@ -6,6 +6,8 @@ Sequence: `list_characters` (which files exist and who they belong to) → `open
 
 `open` selects: each account keeps its own workspace for the whole conversation, so opening another character keeps the first one's unsaved edits, and reading five characters is five `open` calls with no reloads. An account's settings are edited through whichever of its characters is open; opening another character of the *same* account needs the current one saved (or undone) first — `unsaved_edits` says so. `status` lists every workspace and what is unsaved in it; `save` writes the current workspace, `save {all: true}` all of them. `open` with `discard: true` throws the unsaved edits away and reloads both files from disk, the window's own Discard — only when the user asks for it.
 
+When the app window is open, this server runs inside it: `status` says `mode: live` and shows what the window has open. Opening the window's character works in the user's own session — every edit appears there at once and the user can Ctrl+Z it; `undo` from here works only while your own step is on top (`window_edited` otherwise). Account-side settings of the window's account are edited through the window's character; a sibling opened privately has a read-only account slot that names the character to open instead. If the window switches files under you, the next call says `switched` — call `open` again.
+
 Rules:
 
 1. The EVE client rewrites its settings when a character logs out. Only edit files of characters that are logged out, or the edit is overwritten.
