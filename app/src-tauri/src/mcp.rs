@@ -19,6 +19,7 @@ use settings_model::{discover, Fidelity, FileKind, Mutation, NewValue, OverviewC
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
 use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter};
+use crate::mcp_live::{Change, OnChange};
 use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
 use crate::prefs;
@@ -64,11 +65,14 @@ pub struct EveMcp {
     /// (`prefs::path_base()` in production; `None`, or a private path a test
     /// points at, otherwise).
     pub prefs_path: Option<PathBuf>,
+    /// Live mode: told after a call that changed the window's document or
+    /// wrote files on disk (spec §4.3). `None` headless.
+    pub on_change: Option<OnChange>,
 }
 
 impl EveMcp {
     pub fn new(dir: PathBuf, roots: Vec<PathBuf>, prefs_path: Option<PathBuf>) -> Self {
-        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path }
+        EveMcp { workspaces: Arc::default(), current: Mutex::new(None), window: None, dir, roots, prefs_path, on_change: None }
     }
 
     /// The in-window server (spec §4.2): one per connection, over the window's
@@ -79,13 +83,14 @@ impl EveMcp {
         prefs_path: Option<PathBuf>,
         window: AppState,
         workspaces: Arc<Mutex<HashMap<PathBuf, AppState>>>,
+        on_change: OnChange,
     ) -> Self {
-        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path }
+        EveMcp { workspaces, current: Mutex::new(None), window: Some(window), dir, roots, prefs_path, on_change: Some(on_change) }
     }
 
     #[cfg(test)]
     pub(crate) fn for_live_tests(window: AppState) -> Self {
-        EveMcp::in_window(std::env::temp_dir().join("eve-mcp-tests"), vec![], None, window, Arc::default())
+        EveMcp::in_window(std::env::temp_dir().join("eve-mcp-tests"), vec![], None, window, Arc::default(), Arc::new(|_| {}))
     }
 
     /// The workspace tools act on: the one `open` last selected, or a scratch
@@ -1058,6 +1063,27 @@ impl EveMcp {
         matches!(guard.as_ref().map(|d| &d.fidelity), Some(Fidelity::ReadOnly { reason }) if reason.starts_with(ACCOUNT_LOCK))
     }
 
+    /// `call`, plus what the window hears about it (spec §4.3). Decided by
+    /// measuring the window's history before and after — not by a list of
+    /// mutating tools — so a new tool cannot ship without the window
+    /// refreshing. `restore_backup` replaces the document and resets the
+    /// counters, which can land on the same fingerprint, so it always emits.
+    pub(crate) fn call_observed(&self, name: &str, args: &Args) -> ToolResult {
+        let before = self.window.as_ref().map(Fingerprint::of);
+        let result = self.call(name, args);
+        if let (Some(cb), Some(win)) = (&self.on_change, &self.window) {
+            let in_window = self.attached().is_some_and(|a| a.in_window);
+            let moved = Some(Fingerprint::of(win)) != before;
+            if moved || (name == "restore_backup" && in_window && result.is_ok()) {
+                cb(Change::Edited { tool: name.to_string(), outcome: Box::new(undo::outcome_of(win)) });
+            }
+            if let Some(paths) = written_paths(name, &result, in_window) {
+                cb(Change::Wrote(paths));
+            }
+        }
+        result
+    }
+
     /// Every tool, by name. Sync: the ops are mutex-guarded functions that
     /// finish in microseconds. (`list_characters` may block on ESI once for
     /// unknown names, exactly as the window's first launch does.)
@@ -1504,6 +1530,46 @@ fn attached_paths(state: &AppState) -> (Option<PathBuf>, Option<PathBuf>) {
         guard.as_ref().and_then(|d| std::fs::canonicalize(&d.path).ok())
     };
     (path(Slot::Char), path(Slot::User))
+}
+
+/// Where the window's history stands. Compared before and after a call: if
+/// it moved, the window has something to land. Serials make a new entry
+/// after an undo distinct from the one it replaced; `saved` catches a save,
+/// which moves no entry.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct Fingerprint {
+    counters: [u64; 2],
+    saved: [u64; 2],
+    depth: usize,
+    top: Option<u64>,
+}
+
+impl Fingerprint {
+    fn of(state: &AppState) -> Self {
+        let h = state.history.lock().unwrap();
+        Fingerprint { counters: h.counters(), saved: h.saved(), depth: h.depth(), top: h.top_serial() }
+    }
+}
+
+/// The settings files a tool wrote behind the open documents, from its own
+/// result: `copy_apply`/`copy_files` report each target with `ok`;
+/// `restore_backup` reports its `path` — on a private workspace that file may
+/// be one the window has open (a sibling character), so it is announced.
+fn written_paths(tool: &str, result: &ToolResult, in_window: bool) -> Option<Vec<PathBuf>> {
+    let Ok(v) = result else { return None };
+    match tool {
+        "copy_apply" | "copy_files" => {
+            let paths: Vec<PathBuf> = v
+                .as_array()?
+                .iter()
+                .filter(|r| r["ok"] == true)
+                .filter_map(|r| r["path"].as_str().map(PathBuf::from))
+                .collect();
+            (!paths.is_empty()).then_some(paths)
+        }
+        "restore_backup" if !in_window => v["path"].as_str().map(|p| vec![PathBuf::from(p)]),
+        _ => None,
+    }
 }
 
 /// The name a person recognises a settings file by.
@@ -1964,7 +2030,7 @@ impl ServerHandler for EveMcp {
         let args = request.arguments.unwrap_or_default();
         // Both outcomes are *results*, not protocol errors: the model must be
         // able to read a domain failure and react to it.
-        let result = match self.call(&request.name, &args) {
+        let result = match self.call_observed(&request.name, &args) {
             Ok(v) => CallToolResult::success(blocks(v)),
             Err(e) => CallToolResult::error(vec![ContentBlock::text(pretty(&e))]),
         };
@@ -3871,5 +3937,124 @@ mod tests {
         assert!(e["message"].as_str().unwrap().contains("the window"), "{e}");
         let v = s.call("open", &open_args(&a, Some(&c2))).unwrap();
         assert_eq!(v["in_window"], true);
+    }
+
+    /// A live server whose `on_change` collects into a shared Vec.
+    fn observed_live_server() -> (EveMcp, AppState, Arc<Mutex<Vec<Change>>>) {
+        let win = AppState::new();
+        let seen: Arc<Mutex<Vec<Change>>> = Arc::default();
+        let sink = seen.clone();
+        let s = EveMcp::in_window(
+            std::env::temp_dir().join("eve-mcp-tests"),
+            vec![],
+            None,
+            win.clone(),
+            Arc::default(),
+            Arc::new(move |c| sink.lock().unwrap().push(c)),
+        );
+        (s, win, seen)
+    }
+
+    fn edited_tools(seen: &Arc<Mutex<Vec<Change>>>) -> Vec<String> {
+        seen.lock().unwrap().iter().filter_map(|c| match c { Change::Edited { tool, .. } => Some(tool.clone()), _ => None }).collect()
+    }
+
+    /// Spec §4.3: after a call that moved the window's history, one `Edited`
+    /// with the fresh projection and dirty flags; a read emits nothing; a
+    /// save emits (the flags changed); `undo` emits.
+    #[test]
+    fn a_call_that_changes_the_windows_document_emits_one_edited() {
+        let (s, win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_get", &Args::new()).unwrap();
+        assert!(seen.lock().unwrap().is_empty(), "reads and attaching emit nothing");
+
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert_eq!(edited_tools(&seen), ["overview_columns_edit"]);
+        match &seen.lock().unwrap()[0] {
+            Change::Edited { outcome, .. } => {
+                assert!(outcome.dirty.user && !outcome.dirty.char);
+                assert!(outcome.user_tree.is_some() && outcome.char_tree.is_none());
+                assert!(outcome.state.can_undo);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        s.call_observed("save", &Args::new()).unwrap();
+        assert_eq!(edited_tools(&seen), ["overview_columns_edit", "save"]);
+        s.call_observed("undo", &Args::new()).unwrap();
+        assert_eq!(edited_tools(&seen).len(), 3);
+    }
+
+    /// A private workspace is not the window: its edits emit nothing.
+    #[test]
+    fn a_private_workspace_edit_emits_nothing() {
+        let (s, _win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// `copy_files` writes settings files on disk behind the open documents: a `Wrote`
+    /// with the targets that succeeded.
+    ///
+    /// Deviation from the brief: `copy_files` validates source/targets against
+    /// `setup::all_settings_files(roots)`, which needs `discover()`'s
+    /// `<install>_<server>/settings_<profile>/core_*.dat` layout — a bare
+    /// `observed_live_server()` (`roots: vec![]`) can never populate it, and
+    /// `testkit::temp_file`'s flat temp dir can't satisfy that layout at any
+    /// root. Built the server directly over `temp_profile()`'s discoverable
+    /// files instead, the same fixture `copy_files_clones_a_file_onto_another_of_the_same_kind`
+    /// already uses for this file kind.
+    #[test]
+    fn copy_files_emits_wrote_with_the_written_targets() {
+        let (root, prof, _app_dir) = temp_profile();
+        let win = AppState::new();
+        let seen: Arc<Mutex<Vec<Change>>> = Arc::default();
+        let sink = seen.clone();
+        let s = EveMcp::in_window(
+            std::env::temp_dir().join("eve-mcp-tests"),
+            vec![root],
+            None,
+            win,
+            Arc::default(),
+            Arc::new(move |c| sink.lock().unwrap().push(c)),
+        );
+        let src = prof.join("core_user_500.dat");
+        let dst = prof.join("core_user_600.dat");
+        s.call_observed("copy_files", &args(json!({ "source": src.to_string_lossy(), "targets": [dst.to_string_lossy()] }))).unwrap();
+        let wrote: Vec<PathBuf> = seen.lock().unwrap().iter().filter_map(|c| match c { Change::Wrote(p) => Some(p.clone()), _ => None }).flatten().collect();
+        assert_eq!(wrote, vec![dst]);
+    }
+
+    /// `restore_backup` replaces the document; on the window's workspace it
+    /// emits `Edited` whatever the counters say, on a private one `Wrote`.
+    #[test]
+    fn restore_backup_emits_edited_in_the_window_and_wrote_privately() {
+        let (s, win, seen) = observed_live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        s.call_observed("open", &open_args(&a, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        s.call_observed("save", &Args::new()).unwrap();
+        let backups = s.call_observed("list_backups", &args(json!({ "slot": "user" }))).unwrap();
+        let backup = backups[0]["path"].as_str().unwrap().to_string();
+        seen.lock().unwrap().clear();
+        s.call_observed("restore_backup", &args(json!({ "slot": "user", "backup_path": backup }))).unwrap();
+        assert_eq!(edited_tools(&seen), ["restore_backup"]);
+
+        let (s, _win, seen) = observed_live_server();
+        let b = temp_file("mcp-live-b", &overview_user_bytes());
+        s.call_observed("open", &open_args(&b, None)).unwrap();
+        s.call_observed("overview_columns_edit", &args(json!({ "ops": [{ "op": "set_visible", "tab": 0, "column": "TYPE", "visible": true }] }))).unwrap();
+        s.call_observed("save", &Args::new()).unwrap();
+        let backups = s.call_observed("list_backups", &args(json!({ "slot": "user" }))).unwrap();
+        let backup = backups[0]["path"].as_str().unwrap().to_string();
+        seen.lock().unwrap().clear();
+        s.call_observed("restore_backup", &args(json!({ "slot": "user", "backup_path": backup }))).unwrap();
+        assert!(matches!(&seen.lock().unwrap()[..], [Change::Wrote(p)] if p == &vec![b.clone()]));
     }
 }

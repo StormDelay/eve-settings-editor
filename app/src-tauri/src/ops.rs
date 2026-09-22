@@ -2425,6 +2425,38 @@ tabSetup:
         assert_eq!(depth(&state), 0);
     }
 
+    /// Serials name stack entries uniquely across undo/redo/re-edit, which the
+    /// edit counters cannot: undo one step, make another edit, and the
+    /// counters read the same as before the undo. Live mode's `undo` gate
+    /// (mcp.rs) keys on serials for exactly that reason.
+    #[test]
+    fn entry_serials_are_unique_and_survive_redo() {
+        let path = temp_file("undo-serials", &overview_user_bytes());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        let top = |state: &AppState| state.history.lock().unwrap().top_serial();
+        assert_eq!(top(&state), None);
+
+        set_overview_visible(&state, 0, "TYPE", true).unwrap();
+        let s1 = top(&state).unwrap();
+        set_overview_visible(&state, 0, "TYPE", false).unwrap();
+        let s2 = top(&state).unwrap();
+        assert_ne!(s1, s2);
+
+        assert!(undo::undo(&state).is_some());
+        assert_eq!(top(&state), Some(s1));
+        assert!(undo::redo(&state).is_some());
+        assert_eq!(top(&state), Some(s2), "redo puts the same entry back");
+
+        // Undo, then a new edit: the counters return to where they stood after
+        // s2, but the entry on top is a different one.
+        assert!(undo::undo(&state).is_some());
+        set_overview_visible(&state, 0, "TYPE", false).unwrap();
+        let s3 = top(&state).unwrap();
+        assert_ne!(s3, s2, "a new edit after an undo is a new entry, whatever the counters say");
+        assert_eq!(depth(&state), 2);
+    }
+
     /// The core two-slot claim: `overview_window_add` writes the account file
     /// and then the character file inside ONE command, and both come back on a
     /// single press.
