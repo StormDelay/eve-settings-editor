@@ -16,6 +16,12 @@
 //! character's name appears in nearly every account file (chat and contacts),
 //! so neither the files nor the names can answer this.
 //!
+//! From 2026-09 the launcher logs the same three facts as structured payloads
+//! — `[esi] Fetching details for 3 character(s)    { characterIds: [ … ] }`,
+//! `[esi] Fetched 3 character details    { userId: <user_id> }`, and a Plex
+//! payload spread over several lines. Both formats are read; older logs keep
+//! the first one.
+//!
 //! The format is undocumented, so every ambiguity here resolves to FEWER
 //! pairings, never a wrong one: a launcher release that renames these lines must
 //! degrade to "no proposals", not to a bad proposal.
@@ -47,8 +53,16 @@ fn parse_id_list(rest: &str) -> Option<Vec<u64>> {
     Some(ids)
 }
 
-/// Whether this is an `[esi] Fetching character details for …` line, and the
-/// ids it names.
+/// The integer after `name:` in a structured `{ … }` payload.
+fn payload_int(s: &str, name: &str) -> Option<u64> {
+    let rest = s.split_once(&format!("{name}:"))?.1.trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// Whether this is an `[esi] Fetching character details for …` line (or its
+/// structured `Fetching details for N character(s)` successor), and the ids it
+/// names.
 ///
 /// `None` — not a request line at all.
 /// `Some(None)` — a request line whose id list will not parse. The request still
@@ -56,15 +70,24 @@ fn parse_id_list(rest: &str) -> Option<Vec<u64>> {
 /// would credit the next answer to the *previous* request, which is a confident
 /// wrong pairing rather than a missing one.
 fn fetching_ids(line: &str) -> Option<Option<Vec<u64>>> {
-    let rest = line.split_once("[esi] Fetching character details for ")?.1;
-    Some(parse_id_list(rest))
+    if let Some((_, rest)) = line.split_once("[esi] Fetching character details for ") {
+        return Some(parse_id_list(rest));
+    }
+    let rest = line.split_once("[esi] Fetching details for ")?.1;
+    let list = rest.split_once("characterIds: [").and_then(|(_, r)| r.split_once(']')).map(|(l, _)| l);
+    Some(list.and_then(parse_id_list))
 }
 
-/// `(count, user_id)` from an `[esi] Fetched N character details for U` line.
+/// `(count, user_id)` from an `[esi] Fetched N character details for U` line,
+/// or its structured `… details    { userId: U }` successor.
 fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
     let rest = line.split_once("[esi] Fetched ")?.1;
-    let (n, rest) = rest.split_once(" character details for ")?;
-    Some((n.trim().parse().ok()?, rest.trim().parse().ok()?))
+    let (n, rest) = rest.split_once(" character details")?;
+    let user = match rest.strip_prefix(" for ") {
+        Some(u) => u.trim().parse().ok()?,
+        None => payload_int(rest, "userId")?,
+    };
+    Some((n.trim().parse().ok()?, user))
 }
 
 /// The account id from `[virtual-goods] Fetched Plex status for '<user>' …`.
@@ -73,8 +96,31 @@ fn fetched_count_and_user(line: &str) -> Option<(usize, u64)> {
 /// and a looser parse that scanned for "a number" could take that for an account
 /// id — an invented pairing, which is the one failure mode this module forbids.
 fn plex_user(line: &str) -> Option<u64> {
-    let rest = line.split_once("[virtual-goods] Fetched Plex status for '")?.1;
-    rest.split_once('\'')?.0.trim().parse().ok()
+    if let Some((_, rest)) = line.split_once("[virtual-goods] Fetched Plex status for '") {
+        return rest.split_once('\'')?.0.trim().parse().ok();
+    }
+    // Structured: only the `userId` field, never `balance`.
+    payload_int(line.split_once("[virtual-goods] Fetched Plex status    {")?.1, "userId")
+}
+
+/// One logical line per log entry: a line ending in `{` opens a payload the
+/// launcher prints over the following lines, up to the closing `}`, and those
+/// are joined onto it. Everything else passes through as it was.
+fn fold_payloads(lines: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut open = false;
+    for line in lines {
+        if open {
+            let last = out.last_mut().expect("open implies a line");
+            last.push(' ');
+            last.push_str(line.trim());
+            open = !line.trim_start().starts_with('}');
+        } else {
+            open = line.trim_end().ends_with('{');
+            out.push(line.clone());
+        }
+    }
+    out
 }
 
 /// Undo a tally recorded from a claim — **both halves of it**, which is why the
@@ -168,6 +214,7 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
     let mut seq = 0usize;
 
     for lines in files {
+        let lines = fold_payloads(lines);
         // The pending request's ids, the account a Plex line claimed for it, and
         // the `last_seen` value that claim's tally displaced.
         let mut pending: Option<(Vec<u64>, Option<u64>, Option<usize>)> = None;
@@ -178,7 +225,7 @@ pub fn parse_logs(files: &[Vec<String>]) -> LauncherRoster {
         // nothing left to contradict it if the file ends before the reply.
         let mut claimed: Option<Option<u64>> = None;
         let mut in_flight = 0usize;
-        for line in lines {
+        for line in &lines {
             seq += 1;
             if let Some(user) = plex_user(line) {
                 claimed = Some(match claimed {
@@ -436,6 +483,34 @@ mod tests {
     }
     fn chars(r: &LauncherRoster, user: u64) -> Vec<u64> {
         r.accounts.get(&user).cloned().unwrap_or_default()
+    }
+
+    /// The launcher's structured format (seen from 2026-09): the ids move into
+    /// a `{ … }` payload and the Plex payload spans several lines. Verbatim
+    /// from a real log, ids swapped.
+    #[test]
+    fn the_structured_format_pairs_including_a_multi_line_plex_claim() {
+        let file = |ls: &[&str]| ls.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // The claim alone: the file ends before the reply, so only the folded
+        // Plex payload can name the account.
+        let claimed = file(&[
+            "2026-09-23 00:39:13.383    app     info:    [virtual-goods] Fetched Plex status    {",
+            "  userId: 80000001,",
+            "  tenant: 'tranquility',",
+            "  product: 'eve-online',",
+            "  balance: 80000009",
+            "}",
+            "2026-09-23 00:39:13.443    app     info:    [esi] Fetching details for 3 character(s)    { characterIds: [ 90000003, 90000001, 90000002 ] }",
+        ]);
+        // The reply alone, no claim.
+        let replied = file(&[
+            "2026-09-23 00:40:00.000    app     info:    [esi] Fetching details for 2 character(s)    { characterIds: [ 90000004, 90000005 ] }",
+            "2026-09-23 00:40:00.100    app     info:    [esi] Fetched 2 character details    { userId: 80000002 }",
+        ]);
+        let r = parse_logs(&[claimed, replied]);
+        assert_eq!(chars(&r, 80000001), vec![90000001, 90000002, 90000003]);
+        assert_eq!(chars(&r, 80000002), vec![90000004, 90000005]);
+        assert!(!r.accounts.contains_key(&80000009), "the balance is never an account id");
     }
 
     #[test]

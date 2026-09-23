@@ -15,6 +15,7 @@ The assistant works in your open window, and keeps every account it opens.
 
 ### Fixed
 - Chat windows can be moved into and out of stacks, in the Layout view and by the assistant.
+- The Accounts sheet proposes pairings from the EVE launcher's logs again.
 
 ## [0.38.0] - 2026-09-21
 
