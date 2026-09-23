@@ -32,7 +32,7 @@ fn tables() -> &'static Tables {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Env {
+pub enum Env {
     #[default]
     All,
     Docked,
@@ -134,6 +134,18 @@ pub(crate) fn in_env(id: &str, env: Env) -> bool {
         Env::Space => !has(&t.docked_only),
         Env::All => true,
     }
+}
+
+/// The Layout view's filter and selection, as `LayoutView.svelte` sends them
+/// (`WindowFilter` in `layout.ts`, plus the selected window id).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowView {
+    pub text: String,
+    pub open_only: bool,
+    pub hide_clutter: bool,
+    pub env: Env,
+    pub selected: Option<String>,
 }
 
 #[derive(Debug, Clone)]
