@@ -11,6 +11,10 @@ The assistant works in your open window, and keeps every account it opens.
 ### Added
 - **The assistant works in your open window.** While the app is running, an AI assistant's changes land in the window as if you had made them — each announced with an Undo, and Ctrl+Z reverts them. Nothing changes in your MCP client's setup.
 - **The assistant keeps every account it opens.** Opening a second character no longer drops the first: each account has its own workspace, reading across the roster needs no reloads, and `save all: true` writes them all. One character of an account at a time — the next one opens once the current is saved (or its edits discarded).
+- **The assistant sees what you see in the Layout view.** It follows your filter and knows which window you selected.
+
+### Fixed
+- Chat windows can be moved into and out of stacks, in the Layout view and by the assistant.
 
 ## [0.38.0] - 2026-09-21
 
