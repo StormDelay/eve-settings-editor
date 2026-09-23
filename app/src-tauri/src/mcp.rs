@@ -18,7 +18,7 @@ use settings_model::{discover, Fidelity, FileKind, Mutation, NewValue, OverviewC
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
-use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter};
+use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter, WindowView};
 use crate::mcp_live::{Change, OnChange};
 use crate::names;
 use crate::ops::{self, AppState, ErrDto, OpenOutcome, Slot};
@@ -632,13 +632,15 @@ impl EveMcp {
     }
 }
 
-/// `layout_get`/`layout_render`'s view filter, from tool arguments.
-fn window_filter(args: &Args) -> Result<WindowFilter, Value> {
+/// `layout_get`/`layout_render`'s view filter: each argument given wins, then
+/// the window's own Layout filter when the assistant works in the window's
+/// workspace, then the defaults — so both look at the same windows.
+fn window_filter(args: &Args, view: Option<&WindowView>) -> Result<WindowFilter, Value> {
     Ok(WindowFilter {
-        include_closed: opt(args, "include_closed")?.unwrap_or(false),
-        hide_clutter: opt(args, "hide_clutter")?.unwrap_or(true),
-        env: opt::<Env>(args, "environment")?.unwrap_or_default(),
-        matches: opt(args, "match")?,
+        include_closed: opt(args, "include_closed")?.unwrap_or(view.is_some_and(|v| !v.open_only)),
+        hide_clutter: opt(args, "hide_clutter")?.unwrap_or(view.is_none_or(|v| v.hide_clutter)),
+        env: opt::<Env>(args, "environment")?.or(view.map(|v| v.env)).unwrap_or_default(),
+        matches: opt::<String>(args, "match")?.or(view.map(|v| v.text.clone()).filter(|t| !t.trim().is_empty())),
     })
 }
 
@@ -654,7 +656,7 @@ fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "status",
-            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible, every workspace this session holds (one per account) with its unsaved slots — and, with the app window open, mode: live plus what the window has open. Call it to re-orient in a long conversation.",
+            description: "What is open right now: the current character and account file paths, whether each has unsaved edits, whether undo is possible, every workspace this session holds (one per account) with its unsaved slots — and, with the app window open, mode: live plus what the window has open and, under window.layout_view, the user's Layout filter and selected window (null when they are not on the Layout view). Call it to re-orient in a long conversation.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -857,7 +859,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_get",
-            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Needs the character file open. To SEE it, call layout_render.",
+            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. In the app window's workspace, filters you omit follow the user's Layout view, and window_view gives that filter and the window the user selected. Needs the character file open. To SEE it, call layout_render.",
             schema: || obj(json!({
                 "include_closed": { "type": "boolean", "description": "Include closed windows. Default false." },
                 "hide_clutter": { "type": "boolean", "description": "Default true: omit windows EVE spawns per chat, item or dialog, and dead stack frames." },
@@ -867,7 +869,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_render",
-            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. Screen furniture — Neocom bar, ship HUD, fighter panel, badge, target list — is drawn in grey beneath the windows, outside the filter, and listed as furniture [{kind, label, x, y, w, h}]; hud_set moves it. Call it before moving anything. Needs the character file open.",
+            description: "A picture of the character's window layout: every open window as a labelled box on the screen at the file's reference aspect ratio, stacks drawn once at their anchor with a tab strip, plus a legend {width, height, reference_w, reference_h, scale, windows: [{id, label, x, y, w, h, drawn, stack}]} — drawn windows only, unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. In the app window's workspace, filters you omit follow the user's Layout view, and window_view gives that filter and the window the user selected. Screen furniture — Neocom bar, ship HUD, fighter panel, badge, target list — is drawn in grey beneath the windows, outside the filter, and listed as furniture [{kind, label, x, y, w, h}]; hud_set moves it. Call it before moving anything. Needs the character file open.",
             schema: || obj(json!({
                 "width": { "type": "integer", "minimum": 320, "maximum": 2048, "description": "Image width in pixels, default 1024." },
                 "include_closed": { "type": "boolean", "description": "Also outline closed windows. Default false." },
@@ -1064,6 +1066,14 @@ impl EveMcp {
     }
 
     /// Whether the current attachment's account slot carries this code's lock.
+    /// The window's Layout view, when this call acts on the window's own
+    /// workspace and the user has that view on screen.
+    fn window_view(&self) -> Option<WindowView> {
+        let w = self.window.as_ref()?;
+        if !self.attached().is_some_and(|a| a.in_window) { return None; }
+        w.view.lock().unwrap().clone()
+    }
+
     fn account_read_only(&self) -> bool {
         let Some(a) = self.attached() else { return false };
         let guard = a.state.user.lock().unwrap();
@@ -1201,13 +1211,17 @@ impl EveMcp {
             }
             "layout_get" => {
                 let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
-                Ok(layout_view(&wl, &window_filter(args)?, &self.overrides()))
+                let view = self.window_view();
+                let mut v = layout_view(&wl, &window_filter(args, view.as_ref())?, &self.overrides());
+                v["window_view"] = json!(view);
+                Ok(v)
             }
             "layout_render" => {
                 use base64::Engine as _;
                 let wl = ops::window_layout(&self.state(), Slot::Char).map_err(fail)?;
                 let width: u32 = opt::<u32>(args, "width")?.unwrap_or(1024);
-                let filter = window_filter(args)?;
+                let view = self.window_view();
+                let filter = window_filter(args, view.as_ref())?;
                 let overrides = self.overrides();
                 // The character file is open (window_layout just needed it), so
                 // this cannot fail on that; the account file is optional and
@@ -1216,11 +1230,12 @@ impl EveMcp {
                 let (png, legend) = crate::mcp_render::layout_png(&wl, Some(&hud), width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
+                v["window_view"] = json!(view);
                 Ok(v)
             }
             "layout_edit" => self.batch(args, layout_op, |s| {
                 let wl = ops::window_layout(&s.state(), Slot::Char).map_err(fail)?;
-                Ok(layout_view(&wl, &window_filter(&Args::new())?, &s.overrides()))
+                Ok(layout_view(&wl, &window_filter(&Args::new(), s.window_view().as_ref())?, &s.overrides()))
             }),
             "autofill_get" => ok(ops::autofill_lists(&self.state()).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state(), &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
@@ -1308,6 +1323,7 @@ impl EveMcp {
             "window": self.window.as_ref().map(|w| json!({
                 "char": slot_view(w, Slot::Char).map(|v| v["path"].clone()),
                 "user": slot_view(w, Slot::User).map(|v| v["path"].clone()),
+                "layout_view": w.view.lock().unwrap().clone(),
             })),
             "in_window": self.attached().is_some_and(|a| a.in_window),
             "account_read_only": self.account_read_only(),
@@ -3940,6 +3956,35 @@ mod tests {
         assert_eq!(st["window"]["char"], json!(c1.to_string_lossy()));
         assert_eq!(st["account_read_only"], false);
         assert!(st["workspaces"].as_array().unwrap().is_empty(), "the window's state is not a private workspace");
+    }
+
+    /// In the window's workspace, `layout_get` sees what the Layout view shows:
+    /// omitted filters follow the user's, given ones still win, and the
+    /// selection is reported.
+    #[test]
+    fn layout_get_in_the_window_follows_the_users_layout_view() {
+        let (s, win) = live_server();
+        let a = temp_file("mcp-live-a", &overview_user_bytes());
+        let c = temp_file("mcp-live-layout", &layout_char_bytes());
+        ops::open_file(&win, Slot::User, a.to_str().unwrap()).unwrap();
+        ops::open_file(&win, Slot::Char, c.to_str().unwrap()).unwrap();
+        s.call("open", &open_args(&a, Some(&c))).unwrap();
+        let has = |v: &Value, id: &str| v["windows"].as_array().unwrap().iter().any(|w| w["id"] == id);
+
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        assert!(!has(&v, "fitting") && v["window_view"].is_null(), "off the Layout view: the defaults");
+
+        let view = WindowView { text: String::new(), open_only: false, hide_clutter: true, env: Env::All, selected: Some("market".into()) };
+        *win.view.lock().unwrap() = Some(view.clone());
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        assert!(has(&v, "fitting"), "the user shows closed windows, so the assistant does too: {v}");
+        assert_eq!(v["window_view"]["selected"], "market");
+        assert!(!has(&s.call("layout_get", &args(json!({ "include_closed": false }))).unwrap(), "fitting"), "an explicit argument wins");
+        assert_eq!(s.call("status", &Args::new()).unwrap()["window"]["layout_view"]["selected"], "market");
+
+        *win.view.lock().unwrap() = Some(WindowView { text: "market".into(), ..view });
+        let v = s.call("layout_get", &Args::new()).unwrap();
+        assert!(has(&v, "market") && !has(&v, "overview"), "the user's text filter applies");
     }
 
     /// The account-only form attaches too: nothing was asked that the window
