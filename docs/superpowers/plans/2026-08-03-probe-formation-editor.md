@@ -398,9 +398,7 @@ skipping the -4 scratch slot the client uses for the formation being edited.
 
 The wrapper unwrapper checks for a Long first element rather than a tuple
 length: a formation entry (name, probes) is also a 2-tuple, so a length check
-turns every formation into its probe list and projects nothing.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+turns every formation into its probe list and projects nothing."
 ```
 
 ---
@@ -789,9 +787,7 @@ preserve the key's timestamp and mint a zero Long when the key is absent.
 Names go back as Str. The only Bytes name in the corpus belongs to the -4
 scratch slot, so writing Bytes would make a user formation look like the
 client's working copy. Negative ids are refused by both entry points, which is
-what keeps that slot out of reach.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+what keeps that slot out of reach."
 ```
 
 ---
@@ -974,9 +970,7 @@ by design.
 
 The eight-probes-at-one-range assertions run on the real corpus only: the
 synthetic fixture is authored to those values, so checking it would prove
-nothing about the client.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+nothing about the client."
 ```
 
 ---
@@ -1149,9 +1143,7 @@ git commit -m "Expose the probe formations over IPC
 Three commands on the account slot, mirroring the neocom pattern on the other
 side of the file. Id allocation for a new formation resolves in ops rather than
 the frontend, so the fill-the-lowest-gap rule stays next to the corpus
-observation that produced it.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+observation that produced it."
 ```
 
 ---
@@ -1352,9 +1344,7 @@ conversion, and the cube a new-from-scratch formation starts from.
 
 toSpherical returns 0 rather than NaN for the angles at the centre: NaN would
 propagate through every derived field and silently drop the element from the
-SVG rather than showing an obviously wrong number.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+SVG rather than showing an obviously wrong number."
 ```
 
 ---
@@ -1796,9 +1786,7 @@ The edit buffer holds metres and every field is derived from it. Binding the
 inputs directly would make a rounded AU string the source of truth, and since
 one metre is 6.7e-12 AU, editing any one field would then displace every other
 probe in the formation on save. The component test asserts an untouched
-coordinate comes back to the metre.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+coordinate comes back to the metre."
 ```
 
 ---
@@ -1932,9 +1920,7 @@ git commit -m "Draw the formation in a top-down and a side view
 Two orthographic SVG panes on one shared scale, each probe's range sphere drawn
 as a circle. Two rather than one because a real formation is a horizontal ring
 plus a vertical column: the column's probes share their X and Z, so a top-down
-view alone draws three probes as one dot.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+view alone draws three probes as one dot."
 ```
 
 ---
@@ -2090,9 +2076,7 @@ for the leaf HUD keys only.
 selectedFormationID is deliberately not carried. It is 0 in every corpus file
 that has it and a copy brings the ids along with the formations, so copying it
 is a no-op on today's data and an override of a per-account preference on any
-data where it is not.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+data where it is not."
 ```
 
 ---
@@ -2202,9 +2186,7 @@ downward axis, and its 16 km jump sphere.
 These numbers are sourced, not measured, and the four sources found disagree
 between 75 and 100 km. The constant block records the disagreement so 89 km is
 never read back as a fact this project established, and the direction of the
-14 degrees is flagged as an assumption.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+14 degrees is flagged as an assumption."
 ```
 
 ---

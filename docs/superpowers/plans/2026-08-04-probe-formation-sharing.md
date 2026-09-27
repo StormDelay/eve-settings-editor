@@ -20,8 +20,7 @@
 - **Validate before inlining.** In `probes.rs`, every rejection happens before `inline_all(v)`, so a rejected write leaves the document byte-for-byte as it was. Existing tests assert this.
 - **No new dependencies.** `yaml-rust2` is already in `crates/settings-model/Cargo.toml`; the clipboard uses DOM APIs only (§5.4).
 - **A formation holds 1 to 8 probes** (`MAX_PROBES = 8`) and needs a non-empty trimmed name.
-- **Commit message style is this repo's own**: an imperative sentence, no `feat:`/`fix:` prefix. See `git log`. End every commit message with:
-  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
+- **Commit message style is this repo's own**: an imperative sentence, no `feat:`/`fix:` prefix. See `git log`. No attribution trailers (no `Co-Authored-By`).
 - Commands: `cargo test -p settings-model`, `cargo test -p app` (from `app/src-tauri`), `npm test` (in `app/` — runs `node --test` then vitest), `npm run check` (svelte-check, in `app/`).
 - Branch: `probe-formation-sharing`, already created; the spec is already committed on it. Commit after every task.
 
@@ -503,8 +502,6 @@ Give probe formations a text format they can travel in
 
 Metres exactly as stored, so a shared formation comes back where it left;
 comments carry the AU and kilometre readings the numbers hide.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -775,8 +772,6 @@ Wire the formation text format through to the frontend
 
 Emit, parse, read and write it, and add a batch that lands whole imports at
 fresh ids or none of them at all.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -968,8 +963,6 @@ Add the modal for choosing which formations to move
 
 One list with checkboxes, handed items and handing back indices, so export
 and import share it rather than each growing their own.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1279,8 +1272,6 @@ Copy a formation to the clipboard, and paste one back
 
 Ctrl+C and Ctrl+V work anywhere on the tab except inside a field, where they
 still copy the digits. Copy sends what is on screen, unsaved edits included.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1516,8 +1507,6 @@ Export probe formations to a file, and import them back
 
 Pick as many as you like on the way out and on the way in; imports are added
 alongside what the account already has, never over it.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 

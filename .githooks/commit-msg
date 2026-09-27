@@ -1,0 +1,14 @@
+#!/bin/sh
+# Keeps the public history free of personal identity and AI attribution.
+# Enable once per clone: git config core.hooksPath .githooks
+want="StormDelay <stormdelay@gmail.com>"
+for who in AUTHOR COMMITTER; do
+  case "$(git var GIT_${who}_IDENT)" in
+    "$want "*) ;;
+    *) echo "commit-msg: $who must be $want (git config user.name/user.email)" >&2; exit 1 ;;
+  esac
+done
+if grep -qiE 'co-authored-by|generated with \[?claude|noreply@anthropic' "$1"; then
+  echo "commit-msg: no attribution trailers (Co-Authored-By, Generated with Claude Code)" >&2
+  exit 1
+fi
