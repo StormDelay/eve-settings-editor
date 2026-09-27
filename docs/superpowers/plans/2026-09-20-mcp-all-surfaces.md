@@ -21,7 +21,7 @@
 - Nothing in `ops.rs` or `crates/` changes. Direct deps added: `png = "0.18"`, `base64 = "0.22"` — both already in `Cargo.lock`; nothing else.
 - Descriptions are the product — copy them verbatim from this plan.
 - CI gates by exit code: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and in `app/`: `npm run check`, `npm test`.
-- Commits end with `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+- No attribution trailers in commits (no `Co-Authored-By`).
 - Final tool count: **46**.
 
 ---
@@ -147,9 +147,7 @@ Run: `cargo test -p app --lib mcp::` — expected: all pass (the 41 from slice 1
 
 ```bash
 git add app/src-tauri/Cargo.toml Cargo.lock app/src-tauri/src/mcp.rs
-git commit -m "MCP: batch takes a finish closure; a png_base64 field becomes an image block
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: batch takes a finish closure; a png_base64 field becomes an image block"
 ```
 
 ---
@@ -258,9 +256,7 @@ fn vk_code(name: &str) -> Option<i64> {
 
 ```bash
 git add app/src/lib/data/vk-labels.json app/src/lib/keybinds.ts app/src-tauri/src/mcp.rs
-git commit -m "Key-code table becomes data/vk-labels.json, read by the frontend and the MCP server
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "Key-code table becomes data/vk-labels.json, read by the frontend and the MCP server"
 ```
 
 ---
@@ -475,9 +471,7 @@ impl EveMcp {
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: autofill and keybind tools
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: autofill and keybind tools"
 ```
 
 ---
@@ -627,9 +621,7 @@ Tool defs:
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: HUD and chat-split tools
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: HUD and chat-split tools"
 ```
 
 ---
@@ -777,9 +769,7 @@ Tool defs:
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: neocom tools with the button catalog inlined
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: neocom tools with the button catalog inlined"
 ```
 
 ---
@@ -958,9 +948,7 @@ Tool defs:
 
 ```bash
 git add app/src-tauri/src/names.rs app/src-tauri/src/mcp.rs
-git commit -m "MCP: fleet tools and lookup_character
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: fleet tools and lookup_character"
 ```
 
 ---
@@ -1212,9 +1200,7 @@ Tool defs:
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: layout_get and layout_edit — the canvas's own mutations, built server-side
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: layout_get and layout_edit — the canvas's own mutations, built server-side"
 ```
 
 ---
@@ -1592,9 +1578,7 @@ Test in `mcp.rs`'s `mod tests`:
 
 ```bash
 git add app/src-tauri/src/mcp_render.rs app/src-tauri/src/lib.rs app/src-tauri/src/mcp.rs
-git commit -m "MCP: layout_render — the layout as a PNG image block with a legend
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: layout_render — the layout as a PNG image block with a legend"
 ```
 
 ---
@@ -1803,9 +1787,7 @@ Tool defs — the schema's `aspects` enum lists the seven names:
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: copy_preview, copy_apply, copy_files
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: copy_preview, copy_apply, copy_files"
 ```
 
 ---
@@ -1926,9 +1908,7 @@ Tool defs:
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: settings presets
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: settings presets"
 ```
 
 ---
@@ -2047,9 +2027,7 @@ Four zeros or stop.
 git add app/src-tauri/src/mcp_primer.md app/src-tauri/src/mcp.rs app/src-tauri/tests/mcp_stdio.rs README.md CHANGELOG.md docs/superpowers/specs/2026-09-20-mcp-all-surfaces-design.md
 git commit -m "MCP: primer for layout, keybinds and copy; 46 tools; docs
 
-<gate exit codes and the e2e outcome>
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+<gate exit codes and the e2e outcome>"
 ```
 
 Then `superpowers:finishing-a-development-branch` — branch `feat/mcp-all-surfaces`, target `master`.
@@ -2489,7 +2467,5 @@ git commit -m "MCP: layout_get and layout_render take the canvas's filters — c
 The clutter and environment tables move to data/window-filters.json,
 read by windowLabels.ts and by the new mcp_filter.rs; the user's own
 clutter overrides in preferences.json are honoured; hidden counts say
-what a view left out.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+what a view left out."
 ```
