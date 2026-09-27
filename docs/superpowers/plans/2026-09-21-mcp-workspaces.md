@@ -1001,8 +1001,6 @@ The MCP server keeps one workspace per account: `open` selects instead of replac
 `AppState` is now a cloneable `Arc` handle (the window's state and the future in-window server share one), and `Document::changed_on_disk` is `save`'s conflict check made public.
 
 Smoke: <paste the status reply>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )
 ```

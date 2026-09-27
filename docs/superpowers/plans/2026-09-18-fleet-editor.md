@@ -20,7 +20,7 @@
 - Frontend: no hex literal, `rgba()`, `opacity` (other than `--o-disabled`), native-control CSS or blocking dialog in any `.svelte`/`.css` file — `app/src/lib/ui/tokens.test.ts` fails the build on any of them. Colours in `.svelte` script blocks are built with `rgbToHex(...)`, never typed as hex; the one placeholder is the `UNSET_HEX` constant, whose name whitelists its line.
 - Copy standard (spec §4.4): sentence case, one verb per concept (add / remove / set), errors read "<Thing> wasn't <verbed> — <reason>", names not files, no shortcut baked into a string, British spelling ("colour").
 - `npm run check` (`svelte-check --fail-on-warnings`) must stay clean; `cargo clippy --workspace --all-targets -- -D warnings` must stay clean.
-- Commit after every task with the attribution trailer `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+- Commit after every task. No attribution trailers (no `Co-Authored-By`).
 - Run Rust tests from the repo root: `cargo test -p settings-model` for the model crate, `cargo test -p app` for the Tauri crate (its package name is `app`; check `app/src-tauri/Cargo.toml` `[package] name` if that fails). Run frontend tests from `app/`: `npm test` (exit code is the verdict — read it, not the summary line) and `npx vitest run <pattern>` for one file.
 
 ---
@@ -194,9 +194,7 @@ git commit -m "hud: take the field table as a parameter
 project_fields / set_field / section_dict_mut are crate-visible so the fleet
 model can drive the same locate/mint machinery with its own table.
 set_field writes every row carrying the name, which HUD (unique names) never
-notices and the fleet table's two-key top checkbox needs.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+notices and the fleet table's two-key top checkbox needs."
 ```
 
 ---
@@ -542,9 +540,7 @@ git commit -m "fleet: project and write the broadcast, formation and finder scal
 
 The sixteen broadcast types are declared once; the listen fields and colour
 keys expand from the list. Defaults are the corpus's (spec §2.2), and the
-top checkbox's two keys are two rows with one name.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+top checkbox's two keys are two rows with one name."
 ```
 
 ---
@@ -880,9 +876,7 @@ git add crates/settings-model/src/fleet.rs crates/settings-model/src/lib.rs
 git commit -m "fleet: the sixteen broadcast colour leaves and EVE's nine-swatch palette
 
 Absent, cleared (None — EVE's ✕, captured live) and set are three states the
-projection keeps apart; a leaf of any other shape is refused, not overwritten.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+projection keeps apart; a leaf of any other shape is refused, not overwritten."
 ```
 
 ---
@@ -1147,9 +1141,7 @@ git commit -m "fleet: the watch-list colour map, and the leaf table batch copy b
 
 Entries match by id value whichever wire kind the key has; a new id above
 i32 is written as the client's minimal-width Long. FLEET_LEAVES lists every
-key once so the batch category cannot drift from the editor.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+key once so the batch category cannot drift from the editor."
 ```
 
 ---
@@ -1357,9 +1349,7 @@ Expected: the generator prints the seven profile files; the whole crate passes, 
 
 ```bash
 git add crates/settings-model/tests/fleet_corpus.rs crates/settings-model/src/bin/gen_fixtures.rs fixtures/synthetic
-git commit -m "fleet: corpus gate for every key, and fleet keys in the synthetic fixtures
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "fleet: corpus gate for every key, and fleet keys in the synthetic fixtures"
 ```
 
 ---
@@ -1523,9 +1513,7 @@ git add crates/settings-model/src/batch.rs app/src-tauri/src/setup.rs app/src-ta
 git commit -m "batch: a Fleet aspect, one category per fleet leaf
 
 Category::Fleet borrows FLEET_LEAVES so the batch key list is the editor's.
-Absence means EVE's default, the HUD-leaf rule.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+Absence means EVE's default, the HUD-leaf rule."
 ```
 
 ---
@@ -1715,9 +1703,7 @@ Expected: pass, clean.
 
 ```bash
 git add app/src-tauri/src/ops.rs app/src-tauri/src/lib.rs
-git commit -m "fleet: the four commands — project, set a scalar, set a colour, set a watch-list colour
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "fleet: the four commands — project, set a scalar, set a colour, set a watch-list colour"
 ```
 
 ---
@@ -1946,9 +1932,7 @@ git add app/src-tauri/src/names.rs app/src-tauri/src/lib.rs
 git commit -m "names: look a character up by name or id, through the same cache
 
 A name miss asks ESI /universe/ids and writes the hit into names-cache.json,
-so the id→name and name→id directions are both cached from then on.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+so the id→name and name→id directions are both cached from then on."
 ```
 
 ---
@@ -2168,9 +2152,7 @@ Expected: all pass — `ipc.test.ts` now sees five new commands on both sides wi
 
 ```bash
 git add app/src/lib/api.ts app/src/lib/colour.ts app/src/lib/colour.test.ts app/src/lib/fleet.ts app/src/lib/fleet.test.ts app/src/lib/OverviewAppearanceTab.svelte
-git commit -m "frontend: fleet API types and calls, the shared palette snap, EVE's broadcast rows
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "frontend: fleet API types and calls, the shared palette snap, EVE's broadcast rows"
 ```
 
 ---
@@ -2245,9 +2227,7 @@ Expected: all pass, check clean. `commands.spec.ts`'s "no accelerator is bound t
 
 ```bash
 git add app/src/lib/views.ts app/src/lib/keymap.ts app/src/lib/aspects.ts app/src/lib/presetLibrary.svelte.ts app/src/lib/BatchView.svelte app/src/lib/ViewTabs.spec.ts app/src/lib/keymap.spec.ts app/src/lib/commands.spec.ts app/src/lib/presetLibrary.test.ts
-git commit -m "shell: a Fleet tab before Raw, and a Fleet aspect in copy and presets
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "shell: a Fleet tab before Raw, and a Fleet aspect in copy and presets"
 ```
 
 ---
@@ -2626,9 +2606,7 @@ git add app/src/lib/FleetView.svelte app/src/lib/FleetView.spec.ts
 git commit -m "Fleet view: the Broadcast settings panel
 
 Seventeen rows in EVE's order — checkbox, label, swatch, ✕ — on the account
-file, with one live error per panel in the R4 grammar.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+file, with one live error per panel in the R4 grammar."
 ```
 
 ---
@@ -2862,9 +2840,7 @@ Expected: pass.
 
 ```bash
 git add app/src/lib/FleetView.svelte app/src/lib/FleetView.spec.ts
-git commit -m "Fleet view: watch-list colours, with add-by-name-or-id through ESI
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "Fleet view: watch-list colours, with add-by-name-or-id through ESI"
 ```
 
 ---
@@ -3026,9 +3002,7 @@ Use the `starting-the-app` skill (`.claude/skills/starting-the-app/`) to launch 
 
 ```bash
 git add app/src/lib/FleetView.svelte app/src/lib/FleetView.spec.ts app/src/routes/+page.svelte
-git commit -m "Fleet view: the Formation panel, and the tab in the shell
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "Fleet view: the Formation panel, and the tab in the shell"
 ```
 
 ---
@@ -3128,9 +3102,7 @@ Under `## [Unreleased]` in `CHANGELOG.md`:
 
 ```bash
 git add docs/settings-field-reference.md docs/format-notes.md docs/live-verification-plan.md CHANGELOG.md
-git commit -m "docs: the fleet keys are modelled; format findings and live-pass items
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "docs: the fleet keys are modelled; format findings and live-pass items"
 ```
 
 - [ ] **Step 6: Final verification across the workspace**
