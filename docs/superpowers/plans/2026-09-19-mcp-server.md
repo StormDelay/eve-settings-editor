@@ -19,7 +19,7 @@
 - Nothing in `crates/` changes; nothing in `ops.rs` changes (spec §9).
 - Nothing may write to stdout in `--mcp` mode except rmcp (stdout *is* the protocol). Use `eprintln!` if you must print.
 - CI gates: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and in `app/`: `npm run check`, `npm test`. Verify by **exit code** — the test runner has exited 1 with every test passing before.
-- Commits end with `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+- No attribution trailers in commits (no `Co-Authored-By`).
 - Tool count at the end: **24** (7 session, 9 overview, 6 probes, 2 context).
 
 ---
@@ -258,9 +258,7 @@ git commit -m "MCP: --mcp boots a stdio server that answers initialize
 
 Same exe, no window, no Tauri runtime; rmcp over tokio. Zero tools yet.
 The smoke test speaks the handshake over real pipes and takes MCP_EXE so
-the Windows release build can be probed with it.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+the Windows release build can be probed with it."
 ```
 
 - [ ] **Step 10: The Windows release probe (spec §10 item 1) — manual, Windows only**
@@ -540,9 +538,7 @@ Run: `cargo clippy --workspace --all-targets -- -D warnings`
 git add app/src-tauri/src/mcp.rs
 git commit -m "MCP: tool table, argument helpers, schema invariants, status
 
-Release probe on Windows: <passed | see Task 1 note>.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+Release probe on Windows: <passed | see Task 1 note>."
 ```
 
 ---
@@ -781,9 +777,7 @@ Run: `cargo test --test mcp_stdio` (from `app/src-tauri`). Expected: PASS.
 
 ```bash
 git add app/src-tauri/src/mcp.rs app/src-tauri/src/mcp_primer.md app/src-tauri/tests/mcp_stdio.rs
-git commit -m "MCP: the EVE primer, as instructions and as eve_guide
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: the EVE primer, as instructions and as eve_guide"
 ```
 
 ---
@@ -1111,9 +1105,7 @@ Expected: all pass (17).
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: open, save, undo, list_backups, restore_backup
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: open, save, undo, list_backups, restore_backup"
 ```
 
 ---
@@ -1256,9 +1248,7 @@ Expected: all pass (18).
 
 ```bash
 git add app/src-tauri/src/mcp.rs
-git commit -m "MCP: list_characters
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: list_characters"
 ```
 
 ---
@@ -1566,9 +1556,7 @@ Expected: all pass (22).
 
 ```bash
 git add app/src-tauri/src/groups.rs app/src-tauri/src/mcp.rs
-git commit -m "MCP: overview_get with names, groups_search, builtin_presets
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: overview_get with names, groups_search, builtin_presets"
 ```
 
 ---
@@ -1967,9 +1955,7 @@ git commit -m "MCP: batched overview edit tools; undo groups re-enter
 A batch holds one undo group, so edit_reshared's rollback makes it atomic
 and one undo step. group() now rides an already-open group instead of
 closing it on the inner drop — copy_columns, tab_delete and the window
-ops open their own.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+ops open their own."
 ```
 
 ---
@@ -2167,9 +2153,7 @@ Run: `cargo test --test mcp_stdio` (from `app/src-tauri`) — expected PASS with
 
 ```bash
 git add app/src-tauri/src/mcp.rs app/src-tauri/tests/mcp_stdio.rs
-git commit -m "MCP: overview packs and the probe formation tools; 24 tools
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: overview packs and the probe formation tools; 24 tools"
 ```
 
 ---
@@ -2397,9 +2381,7 @@ Run: `cargo test -p app mcp_setup::` — expected 5 passed.
 
 ```bash
 git add app/src-tauri/src/mcp_setup.rs app/src-tauri/src/lib.rs
-git commit -m "MCP: setup info and Claude Desktop register/unregister commands
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "MCP: setup info and Claude Desktop register/unregister commands"
 ```
 
 ---
@@ -2641,9 +2623,7 @@ Invoke the `starting-the-app` skill; open the app menu → "AI access…". Expec
 
 ```bash
 git add app/src/lib/api.ts app/src/lib/AiAccessPanel.svelte app/src/lib/AiAccessPanel.spec.ts app/src/lib/commands.ts app/src/lib/AppMenu.svelte app/src/lib/AppMenu.spec.ts app/src/routes/+page.svelte
-git commit -m "AI access sheet: Claude Desktop register, snippet for any client
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git commit -m "AI access sheet: Claude Desktop register, snippet for any client"
 ```
 
 ---
@@ -2722,9 +2702,7 @@ Record what happened, verbatim, in the final commit message.
 git add README.md CHANGELOG.md docs/superpowers/specs/2026-09-19-mcp-server-design.md
 git commit -m "MCP: README and changelog; spec reconciled with the build
 
-End-to-end on Windows with Claude Desktop: <what happened>.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+End-to-end on Windows with Claude Desktop: <what happened>."
 ```
 
 Then invoke `superpowers:finishing-a-development-branch` — the branch is `feat/mcp-server`, the PR target is `master`.
