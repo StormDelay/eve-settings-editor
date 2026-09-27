@@ -22,7 +22,7 @@
 - No tool result carries a path except `open`, `status`, `save`, `list_backups`, `restore_backup` (`every_get_result_carries_no_paths` enforces it).
 - Product copy says "assistant", not "Claude" — any MCP client may be on the other end.
 - The write path is unchanged: every save is `settings_model::save`'s backup → verify → conflict-check → atomic write. Live mode adds no way to reach the disk.
-- Every commit message: subject, blank line, `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+- Every commit message: subject only, no attribution trailers (no `Co-Authored-By`).
 
 Test commands (repo root): one Rust test `cargo test -p app --lib <module>::tests::<name>`; the crate `cargo test -p app`; an integration test `cargo test -p app --test <name>`; frontend `cd app && npm test`.
 
@@ -1694,8 +1694,6 @@ If PR #101 is still open, `gh pr create --base feat/mcp-workspaces …`; if it m
 Live mode for the MCP server: with the app window open, `app.exe --mcp` relays over a same-user named pipe to a server inside the window, over the window's own document — edits appear in the window at once with an Undo toast, Ctrl+Z reverts them, the assistant's `undo` pops only its own steps, siblings of the window's character get a read-only account slot, and a window that switches files tells the connection `switched`. Headless mode (no window) is unchanged. Spec: docs/superpowers/specs/2026-09-21-mcp-live-mode-design.md §4 (PR 2 of 2; PR 1 was #101).
 
 Smoke (debug build, window open): <one line per step 1–7 above, what happened; the screenshot from step 3>.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
 ---
