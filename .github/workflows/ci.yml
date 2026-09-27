@@ -6,6 +6,21 @@ on:
   pull_request:
 
 jobs:
+  identity:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: No personal identity or AI attribution in PR commits
+        run: |
+          range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          bad=$(git log --format='%h %an <%ae> / %cn <%ce>' "$range" | grep -vE '^[0-9a-f]+ StormDelay <stormdelay@gmail.com> / (StormDelay <stormdelay@gmail.com>|GitHub <noreply@github.com>)$' || true)
+          [ -z "$bad" ] || { echo "Commits not by StormDelay <stormdelay@gmail.com>:"; echo "$bad"; exit 1; }
+          if git log --format=%B "$range" | grep -qiE 'co-authored-by|generated with \[?claude|noreply@anthropic'; then
+            echo "Attribution trailer found in a commit message"; exit 1
+          fi
   test:
     runs-on: ubuntu-22.04
     steps:

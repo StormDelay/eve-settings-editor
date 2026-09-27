@@ -16,7 +16,7 @@
 - Rust tests: `cargo test --workspace` from the repo root. Frontend: `npm test` and `npm run check`, both from `app/`.
 - `Category` variant names are exactly `HudFighterPos`, `HudBadge`, `HudShipTop`, `HudFighterDetached`, `HudFighterShown`, `HudNeocomWidth`. Serde renames them `snake_case` automatically; no `#[serde(rename)]` attributes.
 - Never make a whole-section category (`Layout`, `Autofill`, `Overview`, `OverviewWidths`, `Keybinds`, `NeocomButtons`) `absent_means_default`. Deleting a target's `overview` because the source lacks one is data loss.
-- Every commit message ends with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- No attribution trailers in commit messages (no `Co-Authored-By`).
 
 ## File Structure
 
@@ -164,9 +164,7 @@ git commit -m "Add a category per HUD key
 The HUD editor writes nine fields; the Layout aspect carries one. These
 six categories address the other eight (the ship offset already rides
 inside the char windows subtree), each pointing at a single key so a copy
-cannot drag a whole ui section along with it.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+cannot drag a whole ui section along with it."
 ```
 
 ---
@@ -385,9 +383,7 @@ a layout copy on all of them. Scoped by absent_means_default so a source
 with no overview can never wipe the target's.
 
 An empty root source contributes neither values nor removals, so a preset
-captured before the aspect grew an account side still applies char-only.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+captured before the aspect grew an account side still applies char-only."
 ```
 
 ---
@@ -477,9 +473,7 @@ holding one. derive_aspects only passes whole-section categories today, so
 this closes a footgun rather than a live bug.
 
 Also pins prune's parent-building for an absent HUD key: that is what keeps
-a Layout preset's user.dat off the empty-root shape an old preset has.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+a Layout preset's user.dat off the empty-root shape an old preset has."
 ```
 
 ---
@@ -669,9 +663,7 @@ Layout carried one of the HUD editor's nine fields, so copying it moved a
 character's ship HUD offset and left the fighter panel, the notification
 badge and the neocom width behind. It now carries all nine, which makes it
 write the account file for the first time — so an unpaired target is
-excluded exactly as it is for Overview and Autofill.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+excluded exactly as it is for Overview and Autofill."
 ```
 
 ---
@@ -758,9 +750,7 @@ git commit -m "Say that Window layout now carries the whole HUD
 Both surfaces described the old half: the batch label named what it left
 behind and the preset checkbox carried the same caveat on hover. Neither is
 true any more, and both surfaces now treat layout as the account-writing
-aspect it has become.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+aspect it has become."
 ```
 
 ---
@@ -823,9 +813,7 @@ git commit -m "Gate the HUD categories on the shape real files carry
 The unit tests build bare dicts; every real section is a (timestamp, dict)
 tuple. A fixture that shares the code's assumptions cannot falsify them,
 which is how the chat-name and column-wrapper bugs both survived their
-tests.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+tests."
 ```
 
 ---
@@ -884,9 +872,7 @@ Note the write order: the editor saves on demand, EVE writes its settings on **l
 
 ```bash
 git add CHANGELOG.md docs/small-tasks.md docs/live-verification-session-c.md
-git commit -m "Record the Layout aspect change and its live verification
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "Record the Layout aspect change and its live verification"
 ```
 
 ---
