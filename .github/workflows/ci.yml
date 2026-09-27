@@ -16,8 +16,9 @@ jobs:
       - name: No personal identity or AI attribution in PR commits
         run: |
           range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-          bad=$(git log --format='%h %an <%ae> / %cn <%ce>' "$range" | grep -vE '^[0-9a-f]+ StormDelay <stormdelay@gmail.com> / (StormDelay <stormdelay@gmail.com>|GitHub <noreply@github.com>)$' || true)
-          [ -z "$bad" ] || { echo "Commits not by StormDelay <stormdelay@gmail.com>:"; echo "$bad"; exit 1; }
+          # CI logs are public: print only commit ids, never the offending identity.
+          bad=$(git log --format='%h %an <%ae> / %cn <%ce>' "$range" | grep -vE '^[0-9a-f]+ StormDelay <stormdelay@gmail.com> / (StormDelay <stormdelay@gmail.com>|GitHub <noreply@github.com>)$' | cut -d' ' -f1 || true)
+          [ -z "$bad" ] || { echo "Commits not authored as StormDelay <stormdelay@gmail.com>:"; echo "$bad"; exit 1; }
           if git log --format=%B "$range" | grep -qiE 'co-authored-by|generated with \[?claude|noreply@anthropic'; then
             echo "Attribution trailer found in a commit message"; exit 1
           fi
