@@ -17,6 +17,8 @@
   import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
+  import SearchField from "./ui/SearchField.svelte";
+  import { revealAndFocus } from "./keymap";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
   import HudPanel from "$lib/HudPanel.svelte";
@@ -94,6 +96,8 @@
   // · reset" counter is what keeps a carried-over filter visible instead of
   // silently misleading.
   let filter = $state<WindowFilter>({ ...DEFAULT_FILTER });
+  let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
+  focusSearch = () => revealAndFocus(filterInput);
 
   // The assistant reads this through `status`/`layout_get`, so "this window"
   // means the same one to both. Best effort: it is a view hint, never an edit.
@@ -911,6 +915,51 @@
 {:else}
   <div class="layout-view">
     <div class="canvas-wrap work" bind:clientWidth={containerWidth}>
+      <!-- View controls, above the canvas they change. They used to sit under
+           the HUD panel in the inspector, scrolled out of sight and gone with
+           it when the inspector was collapsed. Everything here narrows or
+           redraws the picture; the list in the inspector follows along. -->
+      <div class="toolbar">
+        <!-- aria-label passed as a raw attribute so it stays "Filter windows"
+             exactly: SearchField names the box from its built placeholder,
+             which carries a trailing ellipsis. -->
+        <SearchField
+          nouns="windows"
+          aria-label="Filter windows"
+          bind:element={filterInput}
+          bind:value={filter.text} />
+        <!-- The one filter whose name overclaims, so it is the one that most
+             needs a tooltip: EVE's flag is sticky, and a window it still calls
+             open may well not be on screen. See docs/format-notes.md,
+             "openWindows is sticky". -->
+        <Field
+          kind="checkbox"
+          class="toggle"
+          label="Open only"
+          bind:value={filter.openOnly}
+          title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas." />
+        <Field
+          kind="checkbox"
+          class="toggle"
+          label="Hide clutter"
+          bind:value={filter.hideClutter}
+          title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay." />
+        <div
+          class="envs"
+          role="radiogroup"
+          aria-label="Environment"
+          title="Shows only the windows that exist in one environment. Station and player structure are one “Docked” view — EVE stores a single position per window, so this filters the picture, it does not switch layouts. A window the editor does not recognise shows in both.">
+          {#each [["all", "All"], ["docked", "Docked"], ["space", "In space"]] as const as [value, label]}
+            <Field kind="radio" class="toggle" name="env" radioValue={value} {label} bind:value={filter.env} />
+          {/each}
+        </div>
+        <Field
+          kind="checkbox"
+          class="toggle"
+          label="Detail"
+          value={detailOn()}
+          onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
+      </div>
       <!-- The capture-phase blur is what gives the canvas the keyboard:
            startMove/startResize/startFurniture all preventDefault their
            pointerdown, which suppresses the browser's focus transfer, so a
@@ -1021,12 +1070,6 @@
       <div class="statusbar">
         <span class="facts">
           <span class="ref">reference {layout.reference_w}×{layout.reference_h}</span>
-          <Field
-            kind="checkbox"
-            class="det"
-            label="Detail"
-            value={detailOn()}
-            onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
         </span>
         <span class="narrowing">
           {#if filterIsActive(filter)}
@@ -1117,8 +1160,7 @@
         {userOpen}
         {sharedNames}
         onSetChatSplits={setChatSplits}
-        bind:filter
-        bind:focusFilter={focusSearch} />
+        {filter} />
     </aside>
   </div>
 {/if}
@@ -1357,8 +1399,28 @@
     gap: var(--s2);
   }
   /* The dark-native-control rule is gone — Field owns it. */
-  .statusbar :global(.det) {
-    color: var(--text-secondary);
-    cursor: pointer;
+  /* Sticky, so the controls stay put while a tall canvas scrolls under them. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s3);
+    padding-bottom: var(--s2);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 2;
+    font-size: var(--t-caption);
+  }
+  .toolbar :global(.search) {
+    width: 16rem;
+    max-width: 100%;
+  }
+  .toolbar :global(.toggle) {
+    color: var(--text-muted);
+  }
+  .envs {
+    display: flex;
+    gap: var(--s2);
   }
 </style>
