@@ -297,6 +297,9 @@ check("open filter keeps the right window", open[0].id === "a");
   check("hideClutter drops an OPEN private chat", !windowMatches(privateChat, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter drops a CLOSED private chat too", !windowMatches(closedPrivateChat, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter keeps an OPEN standing channel", windowMatches(standingChat, { ...NO_FILTER, hideClutter: true }));
+  // A resolved name means the character is still in the channel.
+  const joinedPlayerChat = { ...win("chatchannel_player_-78564080", true, true), name: "StormDelay Fam" };
+  check("hideClutter keeps a joined (named) player chat", windowMatches(joinedPlayerChat, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter keeps a bare parent window (ShipCargo)", windowMatches(bareCargo, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter drops a spawned instance (ShipCargo_<id>)", !windowMatches(spawnedCargo, { ...NO_FILTER, hideClutter: true }));
   // A closed non-clutter window is untouched by hideClutter — only openOnly

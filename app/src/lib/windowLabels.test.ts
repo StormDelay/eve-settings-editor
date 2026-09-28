@@ -106,6 +106,12 @@ import { check } from "./test/check.ts";
   // channel is kept, not hidden (the safe failure direction).
   check("a private chat is clutter", isClutter("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483"));
   check("a player (direct) chat is clutter", isClutter("chatchannel_player_-78564080"));
+  // A name means the character is still in the channel — a kept tab.
+  check("a named player chat is not clutter", !isClutter("chatchannel_player_-78564080", undefined, "StormDelay Fam"));
+  check("a named private chat is not clutter", !isClutter("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", undefined, "Private Chat (2)"));
+  check("a null name still leaves a player chat clutter", isClutter("chatchannel_player_-78564080", undefined, null));
+  check("a name does not rescue a non-chat clutter window", isClutter("ShipCargo_1033391582929", undefined, "Cargo"));
+  check("a name loses to a user clutter override", isClutter("chatchannel_player_-78564080", { clutter: new Set(["chatchannel_player_-78564080"]), visible: new Set() }, "StormDelay Fam"));
   check("Local chat is not clutter", !isClutter("chatchannel_local"));
   check("Corp chat is not clutter", !isClutter("chatchannel_corp"));
   check("Alliance chat is not clutter", !isClutter("chatchannel_alliance"));

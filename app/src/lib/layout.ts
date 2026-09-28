@@ -710,7 +710,7 @@ export function isOrphanFrame(w: WindowRect): boolean {
 
 export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrides): boolean {
   if (f.openOnly && !w.open) return false;
-  if (f.hideClutter && isClutter(w.id, o)) return false;
+  if (f.hideClutter && isClutter(w.id, o, w.name)) return false;
   if (f.hideClutter && isOrphanFrame(w)) return false;
   if (!inEnv(w.id, f.env)) return false;
   const n = nameOf(w);

@@ -105,15 +105,16 @@ pub(crate) fn describe(id: &str) -> Family {
 }
 
 /// `isClutter`: overrides first, then exact ids, then chat by detail, then a
-/// spawned instance of a clutter family (a bare parent stays visible).
-pub(crate) fn is_clutter(id: &str, o: &Overrides) -> bool {
+/// spawned instance of a clutter family (a bare parent stays visible). A chat
+/// with a resolved `name` is one the character is still in — a kept tab.
+pub(crate) fn is_clutter(id: &str, name: Option<&str>, o: &Overrides) -> bool {
     if o.visible.contains(id) { return false; }
     if o.clutter.contains(id) { return true; }
     let t = tables();
     if t.clutter_ids.iter().any(|c| c == id) { return true; }
     let f = describe(id);
     if f.family == "chatchannel" {
-        return t.clutter_chat_details.contains(&f.detail);
+        return name.is_none_or(str::is_empty) && t.clutter_chat_details.contains(&f.detail);
     }
     t.clutter_families.contains(&f.family) && !f.detail.is_empty()
 }
@@ -163,7 +164,7 @@ pub(crate) enum Hidden { Closed, Clutter, Environment, Match }
 /// is the canvas's `windowMatches`: open, clutter, environment, text.
 pub(crate) fn hidden_by(w: &WindowRect, f: &WindowFilter, o: &Overrides) -> Option<Hidden> {
     if !f.include_closed && !w.open { return Some(Hidden::Closed); }
-    if f.hide_clutter && (is_clutter(&w.id, o) || is_orphan_frame(w)) { return Some(Hidden::Clutter); }
+    if f.hide_clutter && (is_clutter(&w.id, w.name.as_deref(), o) || is_orphan_frame(w)) { return Some(Hidden::Clutter); }
     if !in_env(&w.id, f.env) { return Some(Hidden::Environment); }
     if let Some(q) = f.matches.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
         let q = q.to_lowercase();
@@ -212,10 +213,12 @@ mod tests {
     fn clutter_matches_the_frontend_rules() {
         let o = Overrides::default();
         for id in ["ChatInvitation_1111922349", "ChannelSettingsDlg_fleet_1038711647935", "mail_readingWnd_380729425", "groupInfoWnd_494332", "contactmanagement_98477766", "ShipCargo_1033391582929", "ShipDroneBay_1033391582929", "StructureShipHangar_1033391582929", "containerWnd_1033391582929", "chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", "chatchannel_player_-78564080", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1039455460976"] {
-            assert!(is_clutter(id, &o), "{id} should be clutter");
+            assert!(is_clutter(id, None, &o), "{id} should be clutter");
         }
+        assert!(!is_clutter("chatchannel_player_-78564080", Some("StormDelay Fam"), &o), "a joined player chat is a kept tab");
+        assert!(is_clutter("ShipCargo_1033391582929", Some("Cargo"), &o), "a name only rescues chat");
         for id in ["ShipCargo", "InventoryStation", "InventorySpace", "InventoryStructure", "containerContentWindow", "chatchannel_local", "chatchannel_corp", "chatchannel_alliance", "chatchannel_fleet", "chatchannel_incursion", "chatchannel_invasion", "chatchannel_newthing", "market", "overview", "probeScannerWindow", "assembleWindow"] {
-            assert!(!is_clutter(id, &o), "{id} should not be clutter");
+            assert!(!is_clutter(id, None, &o), "{id} should not be clutter");
         }
     }
 
@@ -224,8 +227,8 @@ mod tests {
         let mut o = Overrides::default();
         o.visible.insert("ShipCargo_1033391582929".into());
         o.clutter.insert("market".into());
-        assert!(!is_clutter("ShipCargo_1033391582929", &o), "forced visible");
-        assert!(is_clutter("market", &o), "forced into the clutter set");
+        assert!(!is_clutter("ShipCargo_1033391582929", None, &o), "forced visible");
+        assert!(is_clutter("market", None, &o), "forced into the clutter set");
     }
 
     #[test]
