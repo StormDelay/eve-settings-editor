@@ -28,6 +28,8 @@ Indices: `tab` is a tab's global index — unique across all windows, ascending 
 
 The four `overview_*_edit` tools take `ops`, applied in order as one undo step. The first failing op rolls the whole batch back and reports its index.
 
+Column widths are pixels, and EVE cuts text that doesn't fit at a whole letter — it never wraps. `overview_column_fit` shows exactly what each header and value shows at the current widths, measured with EVE's own fonts at the player's font size, and gives `min_width`, the narrowest width that shows a value whole. To size a column snugly, pass the values it must fit, take `min_width`, and set it with `overview_columns_edit`'s `set_width`.
+
 `overview_pack_preview`, `overview_pack_import` and `overview_pack_export` handle EVE's shareable overview packs (YAML files players exchange). Preview before importing.
 
 ## presets
