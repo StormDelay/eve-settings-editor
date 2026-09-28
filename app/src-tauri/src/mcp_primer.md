@@ -75,7 +75,7 @@ Id 68 may appear in `order` lists without a label; the client never renders it �
 
 ## probes
 
-A probe formation is the arrangement of 1 to 8 scanner probes the client places when the formation is selected. Each probe is an offset from the formation centre in **metres — not AU**. 1 AU = 149,597,870,700 m. Axes: X and Z are the horizontal plane, Y is up. Each probe has its own scan range, also in metres. EVE's range ladder doubles from 0.25 AU to 32 AU: 0.25 AU = 37,399,467,675 m; 0.5 AU = 74,798,935,350 m (the default); 1 AU = 149,597,870,700 m; 2 AU = 299,195,741,400 m; 4 AU = 598,391,482,800 m; 8 AU = 1,196,782,965,600 m; 16 AU = 2,393,565,931,200 m; 32 AU = 4,787,131,862,400 m.
+A probe formation is the arrangement of 1 to 8 scanner probes the client places when the formation is selected. Each probe is an offset from the formation centre in **metres — not AU**. 1 AU = 149,597,870,700 m. Axes are world-fixed, measured in-game: `+Z` is north, `-Z` south, `-X` east, `+X` west, `+Y` up (X and Z are the horizontal plane). The ship's heading plays no part. Each probe has its own scan range, also in metres. EVE's range ladder doubles from 0.25 AU to 32 AU: 0.25 AU = 37,399,467,675 m; 0.5 AU = 74,798,935,350 m (the default); 1 AU = 149,597,870,700 m; 2 AU = 299,195,741,400 m; 4 AU = 598,391,482,800 m; 8 AU = 1,196,782,965,600 m; 16 AU = 2,393,565,931,200 m; 32 AU = 4,787,131,862,400 m.
 
 Formations live in the account file. `probes_set` without `id` creates one at the next free id; with `id` it replaces that formation. `probes_add_yaml` takes the editor's exchange format, so formations shared as text paste straight in. One 7-probe spread at 4 AU (a centre probe and six around it, one range for all):
 
