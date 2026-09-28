@@ -421,6 +421,15 @@ fn stack_create(state: tauri::State<'_, AppState>, member1: String, member2: Str
 fn stack_delete_orphans(state: tauri::State<'_, AppState>) -> Result<settings_model::WindowLayout, ErrDto> {
     ops::stack_delete_orphans(&state)
 }
+#[tauri::command]
+fn chat_leave(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    window: String,
+) -> Result<ops::ChatLeaveResult, ErrDto> {
+    let linked = ops::linked_chars(&state, &app_dir(&app));
+    ops::chat_leave(&state, &window, &linked)
+}
 
 #[tauri::command]
 fn neocom_bar(state: tauri::State<'_, AppState>) -> Result<settings_model::NeocomBar, ErrDto> {
@@ -756,7 +765,7 @@ pub fn run() {
             setup_preview, setup_apply, copy_files,
             settings_preset_list, settings_preset_create, settings_preset_rename,
             settings_preset_delete, settings_preset_export, settings_preset_import,
-            stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans,
+            stack_unstack, stack_add, stack_reorder, stack_create, stack_delete_orphans, chat_leave,
             neocom_bar, neocom_reorder, neocom_remove, neocom_add, neocom_reset, chat_panels, set_chat_splits,
             probe_formations, set_probe_formation, remove_probe_formation, reorder_probe_formations,
             probe_yaml, probe_parse_yaml, probe_export, probe_import, add_probe_formations,
