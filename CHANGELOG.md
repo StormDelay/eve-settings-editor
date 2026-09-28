@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.40.0] - 2026-09-28
+
+Leave old chat channels from the Layout view, and its view controls sit above the canvas.
+
+### Added
+- **Leave a chat channel.** A selected chat window in the Layout view has a Leave channel (or Leave conversation) button that removes the channel from the character, so EVE does not bring it back. The assistant can do the same. Standing channels cannot be left this way.
+
+### Changed
+- The Layout view's search, Open only, Hide clutter, environment and Detail controls sit in a toolbar above the canvas, always in view.
+- Upgrading with the Windows installer takes two clicks, and the desktop shortcut is off by default.
+
 ## [0.39.0] - 2026-09-22
 
 The assistant works in your open window, and keeps every account it opens.
