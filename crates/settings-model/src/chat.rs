@@ -336,6 +336,43 @@ pub fn leave_chat_char(root: &mut Value, window_id: &str) -> Result<String, Chat
     if hit { Ok(key) } else { Err(ChatLeaveError::NotFound { window: window_id.to_string() }) }
 }
 
+/// Leave a chat channel on the ACCOUNT side: drop its per-channel settings
+/// from the root `ui` section — the member-list width, input height, font
+/// size, blink flag, both spellings of the condensed-list flag
+/// (docs/format-notes.md, "Chat window splits") — and its
+/// `chatPlayerChannelsJoined` entry. Returns whether anything was removed.
+///
+/// Every character on the account shares this file, so the caller decides
+/// whether to call it at all (ops.rs::chat_leave).
+pub fn leave_chat_account(root: &mut Value, window_id: &str) -> bool {
+    if !is_leavable(window_id) {
+        return false;
+    }
+    let key = &window_id[CHAT_PREFIX.len()..];
+    let names = [
+        format!("{window_id}{WIDTH_SUFFIX}"),
+        format!("{INPUT_PREFIX}{window_id}"),
+        format!("chatfontsize_{window_id}"),
+        format!("chatWindowBlink_{window_id}"),
+        format!("chatCondensedUserList_{window_id}"),
+        format!("chatCondensedUserList_{key}"),
+    ];
+    inline_all(root);
+    let Value::Dict(top) = root else { return false };
+    let Some((_, Value::Dict(ui))) = top.iter_mut().find(|(k, _)| key_is(k, "ui")) else { return false };
+    let n = ui.len();
+    ui.retain(|(k, _)| !names.iter().any(|name| key_is(k, name)));
+    let mut hit = ui.len() != n;
+    if let Some((_, joined)) = ui.iter_mut().find(|(k, _)| key_is(k, "chatPlayerChannelsJoined")) {
+        if let Some(d) = dict_mut(joined) {
+            let n = d.len();
+            d.retain(|(k, _)| decode_id(k) != key);
+            hit |= d.len() != n;
+        }
+    }
+    hit
+}
+
 /// The dict inside a value, unwrapping the `(timestamp, dict)` wrapper.
 fn dict_mut(v: &mut Value) -> Option<&mut Vec<(Value, Value)>> {
     match v {
@@ -738,5 +775,73 @@ mod tests {
         let mut doc = char_doc();
         leave_chat_char(&mut doc, "chatchannel_player_-1").unwrap();
         assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-88620541".to_string()]);
+    }
+
+    // ---- leave_chat_account ----
+
+    fn account_doc() -> Value {
+        let w = "chatchannel_player_-88620541";
+        ui_doc(vec![
+            (b(&format!("{w}_userlistwidth")), wrapped(Value::Int(104))),
+            (b(&format!("chatinputsize_{w}")), wrapped(Value::Int(62))),
+            (b(&format!("chatfontsize_{w}")), wrapped(Value::Int(13))),
+            (b(&format!("chatWindowBlink_{w}")), wrapped(Value::Bool(true))),
+            (b(&format!("chatCondensedUserList_{w}")), wrapped(Value::Bool(false))),
+            (b("chatCondensedUserList_player_-88620541"), wrapped(Value::Bool(false))),
+            (b("chatchannel_player_-1_userlistwidth"), wrapped(Value::Int(90))),
+            (b("chatPlayerChannelsJoined"), wrapped(Value::Dict(vec![
+                (Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())),
+                (b("player_-1"), Value::Str("Keep".into())),
+            ]))),
+        ])
+    }
+
+    fn ui_keys(doc: &Value) -> Vec<String> {
+        let Value::Dict(top) = doc else { panic!() };
+        let (_, Value::Dict(ui)) = top.iter().find(|(k, _)| key_is(k, "ui")).unwrap() else { panic!() };
+        ui.iter().map(|(k, _)| decode_id(k)).collect()
+    }
+
+    fn joined(doc: &Value) -> Vec<String> {
+        let Value::Dict(top) = doc else { panic!() };
+        let (_, Value::Dict(ui)) = top.iter().find(|(k, _)| key_is(k, "ui")).unwrap() else { panic!() };
+        let (_, Value::Tuple(t)) = ui.iter().find(|(k, _)| key_is(k, "chatPlayerChannelsJoined")).unwrap() else { panic!() };
+        let Some(Value::Dict(d)) = t.iter().find(|e| matches!(e, Value::Dict(_))) else { panic!() };
+        d.iter().map(|(k, _)| decode_id(k)).collect()
+    }
+
+    #[test]
+    fn account_side_removes_every_per_channel_key_and_the_joined_entry() {
+        let mut doc = account_doc();
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        let keys = ui_keys(&doc);
+        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert!(keys.contains(&"chatchannel_player_-1_userlistwidth".to_string()));
+        assert!(keys.contains(&"neocomWidth".to_string()));
+        assert_eq!(joined(&doc), vec!["player_-1".to_string()]);
+    }
+
+    #[test]
+    fn account_side_with_nothing_to_remove_reports_false_and_creates_nothing() {
+        let mut doc = ui_doc(vec![]);
+        assert!(!leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert_eq!(ui_keys(&doc), vec!["neocomWidth".to_string()]);
+    }
+
+    #[test]
+    fn account_side_finds_a_shared_section_key() {
+        let mut doc = account_doc();
+        let Value::Dict(top) = &mut doc else { panic!() };
+        let k = std::mem::replace(&mut top[0].0, Value::None);
+        top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+    }
+
+    #[test]
+    fn account_side_refuses_a_standing_channel() {
+        let mut doc = ui_doc(vec![(b("chatchannel_local_userlistwidth"), wrapped(Value::Int(135)))]);
+        let before = doc.clone();
+        assert!(!leave_chat_account(&mut doc, "chatchannel_local"));
+        assert_eq!(doc, before);
     }
 }
