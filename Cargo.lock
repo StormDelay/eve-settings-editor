@@ -54,6 +54,7 @@ dependencies = [
  "base64 0.22.1",
  "blue-marshal",
  "dirs",
+ "freetype-rs",
  "png 0.18.1",
  "reqwest 0.12.28",
  "rmcp",
@@ -1195,6 +1196,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "freetype-rs"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1d1f81b925f09d7040682dbc91eb1b6ad43232f4bc6ee080f518001c05b5415"
+dependencies = [
+ "bitflags 2.13.0",
+ "freetype-sys",
+ "libc",
+]
+
+[[package]]
+name = "freetype-sys"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddb84abd9992afaa8eb9b8bef907a94553504d0a890924e1bf1f1ab1249455af"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]

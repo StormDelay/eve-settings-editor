@@ -6,6 +6,7 @@
 
 import type { ChatPanel, NeocomBar, OverviewColumns, Stack } from "./api";
 import { HUD_NOMINAL, type DrawUnit } from "./layout.ts";
+import { effectiveWidth } from "./overviewRender.ts";
 
 /**
  * One drawn piece of a rectangle's internals.
@@ -28,27 +29,6 @@ export interface DetailPart {
   label?: string;
 }
 
-/**
- * ponytail: what is left here is INVENTED. Correcting each is a one-line edit,
- * and the upgrade path is a measuring pass like the 2026-07-30 one — take a
- * native screenshot, profile it, then move the corrected value OUT of this
- * object into a named constant citing format-notes.md.
- *
- * That pass has already emptied most of this object. The ship HUD, the fighter
- * panel and the overview chrome all used to live here; every one of them turned
- * out to be materially wrong (rectangles that are really circles, a rack row
- * that is really staggered, chrome bands ~60% too short), which is the argument
- * for keeping the two kinds of number strictly apart.
- *
- * The distinction matters. HUD_NOMINAL's invented 686x250 drew the ship HUD
- * 195px off its real position for three releases.
- */
-export const DETAIL_NOMINAL = {
-  /** Width for an overview column whose width key is absent. This one is not a
-   *  screenshot away: it is EVE's own built-in default, which the file does not
-   *  record and the client never shows as a number. */
-  columnWidth: 80,
-};
 
 // --- ship HUD ---------------------------------------------------------------
 // MEASURED 2026-07-30 from the two native 2560x1440 shots the 2026-07-28 pass
@@ -441,10 +421,11 @@ const OVERVIEW = {
  * selected (`tabgroups` is chat-window state). Naming every tab in the strip is
  * what keeps that choice visible instead of silent.
  *
- * Column bands are laid out left to right from x 0 at their STORED widths, with
- * no clamping. A set wider than the window therefore runs off the edge and gets
- * clipped by the rectangle — which is the whole point: it makes an overflowing
- * overview visible without any overflow arithmetic.
+ * Column bands are laid out left to right from x 0 at the widths EVE draws
+ * them at (`effectiveWidth`: the client's own defaults for a width the file
+ * does not record, its floor and the fixed icon column). The column that
+ * crosses the window edge is drawn clipped there, as the client clips it —
+ * a column set wider than its window reads as columns cut off at the edge.
  */
 export function overviewParts(
   cols: OverviewColumns,
@@ -474,16 +455,9 @@ export function overviewParts(
   let x = 0;
   for (const c of tabs[0].columns) {
     if (!c.visible) continue;
-    // width null = the key is absent = EVE's own default, which the file does
-    // not record. The nominal is the only thing available.
-    const w = c.width ?? DETAIL_NOMINAL.columnWidth;
-    // A column that does not fit WHOLE is not drawn at all — EVE shows what fits
-    // on the one line and drops the rest. So a column set wider than its window
-    // shows up as columns MISSING from the picture, which is exactly what the
-    // player sees in game. (This replaced letting them overflow and clip: that
-    // drew something EVE never draws.)
-    if (x + w > rect.w) break;
-    out.push({ kind: "column", x, y: OVERVIEW.tabStrip, w, h: OVERVIEW.headerBand, label: c.label });
+    if (x >= rect.w) break;
+    const w = effectiveWidth(c.name, c.width);
+    out.push({ kind: "column", x, y: OVERVIEW.tabStrip, w: Math.min(w, rect.w - x), h: OVERVIEW.headerBand, label: c.label });
     x += w;
   }
   return out;
