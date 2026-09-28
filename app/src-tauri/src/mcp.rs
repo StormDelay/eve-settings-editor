@@ -812,12 +812,12 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "probes_get",
-            description: "The open account's probe scanner formations: id, name, probes as [x, y, z] metre offsets from the formation centre (X and Z horizontal, Y up), and one scan range in metres per probe; plus the selected formation id if any. Needs the account file open.",
+            description: "The open account's probe scanner formations: id, name, probes as [x, y, z] metre offsets from the formation centre (X and Z horizontal, Y up; +Z north, -X east, +X west, -Z south, measured in-game), and one scan range in metres per probe; plus the selected formation id if any. Needs the account file open.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
             name: "probes_set",
-            description: "Create a formation (omit id: next free id) or replace one (give id). 1 to 8 probes as [x, y, z] in METRES from the centre — not AU; 1 AU = 149597870700 m. X and Z are the horizontal plane, Y is up. ranges: one metre value per probe (0.5 AU = 74798935350 is the default; the ladder doubles 0.25 → 32 AU). Returns all formations. Nothing reaches disk until save. Unsure: eve_guide probes.",
+            description: "Create a formation (omit id: next free id) or replace one (give id). 1 to 8 probes as [x, y, z] in METRES from the centre — not AU; 1 AU = 149597870700 m. X and Z are the horizontal plane, Y is up; +Z is north, -X east, +X west, -Z south (measured in-game). ranges: one metre value per probe (0.5 AU = 74798935350 is the default; the ladder doubles 0.25 → 32 AU). Returns all formations. Nothing reaches disk until save. Unsure: eve_guide probes.",
             schema: || obj(json!({
                 "id": { "type": "integer" },
                 "name": { "type": "string" },
