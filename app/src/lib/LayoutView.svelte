@@ -943,7 +943,7 @@
           class="toggle"
           label="Hide clutter"
           bind:value={filter.hideClutter}
-          title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay." />
+          title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, chats you have left, channel settings, mail messages, info popups, per-container windows. Standing channels, chats you are still in and parent windows stay." />
         <div
           class="envs"
           role="radiogroup"
