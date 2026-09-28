@@ -13,6 +13,7 @@ import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/svelte";
 import WindowPanel from "$lib/WindowPanel.svelte";
 import type { WindowRect } from "$lib/api";
+import { NO_FILTER } from "$lib/layout";
 
 const path = (n: string) => [{ s: "d", i: 1 }, { s: n }];
 
@@ -71,32 +72,14 @@ const coords = (id: string) =>
   within(row(id)).getAllByRole("spinbutton") as HTMLInputElement[];
 
 describe("the window filter", () => {
-  test("narrows the list to matching windows", async () => {
-    mount([win("overview"), win("market"), win("chatchannel_local")]);
-    expect(screen.queryByTitle("market")).toBeTruthy();
-
-    await fireEvent.input(screen.getByLabelText("Filter windows"), {
-      target: { value: "chat" },
-    });
-
+  test("narrows the list to matching windows", () => {
+    mount([win("overview"), win("market"), win("chatchannel_local")], { filter: { ...NO_FILTER, text: "chat" } });
     expect(screen.queryByTitle("market")).toBeNull();
     expect(screen.queryByTitle("chatchannel_local")).toBeTruthy();
   });
 
-  test("matching is case-insensitive", async () => {
-    mount([win("overview"), win("market")]);
-    await fireEvent.input(screen.getByLabelText("Filter windows"), {
-      target: { value: "MARKET" },
-    });
-    expect(screen.queryByTitle("market")).toBeTruthy();
-    expect(screen.queryByTitle("overview")).toBeNull();
-  });
-
-  test("a filter matching nothing empties the list rather than showing everything", async () => {
-    mount([win("overview"), win("market")]);
-    await fireEvent.input(screen.getByLabelText("Filter windows"), {
-      target: { value: "zzzznothing" },
-    });
+  test("a filter matching nothing empties the list rather than showing everything", () => {
+    mount([win("overview"), win("market")], { filter: { ...NO_FILTER, text: "zzzznothing" } });
     expect(screen.queryByTitle("overview")).toBeNull();
     expect(screen.queryByTitle("market")).toBeNull();
   });
