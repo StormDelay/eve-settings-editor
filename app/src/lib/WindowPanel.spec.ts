@@ -41,7 +41,7 @@ function mount(windows: WindowRect[], over: Record<string, unknown> = {}) {
     onSelect: vi.fn(), onToggleOpen: vi.fn(), onGeom: vi.fn(), onFlag: vi.fn(),
     onReveal: vi.fn(), onUnstack: vi.fn(), onReorder: vi.fn(), onAddToStack: vi.fn(),
     onCreateStack: vi.fn(), onDeleteOrphans: vi.fn(), onClutterOverride: vi.fn(),
-    onSetChatSplits: vi.fn(),
+    onSetChatSplits: vi.fn(), onLeaveChat: vi.fn(),
   };
   render(WindowPanel, {
     windows,
@@ -199,5 +199,32 @@ describe("the row's actions are visible", () => {
     await fireEvent.click(within(row("overview")).getByRole("button", { name: "Window actions" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Treat as clutter" }));
     expect(onClutterOverride).toHaveBeenCalledWith("overview", "clutter");
+  });
+});
+
+describe("Leave channel", () => {
+  test("shown on a player channel and fires with the window", async () => {
+    const w = win("chatchannel_player_-5", { name: "Intel" } as Partial<WindowRect>);
+    const { onLeaveChat } = mount([w], { selectedId: w.id });
+    await fireEvent.click(screen.getByRole("button", { name: "Leave channel" }));
+    expect(onLeaveChat).toHaveBeenCalledWith(expect.objectContaining({ id: "chatchannel_player_-5" }));
+  });
+
+  test("a private conversation says conversation", () => {
+    const w = win("chatchannel_private_abc");
+    mount([w], { selectedId: w.id });
+    expect(screen.getByRole("button", { name: "Leave conversation" })).toBeTruthy();
+  });
+
+  test("absent on a standing channel", () => {
+    const w = win("chatchannel_local");
+    mount([w], { selectedId: w.id });
+    expect(screen.queryByRole("button", { name: /^Leave/ })).toBeNull();
+  });
+
+  test("disabled on a read-only file", () => {
+    const w = win("chatchannel_player_-5");
+    mount([w], { selectedId: w.id, readOnly: true });
+    expect((screen.getByRole("button", { name: "Leave channel" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

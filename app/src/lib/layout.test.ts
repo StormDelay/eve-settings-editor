@@ -3,7 +3,7 @@ import {
   canvasScale, toCanvas, toData, openWindows, resizeRect, stackUnits,
   NO_FILTER, DEFAULT_FILTER, filterIsActive, windowMatches, isOrphanFrame, visibleIds, drawnWindowCount,
   snapLines, movingEdges, snapDelta, unitAt, rectsAt, moveInOrder, dropAction, linkInventory,
-  tabTargetAt, furnitureWrites, nudgeStep, isNudgeKey, swallowsArrowKeys,
+  tabTargetAt, furnitureWrites, nudgeStep, isNudgeKey, swallowsArrowKeys, isLeavableChat, leaveToast,
   type DrawUnit, type Rect,
 } from "./layout.ts";
 import type { WindowRect } from "./api.ts";
@@ -1308,4 +1308,25 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // rect — so it must never reach a write path.
   check("the neocom writes nothing",
     eq(furnitureWrites("neocom", { x: 0, y: 0 }, { x: 50, y: 50 }, null, noHud, layout), []));
+}
+
+// ---- chat leave ----
+check("a player channel is leavable", isLeavableChat("chatchannel_player_-88620541"));
+check("a private conversation is leavable", isLeavableChat("chatchannel_private_009e6df0"));
+for (const id of ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet", "chatchannel_system_263238_263259", "chatchannel_player_", "market"]) {
+  check(`${id} is not leavable`, !isLeavableChat(id));
+}
+{
+  const nameOf = (id: number) => (id === 2 ? "Other Char" : String(id));
+  check("toast: cleaned", leaveToast("Bean-Intel", { outcome: "cleaned" }, nameOf) === "Left Bean-Intel.");
+  check("toast: nothing to clean reads like cleaned", leaveToast("Bean-Intel", { outcome: "nothing_to_clean" }, nameOf) === "Left Bean-Intel.");
+  check("toast: kept, shared",
+    leaveToast("Bean-Intel", { outcome: "kept_shared", chars: [2] }, nameOf) ===
+      "Left Bean-Intel. Its account settings stay: Other Char still has it.");
+  check("toast: kept, unreadable",
+    leaveToast("Bean-Intel", { outcome: "kept_unreadable", chars: [2, 3] }, nameOf) ===
+      "Left Bean-Intel. Its account settings stay: Other Char and 3's files couldn't be read.");
+  check("toast: no account file",
+    leaveToast("Bean-Intel", { outcome: "kept_no_account_file" }, nameOf) ===
+      "Left Bean-Intel. Open the account file to clear its account settings too.");
 }
