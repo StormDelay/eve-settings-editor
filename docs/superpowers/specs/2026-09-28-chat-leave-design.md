@@ -29,8 +29,9 @@ The account file kept `ui → chatPlayerChannelsJoined["player_-70000002"] =
 `chatchannel_private_<key>` (private conversations).
 
 **Refused:** everything else — `local`, `corp`, `alliance`, `fleet`,
-`incursion`, `invasion`, `faction`, and any id that is not one of the two
-leavable shapes. Standing channels are the server's to assign and would be
+`incursion`, `invasion`, `faction`, system channels such as Rookie Help
+(`system_<ids>`, found by the corpus guard while implementing), and any id that
+is not one of the two leavable shapes. Standing channels are the server's to assign and would be
 rebuilt; an unknown shape is refused because refusing is the safe default.
 
 **Out of scope:** leaving the channel server-side (the editor cannot), bulk
@@ -122,11 +123,14 @@ Under one `undo::group`:
      `KeptNoAccountFile`;
    - any linked file fails to read or decode → `KeptUnreadable { chars }`;
    - any linked file lists the key → `KeptShared { chars }`;
+   - none of §3.2's keys exist → `NothingToClean` (the account file is not
+     marked unsaved for a no-op);
    - else `edit_slot(Slot::User, leave_chat_account)` → `Cleaned`.
 
 `ChatLeaveResult { layout: WindowLayout, account: AccountOutcome }`, where
 `AccountOutcome` serialises as
-`{"outcome": "cleaned" | "kept_shared" | "kept_unreadable" | "kept_no_account_file", "chars": [ids]}`.
+`{"outcome": "cleaned" | "nothing_to_clean" | "kept_shared" | "kept_unreadable" | "kept_no_account_file", "chars": [ids]}`
+(`chars` only on the two `kept_*` outcomes that name characters).
 
 Both slot edits are `edit_slot` calls inside one group, so the first captures
 both trees and one `Ctrl+Z` reverts both files. `try_edit_char` is not used, so
@@ -153,15 +157,14 @@ the character must be logged out.
 - In the chat section at `WindowPanel.svelte:304`, for a leavable window: a
   **Leave channel** button (**Leave conversation** for `chatchannel_private_*`),
   disabled on a read-only file with the usual reason.
-- Confirm, house style: "Leave Alpha-Intel? Its window is removed from this
-  character's layout." / "Leave channel".
+- No confirm: the edit is in memory and one `Ctrl+Z` reverts it, the
+  `onDeleteOrphans` precedent. The toast carries an undo action.
 - Toast by outcome:
-  - `cleaned` — "Left Alpha-Intel."
+  - `cleaned`, `nothing_to_clean` — "Left Alpha-Intel."
   - `kept_shared` — "Left Alpha-Intel. Its account settings stay: {names} still has it."
   - `kept_unreadable` — "Left Alpha-Intel. Its account settings stay: {names}'s file couldn't be read."
   - `kept_no_account_file` — "Left Alpha-Intel. Open the account file to clear its account settings too."
-- A command-palette entry (`layout.leaveChat`), enabled when a leavable chat
-  window is selected.
+- No palette entry: no layout window action has one.
 
 ## 5. Testing
 
@@ -178,7 +181,8 @@ the character must be logged out.
   shape, and every `chatchannels` first element is `player_*`, `private_*` or a
   standing name, so §2's classification covers the real world.
 - **ops**: one undo reverts both files; each of the four outcomes.
-- **MCP stdio**: `chat_leave` op round trip, result carries the outcome.
+- **MCP** (`mcp.rs` tests, beside the other `layout_edit` tests): `chat_leave`
+  op round trip, result carries the outcome, a failing later op rolls it back.
 - **UI spec**: button present only on leavable windows; toast per outcome.
 - **Live, before release**, on Pilot Echo:
   1. Leave a private conversation; log in and out; it stays gone.
