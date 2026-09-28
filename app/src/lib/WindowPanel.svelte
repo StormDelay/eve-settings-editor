@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack, ChatPanel } from "$lib/api";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
-  import { windowMatches, isOrphanFrame, NO_FILTER, type WindowFilter } from "$lib/layout";
+  import { windowMatches, isOrphanFrame, isLeavableChat, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ChatSplit from "$lib/ChatSplit.svelte";
   import Button from "./ui/Button.svelte";
@@ -27,6 +27,7 @@
     onAddToStack,
     onCreateStack,
     onDeleteOrphans,
+    onLeaveChat,
     overrides,
     onClutterOverride,
     chats,
@@ -57,6 +58,7 @@
     onAddToStack: (member: string, container: string) => void;
     onCreateStack: (m1: string, m2: string) => void;
     onDeleteOrphans: () => void;
+    onLeaveChat: (w: WindowRect) => void;
     /** The user's per-window clutter overrides — owned by prefs.svelte, passed
      * down so this stays a presentational component like every other prop
      * it takes. */
@@ -302,6 +304,17 @@
       {/each}
     </div>
     {#if w.id.startsWith("chatchannel_")}
+      {#if isLeavableChat(w.id)}
+        <Button
+          size="sm"
+          type="button"
+          disabled={readOnly}
+          disabledReason="This file is read-only"
+          title="Remove this channel from the character, so EVE does not bring it back"
+          onclick={() => onLeaveChat(w)}>
+          {w.id.startsWith("chatchannel_private_") ? "Leave conversation" : "Leave channel"}
+        </Button>
+      {/if}
       {@const chatStack = w.stack ? (stacks.find((s) => s.container_id === w.stack!.container_id) ?? null) : null}
       <!-- A stacked chat window is DISPLAYED at its stack anchor's size (the
            canvas draws every split against `rectOf(unit.anchor)` — see

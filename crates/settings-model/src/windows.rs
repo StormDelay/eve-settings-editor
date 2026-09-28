@@ -371,8 +371,8 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
 }
 
 /// `ui → chatchannels` is `(timestamp, List[Tuple(key, fullChannelId, label)])`.
-/// Returns key → label; a channel's window id is `chatchannel_<key>`, the FIRST
-/// element — confirmed in-game 2026-07-28.
+/// Returns `(key, label)` per row; a channel's window id is `chatchannel_<key>`,
+/// the FIRST element — confirmed in-game 2026-07-28.
 ///
 /// Two traps, both of which shipped here and named nothing on any real file
 /// while four unit tests passed. Keying on the SECOND element looks right
@@ -385,8 +385,8 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
 /// `tests/chat_names_corpus.rs` is the guard; it counts names off the corpus, so
 /// the counts live there and cannot rot in a comment. An absent section is
 /// normal, not an error.
-fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
-    let mut out = HashMap::new();
+fn chat_channel_rows<'a>(root: &'a Value, sh: &SharedTable<'a>) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
     let Some((ui, _)) = section(root, b"ui", sh) else { return out };
     let Some((_, v)) = ui.iter().find(|(k, _)| is_bytes(effective(k, sh), b"chatchannels")) else {
         return out;
@@ -394,14 +394,26 @@ fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<Stri
     let Some(items) = as_list(v, sh) else { return out };
     for it in items {
         let Value::Tuple(parts) = effective(it, sh) else { continue };
-        if parts.len() < 3 { continue }
-        if let (Some(key), Some(label)) = (text(&parts[0], sh), text(&parts[2], sh)) {
-            if !key.is_empty() && !label.is_empty() {
-                out.insert(key, label);
-            }
-        }
+        let Some(key) = parts.first().and_then(|p| text(p, sh)).filter(|k| !k.is_empty()) else { continue };
+        out.push((key, parts.get(2).and_then(|p| text(p, sh))));
     }
     out
+}
+
+/// key → label, for naming chat windows.
+fn chat_channel_names<'a>(root: &'a Value, sh: &SharedTable<'a>) -> HashMap<String, String> {
+    chat_channel_rows(root, sh)
+        .into_iter()
+        .filter_map(|(k, l)| l.filter(|l| !l.is_empty()).map(|l| (k, l)))
+        .collect()
+}
+
+/// Every channel key this character is in. A row counts whatever its label,
+/// because the leave check (`chat.rs`) must not miss a channel for want of a name.
+pub fn chat_channel_keys(root: &Value) -> Vec<String> {
+    let mut sh = SharedTable::new();
+    collect_shared(root, &mut sh);
+    chat_channel_rows(root, &sh).into_iter().map(|(k, _)| k).collect()
 }
 
 /// The ACCOUNT file's root `tabgroups` section, in pairs: `<containerId>` →

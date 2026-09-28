@@ -1,6 +1,6 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
-import type { WindowLayout, Stack, WindowRect, Hud } from "./api";
+import type { WindowLayout, Stack, WindowRect, Hud, AccountOutcome } from "./api";
 import { isClutter, inEnv, nameOf, type ClutterOverrides, type Env } from "./windowLabels.ts";
 
 /** Re-exported so callers that already import from layout.ts get it here.
@@ -1009,4 +1009,31 @@ export function swallowsArrowKeys(
   const tag = el.tagName;
   if (tag === "SELECT" || tag === "TEXTAREA") return true;
   return tag === "INPUT" && el.type !== "checkbox" && el.type !== "radio";
+}
+
+/** Mirrors settings-model `chat.rs::is_leavable`: player channels and private
+ *  conversations only. Standing and system channels are the server's and come
+ *  back. */
+export function isLeavableChat(id: string): boolean {
+  return ["chatchannel_player_", "chatchannel_private_"].some((p) => id.startsWith(p) && id.length > p.length);
+}
+
+function listNames(ids: number[], nameOf: (id: number) => string): string {
+  const n = ids.map(nameOf);
+  return n.length <= 1 ? (n[0] ?? "") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+}
+
+/** The toast after a leave, by what happened to the shared account file. */
+export function leaveToast(label: string, r: AccountOutcome, nameOf: (id: number) => string): string {
+  switch (r.outcome) {
+    case "cleaned":
+    case "nothing_to_clean":
+      return `Left ${label}.`;
+    case "kept_shared":
+      return `Left ${label}. Its account settings stay: ${listNames(r.chars, nameOf)} still has it.`;
+    case "kept_unreadable":
+      return `Left ${label}. Its account settings stay: ${listNames(r.chars, nameOf)}'s files couldn't be read.`;
+    case "kept_no_account_file":
+      return `Left ${label}. Open the account file to clear its account settings too.`;
+  }
 }

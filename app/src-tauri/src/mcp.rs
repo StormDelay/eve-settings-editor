@@ -880,8 +880,8 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_edit",
-            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}. Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
-            schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans"], json!({
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window}; stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}; chat_leave {window} (leave a player channel or private conversation — chatchannel_player_* / chatchannel_private_*; standing channels like local, corp, fleet are refused: removes the window and the channel from the character file, and its per-channel settings from the account file unless another character on the account is still in it; each is reported under chat_leave[].account.outcome: cleaned, nothing_to_clean, kept_shared, kept_unreadable, kept_no_account_file). Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans", "chat_leave"], json!({
                 "window": { "type": "string" },
                 "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
                 "flag": { "type": "string" }, "on": { "type": "boolean" },
@@ -1233,10 +1233,31 @@ impl EveMcp {
                 v["window_view"] = json!(view);
                 Ok(v)
             }
-            "layout_edit" => self.batch(args, layout_op, |s| {
-                let wl = ops::window_layout(&s.state(), Slot::Char).map_err(fail)?;
-                Ok(layout_view(&wl, &window_filter(&Args::new(), s.window_view().as_ref())?, &s.overrides()))
-            }),
+            "layout_edit" => {
+                // chat_leave needs the app dir (to resolve linked characters)
+                // and reports a per-op outcome, so it is handled here rather
+                // than in the plain `layout_op`.
+                let left = std::cell::RefCell::new(Vec::new());
+                let dir = self.dir.clone();
+                let v = self.batch(
+                    args,
+                    |st, a| {
+                        if a.get("op").and_then(Value::as_str) != Some("chat_leave") {
+                            return layout_op(st, a);
+                        }
+                        let w: String = req(a, "window")?;
+                        let r = ops::chat_leave(st, &w, &ops::linked_chars(st, &dir)).map_err(fail)?;
+                        left.borrow_mut().push(json!({ "window": w, "account": r.account }));
+                        Ok(())
+                    },
+                    |s| {
+                        let wl = ops::window_layout(&s.state(), Slot::Char).map_err(fail)?;
+                        Ok(layout_view(&wl, &window_filter(&Args::new(), s.window_view().as_ref())?, &s.overrides()))
+                    },
+                )?;
+                let left = left.into_inner();
+                Ok(if left.is_empty() { v } else { let mut v = v; v["chat_leave"] = json!(left); v })
+            }
             "autofill_get" => ok(ops::autofill_lists(&self.state()).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state(), &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
             "autofill_clear_all" => ok(ops::clear_all_autofill(&self.state()).map_err(fail)?),
@@ -2094,7 +2115,7 @@ impl EveMcp {
     fn batch(
         &self,
         args: &Args,
-        apply: fn(&AppState, &Args) -> Result<(), Value>,
+        apply: impl Fn(&AppState, &Args) -> Result<(), Value>,
         finish: impl FnOnce(&EveMcp) -> ToolResult,
     ) -> ToolResult {
         let ops_list: Vec<Args> = req(args, "ops")?;
@@ -3543,6 +3564,61 @@ mod tests {
         // The two failed batches left nothing behind (the first batch's edits stand).
         let after = s.call("layout_get", &Args::new()).unwrap();
         assert_eq!(window(&after, "market")["geom"]["x"], window(&before, "market")["geom"]["x"]);
+    }
+
+    fn chat_char_mcp_bytes() -> Vec<u8> {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let geom = BmValue::Tuple(vec![BmValue::Int(0), BmValue::Int(0), BmValue::Int(256), BmValue::Int(424), BmValue::Int(2560), BmValue::Int(1440)]);
+        encode(&BmValue::Dict(vec![
+            (b("windows"), BmValue::Dict(vec![
+                (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![
+                    (b("chatchannel_player_-5"), geom.clone()), (b("market"), geom),
+                ])])),
+                (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![
+                    (b("chatchannel_player_-5"), BmValue::Bool(true)), (b("market"), BmValue::Bool(true)),
+                ])])),
+            ])),
+            (b("ui"), BmValue::Dict(vec![(b("chatchannels"), BmValue::Tuple(vec![ts(), BmValue::List(vec![
+                BmValue::Tuple(vec![BmValue::Str("player_-5".into()), BmValue::Str("player_-5".into()), BmValue::Str("Intel".into())]),
+            ])]))])),
+        ]))
+        .unwrap()
+    }
+
+    #[test]
+    fn layout_edit_chat_leave_reports_the_account_outcome() {
+        let (s, _) = open_char(&chat_char_mcp_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [{ "op": "chat_leave", "window": "chatchannel_player_-5" }] }))).unwrap();
+        assert_eq!(v["chat_leave"][0]["window"], "chatchannel_player_-5");
+        assert_eq!(v["chat_leave"][0]["account"]["outcome"], "kept_no_account_file");
+        let all = s.call("layout_get", &args(json!({ "include_closed": true, "hide_clutter": false }))).unwrap();
+        assert!(!all["windows"].as_array().unwrap().iter().any(|w| w["id"] == "chatchannel_player_-5"));
+    }
+
+    #[test]
+    fn layout_edit_chat_leave_refuses_a_standing_channel() {
+        let (s, _) = open_char(&chat_char_mcp_bytes());
+        let e = s.call("layout_edit", &args(json!({ "ops": [{ "op": "chat_leave", "window": "chatchannel_local" }] }))).unwrap_err();
+        assert_eq!(e["code"], "not_leavable");
+    }
+
+    #[test]
+    fn a_failing_later_op_rolls_back_the_leave() {
+        let (s, _) = open_char(&chat_char_mcp_bytes());
+        let e = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "chat_leave", "window": "chatchannel_player_-5" },
+            { "op": "set_geometry", "window": "nope", "x": 1 }
+        ]}))).unwrap_err();
+        assert_eq!(e["op_index"], 1);
+        let all = s.call("layout_get", &args(json!({ "include_closed": true, "hide_clutter": false }))).unwrap();
+        assert!(all["windows"].as_array().unwrap().iter().any(|w| w["id"] == "chatchannel_player_-5"));
+    }
+
+    #[test]
+    fn a_batch_without_chat_leave_has_no_chat_leave_field() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [{ "op": "set_geometry", "window": "market", "x": 5 }] }))).unwrap();
+        assert!(v.get("chat_leave").is_none());
     }
 
     #[test]

@@ -1048,6 +1048,81 @@ pub fn stack_delete_orphans(state: &AppState) -> Result<WindowLayout, ErrDto> {
     edit_char_stacks(state, |v| { delete_orphan_frames(v); Ok(()) })
 }
 
+/// What a chat leave did to the ACCOUNT file, which every character on the
+/// account shares.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum AccountOutcome {
+    Cleaned,
+    /// No linked character has the channel, but none of its account keys exist.
+    NothingToClean,
+    /// These linked characters are still in the channel.
+    KeptShared { chars: Vec<u64> },
+    /// These linked characters' files could not be read, so it is unknown.
+    KeptUnreadable { chars: Vec<u64> },
+    /// No account file open, or it is read-only.
+    KeptNoAccountFile,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatLeaveResult {
+    pub layout: WindowLayout,
+    pub account: AccountOutcome,
+}
+
+/// The characters sharing the open account file (see
+/// `accounts::linked_char_files`). Empty when no account file is open.
+pub fn linked_chars(state: &AppState, dir: &Path) -> Vec<(u64, PathBuf)> {
+    let user = state.user.lock().unwrap().as_ref().map(|d| d.path.clone());
+    let char_path = state.char.lock().unwrap().as_ref().map(|d| d.path.clone());
+    let Some(user) = user else { return Vec::new() };
+    accounts::linked_char_files(&accounts::load_store(dir), &user, char_path.as_deref())
+}
+
+/// Leave a player channel or private conversation: the character side always,
+/// the account side only when no linked character is still in it
+/// (docs/superpowers/specs/2026-09-28-chat-leave-design.md). One undo group,
+/// so one `Ctrl+Z` reverts both files.
+pub fn chat_leave(state: &AppState, window_id: &str, linked: &[(u64, PathBuf)]) -> Result<ChatLeaveResult, ErrDto> {
+    let _group = undo::group(state);
+    let key = edit_slot(state, Slot::Char, |v| settings_model::leave_chat_char(v, window_id), |e| coded_err("chat_leave", e))?;
+    let account = chat_leave_account(state, window_id, &key, linked)?;
+    Ok(ChatLeaveResult { layout: window_layout(state, Slot::Char)?, account })
+}
+
+fn chat_leave_account(state: &AppState, window_id: &str, key: &str, linked: &[(u64, PathBuf)]) -> Result<AccountOutcome, ErrDto> {
+    // A clone to probe on: the edit below runs only when it would remove
+    // something, so a no-op does not mark the account file unsaved.
+    let mut probe = match state.user.lock().unwrap().as_ref() {
+        Some(d) if !matches!(d.fidelity, Fidelity::ReadOnly { .. }) => d.value.clone(),
+        _ => return Ok(AccountOutcome::KeptNoAccountFile),
+    };
+    let (mut shared, mut unreadable) = (Vec::new(), Vec::new());
+    for (id, path) in linked {
+        match fs::read(path).ok().and_then(|b| blue_marshal::decode(&b).ok()) {
+            Some(doc) if settings_model::chat_channel_keys(&doc).iter().any(|k| k == key) => shared.push(*id),
+            Some(_) => {}
+            None => unreadable.push(*id),
+        }
+    }
+    if !shared.is_empty() {
+        return Ok(AccountOutcome::KeptShared { chars: shared });
+    }
+    if !unreadable.is_empty() {
+        return Ok(AccountOutcome::KeptUnreadable { chars: unreadable });
+    }
+    if !settings_model::leave_chat_account(&mut probe, window_id) {
+        return Ok(AccountOutcome::NothingToClean);
+    }
+    edit_slot(
+        state,
+        Slot::User,
+        |v| Ok::<_, std::convert::Infallible>(settings_model::leave_chat_account(v, window_id)),
+        |e| match e {},
+    )?;
+    Ok(AccountOutcome::Cleaned)
+}
+
 /// Project the CHAR slot's neocom bar.
 pub fn neocom_bar(state: &AppState) -> Result<NeocomBar, ErrDto> {
     let guard = state.char.lock().unwrap();
@@ -2756,5 +2831,119 @@ tabSetup:
             "the first write is rolled back, so \"Copy failed\" is TRUE",
         );
         assert_eq!(depth(&state), d0, "and no entry is left behind for it");
+    }
+
+    // ---- chat_leave ----
+
+    const INTEL: &str = "chatchannel_player_-70000002";
+
+    fn chat_char_bytes(keys: &[&str]) -> Vec<u8> {
+        let ts = || Value::Long(vec![0u8; 8]);
+        let geom = Value::Tuple(vec![Value::Int(0), Value::Int(0), Value::Int(256), Value::Int(424), Value::Int(2560), Value::Int(1440)]);
+        let wins = keys.iter().map(|k| (bb(&format!("chatchannel_{k}")), geom.clone())).collect();
+        let rows = keys
+            .iter()
+            .map(|k| Value::Tuple(vec![Value::Str((*k).into()), Value::Str((*k).into()), Value::Str(format!("Name {k}"))]))
+            .collect();
+        encode(&Value::Dict(vec![
+            (bb("windows"), Value::Dict(vec![(bb("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(wins)]))])),
+            (bb("ui"), Value::Dict(vec![(bb("chatchannels"), Value::Tuple(vec![ts(), Value::List(rows)]))])),
+        ]))
+        .unwrap()
+    }
+
+    fn chat_user_bytes(with_keys: bool) -> Vec<u8> {
+        let ts = || Value::Long(vec![0u8; 8]);
+        let mut ui = vec![(bb("neocomWidth"), Value::Tuple(vec![ts(), Value::Int(37)]))];
+        if with_keys {
+            ui.push((bb(&format!("{INTEL}_userlistwidth")), Value::Tuple(vec![ts(), Value::Int(104)])));
+            ui.push((bb("chatPlayerChannelsJoined"), Value::Tuple(vec![ts(), Value::Dict(vec![
+                (Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())),
+            ])])));
+        }
+        encode(&Value::Dict(vec![(bb("ui"), Value::Dict(ui))])).unwrap()
+    }
+
+    /// Open char (in Alpha-Intel + one other channel) and, optionally, the account file.
+    fn chat_state(user: Option<Vec<u8>>) -> AppState {
+        let state = AppState::new();
+        if let Some(u) = user {
+            let upath = temp_file("chat-user", &u);
+            open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+        }
+        let cpath = temp_file("chat-char", &chat_char_bytes(&["player_-70000002", "player_-1"]));
+        open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
+        state
+    }
+
+    fn sibling(id: u64, keys: &[&str]) -> (u64, PathBuf) {
+        (id, temp_file(&format!("chat-sib-{id}"), &chat_char_bytes(keys)))
+    }
+
+    #[test]
+    fn chat_leave_cleans_the_account_when_no_sibling_has_the_channel() {
+        let state = chat_state(Some(chat_user_bytes(true)));
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-1"])]).unwrap();
+        assert_eq!(r.account, AccountOutcome::Cleaned);
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
+        assert!(settings_model::project_chat(&tree_of(&state, Slot::User)).is_empty());
+    }
+
+    #[test]
+    fn chat_leave_keeps_the_account_when_a_sibling_has_the_channel() {
+        let state = chat_state(Some(chat_user_bytes(true)));
+        let user_before = tree_of(&state, Slot::User);
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-70000002"]), sibling(3, &[])]).unwrap();
+        assert_eq!(r.account, AccountOutcome::KeptShared { chars: vec![2] });
+        assert_eq!(tree_of(&state, Slot::User), user_before);
+    }
+
+    #[test]
+    fn chat_leave_keeps_the_account_when_a_sibling_is_unreadable() {
+        let state = chat_state(Some(chat_user_bytes(true)));
+        let user_before = tree_of(&state, Slot::User);
+        let bad = (5, temp_file("chat-sib-bad", b"not a settings file"));
+        let r = chat_leave(&state, INTEL, &[bad]).unwrap();
+        assert_eq!(r.account, AccountOutcome::KeptUnreadable { chars: vec![5] });
+        assert_eq!(tree_of(&state, Slot::User), user_before);
+    }
+
+    #[test]
+    fn chat_leave_without_an_account_file_still_leaves() {
+        let state = chat_state(None);
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
+        assert_eq!(r.account, AccountOutcome::KeptNoAccountFile);
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
+    }
+
+    #[test]
+    fn chat_leave_with_no_account_keys_reports_nothing_to_clean() {
+        let state = chat_state(Some(chat_user_bytes(false)));
+        let d0 = depth(&state);
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
+        assert_eq!(r.account, AccountOutcome::NothingToClean);
+        assert_eq!(depth(&state), d0 + 1);
+    }
+
+    #[test]
+    fn one_undo_reverts_both_files() {
+        let state = chat_state(Some(chat_user_bytes(true)));
+        let (u0, c0) = (tree_of(&state, Slot::User), tree_of(&state, Slot::Char));
+        let d0 = depth(&state);
+        chat_leave(&state, INTEL, &[]).unwrap();
+        assert_eq!(depth(&state), d0 + 1, "one command, one undo entry");
+        assert!(undo::undo(&state).is_some());
+        assert_eq!(tree_of(&state, Slot::User), u0);
+        assert_eq!(tree_of(&state, Slot::Char), c0);
+    }
+
+    #[test]
+    fn chat_leave_refuses_a_standing_channel_and_changes_nothing() {
+        let state = chat_state(Some(chat_user_bytes(true)));
+        let (u0, c0) = (tree_of(&state, Slot::User), tree_of(&state, Slot::Char));
+        let e = chat_leave(&state, "chatchannel_local", &[]).unwrap_err();
+        assert_eq!(e.code, "not_leavable");
+        assert_eq!(tree_of(&state, Slot::User), u0);
+        assert_eq!(tree_of(&state, Slot::Char), c0);
     }
 }
