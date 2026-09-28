@@ -1204,11 +1204,62 @@ getting wrong:
 - **Tabs are text-width and left-packed**, not stretched across the window. In
   the sampled window: `Main` spans 22px with the next tab 59px on, `3` 6px with
   the next 42px on, `Exit!` 20px with the next 53px on.
-- **A column that does not fit is not drawn at all.** EVE keeps the header on one
-  line and shows what fits; it does not wrap to a second row, and it does not
-  draw a column part-way. So an over-provisioned column set shows up as columns
-  *missing*, which is what the player sees in game. The editor drew them
-  overflowing and clipped until this was corrected.
+- **The column that crosses the window edge is clipped there**, not dropped.
+  (This note said "not drawn at all" until 2026-09-28; the client code — see
+  "Overview column rendering" below — clips the header strip and the rows, and
+  `fighter.png` shows a cut-off `Veloci` header.) Columns wholly past the edge
+  are not visible.
+
+### Overview column rendering
+
+**Decoded 2026-09-28 from the client's own code**, not measured: `code.ccp` in
+the shared cache's server folder is a zip of zlib-compressed Python 2.7
+bytecode (`.pyj`, marshal after an 8-byte header). V24.01. Modules:
+`eve/client/script/ui/inflight/overview/overviewConst`, `overViewLabel`,
+`overviewScrollEntry`, `overviewUtil`, `carbonui/text/settings`,
+`carbonui/fontconst`. Encoded in `app/src/lib/overviewRender.ts`.
+
+| What | Value | Source |
+|---|---|---|
+| Stored width floor | 24 (`COLUMNMINSIZE`) | `SortHeaders.CreateColumns` |
+| Icon column | fixed 22 (`FIXEDCOLUMNS`), icon at +3 | |
+| Absent width | 80 (`COLUMNMINDEFAULTSIZE`); NAME/TYPE 112, VELOCITY/ANGULARVELOCITY 58 (`COLUMN_DEFAULTSIZE`) | |
+| Absent width, label fit | `max(default, headerTextWidth + 24)`, except VELOCITY/ANGULARVELOCITY | |
+| Text box | starts at column x + 8, `width - 16` wide (`COLUMNMARGIN` = `LABELTABMARGIN` = 8) | `UpdateColumns` |
+| Right-aligned | DISTANCE, SIZE, VELOCITY, RADIALVELOCITY, ANGULARVELOCITY, TRANSVERSALVELOCITY | `RIGHTALIGNEDCOLUMNS` |
+| Row overflow | the measurer adds only glyphs whose pen stays within `width - 16` (`limit`), so the text is cut at a whole glyph with NO fade; `UpdateFade`'s `clamp(overshoot, 2, 20)` (`COLUMNFADESIZE`) only runs when e-war icons narrow the row (`globalMaxWidth`). CAPTURED 2026-09-28: `Caldari Tra` in a 71 px Type column (pen 55 of 55) | `OverviewLabel.UpdateFade`, `text` |
+| Header overflow | `EveLabelSmall` at +8, `width - 12` wide, whole glyphs, hard edge. The SORTED column alone fades (`SetRightAlphaFade`): past `width - 28` (sort arrow) over `min(20, overshoot)` px (`SCROLL_COLUMN_FADEWIDTH`). CAPTURED: unsorted `Veloci`/`Transvers` hard-cut, sorted 65 px `Distanc` with a 6 px fade | `SortHeaders.UpdateActiveState`, `LabelCore._UpdateAlphaFade` |
+| Row font | `EveSansNeue-Regular`, `EVE_MEDIUM_FONTSIZE`, or `EVE_SMALL_FONTSIZE` with `useSmallText` | `GetEntryFontSize` |
+| Header font | `EveLabelSmall` = `STYLE_SMALLTEXT` = `EveSansNeue-Expanded`, `EVE_SMALL_FONTSIZE` | `eveLabel`, `fontconst` |
+| Row height | 17 with small text, else 19 compact / 24 | `GetEntryHeight` |
+| Row box in window | window width − 20, starting 10 in (MEASURED, `fighter.png`) | |
+
+**Font sizes.** `core_public__.yaml` → `ui` → `clientFontSize` is EVE's
+`FontSizeOption`: 1 SMALL, 2 MEDIUM, 3 LARGE, 4 EXTRA_SMALL ("Tiny"), 5
+EXTRA_LARGE ("Huge") — not in size order. Absent is MEDIUM (LARGE for ko/zh/ja).
+Pixel size per option, `[EVE_SMALL_FONTSIZE, EVE_MEDIUM_FONTSIZE]`: Tiny 10/12,
+Small 11/13, Medium 12/14, Large 13/15, Huge 14/16.
+
+**Text engine.** `Tr2FontMeasurer` is FreeType (`_trinity_dx11.dll` carries
+FreeType 2.12), and the client sets `trinity.fontMan.loadFlag = 32` in
+`carbonui/uilib` — `FT_LOAD_FORCE_AUTOHINT`, normal target. `Tr2GlyphString`
+advances the pen by the glyph's whole-pixel hinted advance plus
+`LookupKerningXP` (FreeType kerning, whole pixels), and text coverage is
+gamma-corrected (`gammaCorrectText`; ~2.2 reproduces the capture's edge pixels).
+Reproduced with FreeType 2.13.2 (`client_env.rs`), 14 of 14 sampled strings in
+`fighter.png` match pixel for pixel — a browser's own layout is 1-3 px off on
+digits, which is why the preview does not use it. Pinned by
+`client_env::tests::matches_the_game_pixel_for_pixel`.
+
+**UI scale.** `device` → `UIScaleWindowed` / `UIScaleFullscreen`; `WindowMode`
+0 (fullscreen) reads the second, the others the first. Corpus: 1.0 and 1.25.
+
+**Fonts on disk.** `<server folder>/resfileindex.txt` maps
+`res:/ui/fonts/evesansneue-*.otf` to `ResFiles/<hash path>` under the shared
+cache root; the files are plain OTF. The server folder is found from the
+settings profile folder name, which is its path lowercased with every
+non-alphanumeric replaced by `_` plus the server name
+(`d_games_eve_sharedcache_tq_tranquility` → `D:\Games\EVE\SharedCache\tq`).
 
 ### Chat window splits
 

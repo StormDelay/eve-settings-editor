@@ -1,4 +1,6 @@
 mod accounts;
+mod client_env;
+mod overview_fit;
 mod groups;
 mod launcher;
 pub mod mcp;
@@ -277,6 +279,11 @@ fn set_overview_order(state: tauri::State<'_, AppState>, tab_index: i64, order: 
 #[tauri::command]
 fn set_overview_width(state: tauri::State<'_, AppState>, tab_index: i64, column: String, width: i64) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::set_overview_width(&state, tab_index, &column, width)
+}
+/// What each overview column shows in game at its width, for the preview.
+#[tauri::command]
+fn overview_fit(state: tauri::State<'_, AppState>, req: overview_fit::FitReq) -> Result<overview_fit::Fit, ErrDto> {
+    overview_fit::overview_fit(&state, req)
 }
 #[tauri::command]
 fn overview_copy_columns(state: tauri::State<'_, AppState>, from_tab: i64, to_tabs: Vec<i64>, order: bool, visible: bool, widths: bool) -> Result<settings_model::OverviewColumns, ErrDto> {
@@ -754,7 +761,7 @@ pub fn run() {
             launcher_proposals,
             begin_capture, resolve_capture, clear_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
-            overview_copy_columns,
+            overview_copy_columns, overview_fit,
             tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove, overview_create_window_mapping,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
