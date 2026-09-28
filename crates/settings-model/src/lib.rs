@@ -43,13 +43,13 @@ pub use mutate::{apply, Mutation, MutateError, NewValue};
 pub use path::{resolve, resolve_mut, NodePath, Step};
 pub use projection::{project, Node};
 pub use save::{save, SaveError, SaveReport};
-pub use windows::{window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
+pub use windows::{chat_channel_keys, window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
 pub use fleet::{
     default_colour, project_fleet, set_broadcast_colour, set_fleet_field, set_watchlist_colour, Colour,
     ColourEntry, Fleet, FleetError, FleetLeaf, WatchEntry, BROADCAST_TYPES, FLEET_LEAVES, PALETTE,
 };
-pub use chat::{project_chat, set_chat_splits, ChatError, ChatPanel};
+pub use chat::{is_leavable, leave_chat_account, leave_chat_char, project_chat, set_chat_splits, ChatError, ChatLeaveError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
 pub use probes::{
     check_formation, next_free_id, next_id as next_formation_id, project_formations,

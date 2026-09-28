@@ -7,10 +7,11 @@
     hudNum, hudFlag, targetAnchor, targetRect, targetCorner, furnitureWrites,
     DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
-    tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys,
+    tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys, leaveToast,
     type Corner, type DrawUnit, type FurnitureRect, type WindowFilter, type SnapLines, type DropAction, type Rect,
   } from "$lib/layout";
   import { displayName, displayNameOf, stackLabel } from "$lib/windowLabels";
+  import { names } from "$lib/names.svelte";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
@@ -346,6 +347,25 @@
       toast(`Deleted ${n} empty stack frame${n === 1 ? "" : "s"}. Save to write it to disk.`, {
         action: undoAction(),
       });
+    }
+  }
+
+  // No confirm: the edit is in memory and one Ctrl+Z reverts both files, the
+  // same reasoning as onDeleteOrphans above.
+  async function onLeaveChat(w: WindowRect) {
+    stackError = null;
+    try {
+      const r = await api.chatLeave(w.id);
+      layout = r.layout;
+      onDirty("char");
+      if (r.account.outcome === "cleaned") onDirty("user");
+      if (selectedId === w.id) selectedId = null;
+      const label = w.name ?? w.label;
+      toast(`${leaveToast(label, r.account, (id) => names[id]?.name ?? String(id))} Save to write it to disk.`, {
+        action: undoAction(),
+      });
+    } catch (e) {
+      stackError = { text: `The channel wasn't left — ${errText(e)}`, detail: errMessage(e) };
     }
   }
 
@@ -1089,6 +1109,7 @@
         {onAddToStack}
         {onCreateStack}
         {onDeleteOrphans}
+        {onLeaveChat}
         overrides={clutterOverrides()}
         onClutterOverride={setClutterOverride}
         {chats}

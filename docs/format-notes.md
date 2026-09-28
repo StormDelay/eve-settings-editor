@@ -1260,6 +1260,36 @@ would mint `market_userlistwidth` — a key EVE never reads and nothing ever
 cleans up. Validation of the whole batch completes before the first mutation, so
 a refused write leaves the document byte-identical.
 
+### Leaving a chat channel
+
+Verified in game 2026-09-28 on Pilot Echo (`core_char_96000002`), Bean-Intel
+(`chatchannel_player_-88620541`, a pinned member of `ChatWindowStack`).
+
+**The character file's `ui → chatchannels` row is what brings a chat window
+back.** Removing only the window's entries under `windows` (what a layout copy
+does) is undone on the next login. Removing the window from every `windows`
+dict AND its `chatchannels` row sticks: the client's rewrite differed from the
+edited file by nothing but timestamps, and the other tabs' stack indices were
+left as they were. In game, the channel then shows only as a join suggestion.
+
+The account file keeps per-channel state under the root `ui` section, keyed by
+the window id: `<W>_userlistwidth`, `chatinputsize_<W>`, `chatfontsize_<W>`,
+`chatWindowBlink_<W>`, `chatCondensedUserList_<W>` or `chatCondensedUserList_<key>`,
+and `chatPlayerChannelsJoined` (`(timestamp, dict)` of `player_<key>` → label,
+player channels only). It survived the logout above untouched — the likely
+source of the join suggestion. `chat.rs::leave_chat_account` clears it only
+when no other paired character in the same folder is in the channel.
+
+The channel's settings dialog is a window of its own, `ChannelSettingsDlg_<key>`,
+and goes with it.
+
+Only `player_*` and `private_*` keys can be left. Besides the standing channels
+(`local`, `corp`, `alliance`, `fleet`, `incursion`, `invasion`, `faction`), the
+corpus holds a third, server-managed kind: `system_<ids>` — Rookie Help is
+`system_263238_263259`. It is refused too; whether leaving one in the file
+sticks has not been tested. `tests/chat_leave_corpus.rs` fails on any key of a
+kind nobody has classified.
+
 ### Target list anchor
 
 **Captured in-game 2026-07-31** (B1 Pilot Echo, 2560×1440, UI scale 1.0): three
