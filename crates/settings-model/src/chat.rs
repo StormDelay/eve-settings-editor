@@ -14,7 +14,8 @@ use blue_marshal::Value;
 use serde::Serialize;
 
 use crate::path::{NodePath, Step};
-use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, section, text, unwrap_shared, SharedTable};
+use crate::treewalk::{collect_shared, effective, inline_all, is_bytes, key_is, section, text, unwrap_shared, SharedTable};
+use crate::windows::decode_id;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChatPanel {
@@ -246,6 +247,111 @@ fn mint(root: &mut Value, key: &str, value: i64) -> Result<(), ChatError> {
         Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(value)]),
     ));
     Ok(())
+}
+
+/// Leavable window-id prefixes. Standing channels (local, corp, alliance, fleet,
+/// incursion, invasion, faction) are assigned by the server and come back, so
+/// they are refused — as is any shape not listed here.
+const LEAVABLE: [&str; 2] = ["chatchannel_player_", "chatchannel_private_"];
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum ChatLeaveError {
+    NotLeavable { window: String },
+    NotFound { window: String },
+}
+
+impl std::fmt::Display for ChatLeaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatLeaveError::NotLeavable { window } => {
+                write!(f, "{window:?} can't be left: only player channels and private conversations can.")
+            }
+            ChatLeaveError::NotFound { window } => write!(f, "{window:?} is not in this character's file."),
+        }
+    }
+}
+
+pub fn is_leavable(window_id: &str) -> bool {
+    LEAVABLE.iter().any(|p| window_id.strip_prefix(p).is_some_and(|rest| !rest.is_empty()))
+}
+
+/// Leave a chat channel on the CHARACTER side: drop `window_id` and its
+/// settings dialog (`ChannelSettingsDlg_<key>`) from every dict under
+/// `windows` and from the dicts nested one level inside them (the
+/// per-container `preferredIdxInStack3` dicts), and drop the
+/// `ui → chatchannels` row keyed `<key>`. Returns `<key>`.
+///
+/// The row is what makes it stick: removing only the window entries, EVE
+/// rebuilds the window from the row on the next login. Verified in game
+/// 2026-09-28 (docs/format-notes.md, "Leaving a chat channel").
+///
+/// Every dict under `windows` is swept rather than a named list, so a table EVE
+/// adds later is covered too. Refusal happens before `inline_all`, so a refused
+/// call leaves the tree untouched; `NotFound` does not, and the caller's
+/// rollback (`edit_slot`) restores it.
+pub fn leave_chat_char(root: &mut Value, window_id: &str) -> Result<String, ChatLeaveError> {
+    if !is_leavable(window_id) {
+        return Err(ChatLeaveError::NotLeavable { window: window_id.to_string() });
+    }
+    let key = window_id[CHAT_PREFIX.len()..].to_string();
+    let dialog = format!("ChannelSettingsDlg_{key}");
+    let gone = |k: &Value| {
+        let id = decode_id(k);
+        id == window_id || id == dialog
+    };
+
+    inline_all(root);
+    let mut hit = false;
+    let Value::Dict(top) = root else { return Err(ChatLeaveError::NotFound { window: window_id.to_string() }) };
+    for (k, sect) in top.iter_mut() {
+        if key_is(k, "windows") {
+            let Value::Dict(win) = sect else { continue };
+            for (_, child) in win.iter_mut() {
+                let Some(d) = dict_mut(child) else { continue };
+                let n = d.len();
+                d.retain(|(k, _)| !gone(k));
+                hit |= d.len() != n;
+                for (_, inner) in d.iter_mut() {
+                    if let Some(dd) = dict_mut(inner) {
+                        let n = dd.len();
+                        dd.retain(|(k, _)| !gone(k));
+                        hit |= dd.len() != n;
+                    }
+                }
+            }
+        } else if key_is(k, "ui") {
+            let Value::Dict(ui) = sect else { continue };
+            for (k, v) in ui.iter_mut() {
+                if !key_is(k, "chatchannels") {
+                    continue;
+                }
+                let Some(rows) = list_mut(v) else { continue };
+                let n = rows.len();
+                rows.retain(|row| !matches!(row, Value::Tuple(t) if t.first().is_some_and(|k0| decode_id(k0) == key)));
+                hit |= rows.len() != n;
+            }
+        }
+    }
+    if hit { Ok(key) } else { Err(ChatLeaveError::NotFound { window: window_id.to_string() }) }
+}
+
+/// The dict inside a value, unwrapping the `(timestamp, dict)` wrapper.
+fn dict_mut(v: &mut Value) -> Option<&mut Vec<(Value, Value)>> {
+    match v {
+        Value::Dict(d) => Some(d),
+        Value::Tuple(t) => t.iter_mut().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+        _ => None,
+    }
+}
+
+/// The list inside a value, unwrapping the `(timestamp, list)` wrapper.
+fn list_mut(v: &mut Value) -> Option<&mut Vec<Value>> {
+    match v {
+        Value::List(l) => Some(l),
+        Value::Tuple(t) => t.iter_mut().find_map(|e| if let Value::List(l) = e { Some(l) } else { None }),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -497,5 +603,140 @@ mod tests {
         let before = doc.clone();
         assert!(!set_chat_splits(&mut doc, &["chatchannel_local".into()], None, None).unwrap());
         assert_eq!(doc, before);
+    }
+
+    // ---- leave_chat_char ----
+
+    fn geom() -> Value {
+        Value::Tuple(vec![Value::Int(0), Value::Int(0), Value::Int(256), Value::Int(424), Value::Int(2560), Value::Int(1440)])
+    }
+
+    /// A character document shaped like the Pilot Echo spike file: the channel
+    /// is a pinned, open member of ChatWindowStack with a stack index, has a
+    /// settings-dialog window, and a `chatchannels` row. `keep` is a second
+    /// channel that must survive untouched.
+    fn char_doc() -> Value {
+        let w = "chatchannel_player_-88620541";
+        let keep = "chatchannel_player_-1";
+        Value::Dict(vec![
+            (b("windows"), Value::Dict(vec![
+                (b("windowSizesAndPositions_1"), wrapped(Value::Dict(vec![
+                    (b(w), geom()), (b(keep), geom()),
+                    (b("ChannelSettingsDlg_player_-88620541"), geom()),
+                ]))),
+                (b("openWindows"), wrapped(Value::Dict(vec![(b(w), Value::Bool(true)), (b(keep), Value::Bool(true))]))),
+                // Str key here, Bytes elsewhere: real files mix them.
+                (b("pinnedWindows"), wrapped(Value::Dict(vec![(Value::Str(w.into()), Value::Bool(true))]))),
+                (b("stacksWindows"), wrapped(Value::Dict(vec![(b(w), b("ChatWindowStack")), (b(keep), b("ChatWindowStack"))]))),
+                (b("preferredIdxInStack3"), wrapped(Value::Dict(vec![
+                    (b("ChatWindowStack"), Value::Dict(vec![(b(w), Value::Int(2)), (b(keep), Value::Int(3))])),
+                ]))),
+            ])),
+            (b("ui"), Value::Dict(vec![
+                (b("chatchannels"), wrapped(Value::List(vec![
+                    Value::Tuple(vec![Value::Str("player_-88620541".into()), Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())]),
+                    Value::Tuple(vec![Value::Str("player_-1".into()), Value::Str("player_-1".into()), Value::Str("Keep".into())]),
+                ]))),
+            ])),
+        ])
+    }
+
+    /// Every window-id key left anywhere under `windows`, one level of nesting deep.
+    fn window_keys(doc: &Value) -> Vec<String> {
+        let Value::Dict(top) = doc else { panic!() };
+        let (_, Value::Dict(win)) = top.iter().find(|(k, _)| key_is(k, "windows")).unwrap() else { panic!() };
+        let mut out = Vec::new();
+        for (_, child) in win {
+            let d = match child {
+                Value::Tuple(t) => t.iter().find_map(|e| if let Value::Dict(d) = e { Some(d) } else { None }),
+                Value::Dict(d) => Some(d),
+                _ => None,
+            };
+            for (k, v) in d.into_iter().flatten() {
+                out.push(decode_id(k));
+                if let Value::Dict(inner) = v {
+                    out.extend(inner.iter().map(|(k, _)| decode_id(k)));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn leave_purges_the_window_the_dialog_and_the_row() {
+        let mut doc = char_doc();
+        assert_eq!(leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap(), "player_-88620541");
+        let keys = window_keys(&doc);
+        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-1".to_string()]);
+    }
+
+    #[test]
+    fn purges_str_and_bytes_keys_alike() {
+        let mut doc = char_doc();
+        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        // pinnedWindows held the id as a Str key.
+        assert!(!window_keys(&doc).contains(&"chatchannel_player_-88620541".to_string()));
+    }
+
+    #[test]
+    fn leave_leaves_every_other_window_alone() {
+        let mut doc = char_doc();
+        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        let keep = window_keys(&doc).into_iter().filter(|k| k == "chatchannel_player_-1").count();
+        // geometry, openWindows, stacksWindows, preferredIdxInStack3 inner dict
+        assert_eq!(keep, 4);
+    }
+
+    #[test]
+    fn leave_finds_a_shared_section_key() {
+        let mut doc = char_doc();
+        let Value::Dict(top) = &mut doc else { panic!() };
+        let k = std::mem::replace(&mut top[0].0, Value::None);
+        top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
+        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        assert!(!window_keys(&doc).iter().any(|k| k.contains("-88620541")));
+    }
+
+    #[test]
+    fn the_edited_document_still_encodes() {
+        let mut doc = char_doc();
+        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        let bytes = blue_marshal::encode(&blue_marshal::reshare(&doc)).unwrap();
+        blue_marshal::decode(&bytes).unwrap();
+    }
+
+    #[test]
+    fn a_private_conversation_is_leavable() {
+        assert!(is_leavable("chatchannel_private_009e6df0127111ecaa569abe94f5b483"));
+        assert!(is_leavable("chatchannel_player_-88620541"));
+    }
+
+    #[test]
+    fn standing_channels_and_unknown_shapes_are_refused_untouched() {
+        for id in ["chatchannel_local", "chatchannel_corp", "chatchannel_alliance", "chatchannel_fleet",
+                   "chatchannel_incursion", "chatchannel_invasion", "chatchannel_player_", "market", "ChatWindowStack"] {
+            let mut doc = char_doc();
+            let before = doc.clone();
+            assert_eq!(leave_chat_char(&mut doc, id), Err(ChatLeaveError::NotLeavable { window: id.into() }), "{id}");
+            assert_eq!(doc, before, "{id} must leave the tree untouched");
+        }
+    }
+
+    #[test]
+    fn an_absent_channel_is_not_found() {
+        let mut doc = char_doc();
+        assert_eq!(
+            leave_chat_char(&mut doc, "chatchannel_player_-999"),
+            Err(ChatLeaveError::NotFound { window: "chatchannel_player_-999".into() }),
+        );
+    }
+
+    #[test]
+    fn a_row_without_a_window_is_still_left() {
+        // A channel the character is in whose window was never opened.
+        let mut doc = char_doc();
+        leave_chat_char(&mut doc, "chatchannel_player_-1").unwrap();
+        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-88620541".to_string()]);
     }
 }
