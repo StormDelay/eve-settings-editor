@@ -9,8 +9,6 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import MenuButton from "./ui/MenuButton.svelte";
-  import SearchField from "./ui/SearchField.svelte";
-  import { revealAndFocus } from "$lib/keymap";
 
   let {
     windows,
@@ -37,8 +35,7 @@
     onSetChatSplits,
     stackError = null,
     chatError = null,
-    filter = $bindable({ ...NO_FILTER }),
-    focusFilter = $bindable(undefined),
+    filter = { ...NO_FILTER },
   }: {
     windows: WindowRect[];
     stacks: Stack[];
@@ -80,23 +77,15 @@
      * because these two fields are account-wide. */
     sharedNames: string[];
     onSetChatSplits: (ids: string[], userlistWidth: number | null, inputHeight: number | null) => void;
-    /** Shared with the canvas — see LayoutView. The panel renders the controls;
-     * LayoutView owns the state and applies the same predicate to the rects. */
+    /** Owned by LayoutView, whose toolbar renders the controls; the list and
+     * the canvas apply the same predicate. */
     filter?: WindowFilter;
-    /** Exposed so the global Ctrl+F handler in +page.svelte can focus this
-     * input from outside — LayoutView forwards it up. The input lives here,
-     * so this is where the bind:this actually is. */
-    focusFilter?: () => void;
   } = $props();
 
-  let filterInput: HTMLInputElement | HTMLSelectElement | undefined = $state();
   // Per-row selection for the two "stack with…" pickers, cleared as soon as the
   // pick is acted on so each control returns to its prompt.
   let addPick: Record<string, string> = $state({});
   let withPick: Record<string, string> = $state({});
-  // Scrolls the box into view as well as focusing it: this one sits at the top
-  // of a tall inspector, so Ctrl+F used to focus something off screen.
-  focusFilter = () => revealAndFocus(filterInput);
 
   // Counted from the same predicate the filter uses, so the offer can never
   // name a number the `Hide clutter` toggle disagrees with.
@@ -401,42 +390,6 @@
 {/snippet}
 
 <div class="window-panel">
-  <div class="filters">
-    <!-- aria-label passed as a raw attribute so it stays "Filter windows"
-         exactly: SearchField names the box from its built placeholder, which
-         carries a trailing ellipsis, and WindowPanel.spec looks it up by the
-         bare phrase. -->
-    <SearchField
-      nouns="windows"
-      aria-label="Filter windows"
-      bind:element={filterInput}
-      bind:value={filter.text} />
-    <!-- The one filter whose name overclaims, so it is the one that most needs
-         a tooltip: EVE's flag is sticky, and a window it still calls open may
-         well not be on screen. See docs/format-notes.md, "openWindows is
-         sticky". -->
-    <Field
-      kind="checkbox"
-      class="toggle"
-      label="Open only"
-      bind:value={filter.openOnly}
-      title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas." />
-    <Field
-      kind="checkbox"
-      class="toggle"
-      label="Hide clutter"
-      bind:value={filter.hideClutter}
-      title="Hides windows EVE spawns per conversation, item or dialog — chat invitations, private chats, channel settings, mail messages, info popups, per-container windows. Standing channels and parent windows stay." />
-    <div
-      class="envs"
-      role="radiogroup"
-      aria-label="Environment"
-      title="Shows only the windows that exist in one environment. Station and player structure are one “Docked” view — EVE stores a single position per window, so this filters the picture, it does not switch layouts. A window the editor does not recognise shows in both.">
-      {#each [["all", "All"], ["docked", "Docked"], ["space", "In space"]] as const as [value, label]}
-        <Field kind="radio" class="toggle" name="env" radioValue={value} {label} bind:value={filter.env} />
-      {/each}
-    </div>
-  </div>
   {#if orphanCount > 0 && !readOnly}
     <InlineMessage variant="warn" class="orphans">
       {orphanCount} empty stack frame{orphanCount === 1 ? "" : "s"} — leftovers that draw a
@@ -603,30 +556,6 @@
   }
   .window-panel :global(.orphans) {
     margin-bottom: var(--s1);
-  }
-  .filters {
-    display: grid;
-    gap: var(--s1);
-    padding: var(--s1) var(--s2);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    background: var(--surface);
-    z-index: 1;
-  }
-  .filters :global(.search) {
-    width: 100%;
-  }
-  .filters :global(.search input) {
-    width: 100%;
-  }
-  .window-panel :global(.toggle) {
-    font-size: var(--t-caption);
-    color: var(--text-muted);
-  }
-  .envs {
-    display: flex;
-    gap: var(--s2);
   }
   .row {
     border-bottom: 1px solid var(--border);
