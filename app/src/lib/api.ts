@@ -238,6 +238,18 @@ export interface WindowLayout {
   stacks: Stack[];
 }
 
+export type AccountOutcome =
+  | { outcome: "cleaned" }
+  | { outcome: "nothing_to_clean" }
+  | { outcome: "kept_shared"; chars: number[] }
+  | { outcome: "kept_unreadable"; chars: number[] }
+  | { outcome: "kept_no_account_file" };
+
+export interface ChatLeaveResult {
+  layout: WindowLayout;
+  account: AccountOutcome;
+}
+
 export interface NeocomButton {
   index: number;
   id: string;
@@ -639,6 +651,7 @@ export const api = {
   stackReorder: (container: string, members: string[]) => invoke<WindowLayout>("stack_reorder", { container, members }),
   stackCreate: (member1: string, member2: string) => invoke<WindowLayout>("stack_create", { member1, member2 }),
   stackDeleteOrphans: () => invoke<WindowLayout>("stack_delete_orphans"),
+  chatLeave: (window: string) => invoke<ChatLeaveResult>("chat_leave", { window }),
   /** Tell the assistant what the Layout view shows; `null` on leaving it. */
   setLayoutView: (view: { text: string; openOnly: boolean; hideClutter: boolean; env: string; selected: string | null } | null) =>
     invoke<void>("set_layout_view", { view }),
