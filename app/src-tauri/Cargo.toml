@@ -44,4 +44,10 @@ dirs = "6"
 # block. Both crates are already in the lockfile through Tauri's icon handling.
 png = "0.18"
 base64 = "0.22"
+# The overview width preview measures and draws text with the same engine EVE
+# does (FreeType, auto-hinted), from EVE's own font files — client_env.rs.
+# `bundled` compiles FreeType 2.13.2 with `cc`: no cmake, no system library,
+# and the same version on every platform, which is what makes it exact.
+# Pinned: 0.38's bundled build pulls in libpng + zlib and fails on Windows.
+freetype-rs = { version = "=0.37.0", features = ["bundled"] }
 

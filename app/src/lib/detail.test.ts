@@ -1,7 +1,7 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DETAIL_NOMINAL, shipHudParts, fighterParts, targetParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
+import { shipHudParts, fighterParts, targetParts, neocomParts, overviewParts, chatParts, overviewIndex, windowDetail, chatStackTargets, historyArea } from "./detail.ts";
 import { HUD_NOMINAL, SHIP_ANCHOR_LEFT } from "./layout.ts";
 import type { NeocomBar, OverviewColumns, ChatPanel, WindowRect, Stack } from "./api.ts";
 import type { DrawUnit } from "./layout.ts";
@@ -286,8 +286,9 @@ import { check } from "./test/check.ts";
 
 // --- overview columns ------------------------------------------------------
 {
+  // EVE's own column ids, which is what the width rules key on.
   const col = (name: string, visible: boolean, width: number | null) =>
-    ({ name, label: name.toUpperCase(), visible, width });
+    ({ name: name.toUpperCase(), label: name.toUpperCase(), visible, width });
   const cols: OverviewColumns = {
     tabs: [
       { index: 0, name: "General", preset: "p", inherits: false,
@@ -320,23 +321,21 @@ import { check } from "./test/check.ts";
   // Only visible columns, in stored order — `name` is hidden and must be gone.
   check("hidden columns are omitted", bands.length === 3);
   check("columns keep their stored order", bands.map((b) => b.label).join(",") === "ICON,DISTANCE,TYPE");
-  check("columns use their stored widths", bands[0].w === 30 && bands[1].w === 90);
-  check("an absent width falls back to the nominal", bands[2].w === DETAIL_NOMINAL.columnWidth);
+  // EVE's own rules (overviewRender.ts): the icon column is fixed at 22, an
+  // absent TYPE width is the client's 112.
+  check("the icon column is EVE's fixed 22; others use their stored widths", bands[0].w === 22 && bands[1].w === 90);
+  check("an absent width falls back to the client's per-column default", bands[2].w === 112);
 
   // Offsets are the running sum, and the band sits below the tab strip.
-  check("bands start at the running sum of widths", bands[1].x === 30 && bands[2].x === 120);
+  check("bands start at the running sum of widths", bands[1].x === 22 && bands[2].x === 112);
   check("bands sit below the tab strip", bands.every((b) => b.y === 30));
 
-  // EVE shows the columns that fit on the one line and DROPS the rest — it does
-  // not draw a column part-way and clip it. So an over-provisioned column set
-  // reads as columns MISSING from the picture, which is what the player sees in
-  // game. This replaced letting them overflow, which drew something EVE never
-  // draws.
+  // The client clips the column that crosses the window edge rather than
+  // dropping it (fighter.png shows a cut-off "Veloci" header); everything
+  // right of the edge is gone.
   const narrow = overviewParts(cols, 0, { w: 100, h: 300 }).filter((p) => p.kind === "column");
-  // icon (30) fits in 100; distance (90) would end at 120, so it and everything
-  // after it are gone. Once a column runs off the line, so does every column
-  // right of it — hence stopping rather than skipping ahead to a narrower one.
-  check("columns that do not fit are dropped", narrow.length === 1 && narrow[0].label === "ICON");
+  check("the column crossing the edge is clipped, the rest dropped",
+    narrow.length === 2 && narrow[1].label === "DISTANCE" && narrow[1].w === 78);
   check("no column is ever drawn past the window", narrow.every((b) => b.x + b.w <= 100));
 
   // A window with no tabs, and an index no window has.

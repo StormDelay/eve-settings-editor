@@ -5,6 +5,7 @@
   import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
+  import OverviewWidthPreview from "./OverviewWidthPreview.svelte";
   import Sheet from "./ui/Sheet.svelte";
   import { toast } from "./ui/toasts.svelte";
 
@@ -190,6 +191,8 @@
       {/snippet}
     </Sheet>
   {/if}
+  <OverviewWidthPreview {tab} {charOpen}
+    onWidth={(column, width) => setWidth(column, String(width))} />
   {#if orderError}
     <InlineMessage variant="error" detail={orderError.detail}>{orderError.text}</InlineMessage>
   {/if}
