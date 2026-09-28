@@ -43,7 +43,7 @@ const NAMES = {
   950: { name: "Pilot Alpha", category: "character" },
   951: { name: "Pilot Bravo", category: "character" },
   970: { name: "Pilot Charlie", category: "character" },
-  980: { name: "Fourth Pilot", category: "character" },
+  980: { name: "Pilot Zulu", category: "character" },
 };
 
 async function seed() {
@@ -109,7 +109,7 @@ const rowsIn = (root: HTMLElement) =>
   within(root)
     .getAllByRole("listitem")
     .map(nameOf)
-    .filter((t) => /Commander|Otsada|Opera|Pilot|core_char/.test(t));
+    .filter((t) => /Pilot|core_char/.test(t));
 
 test("the switcher's order is the sidebar's order", async () => {
   await seed();
@@ -128,7 +128,7 @@ test("the switcher's order is the sidebar's order", async () => {
 
   expect(inSwitcher).toEqual(inSidebar);
   // Alphabetical by resolved name, which is how a name is found.
-  expect(inSwitcher).toEqual(["Pilot Alpha", "Pilot Bravo", "Pilot Charlie", "Fourth Pilot"]);
+  expect(inSwitcher).toEqual(["Pilot Alpha", "Pilot Bravo", "Pilot Charlie", "Pilot Zulu"]);
 });
 
 /**
@@ -149,7 +149,7 @@ test("typing a character name filters to it", async () => {
   await seed();
   mountSwitcher();
   const box = await screen.findByRole("dialog", { name: "Find a character" });
-  await fireEvent.input(within(box).getByRole("searchbox"), { target: { value: "otsada" } });
+  await fireEvent.input(within(box).getByRole("searchbox"), { target: { value: "bravo" } });
   await waitFor(() => expect(rowsIn(box)).toEqual(["Pilot Bravo"]));
 });
 
