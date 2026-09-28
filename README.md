@@ -79,3 +79,8 @@ package.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+The overview preview renders text with FreeType, used under the FreeType
+License: portions of this software are copyright © 2023 The FreeType Project
+(www.freetype.org). All rights reserved. It reads EVE's own fonts from your
+installation; none are distributed with the editor.
