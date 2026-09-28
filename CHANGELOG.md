@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.41.0] - 2026-09-28
+
+See exactly how your overview columns look in game, and let the assistant size them.
+
+### Added
+- **Overview column preview.** The Overview Columns tab shows the tab's header and sample rows exactly as EVE draws them, with your own font size and UI scale. Edit a sample, click a header to sort by it, or drag a header edge to resize.
+- The assistant can check what each overview column shows at its width, and the narrowest width that fits a value.
+
+### Changed
+- The Layout view draws overview columns at EVE's default widths and cuts the last one at the window's edge.
+- Hide clutter keeps chat channels the character is still in.
+
+### Fixed
+- Upgrading with the Windows installer installs the new version again.
+
 ## [0.40.0] - 2026-09-28
 
 Leave old chat channels from the Layout view, and its view controls sit above the canvas.
