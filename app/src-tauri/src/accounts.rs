@@ -238,6 +238,28 @@ pub fn load_roster(roots: &[PathBuf], dir: &Path) -> AccountRoster {
     build_roster(&files, &store)
 }
 
+/// The character files that share `user_path`'s account file: the characters
+/// the store pairs to that account whose `core_char_<id>.dat` sits in the SAME
+/// folder — each settings folder has its own copy of the account file — minus
+/// `open_char`. Unpaired characters are not considered (decided 2026-09-28,
+/// docs/superpowers/specs/2026-09-28-chat-leave-design.md §3.2).
+pub fn linked_char_files(store: &AccountsStore, user_path: &Path, open_char: Option<&Path>) -> Vec<(u64, PathBuf)> {
+    fn id_of(p: &Path, prefix: &str) -> Option<u64> {
+        p.file_stem()?.to_str()?.strip_prefix(prefix)?.parse().ok()
+    }
+    let (Some(user_id), Some(dir)) = (id_of(user_path, "core_user_"), user_path.parent()) else {
+        return Vec::new();
+    };
+    let Some(acct) = store.accounts.get(&user_id) else { return Vec::new() };
+    let open = open_char.and_then(|p| id_of(p, "core_char_"));
+    acct.characters
+        .iter()
+        .filter(|&&c| Some(c) != open)
+        .map(|&c| (c, dir.join(format!("core_char_{c}.dat"))))
+        .filter(|(_, p)| p.is_file())
+        .collect()
+}
+
 // ponytail: each mutation reloads the whole roster (re-discovers + re-parses
 // user files). Fine for a handful of local files and user-initiated edits; if
 // it ever drags, cache the parsed texts in AppState.
@@ -316,6 +338,48 @@ mod tests {
         let d = std::env::temp_dir().join(format!("accounts-test-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         d
+    }
+
+    /// Account 7 pairs 1 (the open character), 2 (same folder), 3 (another
+    /// folder) and 4 (no file anywhere).
+    fn linked_fixture(tag: &str) -> (PathBuf, PathBuf, AccountsStore) {
+        let dir = temp_dir(tag);
+        let other = dir.join("other");
+        fs::create_dir_all(&other).unwrap();
+        for f in ["core_user_7.dat", "core_char_1.dat", "core_char_2.dat"] {
+            fs::write(dir.join(f), b"x").unwrap();
+        }
+        fs::write(other.join("core_char_3.dat"), b"x").unwrap();
+        let mut store = AccountsStore::default();
+        store.accounts.insert(7, Account { alias: None, characters: vec![1, 2, 3, 4] });
+        (dir.join("core_user_7.dat"), dir.join("core_char_1.dat"), store)
+    }
+
+    #[test]
+    fn linked_are_the_paired_characters_in_the_same_folder() {
+        let (user, open, store) = linked_fixture("linked-same");
+        let dir = user.parent().unwrap();
+        assert_eq!(linked_char_files(&store, &user, Some(&open)), vec![(2, dir.join("core_char_2.dat"))]);
+    }
+
+    #[test]
+    fn excludes_the_open_character() {
+        let (user, open, store) = linked_fixture("linked-open");
+        assert!(!linked_char_files(&store, &user, Some(&open)).iter().any(|(id, _)| *id == 1));
+    }
+
+    #[test]
+    fn ignores_a_character_in_another_folder() {
+        // 3 is paired but its file is in `other/`; 4 is paired with no file at all.
+        let (user, open, store) = linked_fixture("linked-other");
+        let ids: Vec<u64> = linked_char_files(&store, &user, Some(&open)).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
+    fn an_unpaired_account_has_no_linked_characters() {
+        let (user, open, _) = linked_fixture("linked-unpaired");
+        assert!(linked_char_files(&AccountsStore::default(), &user, Some(&open)).is_empty());
     }
 
     #[test]
