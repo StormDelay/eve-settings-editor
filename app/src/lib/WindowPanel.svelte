@@ -127,7 +127,7 @@
     const overridden = overrides.clutter.has(w.id) || overrides.visible.has(w.id);
     if (overridden) {
       items.push({ label: "Use the default clutter rule", run: () => onClutterOverride(w.id, "default") });
-    } else if (isClutter(w.id, overrides)) {
+    } else if (isClutter(w.id, overrides, w.name)) {
       items.push({ label: "Stop treating as clutter", run: () => onClutterOverride(w.id, "visible") });
     } else {
       items.push({ label: "Treat as clutter", run: () => onClutterOverride(w.id, "clutter") });
