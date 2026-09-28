@@ -550,24 +550,24 @@ mod tests {
     fn lookup_by_name_hits_the_cache_case_insensitively_without_a_call() {
         let dir = temp_dir("lookup-cache");
         let mut cache = Cache::new();
-        cache.insert(96821229, character("Holy Storm"));
+        cache.insert(90000001, character("Pilot One"));
         save_cache(&dir, &cache).unwrap();
-        let found = lookup_with(&dir, "holy storm", no_names, no_ids).unwrap();
-        assert_eq!(found, Some(Found { id: 96821229, name: "Holy Storm".into() }));
+        let found = lookup_with(&dir, "pilot one", no_names, no_ids).unwrap();
+        assert_eq!(found, Some(Found { id: 90000001, name: "Pilot One".into() }));
     }
 
     #[test]
     fn lookup_by_name_asks_esi_on_a_miss_and_persists_the_answer() {
         let dir = temp_dir("lookup-miss");
-        let found = lookup_with(&dir, "Farm Delay", no_names, |q| {
-            assert_eq!(q, "Farm Delay");
-            Ok(Some(Found { id: 2117000000, name: "Farm Delay".into() }))
+        let found = lookup_with(&dir, "Pilot Two", no_names, |q| {
+            assert_eq!(q, "Pilot Two");
+            Ok(Some(Found { id: 2117000000, name: "Pilot Two".into() }))
         })
         .unwrap();
         assert_eq!(found.as_ref().map(|f| f.id), Some(2117000000));
         // Both directions are cached from now on.
-        assert_eq!(load_cache(&dir).get(&2117000000), Some(&character("Farm Delay")));
-        let again = lookup_with(&dir, "farm delay", no_names, no_ids).unwrap();
+        assert_eq!(load_cache(&dir).get(&2117000000), Some(&character("Pilot Two")));
+        let again = lookup_with(&dir, "pilot two", no_names, no_ids).unwrap();
         assert_eq!(again.map(|f| f.id), Some(2117000000));
     }
 
@@ -581,14 +581,14 @@ mod tests {
     #[test]
     fn lookup_by_id_uses_the_names_endpoint_and_only_accepts_a_character() {
         let dir = temp_dir("lookup-id");
-        let found = lookup_with(&dir, " 96821229 ", |ids| {
-            assert_eq!(ids, &[96821229]);
-            Ok(vec![EsiName { category: "character".into(), id: 96821229, name: "Holy Storm".into() }])
+        let found = lookup_with(&dir, " 90000001 ", |ids| {
+            assert_eq!(ids, &[90000001]);
+            Ok(vec![EsiName { category: "character".into(), id: 90000001, name: "Pilot One".into() }])
         }, no_ids)
         .unwrap();
-        assert_eq!(found, Some(Found { id: 96821229, name: "Holy Storm".into() }));
+        assert_eq!(found, Some(Found { id: 90000001, name: "Pilot One".into() }));
         // Cached: the second ask makes no call.
-        assert_eq!(lookup_with(&dir, "96821229", no_names, no_ids).unwrap().map(|f| f.name), Some("Holy Storm".into()));
+        assert_eq!(lookup_with(&dir, "90000001", no_names, no_ids).unwrap().map(|f| f.name), Some("Pilot One".into()));
         // A corporation id resolves to a name ESI is happy with, but it is not a character.
         let corp = lookup_with(&dir, "98000001", |_| Ok(vec![EsiName { category: "corporation".into(), id: 98000001, name: "Corp".into() }]), no_ids).unwrap();
         assert_eq!(corp, None);
@@ -603,8 +603,8 @@ mod tests {
 
     #[test]
     fn parse_ids_reads_the_characters_array_and_tolerates_its_absence() {
-        let body = br#"{"characters":[{"id":96821229,"name":"Holy Storm"}],"corporations":[{"id":1,"name":"x"}]}"#;
-        assert_eq!(parse_ids(body).unwrap(), Some(Found { id: 96821229, name: "Holy Storm".into() }));
+        let body = br#"{"characters":[{"id":90000001,"name":"Pilot One"}],"corporations":[{"id":1,"name":"x"}]}"#;
+        assert_eq!(parse_ids(body).unwrap(), Some(Found { id: 90000001, name: "Pilot One".into() }));
         assert_eq!(parse_ids(br#"{}"#).unwrap(), None);
         assert!(parse_ids(b"not json").is_err());
     }
