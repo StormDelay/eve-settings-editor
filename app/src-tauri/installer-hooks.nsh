@@ -9,12 +9,16 @@
 ; past the "uninstall before installing?" page and the folder page (the folder
 ; is restored from the previous install) straight to installing over it, the
 ; way Tauri's updater does. Installing over also keeps the user's shortcuts.
-; Page order: welcome, reinstall, directory, start menu (skipped), install.
+; Page order: welcome, reinstall, directory, start menu, install files. The
+; jump must land on the install page itself: a page whose pre function aborts
+; (the start menu page) is skipped by the same jump again, so jumping 3 carries
+; on past the install page and NSIS's hidden completed page to the finish page
+; without installing anything.
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE SkipUpgradePages
 Function SkipUpgradePages
   ReadRegStr $0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\EVE Settings Editor" "UninstallString"
   ${If} $0 != ""
-    SendMessage $HWNDPARENT 0x408 3 ""
+    SendMessage $HWNDPARENT 0x408 4 ""
     Abort
   ${EndIf}
 FunctionEnd
