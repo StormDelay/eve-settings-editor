@@ -5,7 +5,7 @@
 //!
 //! stdout IS the protocol here. Nothing in this process may print to it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +18,7 @@ use settings_model::{discover, Fidelity, FileKind, Mutation, NewValue, OverviewC
 
 use crate::accounts::{self, AccountRoster};
 use crate::groups;
+use crate::overview_fit;
 use crate::mcp_filter::{self, Env, HiddenCounts, Overrides, WindowFilter, WindowView};
 use crate::mcp_live::{Change, OnChange};
 use crate::names;
@@ -751,6 +752,16 @@ fn tool_defs() -> Vec<ToolDef> {
             })), &["ops"]),
         },
         ToolDef {
+            name: "overview_column_fit",
+            description: "How a tab's columns come out IN GAME at their widths: for each visible column, what its header and each value actually show (EVE cuts text at whole letters, it does not wrap), and min_width — the narrowest width that shows it whole. Measured with EVE's own fonts and text engine at the player's font size and UI scale, so it is exact to the pixel. Use it to size a column snugly: pass the values it must fit (EVE's formats: speeds as \"12,345\" with no unit, \"-\" for a stationary object, distances \"8,432 m\" / \"1,234 km\" / \"14.4 AU\"), take min_width, set it with overview_columns_edit set_width. Without values it uses sample rows covering the common cases. widths tries widths without writing anything. The sorted column (default DISTANCE) loses 16 px of header to its sort arrow. Needs the account and character files open, and EVE installed on this machine.",
+            schema: || obj(json!({
+                "tab": { "type": "integer" },
+                "values": { "type": "object", "description": "Column name -> values it must show, e.g. {\"VELOCITY\": [\"99,999\"]}. Replaces the sample rows.", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+                "widths": { "type": "object", "description": "Column name -> width to try instead of the stored one. Nothing is written.", "additionalProperties": { "type": "integer" } },
+                "sorted_by": { "type": "string", "description": "The column carrying the sort arrow. Default DISTANCE." }
+            }), &["tab"]),
+        },
+        ToolDef {
             name: "overview_tabs_edit",
             description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name}; delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
             schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
@@ -1162,6 +1173,7 @@ impl EveMcp {
             "restore_backup" => self.restore_backup(args),
             "list_characters" => self.list_characters(),
             "overview_get" => self.overview_get(),
+            "overview_column_fit" => self.overview_column_fit(args),
             "groups_search" => self.groups_search(args),
             "builtin_presets" => self.builtin_presets(args),
             "overview_columns_edit" => self.batch(args, columns_op, |s| s.overview_get()),
@@ -1978,6 +1990,45 @@ impl EveMcp {
         let mut v = serde_json::to_value(&oc).map_err(|e| err("serialize", e.to_string()))?;
         v["names"] = json!({ "states": states, "groups": groups });
         Ok(v)
+    }
+
+    fn overview_column_fit(&self, args: &Args) -> ToolResult {
+        let values: Option<BTreeMap<String, Vec<String>>> = opt(args, "values")?;
+        // Column-major for the caller, row-major for the layout.
+        let rows = values.map(|v| {
+            let n = v.values().map(Vec::len).max().unwrap_or(0);
+            (0..n)
+                .map(|i| v.iter().filter_map(|(k, vs)| vs.get(i).map(|s| (k.clone(), s.clone()))).collect())
+                .collect()
+        });
+        let fit = overview_fit::overview_fit(&self.state(), overview_fit::FitReq {
+            tab: req(args, "tab")?,
+            rows,
+            widths: opt(args, "widths")?.unwrap_or_default(),
+            sorted_by: opt(args, "sorted_by")?,
+            masks: false,
+        })
+        .map_err(fail)?;
+        // Only what a caller acts on; the drawing geometry stays with the preview.
+        let label = |l: &overview_fit::FitLabel| json!({ "text": l.text, "shown": l.shown, "whole": l.whole, "min_width": l.min_width });
+        let columns: Vec<Value> = fit.columns.iter().map(|c| json!({
+            "name": c.name,
+            "width": c.width,
+            "width_source": c.width_source,
+            "min_width": c.min_width,
+            "past_window_edge": c.past_window_edge,
+            "header": label(&c.header),
+            "values": c.cells.iter().filter(|v| !v.text.is_empty()).map(label).collect::<Vec<_>>(),
+        })).collect();
+        ok(json!({
+            "font_size": fit.font_size,
+            "ui_scale": fit.ui_scale,
+            "use_small_text": fit.use_small_text,
+            "sorted_by": fit.sorted_by,
+            "row_width": fit.row_width,
+            "total_width": fit.total_width,
+            "columns": columns,
+        }))
     }
 
     fn groups_search(&self, args: &Args) -> ToolResult {
@@ -2915,6 +2966,16 @@ mod tests {
         for (id, label) in catalog["states"].as_object().unwrap() {
             assert!(states.contains(&format!("- {id} — ")), "state {id} ({label}) is missing from the primer");
         }
+    }
+
+    #[test]
+    fn overview_column_fit_refuses_to_guess_without_eves_fonts() {
+        // A temp file's folder is no EVE profile, so there is nothing to
+        // measure with: the tool says so instead of approximating.
+        let (s, _) = open_user(&overview_user_bytes());
+        let e = s.call("overview_column_fit", &args(json!({ "tab": 0 }))).unwrap_err();
+        assert_eq!(e["code"], "fonts");
+        assert!(e["message"].as_str().unwrap().contains("nothing can be measured"));
     }
 
     #[test]

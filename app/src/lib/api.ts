@@ -382,6 +382,29 @@ export interface OverviewColumns {
 
 export type PackSummary = { sections: [string, number][]; ignored: string[] };
 export type PackReport = { applied: string[]; warnings: string[] };
+/** One string through EVE's text engine: `pens[i]` is the pen after character
+ *  i; `mask` is base64 coverage, `width` x `height`, placed `left` px from the
+ *  pen origin with the baseline `ascent` px down. */
+export interface Shaped { pens: number[]; left: number; ascent: number; width: number; height: number; mask: string }
+/** A header or value as EVE shows it: `shown` is the text left after the cut;
+ *  `min_width` the narrowest column showing it whole; the rest places it. */
+export interface FitLabel {
+  text: string; shown: string; whole: boolean; min_width: number;
+  text_x: number; clip_w: number; fade_w: number; mask?: Shaped;
+}
+export interface FitColumn {
+  name: string; x: number; width: number; width_source: "stored" | "default" | "fixed";
+  right_aligned: boolean; past_window_edge: boolean; header: FitLabel; cells: FitLabel[]; min_width: number;
+}
+/** overview_fit.rs: how a tab's columns come out in game. */
+export interface Fit {
+  font_size: string; ui_scale: number; use_small_text: boolean; sorted_by: string;
+  row_width: number | null; total_width: number; rows: Record<string, string>[]; columns: FitColumn[];
+}
+export interface FitReq {
+  tab: number; rows?: Record<string, string>[] | null; widths?: Record<string, number>;
+  sorted_by?: string; masks?: boolean;
+}
 export type PackImportResult = { columns: OverviewColumns; report: PackReport };
 
 export interface GroupEntry {
@@ -574,6 +597,7 @@ export const api = {
   /// that. See `03-sheets.md` §4.4.4.
   clearCapture: () => invoke<void>("clear_capture"),
   overviewColumns: () => invoke<OverviewColumns>("overview_columns"),
+  overviewFit: (req: FitReq) => invoke<Fit>("overview_fit", { req }),
   setOverviewVisible: (tabIndex: number, column: string, visible: boolean) =>
     invoke<OverviewColumns>("set_overview_visible", { tabIndex, column, visible }),
   setOverviewOrder: (tabIndex: number, order: string[]) =>
