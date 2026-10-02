@@ -1810,3 +1810,25 @@ watch-list member. Saved fleet setups ("Form fleet with setup") are not in the
 files: the owner's names appear only in the account's `editHistory` for the
 "Store fleet setup" dialog, and two of the eight appear nowhere while the
 client still lists them.
+
+### Ship slot order (2026-10-02)
+
+`ui -> slotOrder`, account file, `(FILETIME, {shipItemID: [24 Int]})`. Read from
+the client code (`eve/client/script/ui/inflight/shipHud/__init__.py`,
+`slotsContainer.py`, decoded from `code.ccp`) and measured over 157 account
+files (21,720 entries, every one 24 flags from 11–34):
+
+- The key is `session.shipid`, the ship's item id, so a layout belongs to one
+  hull, not a ship type. Ids are ~1e12, so they are `Long` keys on the wire.
+- The value is a permutation of the 24 rack flags: low 11–18, mid 19–26, high
+  27–34. `InitDrawSlots` reads `myOrder[r * 8 + i]`, so position `p` is row
+  `p // 8` (grid `[[1.0, 0.0], [1.5, 1.0], [1.0, 2.0]]`: top, middle staggered
+  half a button, bottom) and column `p % 8`.
+- `GetSlotOrder` falls back to `[Hi0..7, Med0..7, Lo0..7]` when the ship has
+  no entry. `SwapSlots(flag1, flag2)` is the only writer and nothing ever
+  deletes an entry, so the map grows with every ship ever rearranged.
+- A short list raises in `InitDrawSlots` and a missing flag raises in
+  `SwapSlots`. The editor writes full permutations only.
+
+Edited by `crates/settings-model/src/slot_order.rs`; spec
+`docs/superpowers/specs/2026-10-02-slot-order-design.md`.

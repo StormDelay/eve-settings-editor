@@ -1,4 +1,4 @@
-//! The six views, in row order, and the one rule that says whether each is
+//! The eight views, in row order, and the one rule that says whether each is
 //! reachable. `02-shell.md` §5.5.
 //!
 //! The conditions here are byte-for-byte the ones they replace — this phase
@@ -11,7 +11,7 @@
 //! template beside it.
 import { subject } from "./subject.svelte";
 
-export type View = "layout" | "overview" | "autofill" | "keybinds" | "probes" | "fleet" | "raw";
+export type View = "layout" | "overview" | "autofill" | "keybinds" | "probes" | "fleet" | "racks" | "raw";
 
 /**
  * Row order, and it is THE order — fixed membership is worth nothing if the
@@ -28,6 +28,7 @@ export const VIEWS: { id: View; label: string }[] = [
   { id: "keybinds", label: "Keybinds" },
   { id: "probes", label: "Probes" },
   { id: "fleet", label: "Fleet" },
+  { id: "racks", label: "Racks" },
   { id: "raw", label: "Raw" },
 ];
 

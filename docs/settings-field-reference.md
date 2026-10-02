@@ -547,7 +547,7 @@ include this in an export or a shared pack.
 
 **Fitting.** `fittingLeftPanel`, `fittingPanelLeft3`, `fitting_browserBtnID`,
 `fitting_filter_ship_{personal,corp,community}Fittings`, `defaultFittingPosition`,
-`showEmptySlots`, `showhavecpuandpower`, `lockOverload`, `slotOrder`,
+`showEmptySlots`, `showhavecpuandpower`, `lockOverload`, `slotOrder` (per-ship HUD slot layout — format-notes "Ship slot order"),
 `linkedWeapons_groupsDict`, `fitting_hardwareSearchField`.
 
 **Scanner.** `probeScannerFilters` (dict of named filters),

@@ -11,6 +11,7 @@ import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import BatchView from "$lib/BatchView.svelte";
 import { calls } from "$lib/test/setup";
+import { loadRoster } from "$lib/accounts.svelte";
 import type { AccountRoster, Profile, SetupPlan } from "$lib/api";
 
 const DIR = "C:/eve/settings_Default";
@@ -49,6 +50,8 @@ const PROFILES: Profile[] = [
       charFile(90000003),
       userFile(80000001),
       userFile(80000002),
+      // A parked backup copy: discovery keeps it as a user file with no id.
+      { ...userFile(80000001), path: `${DIR}/core_user_80000001 - old.dat`, file_name: "core_user_80000001 - old.dat", id: null },
     ],
   },
 ];
@@ -66,14 +69,14 @@ const PLAN: SetupPlan = {
   source_error: null,
 };
 
-async function mount(openPath: string | null = `${DIR}/core_char_90000001.dat`) {
+async function mount(openPath: string | null = `${DIR}/core_char_90000001.dat`, onApplied?: (w: string[]) => void) {
   calls.stub("discover_profiles", PROFILES);
   calls.stub("account_roster", ROSTER);
   calls.stub("setup_apply", []);
   calls.stub("resolve_character_names", {});
   // Only the default: a test that stubbed its own plan before mounting keeps it.
   if (!calls.stubbed("setup_preview")) calls.stub("setup_preview", PLAN);
-  render(BatchView, { props: { openCharPath: openPath, openUserPath: null, onClose: () => {} } });
+  render(BatchView, { props: { openCharPath: openPath, openUserPath: null, onClose: () => {}, onApplied } });
   // The component discovers profiles and the roster on mount; nothing renders
   // a target row until both land.
   await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
@@ -564,5 +567,101 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
     kind: "preset",
     dir: `${DIR}/presets/ Layout only `,
     anchor_dir: DIR,
+  });
+});
+
+describe("merging ship slot layouts", () => {
+  const MERGE_PLAN = {
+    files: [
+      { path: `${DIR}/core_user_80000001.dat`, account_id: 80000001, gained: 2, changed: 0, error: null },
+      { path: `${DIR}/core_user_80000002.dat`, account_id: 80000002, gained: 0, changed: 0, error: null },
+    ],
+    conflicts: [{ ship_id: 90000501, kept_from: `${DIR}/core_user_80000002.dat`, overridden: [`${DIR}/core_user_80000001.dat`] }],
+  };
+
+  async function mountRacks(onApplied?: (w: string[]) => void) {
+    calls.stub("slot_order_merge_preview", MERGE_PLAN);
+    calls.stub("slot_order_merge_apply", [
+      { path: `${DIR}/core_user_80000001.dat`, ok: true, backup_path: "b", error: null },
+      { path: `${DIR}/core_user_80000002.dat`, ok: true, backup_path: null, error: null },
+    ]);
+    await mount(undefined, onApplied);
+    await fireEvent.click(screen.getByLabelText("Ship slot layouts, merged across the profile"));
+  }
+
+  const accountBox = (id: number) =>
+    rowIn("Account files", `core_user_${id}.dat`).querySelector("input")! as HTMLInputElement;
+
+  test("lists only the profile's account files, all ticked, and previews the merge", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(true));
+    expect(accountBox(80000002).checked).toBe(true);
+    expect(() => rowIn("Account files", "core_char_")).toThrow();
+    await waitFor(() => expect(calls.of("slot_order_merge_preview").length).toBeGreaterThan(0));
+    expect(await screen.findByText(/gains 2 ships/)).toBeTruthy();
+    expect(screen.getByText(/no change/)).toBeTruthy();
+    expect(screen.getByText(/90000501/)).toBeTruthy();
+  });
+
+  test("an unticked file is left out of the merge and the write", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000002).checked).toBe(true));
+    await fireEvent.click(accountBox(80000002));
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_preview").at(-1)!.args).toEqual({ files: [`${DIR}/core_user_80000001.dat`] }));
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_apply")[0]?.args).toEqual({ files: [`${DIR}/core_user_80000001.dat`] }));
+  });
+
+  test("onApplied reports only the files the merge actually wrote", async () => {
+    const onApplied = vi.fn();
+    await mountRacks(onApplied);
+    await screen.findByText(/gains 2 ships/);
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith([`${DIR}/core_user_80000001.dat`]));
+  });
+
+  test("unticking every account file leaves Merge disabled", async () => {
+    await mountRacks();
+    await screen.findByText(/gains 2 ships/);
+    await fireEvent.click(accountBox(80000001));
+    await fireEvent.click(accountBox(80000002));
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(false));
+    expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a parked backup copy with no id is not listed", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(true));
+    expect(() => rowIn("Account files", "- old.dat")).toThrow();
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_preview").at(-1)!.args).toEqual({
+        files: [`${DIR}/core_user_80000001.dat`, `${DIR}/core_user_80000002.dat`],
+      }));
+  });
+
+  test("an alias or roster reload keeps an unticked file unticked", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000002).checked).toBe(true));
+    await fireEvent.click(accountBox(80000002));
+    expect(accountBox(80000002).checked).toBe(false);
+    // Aliases reorder the list (sorted by resolved name); the ticks must survive.
+    calls.stub("account_roster", {
+      accounts: [{ user_id: 80000002, alias: "Alpha", characters: [] }, { user_id: 80000001, alias: "Zulu", characters: [90000001] }],
+      unassigned: [],
+    });
+    await loadRoster();
+    await waitFor(() => expect(rowIn("Account files", "core_user_").textContent).toContain("core_user_80000002"));
+    expect(accountBox(80000002).checked).toBe(false);
+    expect(accountBox(80000001).checked).toBe(true);
+  });
+
+  test("a failed preview says so and keeps Merge disabled", async () => {
+    await mountRacks();
+    calls.stub("slot_order_merge_preview", () => Promise.reject({ code: "io", message: "Could not read the account files." }));
+    await fireEvent.click(accountBox(80000002));
+    expect(await screen.findByText(/Could not read the account files/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
