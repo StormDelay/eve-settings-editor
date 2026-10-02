@@ -10,4 +10,5 @@
 - Never commit the owner's real EVE data: character names, character, account or file ids, corporation and alliance tickers, structure or system names seen in captures, or local paths (a settings profile folder's name encodes the disk layout). This covers code, tests, fixtures, sample data, docs, commit messages and PR text.
 - Use synthetic placeholders: ids like `90000001`, names like "Pilot One", `<charID>` in docs. Tests that need a real EVE install (its fonts, a settings file) find one at runtime and skip without it; they never name a profile, account or character.
 - An identifier already in the repo is a bug to report, never a precedent to follow.
+- `.githooks/real-ids.py` (run by the commit-msg hook) blocks any staged id, hex token or character name that also occurs in the real settings files on this machine; `python .githooks/real-ids.py --all` audits the whole tree. CCP's public ids that legitimately match go in `.githooks/public-ids.txt`, never real ones.
 - StormDelay, the public identity above, is the one exception.

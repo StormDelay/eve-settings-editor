@@ -1,0 +1,5 @@
+# Ids that are CCP's public game data, so they also occur in every real settings
+# file. Everything else that real-ids.py flags is personal: replace it.
+00000000          # zero padding
+30000142          # Jita, the solar system
+639431-639466     # CCP's built-in overview presets (DefaultPreset_<id>)
