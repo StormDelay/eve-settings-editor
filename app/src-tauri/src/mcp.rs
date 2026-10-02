@@ -273,8 +273,8 @@ fn builtin_catalog() -> Vec<BuiltinPreset> {
     out
 }
 
-pub(crate) const TOPICS: [&str; 8] =
-    ["workflow", "overview", "presets", "states", "probes", "layout", "keybinds", "copy"];
+pub(crate) const TOPICS: [&str; 9] =
+    ["workflow", "overview", "presets", "states", "probes", "layout", "keybinds", "racks", "copy"];
 
 /// `(slug, body)` per `## ` heading, in file order.
 fn primer_sections() -> Vec<(&'static str, &'static str)> {
@@ -450,6 +450,44 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
     .map_err(fail)
 }
 
+/// Ships with their racks as labels, top/middle/bottom, so the model never
+/// needs the flag table.
+fn slot_order_view(ships: &[settings_model::SlotEntry]) -> Value {
+    let row = |o: &[u8]| o.iter().map(|&f| settings_model::slot_label(f)).collect::<Vec<_>>();
+    json!({ "ships": ships.iter().map(|s| match &s.order {
+        Some(o) => json!({ "ship_id": s.ship_id, "rows": { "top": row(&o[..8]), "middle": row(&o[8..16]), "bottom": row(&o[16..]) } }),
+        None => json!({ "ship_id": s.ship_id, "unreadable": true }),
+    }).collect::<Vec<_>>() })
+}
+
+fn parse_slot_arg(s: &str, key: &str) -> Result<u8, Value> {
+    settings_model::parse_slot(s)
+        .ok_or_else(|| err("bad_arguments", format!("`{key}`: {s:?} is not a slot. Use H1–H8, M1–M8, L1–L8 or a flag 11–34.")))
+}
+
+fn slot_order_op(state: &AppState, a: &Args) -> Result<(), Value> {
+    let op: String = req(a, "op")?;
+    match op.as_str() {
+        "add" => ops::add_slot_order(state, req(a, "ship_id")?, opt(a, "from")?),
+        "remove" => ops::remove_slot_order(state, req(a, "ship_id")?),
+        "set" => {
+            let order = req::<Vec<String>>(a, "order")?
+                .iter()
+                .map(|s| parse_slot_arg(s, "order"))
+                .collect::<Result<Vec<u8>, Value>>()?;
+            ops::set_slot_order(state, req(a, "ship_id")?, &order)
+        }
+        "swap" => {
+            let (x, y) = (parse_slot_arg(&req::<String>(a, "a")?, "a")?, parse_slot_arg(&req::<String>(a, "b")?, "b")?);
+            ops::swap_slot_order(state, req(a, "ship_id")?, x, y)
+        }
+        "copy" => ops::copy_slot_order(state, req(a, "from")?, &req::<Vec<u64>>(a, "to")?),
+        _ => return Err(unknown_op(&op)),
+    }
+    .map(drop)
+    .map_err(fail)
+}
+
 /// The layout without a single path: what the model sees. A real character
 /// file runs to ~381 windows, ~1.3 KB each pretty-printed and most of that
 /// the old per-window `flags` array — ~495 KB total, well past a client's
@@ -603,6 +641,25 @@ fn lookup_result(r: Result<Option<names::Found>, names::FetchError>) -> ToolResu
 }
 
 impl EveMcp {
+    fn slot_order_get(&self) -> ToolResult {
+        Ok(slot_order_view(&ops::slot_orders(&self.state()).map_err(fail)?))
+    }
+
+    /// `files`, or every account file of the first profile folder (the one
+    /// `list_characters` shows first).
+    fn merge_files(&self, args: &Args) -> Result<Vec<String>, Value> {
+        if let Some(f) = opt::<Vec<String>>(args, "files")? {
+            return Ok(f);
+        }
+        let profiles = discover(&self.roots);
+        let p = profiles.first().ok_or_else(|| err("no_profile", "No EVE settings folder was found."))?;
+        Ok(p.files
+            .iter()
+            .filter(|f| f.kind == settings_model::FileKind::User)
+            .map(|f| f.path.to_string_lossy().into_owned())
+            .collect())
+    }
+
     fn fleet_get(&self) -> ToolResult {
         let f = ops::fleet_settings(&self.state()).map_err(fail)?;
         // Names from the cache only — no network on a read. `resolve_blocking`
@@ -662,7 +719,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "eve_guide",
-            description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML), layout (windows, geometry, stacks, flags), keybinds (combos, key names, stealing), copy (aspects, collateral characters, settings presets). Call it before your first edit of a kind you have not done in this conversation.",
+            description: "Explains this server's model of EVE settings. Topics: workflow (files, sequence, rules), overview (windows, tabs, columns, indices), presets (groups, filtered and always-shown states, built-ins), states (ids and labels, background and flag lists), probes (formations, metres, axes, YAML), layout (windows, geometry, stacks, flags), keybinds (combos, key names, stealing), racks (ship HUD slot arrangements, labels, merging across accounts), copy (aspects, collateral characters, settings presets). Call it before your first edit of a kind you have not done in this conversation.",
             schema: || obj(json!({ "topic": { "type": "string", "enum": TOPICS } }), &["topic"]),
         },
         ToolDef {
@@ -961,6 +1018,31 @@ fn tool_defs() -> Vec<ToolDef> {
             name: "lookup_character",
             description: "Find a character's id by name, or confirm an id, through EVE's ESI (cached afterwards). Returns {id, name}; not_found when ESI knows no such character. Use it for watch-list colours.",
             schema: || obj(json!({ "query": { "type": "string" } }), &["query"]),
+        },
+        ToolDef {
+            name: "slot_order_get",
+            description: "The ship HUD's module arrangement per ship, from the account file: ships [{ship_id, rows: {top, middle, bottom}}], each row 8 slot labels in screen order (H1–H8 high, M1–M8 mid, L1–L8 low slots). A ship not listed uses EVE's default (top H1–H8, middle M1–M8, bottom L1–L8). ship_id is the ship's item id; the files hold no ship name. An entry in an unexpected shape is {ship_id, unreadable: true}. Needs the account file open. Unsure: eve_guide racks.",
+            schema: || obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "slot_order_edit",
+            description: "Edit ship HUD arrangements as a batch (one undo step; first failure rolls back). Slots are strings: a label (H1–H8, M1–M8, L1–L8) or an inventory flag (\"27\"). Ops: add {ship_id, from?} (a new ship, starting from ship `from`'s arrangement or EVE's default; refused if the ship is already listed); remove {ship_id} (drop its arrangement, so EVE falls back to the default; refused if not listed); set {ship_id, order} (replace a listed ship's arrangement: 24 slots, top row left to right, then middle, then bottom, each slot exactly once); swap {ship_id, a, b} (exchange two slots' buttons, as dragging one onto the other in game); copy {from, to} (give every ship in `to` the arrangement of `from`, adding or overwriting). Returns slot_order_get's shape. Nothing reaches disk until save.",
+            schema: || obj(op_item(&["add", "remove", "set", "swap", "copy"], json!({
+                "ship_id": { "type": "integer" }, "from": { "type": "integer" },
+                "order": { "type": "array", "items": { "type": "string" }, "minItems": 24, "maxItems": 24 },
+                "a": { "type": "string" }, "b": { "type": "string" },
+                "to": { "type": "array", "items": { "type": "integer" }, "minItems": 1 }
+            })), &["ops"]),
+        },
+        ToolDef {
+            name: "slot_order_merge_preview",
+            description: "Plan merging ship HUD arrangements across account files without changing anything: every ship arranged in any of `files` ends up in all of them; where files disagree on a ship, the most recently modified file wins. Returns {files: [{path, account_id, gained, changed, error}], conflicts: [{ship_id, kept_from, overridden}]}. files: account file paths (core_user_*.dat, list_characters' user_file); omitted, every account file in the first profile folder. ALWAYS call this before slot_order_merge_apply and show the user the plan.",
+            schema: || obj(json!({ "files": { "type": "array", "items": { "type": "string" } } }), &[]),
+        },
+        ToolDef {
+            name: "slot_order_merge_apply",
+            description: "Perform the merge slot_order_merge_preview planned, with the same arguments. WRITES TO DISK IMMEDIATELY: each file that changes is backed up, then written; returns [{path, ok, backup_path, error}] — backup_path null with ok true means that file needed no change. Only for accounts whose characters are all logged out; reopen a file afterwards if it was open here.",
+            schema: || obj(json!({ "files": { "type": "array", "items": { "type": "string" } } }), &[]),
         },
         ToolDef {
             name: "copy_preview",
@@ -1279,6 +1361,10 @@ impl EveMcp {
             "neocom_get" => Ok(neocom_view(&ops::neocom_bar(&self.state()).map_err(fail)?)),
             "fleet_get" => self.fleet_get(),
             "fleet_edit" => self.batch(args, fleet_op, |s| s.fleet_get()),
+            "slot_order_get" => self.slot_order_get(),
+            "slot_order_edit" => self.batch(args, slot_order_op, |s| s.slot_order_get()),
+            "slot_order_merge_preview" => ok(setup::slot_order_merge_preview(&self.roots, &self.merge_files(args)?)),
+            "slot_order_merge_apply" => ok(setup::slot_order_merge_apply(&self.roots, &self.merge_files(args)?)),
             "lookup_character" => {
                 let q: String = req(args, "query")?;
                 lookup_result(off_runtime(|| names::lookup_blocking(&self.dir, &q)))
@@ -1663,11 +1749,13 @@ impl Fingerprint {
 fn written_paths(tool: &str, result: &ToolResult, in_window: bool, own: &[PathBuf]) -> Option<Vec<PathBuf>> {
     let Ok(v) = result else { return None };
     match tool {
-        "copy_apply" | "copy_files" => {
+        "copy_apply" | "copy_files" | "slot_order_merge_apply" => {
             let paths: Vec<PathBuf> = v
                 .as_array()?
                 .iter()
                 .filter(|r| r["ok"] == true)
+                // A merge row with no backup wrote nothing; a copy always has one.
+                .filter(|r| !r["backup_path"].is_null())
                 .filter_map(|r| r["path"].as_str().map(PathBuf::from))
                 .collect();
             (!paths.is_empty()).then_some(paths)
@@ -1699,6 +1787,7 @@ fn file_label(p: Option<&Path>) -> String {
 const WORKSPACE_FREE: &[&str] = &[
     "open", "status", "eve_guide", "list_characters", "groups_search", "builtin_presets",
     "settings_presets_list", "lookup_character", "overview_pack_preview", "copy_preview", "copy_apply", "copy_files",
+    "slot_order_merge_preview", "slot_order_merge_apply",
 ];
 
 /// How the account lock (spec §3.5 rule 2) introduces itself in a
@@ -3243,7 +3332,7 @@ mod tests {
         ops::open_file(&s.state(), Slot::User, upath.to_str().unwrap()).unwrap();
 
         for tool in [
-            "layout_get", "hud_get", "fleet_get", "neocom_get", "chat_get", "autofill_get",
+            "layout_get", "slot_order_get", "hud_get", "fleet_get", "neocom_get", "chat_get", "autofill_get",
             "keybinds_get", "overview_get", "probes_get", "settings_presets_list",
         ] {
             match s.call(tool, &Args::new()) {
@@ -3507,6 +3596,80 @@ mod tests {
         let c = v["colours"].as_array().unwrap().iter().find(|c| c["broadcast"] == "Target").unwrap();
         assert_eq!(c["state"], "cleared");
         assert_eq!(undo::undo_state(&s.state()).depth, 2, "two batches, two undo steps");
+    }
+
+    #[test]
+    fn slot_order_edit_adds_swaps_copies_and_removes_in_one_undo_step_and_survives_save() {
+        let (s, upath) = open_user(&empty_ui_bytes());
+        let v = s.call("slot_order_edit", &args(json!({ "ops": [
+            { "op": "add", "ship_id": 90000001 },
+            { "op": "swap", "ship_id": 90000001, "a": "H1", "b": "M1" },
+            { "op": "copy", "from": 90000001, "to": [90000002] },
+            { "op": "add", "ship_id": 90000003, "from": 90000001 },
+            { "op": "remove", "ship_id": 90000003 }
+        ]}))).unwrap();
+        assert_no_paths(&v, "slot_order_edit");
+        let ships = v["ships"].as_array().unwrap();
+        assert_eq!(ships.len(), 2);
+        assert_eq!(ships[0]["rows"]["top"][0], "M1");
+        assert_eq!(ships[0]["rows"]["middle"][0], "H1");
+        assert_eq!(ships[0]["rows"]["bottom"].as_array().unwrap().len(), 8);
+        assert_eq!(ships[1]["ship_id"], 90000002);
+        assert_eq!(ships[1]["rows"], ships[0]["rows"]);
+        assert_eq!(undo::undo_state(&s.state()).depth, 1, "one batch, one undo step");
+
+        s.call("save", &Args::new()).unwrap();
+        s.call("open", &open_args(&upath, None)).unwrap();
+        let v = s.call("slot_order_get", &Args::new()).unwrap();
+        assert_eq!(v["ships"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn slot_order_edit_rolls_back_a_batch_on_a_refused_op_or_a_bad_slot() {
+        let (s, _) = open_user(&empty_ui_bytes());
+        let e = s.call("slot_order_edit", &args(json!({ "ops": [
+            { "op": "add", "ship_id": 90000001 }, { "op": "add", "ship_id": 90000001 }
+        ]}))).unwrap_err();
+        assert_eq!(e["code"], "already_present");
+        assert_eq!(e["op_index"], 1);
+        assert_eq!(s.call("slot_order_get", &Args::new()).unwrap()["ships"], json!([]), "rolled back");
+
+        s.call("slot_order_edit", &args(json!({ "ops": [{ "op": "add", "ship_id": 90000001 }] }))).unwrap();
+        let e = s.call("slot_order_edit", &args(json!({ "ops": [
+            { "op": "swap", "ship_id": 90000001, "a": "H9", "b": "M1" }
+        ]}))).unwrap_err();
+        assert_eq!(e["code"], "bad_arguments");
+        let e = s.call("slot_order_edit", &args(json!({ "ops": [
+            { "op": "set", "ship_id": 90000001, "order": ["H1"] }
+        ]}))).unwrap_err();
+        assert_eq!(e["code"], "invalid_order");
+    }
+
+    #[test]
+    fn slot_order_merge_previews_then_writes_immediately_and_defaults_to_account_files() {
+        let (s, prof) = copy_server();
+        let order: Vec<BmValue> = settings_model::DEFAULT_ORDER.iter().map(|&f| BmValue::Int(f.into())).collect();
+        let doc = |id: i64| {
+            let map = BmValue::Dict(vec![(BmValue::Int(id), BmValue::List(order.clone()))]);
+            let ui = BmValue::Dict(vec![(b("slotOrder"), BmValue::Tuple(vec![BmValue::Long(vec![0; 8]), map]))]);
+            encode(&BmValue::Dict(vec![(b("ui"), ui)])).unwrap()
+        };
+        std::fs::write(prof.join("core_user_500.dat"), doc(90000001)).unwrap();
+        std::fs::write(prof.join("core_user_600.dat"), doc(90000002)).unwrap();
+        let files = json!([
+            prof.join("core_user_500.dat").to_string_lossy(),
+            prof.join("core_user_600.dat").to_string_lossy()
+        ]);
+        let plan = s.call("slot_order_merge_preview", &args(json!({ "files": files }))).unwrap();
+        assert!(plan["files"].as_array().unwrap().iter().all(|f| f["gained"] == 1), "{plan}");
+        let r = s.call("slot_order_merge_apply", &args(json!({ "files": files }))).unwrap();
+        assert!(r.as_array().unwrap().iter().all(|r| r["ok"] == true && !r["backup_path"].is_null()), "{r}");
+        let again = s.call("slot_order_merge_preview", &args(json!({ "files": files }))).unwrap();
+        assert!(again["files"].as_array().unwrap().iter().all(|f| f["gained"] == 0 && f["changed"] == 0), "{again}");
+
+        let all = s.call("slot_order_merge_preview", &Args::new()).unwrap();
+        let paths: Vec<&str> = all["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        assert!(!paths.is_empty() && paths.iter().all(|p| p.contains("core_user_")), "{all}");
     }
 
     #[test]
