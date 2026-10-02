@@ -11,6 +11,7 @@ import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import BatchView from "$lib/BatchView.svelte";
 import { calls } from "$lib/test/setup";
+import { loadRoster } from "$lib/accounts.svelte";
 import type { AccountRoster, Profile, SetupPlan } from "$lib/api";
 
 const DIR = "C:/eve/settings_Default";
@@ -49,6 +50,8 @@ const PROFILES: Profile[] = [
       charFile(90000003),
       userFile(80000001),
       userFile(80000002),
+      // A parked backup copy: discovery keeps it as a user file with no id.
+      { ...userFile(80000001), path: `${DIR}/core_user_80000001 - old.dat`, file_name: "core_user_80000001 - old.dat", id: null },
     ],
   },
 ];
@@ -625,6 +628,40 @@ describe("merging ship slot layouts", () => {
     await fireEvent.click(accountBox(80000001));
     await fireEvent.click(accountBox(80000002));
     await waitFor(() => expect(accountBox(80000001).checked).toBe(false));
+    expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a parked backup copy with no id is not listed", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(true));
+    expect(() => rowIn("Account files", "- old.dat")).toThrow();
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_preview").at(-1)!.args).toEqual({
+        files: [`${DIR}/core_user_80000001.dat`, `${DIR}/core_user_80000002.dat`],
+      }));
+  });
+
+  test("an alias or roster reload keeps an unticked file unticked", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000002).checked).toBe(true));
+    await fireEvent.click(accountBox(80000002));
+    expect(accountBox(80000002).checked).toBe(false);
+    // Aliases reorder the list (sorted by resolved name); the ticks must survive.
+    calls.stub("account_roster", {
+      accounts: [{ user_id: 80000002, alias: "Alpha", characters: [] }, { user_id: 80000001, alias: "Zulu", characters: [90000001] }],
+      unassigned: [],
+    });
+    await loadRoster();
+    await waitFor(() => expect(rowIn("Account files", "core_user_").textContent).toContain("core_user_80000002"));
+    expect(accountBox(80000002).checked).toBe(false);
+    expect(accountBox(80000001).checked).toBe(true);
+  });
+
+  test("a failed preview says so and keeps Merge disabled", async () => {
+    await mountRacks();
+    calls.stub("slot_order_merge_preview", () => Promise.reject({ code: "io", message: "Could not read the account files." }));
+    await fireEvent.click(accountBox(80000002));
+    expect(await screen.findByText(/Could not read the account files/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

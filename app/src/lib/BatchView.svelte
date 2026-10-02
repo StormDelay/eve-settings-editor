@@ -157,7 +157,7 @@
   const accountFiles = $derived(
     profiles
       .filter((p) => p.dir === folder)
-      .flatMap((p) => p.files.filter((f) => f.kind === "user").map((f) => ({ ...f, dir: p.dir })))
+      .flatMap((p) => p.files.filter((f) => f.kind === "user" && f.id !== null).map((f) => ({ ...f, dir: p.dir })))
       .sort(byResolvedName),
   );
   const candidates = $derived(
@@ -252,23 +252,38 @@
 
   // Default: every account file ticked. Re-ticks when the folder changes or
   // discovery lands, which is when the list itself changes.
+  // Keyed on the set of paths, not the sorted list: a roster or alias load only
+  // reorders it and must not undo the user's unticks.
+  const accountKey = $derived(accountFiles.map((f) => f.path).sort().join("\n"));
   $effect(() => {
-    if (racksMode) selectedTargets = new Set(accountFiles.map((f) => f.path));
+    void accountKey;
+    if (racksMode) untrack(() => (selectedTargets = new Set(accountFiles.map((f) => f.path))));
   });
 
   let mergePlan = $state<SlotMergePlan | null>(null);
+  let mergeError = $state<string | null>(null);
+  let mergePending = $state(false);
   let mergeSeq = 0;
   $effect(() => {
     const files = effectiveTargets;
     const seq = ++mergeSeq;
     // Cleared before the await: the shown plan must always describe the current ticks.
     mergePlan = null;
+    mergeError = null;
+    mergePending = false;
     if (!racksMode || files.length === 0) return;
+    mergePending = true;
     api.slotOrderMergePreview(files)
-      .then((p) => { if (seq === mergeSeq) mergePlan = p; })
-      .catch(() => { if (seq === mergeSeq) mergePlan = null; });
+      .then((p) => { if (seq === mergeSeq) { mergePlan = p; mergePending = false; } })
+      .catch((e) => { if (seq === mergeSeq) { mergeError = errMessage(e); mergePending = false; } });
   });
   const mergeWrites = $derived(mergePlan?.files.filter((f) => !f.error && f.gained + f.changed > 0).length ?? 0);
+  const mergeReason = $derived(
+    effectiveTargets.length === 0 ? "Tick at least one account file"
+    : mergePending ? "Working out what would change…"
+    : mergeError ? "The merge preview failed"
+    : "Nothing to merge — every ticked account already has every ship",
+  );
   const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
   // Preview from the backend whenever source/aspects/targets settle. Guarded
@@ -503,6 +518,9 @@
     {/if}
 
     {#if racksMode}
+      {#if mergeError}
+        <section class="preview"><InlineMessage variant="error">{mergeError}</InlineMessage></section>
+      {/if}
       {#if mergePlan}
         <section class="preview">
           <p>Will write {mergeWrites} file(s) — each is backed up first.</p>
@@ -551,7 +569,7 @@
       <Button
         variant="primary"
         disabled={!canApply}
-        disabledReason={busy ? "A copy is already running" : racksMode ? "Nothing to merge — every ticked account already has every ship" : "Pick a source and at least one target"}
+        disabledReason={busy ? "A copy is already running" : racksMode ? mergeReason : "Pick a source and at least one target"}
         onclick={apply}>{busy ? (racksMode ? "Merging…" : "Copying…") : racksMode ? "Merge" : "Copy"}</Button>
       {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
     </section>

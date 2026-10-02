@@ -90,10 +90,13 @@
     next.has(id) ? next.delete(id) : next.add(id);
     copyTo = next;
   }
+  // Only ships still listed: a ticked ship hidden by the filter is not copied to.
+  const visibleCopyTo = $derived([...copyTo].filter((id) => shown.some((s) => s.ship_id === id)));
   async function copy() {
-    if (!current || copyTo.size === 0) return;
+    if (!current || visibleCopyTo.length === 0) return;
     const from = current.ship_id;
-    if (await write("That layout wasn't copied", () => api.copySlotOrder(from, [...copyTo]))) copyTo = new Set();
+    const to = visibleCopyTo;
+    if (await write("That layout wasn't copied", () => api.copySlotOrder(from, to))) copyTo = new Set();
   }
 </script>
 
@@ -172,7 +175,7 @@
               {/each}
               <Button
                 size="sm"
-                disabled={copyTo.size === 0}
+                disabled={visibleCopyTo.length === 0}
                 disabledReason="Tick at least one ship"
                 onclick={copy}>Copy layout</Button>
             </div>
