@@ -12,7 +12,7 @@ and a fresh account starts with no arrangements at all.
 This slice ships:
 
 1. **A Slots view** that lists every ship id in the open account file and edits
-   its layout: drag to swap two positions, add a ship, delete one, and copy one
+   its layout: drag to swap two positions, add a ship, remove one, and copy one
    ship's layout onto others.
 2. **A folder merge** in the batch view. It collects every ship layout from the
    ticked account files of a profile and writes the merged set back into each
@@ -77,8 +77,9 @@ All format knowledge lives here, in the shape of `fleet.rs`'s watch-list map.
 pub const DEFAULT_ORDER: [u8; 24] = [27..=34, 19..=26, 11..=18]; // flattened
 pub struct SlotEntry { pub ship_id: u64, pub order: Option<[u8; 24]> }
 pub fn project(user: &Value) -> Vec<SlotEntry>
+pub fn add(user: &mut Value, ship_id: u64, from: Option<u64>) -> Result<(), SlotOrderError>
 pub fn set(user: &mut Value, ship_id: u64, order: [u8; 24]) -> Result<(), SlotOrderError>
-pub fn delete(user: &mut Value, ship_id: u64) -> Result<bool, SlotOrderError>
+pub fn remove(user: &mut Value, ship_id: u64) -> Result<(), SlotOrderError>
 pub fn copy(user: &mut Value, from: u64, to: &[u64]) -> Result<(), SlotOrderError>
 pub fn merge(files: &[(PathBuf, SystemTime, &Value)]) -> Merge
 ```
@@ -86,16 +87,23 @@ pub fn merge(files: &[(PathBuf, SystemTime, &Value)]) -> Merge
 - `project` returns the entries in file order. An entry whose value is not a
   24-flag permutation projects `order: None` (shown as **unreadable**) instead
   of vanishing, so its id cannot be added again as a duplicate key. An
-  unreadable entry can be deleted or overwritten by `set`.
+  unreadable entry can be removed or overwritten by `set`.
+- `add` appends `(key, list)`, where the list is `from`'s order, or
+  `DEFAULT_ORDER` when `from` is `None`.
+  - It fails with `AlreadyPresent` when the ship exists, and with `Missing` or
+    `Unreadable` when `from` is unusable.
+  - When `slotOrder` is absent it mints `(zero FILETIME, {})`, the same way
+    `fleet.rs` mints its map (format-notes "A minted zero timestamp is safe").
+  - Keys are written as the minimal-width `Long`. Ids are matched by value, not
+    by wire kind.
 - `set` validates that `order` is a permutation of 11–34 (`InvalidOrder`
-  otherwise), then overwrites the entry's list in place or appends
-  `(key, list)`. When `slotOrder` is absent it mints `(zero FILETIME, {})`, the
-  same way `fleet.rs` mints its map (format-notes "A minted zero timestamp is
-  safe"). Keys are written as the minimal-width `Long`. Ids are matched by
-  value, not by wire kind.
-- `delete` removes the entry and reports whether one existed.
-- `copy` is `set(to_i, order_of(from))` for each target. A `from` that is
-  missing or unreadable is an error and writes nothing.
+  otherwise), then overwrites the existing entry's list in place. It fails with
+  `Missing` when the ship is absent.
+- `remove` deletes the entry. It fails with `Missing` when the ship is absent.
+- `copy` writes `from`'s order onto each target, adding the ones that are
+  absent: this is the one path that may either add or overwrite, and copying
+  says so. A `from` that is missing or unreadable is an error and writes
+  nothing.
 - `merge` builds the union of all entries:
   - When the files disagree on a ship, the entry from the file with the newest
     mtime wins. Files with equal mtimes are ordered by path, so the result is
@@ -112,8 +120,9 @@ inline-first idiom (`autofill.rs`, `fleet.rs`).
 ### 3.2 `ops.rs` and `lib.rs` (the editor)
 
 - `slot_orders(state) -> Vec<SlotEntry>` needs the account file open.
-- `set_slot_order(state, ship_id, order)`, `delete_slot_order(state, ship_id)`
-  and `copy_slot_order(state, from, to)` each call `edit_slot` on `Slot::User`.
+- `add_slot_order(state, ship_id, from)`, `set_slot_order(state, ship_id, order)`,
+  `remove_slot_order(state, ship_id)` and `copy_slot_order(state, from, to)`
+  each call `edit_slot` on `Slot::User`.
   Each is one Tauri command and one undo entry, and goes through the normal
   `save`.
 
@@ -144,7 +153,8 @@ written, and an unticked file is neither.
 
 ### 3.4 `api.ts`
 
-`slotOrders()`, `setSlotOrder(shipId, order)`, `deleteSlotOrder(shipId)`,
+`slotOrders()`, `addSlotOrder(shipId, from | null)`, `setSlotOrder(shipId, order)`,
+`removeSlotOrder(shipId)`,
 `copySlotOrder(from, to)`, `slotOrderMergePreview(files)`,
 `slotOrderMergeApply(files)`. Ship ids cross IPC as plain `number`s, as
 `setWatchlistColour(charId: number)` does. Item ids are ~1e12, far below 2^53.
@@ -164,10 +174,11 @@ written, and an unticked file is neither.
   exactly `SwapSlots`. Keyboard: select a button, then the arrow keys and Enter
   swap.
 - Actions on the selected ship:
-  - **Reset to default** = delete the entry.
+  - **Remove ship** = remove the entry, which resets the ship to the default
+    order in-game.
   - **Copy to…** takes a multi-select of the other ids.
 - **Add ship:** an id field, starting from the selected ship's order or the
-  default.
+  default (`add`; an id already listed is refused inline).
 - Edits are live, with undo and save as in every other editor.
 
 ### 4.2 The batch view
@@ -190,10 +201,16 @@ profile"**:
   never needs the flag table.
 - `slot_order_edit` is a batch, like `fleet_edit` (one undo step, first failure
   rolls back). Ops:
-  - `set {ship_id, order}`, where the order is 24 labels or 24 flags;
-  - `swap {ship_id, a, b}`, positions or labels;
-  - `delete {ship_id}`;
-  - `copy {from, to: []}`.
+  - `add {ship_id, from?}` adds a ship. It starts from another ship's order,
+    or from the default order when `from` is omitted. It is refused when the
+    ship is already present, so it can never silently overwrite.
+  - `remove {ship_id}` removes the ship, and with it any custom layout: the
+    client falls back to the default order. It is refused when the ship is
+    absent.
+  - `set {ship_id, order}` replaces an existing ship's order, given as 24
+    labels or 24 flags. It is refused when the ship is absent; use `add`.
+  - `swap {ship_id, a, b}` swaps two positions, given as positions or labels.
+  - `copy {from, to: []}` adds or overwrites each target.
 
   Nothing reaches disk until `save`.
 - `slot_order_merge_preview {files?}` / `slot_order_merge_apply {files?}`.
@@ -208,7 +225,7 @@ profile"**:
 All fixtures are synthetic: ships `90000001…`, accounts `90000101…`.
 
 - **Model:**
-  - project / set / delete / copy round-trips;
+  - project / add / set / remove / copy round-trips; `add` refuses a present ship and `set`/`remove` an absent one;
   - `set` refuses a short list, a repeated flag, and a flag outside 11–34;
   - minting on an absent key;
   - an unreadable entry projects as `None` and survives a merge untouched;
