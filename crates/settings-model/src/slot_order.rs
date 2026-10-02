@@ -7,6 +7,8 @@
 
 use blue_marshal::Value;
 use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 use crate::fleet::{id_key, id_of};
 use crate::hud::section_dict_mut;
@@ -14,6 +16,8 @@ use crate::treewalk::{
     as_dict, as_list, collect_shared, dict_inner_mut, effective, find_child, inline_all, is_bytes, section,
     Entries, SharedTable,
 };
+use crate::document::{Document, LoadError};
+use crate::save::{save, SaveReport};
 
 const KEY: &[u8] = b"slotOrder";
 
@@ -227,6 +231,85 @@ pub fn parse_slot(s: &str) -> Option<u8> {
     is_slot(flag).then_some(flag)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotConflict {
+    pub ship_id: u64,
+    /// Index into the merge input of the file whose order was kept.
+    pub winner: usize,
+    /// Indices of every file holding a different order for this ship.
+    pub losers: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SlotMerge {
+    /// Every readable ship across the input, sorted by id.
+    pub orders: Vec<(u64, SlotOrder)>,
+    pub conflicts: Vec<SlotConflict>,
+}
+
+/// The union of every readable entry in `files` (`(document, modified)`).
+/// Where files disagree the newest `modified` wins; equal times go to the
+/// later index, so a caller that sorts its input by path breaks ties the same
+/// way every run. Unreadable entries never take part.
+pub fn merge(files: &[(&Value, u64)]) -> SlotMerge {
+    let readable: Vec<Vec<(u64, SlotOrder)>> = files
+        .iter()
+        .map(|(v, _)| project(v).into_iter().filter_map(|e| Some((e.ship_id, e.order?))).collect())
+        .collect();
+    let mut by_age: Vec<usize> = (0..files.len()).collect();
+    by_age.sort_by_key(|&i| (files[i].1, i));
+    let mut kept: BTreeMap<u64, (SlotOrder, usize)> = BTreeMap::new();
+    for &i in &by_age {
+        for &(id, o) in &readable[i] {
+            kept.insert(id, (o, i));
+        }
+    }
+    let conflicts = kept
+        .iter()
+        .filter_map(|(&ship_id, &(o, winner))| {
+            let losers: Vec<usize> = (0..files.len())
+                .filter(|&i| readable[i].iter().any(|&(id, p)| id == ship_id && p != o))
+                .collect();
+            (!losers.is_empty()).then_some(SlotConflict { ship_id, winner, losers })
+        })
+        .collect();
+    SlotMerge { orders: kept.into_iter().map(|(id, (o, _))| (id, o)).collect(), conflicts }
+}
+
+/// What writing `orders` would do to this file: (ships it gains, ships whose
+/// order changes). An unreadable entry is neither; the merge leaves it alone.
+pub fn merge_diff(user: &Value, orders: &[(u64, SlotOrder)]) -> (usize, usize) {
+    let have: HashMap<u64, Option<SlotOrder>> = project(user).into_iter().map(|e| (e.ship_id, e.order)).collect();
+    orders.iter().fold((0, 0), |(gained, changed), (id, o)| match have.get(id) {
+        None => (gained + 1, changed),
+        Some(Some(p)) if p != o => (gained, changed + 1),
+        _ => (gained, changed),
+    })
+}
+
+/// Make every readable or absent entry equal `orders`; unreadable ones stay.
+fn apply_merge(user: &mut Value, orders: &[(u64, SlotOrder)]) -> Result<(), SlotOrderError> {
+    let unreadable: Vec<u64> = project(user).into_iter().filter(|e| e.order.is_none()).map(|e| e.ship_id).collect();
+    let map = map_mut(user)?;
+    for (id, o) in orders.iter().filter(|(id, _)| !unreadable.contains(id)) {
+        put(map, *id, o);
+    }
+    Ok(())
+}
+
+/// Load `path`, apply the merge, reshare, and run the full save chain (backup
+/// first). `force_conflict = true` as in `batch::apply_categories_to`: the
+/// file is loaded fresh in this call, so there is no stale copy to guard.
+pub fn write_merge(path: &Path, orders: &[(u64, SlotOrder)]) -> Result<SaveReport, String> {
+    let mut doc = Document::load(path).map_err(|e| match e {
+        LoadError::Io(m) => format!("Io: {m}"),
+        LoadError::Decode { message, .. } => format!("Decode: {message}"),
+    })?;
+    apply_merge(&mut doc.value, orders).map_err(|e| e.to_string())?;
+    doc.value = blue_marshal::reshare(&doc.value);
+    save(&mut doc, true).map_err(|e| format!("{e:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +321,21 @@ mod tests {
 
     pub(super) const CUSTOM: SlotOrder = [
         29, 33, 34, 30, 31, 32, 28, 27, 19, 20, 21, 22, 23, 24, 25, 26, 11, 12, 13, 14, 15, 16, 17, 18,
+    ];
+
+    /// One map of Int-keyed ships; `None` writes an unreadable one-flag list.
+    fn doc_with(entries: &[(i64, Option<SlotOrder>)]) -> Value {
+        let map = Value::Dict(
+            entries
+                .iter()
+                .map(|(id, o)| (Value::Int(*id), o.map_or(Value::List(vec![Value::Int(27)]), |o| order_value(&o))))
+                .collect(),
+        );
+        Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("slotOrder"), wrapped(map))]))])
+    }
+
+    const OTHER: SlotOrder = [
+        19, 28, 29, 30, 31, 32, 33, 34, 27, 20, 21, 22, 23, 24, 25, 26, 11, 12, 13, 14, 15, 16, 17, 18,
     ];
 
     /// Ship 1 custom, ship 2 default under a `Long` key (matched by value),
@@ -380,5 +478,64 @@ mod tests {
         u = blue_marshal::reshare(&u);
         let bytes = blue_marshal::encode(&u).unwrap();
         assert_eq!(orders(&blue_marshal::decode(&bytes).unwrap()), orders(&u));
+    }
+
+    #[test]
+    fn merge_takes_the_union_and_the_newest_file_wins_a_disagreement() {
+        let a = doc_with(&[(90000001, Some(DEFAULT_ORDER)), (90000002, Some(CUSTOM))]);
+        let b_ = doc_with(&[(90000002, Some(OTHER)), (90000003, Some(DEFAULT_ORDER))]);
+        let c = doc_with(&[(90000002, Some(CUSTOM))]);
+        let m = merge(&[(&a, 100), (&b_, 200), (&c, 50)]);
+        assert_eq!(
+            m.orders,
+            vec![(90000001, DEFAULT_ORDER), (90000002, OTHER), (90000003, DEFAULT_ORDER)]
+        );
+        assert_eq!(m.conflicts, vec![SlotConflict { ship_id: 90000002, winner: 1, losers: vec![0, 2] }]);
+    }
+
+    #[test]
+    fn equal_times_go_to_the_later_file() {
+        let a = doc_with(&[(90000002, Some(CUSTOM))]);
+        let b_ = doc_with(&[(90000002, Some(OTHER))]);
+        assert_eq!(merge(&[(&a, 100), (&b_, 100)]).orders, vec![(90000002, OTHER)]);
+        assert_eq!(merge(&[(&b_, 100), (&a, 100)]).orders, vec![(90000002, CUSTOM)]);
+    }
+
+    #[test]
+    fn unreadable_entries_never_take_part_and_are_never_overwritten() {
+        let a = doc_with(&[(90000003, None), (90000001, Some(CUSTOM))]);
+        let b_ = doc_with(&[(90000003, Some(DEFAULT_ORDER))]);
+        let m = merge(&[(&a, 500), (&b_, 100)]);
+        assert_eq!(m.orders, vec![(90000001, CUSTOM), (90000003, DEFAULT_ORDER)]);
+        assert!(m.conflicts.is_empty());
+        assert_eq!(merge_diff(&a, &m.orders), (0, 0), "its unreadable ship is neither gained nor changed");
+        let mut a2 = a.clone();
+        apply_merge(&mut a2, &m.orders).unwrap();
+        assert_eq!(orders(&a2), orders(&a), "the unreadable entry is left exactly as it was");
+    }
+
+    #[test]
+    fn the_diff_counts_gained_and_changed_ships_and_apply_makes_it_zero() {
+        let a = doc_with(&[(90000001, Some(DEFAULT_ORDER)), (90000002, Some(CUSTOM))]);
+        let b_ = doc_with(&[(90000002, Some(OTHER)), (90000003, Some(DEFAULT_ORDER))]);
+        let m = merge(&[(&a, 100), (&b_, 200)]);
+        assert_eq!(merge_diff(&a, &m.orders), (1, 1));
+        assert_eq!(merge_diff(&b_, &m.orders), (1, 0));
+        let mut a2 = a.clone();
+        apply_merge(&mut a2, &m.orders).unwrap();
+        assert_eq!(merge_diff(&a2, &m.orders), (0, 0));
+    }
+
+    #[test]
+    fn write_merge_backs_up_and_saves_the_merged_file() {
+        let dir = std::env::temp_dir().join(format!("slot-order-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("core_user_80000001.dat");
+        std::fs::write(&path, blue_marshal::encode(&doc_with(&[(90000001, Some(CUSTOM))])).unwrap()).unwrap();
+        let rep = write_merge(&path, &[(90000001, CUSTOM), (90000002, OTHER)]).unwrap();
+        assert!(rep.backup_path.exists());
+        let back = blue_marshal::decode(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(orders(&back), vec![(90000001, Some(CUSTOM)), (90000002, Some(OTHER))]);
     }
 }
