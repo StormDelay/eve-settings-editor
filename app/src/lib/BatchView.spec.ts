@@ -66,14 +66,14 @@ const PLAN: SetupPlan = {
   source_error: null,
 };
 
-async function mount(openPath: string | null = `${DIR}/core_char_90000001.dat`) {
+async function mount(openPath: string | null = `${DIR}/core_char_90000001.dat`, onApplied?: (w: string[]) => void) {
   calls.stub("discover_profiles", PROFILES);
   calls.stub("account_roster", ROSTER);
   calls.stub("setup_apply", []);
   calls.stub("resolve_character_names", {});
   // Only the default: a test that stubbed its own plan before mounting keeps it.
   if (!calls.stubbed("setup_preview")) calls.stub("setup_preview", PLAN);
-  render(BatchView, { props: { openCharPath: openPath, openUserPath: null, onClose: () => {} } });
+  render(BatchView, { props: { openCharPath: openPath, openUserPath: null, onClose: () => {}, onApplied } });
   // The component discovers profiles and the roster on mount; nothing renders
   // a target row until both land.
   await waitFor(() => expect(targetRow(90000002)).toBeTruthy());
@@ -576,13 +576,13 @@ describe("merging ship slot layouts", () => {
     conflicts: [{ ship_id: 90000501, kept_from: `${DIR}/core_user_80000002.dat`, overridden: [`${DIR}/core_user_80000001.dat`] }],
   };
 
-  async function mountRacks() {
+  async function mountRacks(onApplied?: (w: string[]) => void) {
     calls.stub("slot_order_merge_preview", MERGE_PLAN);
     calls.stub("slot_order_merge_apply", [
       { path: `${DIR}/core_user_80000001.dat`, ok: true, backup_path: "b", error: null },
       { path: `${DIR}/core_user_80000002.dat`, ok: true, backup_path: null, error: null },
     ]);
-    await mount();
+    await mount(undefined, onApplied);
     await fireEvent.click(screen.getByLabelText("Ship slot layouts, merged across the profile"));
   }
 
@@ -609,5 +609,22 @@ describe("merging ship slot layouts", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await waitFor(() =>
       expect(calls.of("slot_order_merge_apply")[0]?.args).toEqual({ files: [`${DIR}/core_user_80000001.dat`] }));
+  });
+
+  test("onApplied reports only the files the merge actually wrote", async () => {
+    const onApplied = vi.fn();
+    await mountRacks(onApplied);
+    await screen.findByText(/gains 2 ships/);
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith([`${DIR}/core_user_80000001.dat`]));
+  });
+
+  test("unticking every account file leaves Merge disabled", async () => {
+    await mountRacks();
+    await screen.findByText(/gains 2 ships/);
+    await fireEvent.click(accountBox(80000001));
+    await fireEvent.click(accountBox(80000002));
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(false));
+    expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
