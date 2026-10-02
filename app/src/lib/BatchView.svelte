@@ -260,8 +260,10 @@
   let mergeSeq = 0;
   $effect(() => {
     const files = effectiveTargets;
-    if (!racksMode || files.length === 0) { mergePlan = null; return; }
     const seq = ++mergeSeq;
+    // Cleared before the await: the shown plan must always describe the current ticks.
+    mergePlan = null;
+    if (!racksMode || files.length === 0) return;
     api.slotOrderMergePreview(files)
       .then((p) => { if (seq === mergeSeq) mergePlan = p; })
       .catch(() => { if (seq === mergeSeq) mergePlan = null; });
@@ -320,7 +322,7 @@
   let results = $state<BatchTargetResult[] | null>(null);
   const canApply = $derived(
     racksMode
-      ? mergeWrites > 0 && !busy
+      ? mergeWrites > 0 && effectiveTargets.length > 0 && !busy
       : fileMode
       ? !!sourceFile && effectiveTargets.length > 0 && !busy
       : !!batchSource && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
