@@ -28,6 +28,7 @@ use settings_model::{
     project_chat, ChatPanel,
     project_fleet, set_broadcast_colour, set_fleet_field as model_set_fleet_field,
     set_watchlist_colour as model_set_watchlist_colour, Fleet,
+    project_slot_orders, slot_order_add, slot_order_copy, slot_order_remove, slot_order_set, slot_order_swap, SlotEntry,
 };
 
 use crate::accounts;
@@ -523,6 +524,38 @@ pub fn set_fleet_colour(state: &AppState, broadcast: &str, rgb: Option<[f64; 3]>
 pub fn set_watchlist_colour(state: &AppState, char_id: u64, rgb: Option<[f64; 3]>) -> Result<Fleet, ErrDto> {
     edit_slot(state, Slot::Char, |v| model_set_watchlist_colour(v, char_id, rgb), |e| coded_err("fleet", e))?;
     fleet_settings(state)
+}
+
+/// Every ship's HUD slot order in the open account file (spec 2026-10-02 §3.2).
+pub fn slot_orders(state: &AppState) -> Result<Vec<SlotEntry>, ErrDto> {
+    let guard = state.user.lock().unwrap();
+    let doc = guard.as_ref().ok_or_else(|| no_document(Slot::User))?;
+    Ok(project_slot_orders(&doc.value))
+}
+
+pub fn add_slot_order(state: &AppState, ship_id: u64, from: Option<u64>) -> Result<Vec<SlotEntry>, ErrDto> {
+    edit_slot(state, Slot::User, |v| slot_order_add(v, ship_id, from), |e| coded_err("slot_order", e))?;
+    slot_orders(state)
+}
+
+pub fn set_slot_order(state: &AppState, ship_id: u64, order: &[u8]) -> Result<Vec<SlotEntry>, ErrDto> {
+    edit_slot(state, Slot::User, |v| slot_order_set(v, ship_id, order), |e| coded_err("slot_order", e))?;
+    slot_orders(state)
+}
+
+pub fn remove_slot_order(state: &AppState, ship_id: u64) -> Result<Vec<SlotEntry>, ErrDto> {
+    edit_slot(state, Slot::User, |v| slot_order_remove(v, ship_id), |e| coded_err("slot_order", e))?;
+    slot_orders(state)
+}
+
+pub fn swap_slot_order(state: &AppState, ship_id: u64, a: u8, b: u8) -> Result<Vec<SlotEntry>, ErrDto> {
+    edit_slot(state, Slot::User, |v| slot_order_swap(v, ship_id, a, b), |e| coded_err("slot_order", e))?;
+    slot_orders(state)
+}
+
+pub fn copy_slot_order(state: &AppState, from: u64, to: &[u64]) -> Result<Vec<SlotEntry>, ErrDto> {
+    edit_slot(state, Slot::User, |v| slot_order_copy(v, from, to), |e| coded_err("slot_order", e))?;
+    slot_orders(state)
 }
 
 pub fn restore_backup(state: &AppState, slot: Slot, backup_path: &str) -> Result<OpenOutcome, ErrDto> {
@@ -2178,6 +2211,30 @@ mod tests {
         assert!(f.watchlist.is_empty());
         roundtrips(&state, Slot::Char);
         assert_eq!(set_fleet_colour(&state, "Target", None).unwrap_err().code, "no_document");
+    }
+
+    #[test]
+    fn slot_order_edits_land_in_the_account_file_one_undo_step_each() {
+        let state = AppState::new();
+        assert_eq!(slot_orders(&state).unwrap_err().code, "no_document");
+        let path = temp_file("slot-user", &fleet_doc_bytes());
+        open_file(&state, Slot::User, &path.to_string_lossy()).expect("open");
+        assert!(slot_orders(&state).unwrap().is_empty());
+
+        let s = add_slot_order(&state, 90000001, None).expect("add");
+        assert_eq!(s[0].order, Some(settings_model::DEFAULT_ORDER));
+        let s = swap_slot_order(&state, 90000001, 27, 19).expect("swap");
+        assert_eq!(s[0].order.unwrap()[0], 19);
+        let s = copy_slot_order(&state, 90000001, &[90000002]).expect("copy");
+        assert_eq!(s.len(), 2);
+        let s = remove_slot_order(&state, 90000002).expect("remove");
+        assert_eq!(s.len(), 1);
+
+        assert_eq!(add_slot_order(&state, 90000001, None).unwrap_err().code, "already_present");
+        assert_eq!(set_slot_order(&state, 90000001, &[27]).unwrap_err().code, "invalid_order");
+        assert_eq!(remove_slot_order(&state, 90000009).unwrap_err().code, "missing");
+        roundtrips(&state, Slot::User);
+        assert_eq!(undo::undo_state(&state).depth, 4, "four edits, four steps; refusals add none");
     }
 
     /// char -> ui -> neocomButtonRawData `(ts, List)` with two `utillib.KeyVal`
