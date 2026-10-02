@@ -79,6 +79,17 @@ describe("the racks view", () => {
     await waitFor(() => expect(calls.of("slot_order_copy")[0]?.args).toEqual({ from: 90000001, to: [90000003] }));
   });
 
+  test("copy skips a ticked ship the filter has hidden", async () => {
+    mount([...SHIPS, { ship_id: 90000003, order: DEFAULT }, { ship_id: 90000004, order: DEFAULT }]);
+    await fireEvent.click(await screen.findByText("90000001"));
+    await fireEvent.click(screen.getByLabelText("Copy to 90000003"));
+    await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "90000004" } });
+    await fireEvent.click(await screen.findByLabelText("Copy to 90000004"));
+    expect(screen.queryByLabelText("Copy to 90000003")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Copy layout" }));
+    await waitFor(() => expect(calls.of("slot_order_copy")[0]?.args).toEqual({ from: 90000001, to: [90000004] }));
+  });
+
   test("a refused write shows the backend's sentence", async () => {
     mount();
     calls.stub("slot_order_swap", () => Promise.reject({ code: "missing", message: "Ship 90000001 has no layout here." }));

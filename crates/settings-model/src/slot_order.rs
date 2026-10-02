@@ -512,6 +512,9 @@ mod tests {
         let mut a2 = a.clone();
         apply_merge(&mut a2, &m.orders).unwrap();
         assert_eq!(orders(&a2), orders(&a), "the unreadable entry is left exactly as it was");
+        let raw = |d: &Value| map_of(d).iter().find(|(k, _)| *k == Value::Int(90000003)).map(|(_, v)| v.clone());
+        assert!(raw(&a).is_some());
+        assert_eq!(raw(&a2), raw(&a), "its stored value is untouched, not merely still unreadable");
     }
 
     #[test]

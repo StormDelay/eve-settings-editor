@@ -450,6 +450,16 @@ fn fleet_op(state: &AppState, a: &Args) -> Result<(), Value> {
     .map_err(fail)
 }
 
+/// The account files a merge defaults to: identified ones only, so a parked
+/// backup copy (`core_user_<id> - old.dat`, discovered with no id) is left alone.
+fn default_merge_files(files: &[settings_model::SettingsFile]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|f| f.kind == settings_model::FileKind::User && f.id.is_some())
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect()
+}
+
 /// Ships with their racks as labels, top/middle/bottom, so the model never
 /// needs the flag table.
 fn slot_order_view(ships: &[settings_model::SlotEntry]) -> Value {
@@ -653,11 +663,7 @@ impl EveMcp {
         }
         let profiles = discover(&self.roots);
         let p = profiles.first().ok_or_else(|| err("no_profile", "No EVE settings folder was found."))?;
-        Ok(p.files
-            .iter()
-            .filter(|f| f.kind == settings_model::FileKind::User)
-            .map(|f| f.path.to_string_lossy().into_owned())
-            .collect())
+        Ok(default_merge_files(&p.files))
     }
 
     fn fleet_get(&self) -> ToolResult {
@@ -3670,6 +3676,20 @@ mod tests {
         let all = s.call("slot_order_merge_preview", &Args::new()).unwrap();
         let paths: Vec<&str> = all["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
         assert!(!paths.is_empty() && paths.iter().all(|p| p.contains("core_user_")), "{all}");
+    }
+
+    #[test]
+    fn the_default_merge_selection_skips_an_id_less_parked_copy() {
+        let f = |name: &str, id: Option<u64>| settings_model::SettingsFile {
+            path: name.into(),
+            file_name: name.into(),
+            kind: settings_model::FileKind::User,
+            id,
+            size: 1,
+            modified_unix: None,
+        };
+        let files = [f("core_user_80000001.dat", Some(80000001)), f("core_user_80000001 - old.dat", None)];
+        assert_eq!(default_merge_files(&files), vec!["core_user_80000001.dat".to_string()]);
     }
 
     #[test]
