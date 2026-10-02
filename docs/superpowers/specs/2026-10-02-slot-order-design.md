@@ -11,7 +11,7 @@ and a fresh account starts with no arrangements at all.
 
 This slice ships:
 
-1. **A Slots view** that lists every ship id in the open account file and edits
+1. **A Racks view** that lists every ship id in the open account file and edits
    its layout: drag to swap two positions, add a ship, remove one, and copy one
    ship's layout onto others.
 2. **A folder merge** in the batch view. It collects every ship layout from the
@@ -80,6 +80,9 @@ pub fn project(user: &Value) -> Vec<SlotEntry>
 pub fn add(user: &mut Value, ship_id: u64, from: Option<u64>) -> Result<(), SlotOrderError>
 pub fn set(user: &mut Value, ship_id: u64, order: [u8; 24]) -> Result<(), SlotOrderError>
 pub fn remove(user: &mut Value, ship_id: u64) -> Result<(), SlotOrderError>
+pub fn swap(user: &mut Value, ship_id: u64, a: u8, b: u8) -> Result<(), SlotOrderError> // by flag
+pub fn slot_label(flag: u8) -> String          // 27 -> "H1", 19 -> "M1", 11 -> "L1"
+pub fn parse_slot(s: &str) -> Option<u8>       // "H1" or "27" -> 27
 pub fn copy(user: &mut Value, from: u64, to: &[u64]) -> Result<(), SlotOrderError>
 pub fn merge(files: &[(PathBuf, SystemTime, &Value)]) -> Merge
 ```
@@ -161,9 +164,11 @@ written, and an unticked file is neither.
 
 ## 4. UI
 
-### 4.1 The Slots view
+### 4.1 The Racks view
 
-- `View` gains `"slots"`, placed before Raw. It is account-scoped
+- `View` gains `"racks"` (label **Racks**, EVE's own word for a slot row), placed
+  before Raw. Not `"slots"`: the shell already says `subject.slots` for the
+  char/user document pair. It is account-scoped
   (`ACCOUNT_SCOPED` → `ScopeBanner`) and available when an account file is open.
 - **Left:** a filterable list of ship ids (`SearchField` filtering by
   substring). Unreadable entries show a **unreadable** chip.
@@ -196,9 +201,9 @@ profile"**:
 
 ## 5. MCP
 
-- `slot_order_get` returns `{ships: [{ship_id, order, rows: {top, middle,
-  bottom}}]}`. `rows` names each position's flag as `H1`…`L8`, so the model
-  never needs the flag table.
+- `slot_order_get` returns `{ships: [{ship_id, rows: {top, middle, bottom}}]}`,
+  each row 8 labels `H1`…`L8`, so the model never needs the flag table. An
+  unreadable entry is `{ship_id, unreadable: true}`.
 - `slot_order_edit` is a batch, like `fleet_edit` (one undo step, first failure
   rolls back). Ops:
   - `add {ship_id, from?}` adds a ship. It starts from another ship's order,
@@ -207,9 +212,12 @@ profile"**:
   - `remove {ship_id}` removes the ship, and with it any custom layout: the
     client falls back to the default order. It is refused when the ship is
     absent.
-  - `set {ship_id, order}` replaces an existing ship's order, given as 24
-    labels or 24 flags. It is refused when the ship is absent; use `add`.
-  - `swap {ship_id, a, b}` swaps two positions, given as positions or labels.
+  - `set {ship_id, order}` replaces an existing ship's order: 24 strings, each
+    a label (`H1`) or a flag (`"27"`). The MCP schema rules forbid a union
+    type, so both forms are strings. It is refused when the ship is absent; use
+    `add`.
+  - `swap {ship_id, a, b}` swaps two slots, each a label or a flag string. It
+    swaps by slot, exactly as the client's `SwapSlots(flag1, flag2)` does.
   - `copy {from, to: []}` adds or overwrites each target.
 
   Nothing reaches disk until `save`.
@@ -246,11 +254,11 @@ All fixtures are synthetic: ships `90000001…`, accounts `90000101…`.
 
 - `docs/format-notes.md` gains a section "Ship slot order", holding §2 above.
 - `docs/settings-field-reference.md`'s `slotOrder` mention points to it.
-- `CHANGELOG.md` gains one line per user-visible feature.
+- `CHANGELOG.md` is written at release time, as for every other feature.
 
 ## 8. Definition of done
 
-- The Slots view and the batch merge work in the app.
+- The Racks view and the batch merge work in the app.
 - The MCP tools round-trip.
 - `cargo test` and `npm test` pass (verified by exit code).
 - In-game check: after a merge, a ship arranged on account A shows the same HUD
