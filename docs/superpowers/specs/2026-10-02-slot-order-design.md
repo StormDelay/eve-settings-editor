@@ -114,7 +114,7 @@ pub fn merge(files: &[(PathBuf, SystemTime, &Value)]) -> Merge
   - Unreadable entries never take part. They neither win nor get overwritten in
     their own file.
   - It returns the merged map, a `conflicts` list (`ship_id`, the winning file,
-    the losing files), and per file `{ gained, overwritten }`: the counts of
+    the losing files), and per file `{ gained, changed }`: the counts of
     ships it lacks and of ships whose order differs from the merged one.
 
 `slotOrder` is a whole-`ui`-key edit, so inlining follows the existing
@@ -137,7 +137,7 @@ Beside `copy_files`, with the same path checks against discovery:
   - Every path must be a discovered **user** file, otherwise that row is
     excluded with its reason.
   - It decodes each file, runs `merge`, and returns per file
-    `{ path, account_id, gained, overwritten, unchanged: bool }` plus
+    `{ path, account_id, gained, changed, error }` plus
     `conflicts`.
 - `slot_order_merge_apply(roots, files) -> Vec<TargetResult>`
   - It recomputes the plan from disk, so the files can't change between preview
@@ -176,8 +176,8 @@ written, and an unticked file is neither.
   round buttons, the middle row offset half a column (the shape `DetailParts`
   already draws). Each button shows its flag as **H1–H8 / M1–M8 / L1–L8**,
   coloured by rack. Dragging one button onto another swaps them, which is
-  exactly `SwapSlots`. Keyboard: select a button, then the arrow keys and Enter
-  swap.
+  exactly `SwapSlots`. Every slot is a button, so the keyboard needs no extra handling: Tab to a
+  slot and press Enter, then do the same on a second slot to swap them.
 - Actions on the selected ship:
   - **Remove ship** = remove the entry, which resets the ship to the default
     order in-game.
@@ -238,7 +238,7 @@ All fixtures are synthetic: ships `90000001…`, accounts `90000101…`.
   - minting on an absent key;
   - an unreadable entry projects as `None` and survives a merge untouched;
   - `merge` with three files: a union, one conflict won by the newest mtime, and
-    the per-file gained/overwritten counts.
+    the per-file gained/changed counts.
 - **Setup:**
   - merge preview and apply over temp copies, with a backup per changed file;
   - an unchanged file is not written;
