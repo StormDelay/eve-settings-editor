@@ -53,7 +53,8 @@ pub use fleet::{
 pub use slot_order::{
     add as slot_order_add, copy as slot_order_copy, parse_slot, project as project_slot_orders,
     remove as slot_order_remove, set as slot_order_set, slot_label, swap as slot_order_swap, SlotEntry,
-    SlotOrder, SlotOrderError, DEFAULT_ORDER,
+    SlotOrder, SlotOrderError, DEFAULT_ORDER, merge as slot_order_merge, merge_diff as slot_order_merge_diff,
+    write_merge as slot_order_write_merge, SlotConflict, SlotMerge,
 };
 pub use chat::{is_leavable, leave_chat_account, leave_chat_char, project_chat, set_chat_splits, ChatError, ChatLeaveError, ChatPanel};
 pub use neocom::{add as neocom_add, project_neocom, remove as neocom_remove, reorder as neocom_reorder, reset as neocom_reset, NeocomBar, NeocomButton, NeocomError};
