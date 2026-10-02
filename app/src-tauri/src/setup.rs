@@ -14,7 +14,8 @@ use blue_marshal::Value;
 use serde::Serialize;
 use settings_model::{
     apply_categories_to, discover, extract_categories, full_copy_to,
-    window_layout as project_window_layout, Category, FileKind,
+    window_layout as project_window_layout, Category, FileKind, slot_order_merge,
+    slot_order_merge_diff, slot_order_write_merge, SlotMerge,
 };
 
 use crate::accounts;
@@ -655,6 +656,120 @@ fn ok_result(path: &str, backup: String) -> TargetResult {
 }
 fn err_result(path: &str, error: String) -> TargetResult {
     TargetResult { path: path.to_string(), ok: false, backup_path: None, error: Some(error) }
+}
+
+/// One ticked account file in a slot-order merge plan.
+#[derive(Debug, Serialize)]
+pub struct MergeFile {
+    pub path: String,
+    pub account_id: Option<u64>,
+    /// Ships this file does not have yet.
+    pub gained: usize,
+    /// Ships whose order here differs from the merged one.
+    pub changed: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergeConflict {
+    pub ship_id: u64,
+    pub kept_from: String,
+    pub overridden: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergePlan {
+    pub files: Vec<MergeFile>,
+    pub conflicts: Vec<MergeConflict>,
+}
+
+struct MergeSource {
+    path: String,
+    account_id: Option<u64>,
+    modified: u64,
+    doc: Result<Value, String>,
+}
+
+/// The ticked files, sorted by path (so equal mtimes break ties the same way
+/// every run), each checked against discovery: only a real ACCOUNT file is
+/// read, as `copy_files` checks kinds. Paths come from the frontend.
+fn merge_sources(roots: &[PathBuf], files: &[String]) -> Vec<MergeSource> {
+    let known: HashMap<PathBuf, (Option<u64>, u64)> = discover(roots)
+        .into_iter()
+        .flat_map(|p| p.files)
+        .filter(|f| f.kind == FileKind::User)
+        .map(|f| (f.path, (f.id, f.modified_unix.unwrap_or(0))))
+        .collect();
+    let mut paths = files.to_vec();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| match known.get(Path::new(&path)) {
+            None => MergeSource { path, account_id: None, modified: 0, doc: Err("Not an account settings file.".into()) },
+            Some(&(account_id, modified)) => {
+                let doc = fs::read(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| blue_marshal::decode(&b).map_err(|e| e.to_string()));
+                MergeSource { path, account_id, modified, doc }
+            }
+        })
+        .collect()
+}
+
+/// The merge over the readable sources, plus the map from merge-input index
+/// back to `sources` index.
+fn merge_of(sources: &[MergeSource]) -> (SlotMerge, Vec<usize>) {
+    let readable: Vec<usize> = (0..sources.len()).filter(|&i| sources[i].doc.is_ok()).collect();
+    let inputs: Vec<(&Value, u64)> = readable
+        .iter()
+        .map(|&i| (sources[i].doc.as_ref().expect("filtered to Ok"), sources[i].modified))
+        .collect();
+    (slot_order_merge(&inputs), readable)
+}
+
+/// Plan a slot-order merge across the ticked account files, writing nothing.
+pub fn slot_order_merge_preview(roots: &[PathBuf], files: &[String]) -> MergePlan {
+    let sources = merge_sources(roots, files);
+    let (m, readable) = merge_of(&sources);
+    MergePlan {
+        files: sources
+            .iter()
+            .map(|s| {
+                let (gained, changed) = s.doc.as_ref().map_or((0, 0), |d| slot_order_merge_diff(d, &m.orders));
+                MergeFile { path: s.path.clone(), account_id: s.account_id, gained, changed, error: s.doc.as_ref().err().cloned() }
+            })
+            .collect(),
+        conflicts: m
+            .conflicts
+            .iter()
+            .map(|c| MergeConflict {
+                ship_id: c.ship_id,
+                kept_from: sources[readable[c.winner]].path.clone(),
+                overridden: c.losers.iter().map(|&i| sources[readable[i]].path.clone()).collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Write the merge into every ticked account file that changes, each backed up
+/// first. Recomputed from disk, never from an earlier preview. A file with
+/// nothing to change is not touched: `ok` with no backup.
+pub fn slot_order_merge_apply(roots: &[PathBuf], files: &[String]) -> Vec<TargetResult> {
+    let sources = merge_sources(roots, files);
+    let (m, _) = merge_of(&sources);
+    sources
+        .iter()
+        .map(|s| match &s.doc {
+            Err(e) => err_result(&s.path, e.clone()),
+            Ok(d) if slot_order_merge_diff(d, &m.orders) == (0, 0) => {
+                TargetResult { path: s.path.clone(), ok: true, backup_path: None, error: None }
+            }
+            Ok(_) => slot_order_write_merge(Path::new(&s.path), &m.orders)
+                .map(|r| ok_result(&s.path, r.backup_path.to_string_lossy().into_owned()))
+                .unwrap_or_else(|e| err_result(&s.path, e)),
+        })
+        .collect()
 }
 
 /// Create a preset from the OPEN documents, so unsaved edits are captured.
@@ -1648,6 +1763,92 @@ mod tests {
             vec![(Category::Overview, Some(Value::Dict(vec![(bb("marker"), bb("FROM_DEFAULT"))])))],
             "must carry the source's OWN profile's account settings, not another profile's"
         );
+    }
+
+    fn merge_root(tag: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("slot-merge-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let prof = base.join("c_eve_sharedcache_tq_tranquility").join("settings_Default");
+        fs::create_dir_all(&prof).unwrap();
+        (base, prof)
+    }
+
+    fn slot_doc(entries: &[(i64, [u8; 24])]) -> Vec<u8> {
+        let map = Value::Dict(
+            entries
+                .iter()
+                .map(|(id, o)| (Value::Int(*id), Value::List(o.iter().map(|&f| Value::Int(f.into())).collect())))
+                .collect(),
+        );
+        let ui = Value::Dict(vec![(b("slotOrder"), Value::Tuple(vec![Value::Long(vec![0; 8]), map]))]);
+        encode(&Value::Dict(vec![(b("ui"), ui)])).unwrap()
+    }
+
+    fn write_at(path: &Path, bytes: &[u8], secs: u64) {
+        fs::write(path, bytes).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    fn slot_orders_in(path: &Path) -> Vec<(u64, Option<[u8; 24]>)> {
+        let v = blue_marshal::decode(&fs::read(path).unwrap()).unwrap();
+        let mut o: Vec<_> = settings_model::project_slot_orders(&v).into_iter().map(|e| (e.ship_id, e.order)).collect();
+        o.sort();
+        o
+    }
+
+    #[test]
+    fn slot_order_merge_previews_then_writes_the_union_into_every_ticked_account_file() {
+        let (root, prof) = merge_root("union");
+        let d = settings_model::DEFAULT_ORDER;
+        let mut custom = d;
+        custom.swap(0, 8);
+        let big: i64 = 1_024_000_000_001; // a real-sized item id: a Long key on the wire
+        let a = prof.join("core_user_80000001.dat");
+        let bb = prof.join("core_user_80000002.dat");
+        let c = prof.join("core_user_80000003.dat");
+        let ch = prof.join("core_char_90000101.dat");
+        write_at(&a, &slot_doc(&[(90000001, d), (90000002, d)]), 1_000);
+        write_at(&bb, &slot_doc(&[(90000002, custom), (big, d)]), 2_000);
+        write_at(&c, &slot_doc(&[(90000002, d), (90000009, d)]), 3_000); // newest, but never ticked
+        fs::write(&ch, slot_doc(&[])).unwrap();
+        let roots = vec![root];
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let ticked = vec![s(&a), s(&bb), s(&ch)];
+
+        let plan = slot_order_merge_preview(&roots, &ticked);
+        let row = |p: &Path| plan.files.iter().find(|f| Path::new(&f.path) == p).unwrap();
+        assert_eq!((row(&a).gained, row(&a).changed), (1, 1));
+        assert_eq!((row(&bb).gained, row(&bb).changed), (1, 0));
+        assert_eq!(row(&a).account_id, Some(80000001));
+        assert_eq!(row(&ch).error.as_deref(), Some("Not an account settings file."));
+        assert!(plan.files.iter().all(|f| Path::new(&f.path) != c), "an unticked file is not in the plan");
+        assert_eq!(plan.conflicts.len(), 1);
+        assert_eq!(plan.conflicts[0].ship_id, 90000002);
+        assert_eq!(Path::new(&plan.conflicts[0].kept_from), bb.as_path(), "newest TICKED file wins");
+
+        let c_before = fs::read(&c).unwrap();
+        let results = slot_order_merge_apply(&roots, &ticked);
+        let res = |p: &Path| results.iter().find(|r| Path::new(&r.path) == p).unwrap();
+        for p in [&a, &bb] {
+            assert!(res(p).ok && res(p).backup_path.is_some(), "{:?}", res(p));
+            assert_eq!(
+                slot_orders_in(p),
+                vec![(90000001, Some(d)), (90000002, Some(custom)), (big as u64, Some(d))]
+            );
+        }
+        assert!(!res(&ch).ok);
+        assert_eq!(fs::read(&c).unwrap(), c_before, "an unticked file is never written");
+
+        let mtime = |p: &Path| fs::metadata(p).unwrap().modified().unwrap();
+        let before = (mtime(&a), mtime(&bb));
+        let again = slot_order_merge_apply(&roots, &ticked[..2]);
+        assert!(again.iter().all(|r| r.ok && r.backup_path.is_none()), "{again:?}");
+        assert_eq!((mtime(&a), mtime(&bb)), before, "a second run writes nothing");
     }
 
 }
