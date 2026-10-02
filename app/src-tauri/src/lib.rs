@@ -584,6 +584,30 @@ fn set_watchlist_colour(
 ) -> Result<settings_model::Fleet, ErrDto> {
     ops::set_watchlist_colour(&state, char_id, rgb)
 }
+#[tauri::command]
+fn slot_orders(state: tauri::State<'_, AppState>) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::slot_orders(&state)
+}
+#[tauri::command]
+fn slot_order_add(state: tauri::State<'_, AppState>, ship_id: u64, from: Option<u64>) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::add_slot_order(&state, ship_id, from)
+}
+#[tauri::command]
+fn slot_order_set(state: tauri::State<'_, AppState>, ship_id: u64, order: Vec<u8>) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::set_slot_order(&state, ship_id, &order)
+}
+#[tauri::command]
+fn slot_order_remove(state: tauri::State<'_, AppState>, ship_id: u64) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::remove_slot_order(&state, ship_id)
+}
+#[tauri::command]
+fn slot_order_swap(state: tauri::State<'_, AppState>, ship_id: u64, a: u8, b: u8) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::swap_slot_order(&state, ship_id, a, b)
+}
+#[tauri::command]
+fn slot_order_copy(state: tauri::State<'_, AppState>, from: u64, to: Vec<u64>) -> Result<Vec<settings_model::SlotEntry>, ErrDto> {
+    ops::copy_slot_order(&state, from, &to)
+}
 
 #[tauri::command]
 fn setup_preview(
@@ -779,6 +803,7 @@ pub fn run() {
             scene_list,
             hud_layout, set_hud_value,
             fleet_settings, set_fleet_field, set_fleet_colour, set_watchlist_colour,
+            slot_orders, slot_order_add, slot_order_set, slot_order_remove, slot_order_swap, slot_order_copy,
             preferences, set_preferences,
             mcp_setup::mcp_setup_info, mcp_setup::mcp_set_claude_desktop,
             check_for_update

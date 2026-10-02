@@ -201,6 +201,13 @@ export interface Fleet {
   char_open: boolean;
   user_open: boolean;
 }
+/** One ship's HUD arrangement: 24 inventory flags, position p drawn at rack
+ *  row p/8 (top, middle, bottom), column p%8. `null`: the stored list is not
+ *  a readable arrangement. Ship ids are item ids (~1e12), safe as numbers. */
+export interface SlotEntry {
+  ship_id: number;
+  order: number[] | null;
+}
 export interface FoundCharacter {
   id: number;
   name: string;
@@ -568,6 +575,15 @@ export const api = {
     invoke<Fleet>("set_fleet_colour", { broadcast, rgb }),
   setWatchlistColour: (charId: number, rgb: Rgb | null) =>
     invoke<Fleet>("set_watchlist_colour", { charId, rgb }),
+  slotOrders: () => invoke<SlotEntry[]>("slot_orders"),
+  addSlotOrder: (shipId: number, from: number | null) =>
+    invoke<SlotEntry[]>("slot_order_add", { shipId, from }),
+  setSlotOrder: (shipId: number, order: number[]) =>
+    invoke<SlotEntry[]>("slot_order_set", { shipId, order }),
+  removeSlotOrder: (shipId: number) => invoke<SlotEntry[]>("slot_order_remove", { shipId }),
+  swapSlots: (shipId: number, a: number, b: number) =>
+    invoke<SlotEntry[]>("slot_order_swap", { shipId, a, b }),
+  copySlotOrder: (from: number, to: number[]) => invoke<SlotEntry[]>("slot_order_copy", { from, to }),
   /** `null` when ESI knows no character by that name or id; rejects with code
    *  `esi` when ESI could not be reached — the two read differently to the user. */
   lookupCharacter: (query: string) =>
