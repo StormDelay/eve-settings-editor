@@ -492,6 +492,23 @@ export interface BatchTargetResult {
   error: string | null;
 }
 
+export interface SlotMergeFile {
+  path: string;
+  account_id: number | null;
+  gained: number;
+  changed: number;
+  error: string | null;
+}
+export interface SlotMergeConflict {
+  ship_id: number;
+  kept_from: string;
+  overridden: string[];
+}
+export interface SlotMergePlan {
+  files: SlotMergeFile[];
+  conflicts: SlotMergeConflict[];
+}
+
 export type Aspect = "layout" | "overview" | "autofill" | "keybinds" | "probe_formations" | "fleet" | "everything";
 export interface CharWrite {
   char_id: number;
@@ -672,6 +689,10 @@ export const api = {
     invoke<BatchTargetResult[]>("setup_apply", { source, targetCharPaths, aspects, allowOtherFolders }),
   copyFiles: (source: string, targets: string[]) =>
     invoke<BatchTargetResult[]>("copy_files", { source, targets }),
+  slotOrderMergePreview: (files: string[]) =>
+    invoke<SlotMergePlan>("slot_order_merge_preview", { files }),
+  slotOrderMergeApply: (files: string[]) =>
+    invoke<BatchTargetResult[]>("slot_order_merge_apply", { files }),
   // The overview view already owns `presetCreate`/`presetRename`/`presetDelete`
   // for EVE's own overview filter presets — these are the settings-preset
   // library, hence the longer names.
