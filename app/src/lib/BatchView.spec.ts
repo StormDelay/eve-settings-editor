@@ -566,3 +566,48 @@ test("a preset source offers only what it holds and sends dir verbatim", async (
     anchor_dir: DIR,
   });
 });
+
+describe("merging ship slot layouts", () => {
+  const MERGE_PLAN = {
+    files: [
+      { path: `${DIR}/core_user_80000001.dat`, account_id: 80000001, gained: 2, changed: 0, error: null },
+      { path: `${DIR}/core_user_80000002.dat`, account_id: 80000002, gained: 0, changed: 0, error: null },
+    ],
+    conflicts: [{ ship_id: 90000501, kept_from: `${DIR}/core_user_80000002.dat`, overridden: [`${DIR}/core_user_80000001.dat`] }],
+  };
+
+  async function mountRacks() {
+    calls.stub("slot_order_merge_preview", MERGE_PLAN);
+    calls.stub("slot_order_merge_apply", [
+      { path: `${DIR}/core_user_80000001.dat`, ok: true, backup_path: "b", error: null },
+      { path: `${DIR}/core_user_80000002.dat`, ok: true, backup_path: null, error: null },
+    ]);
+    await mount();
+    await fireEvent.click(screen.getByLabelText("Ship slot layouts, merged across the profile"));
+  }
+
+  const accountBox = (id: number) =>
+    rowIn("Account files", `core_user_${id}.dat`).querySelector("input")! as HTMLInputElement;
+
+  test("lists only the profile's account files, all ticked, and previews the merge", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000001).checked).toBe(true));
+    expect(accountBox(80000002).checked).toBe(true);
+    expect(() => rowIn("Account files", "core_char_")).toThrow();
+    await waitFor(() => expect(calls.of("slot_order_merge_preview").length).toBeGreaterThan(0));
+    expect(await screen.findByText(/gains 2 ships/)).toBeTruthy();
+    expect(screen.getByText(/no change/)).toBeTruthy();
+    expect(screen.getByText(/90000501/)).toBeTruthy();
+  });
+
+  test("an unticked file is left out of the merge and the write", async () => {
+    await mountRacks();
+    await waitFor(() => expect(accountBox(80000002).checked).toBe(true));
+    await fireEvent.click(accountBox(80000002));
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_preview").at(-1)!.args).toEqual({ files: [`${DIR}/core_user_80000001.dat`] }));
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() =>
+      expect(calls.of("slot_order_merge_apply")[0]?.args).toEqual({ files: [`${DIR}/core_user_80000001.dat`] }));
+  });
+});

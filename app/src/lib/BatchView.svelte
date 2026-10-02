@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, errMessage, type Profile, type Aspect, type SetupPlan, type BatchTargetResult, type BatchSource, type PresetInfo } from "./api";
+  import { api, errMessage, type Profile, type Aspect, type SetupPlan, type BatchTargetResult, type BatchSource, type PresetInfo, type SlotMergePlan } from "./api";
   import { byResolvedName, resolvedName } from "./filesort.svelte";
   import { primaryProfileDir, profileLabels } from "./profiles";
   import { accountsStore, loadRoster } from "./accounts.svelte";
@@ -74,12 +74,13 @@
   // other files of the same kind. No aspects and no pairing — the plain copy
   // the character-centric flow cannot express, because every aspect it offers
   // writes the account file and so needs to know which account that is.
-  let sourceKind = $state<"character" | "preset" | "file">("character");
+  let sourceKind = $state<"character" | "preset" | "file" | "racks">("character");
   let presetDir = $state<string | null>(null);
   const preset = $derived<PresetInfo | null>(allPresets().find((p) => p.dir === presetDir) ?? null);
 
   let sourceFile = $state<string | null>(null);
   const fileMode = $derived(sourceKind === "file");
+  const racksMode = $derived(sourceKind === "racks");
   // Every char AND user file, backups included: this mode addresses files by
   // path, so `core_char_123 - old.dat` is a legitimate pick at either end.
   const filesInScope = $derived(
@@ -150,8 +151,19 @@
         ),
       ),
   );
+  // The rack merge reads and writes the same ticked list: a ticked account file
+  // contributes its ships and receives everyone's; an unticked one is untouched.
+  // Its own folder only — the merge is a per-profile operation.
+  const accountFiles = $derived(
+    profiles
+      .filter((p) => p.dir === folder)
+      .flatMap((p) => p.files.filter((f) => f.kind === "user").map((f) => ({ ...f, dir: p.dir })))
+      .sort(byResolvedName),
+  );
   const candidates = $derived(
-    fileMode
+    racksMode
+      ? accountFiles
+      : fileMode
       ? fileTargets
       // A character cannot be its own copy target — but ONLY when it is the
       // source. `sourcePath` is seeded from the open file and never cleared on
@@ -168,7 +180,7 @@
   // Pairing only gates the character flow: a file copy writes the file you
   // picked, so it has no account to look up.
   const targetDisabled = (id: number | null) =>
-    !fileMode && anyAccountAspect && !(id != null && pairedIds.has(id));
+    !fileMode && !racksMode && anyAccountAspect && !(id != null && pairedIds.has(id));
 
   // The targets actually sent to the backend: the selected set minus any row the
   // current aspect selection excludes (an unpaired character under an account
@@ -176,7 +188,7 @@
   // keeps the UI honest — a disabled row never counts as a real target, and its
   // selection is preserved so it re-includes if the aspect choice changes back.
   const effectiveTargets = $derived(
-    fileMode
+    fileMode || racksMode
       ? [...selectedTargets]
       : [...selectedTargets].filter((p) => {
           const c = chars.find((x) => x.path === p);
@@ -238,6 +250,25 @@
     selectedTargets = new Set();
   });
 
+  // Default: every account file ticked. Re-ticks when the folder changes or
+  // discovery lands, which is when the list itself changes.
+  $effect(() => {
+    if (racksMode) selectedTargets = new Set(accountFiles.map((f) => f.path));
+  });
+
+  let mergePlan = $state<SlotMergePlan | null>(null);
+  let mergeSeq = 0;
+  $effect(() => {
+    const files = effectiveTargets;
+    if (!racksMode || files.length === 0) { mergePlan = null; return; }
+    const seq = ++mergeSeq;
+    api.slotOrderMergePreview(files)
+      .then((p) => { if (seq === mergeSeq) mergePlan = p; })
+      .catch(() => { if (seq === mergeSeq) mergePlan = null; });
+  });
+  const mergeWrites = $derived(mergePlan?.files.filter((f) => !f.error && f.gained + f.changed > 0).length ?? 0);
+  const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
   // Preview from the backend whenever source/aspects/targets settle. Guarded
   // by a request token so a slow, stale response can't clobber a newer plan.
   let plan = $state<SetupPlan | null>(null);
@@ -249,7 +280,7 @@
   // sibling writes it, and it may be the very one open), and the open character
   // file whenever the user sat on a user-scoped tab.
   const willWrite = $derived(
-    fileMode
+    fileMode || racksMode
       ? effectiveTargets
       : [...effectiveTargets, ...(plan?.account_writes ?? []).map((w) => w.path)],
   );
@@ -277,7 +308,7 @@
     const tgts = effectiveTargets;
     const allow = allowOtherFolders;
     // A file copy has no plan to fetch: the write list is exactly the ticked files.
-    if (fileMode || !src || asp.length === 0 || tgts.length === 0) { plan = null; return; }
+    if (fileMode || racksMode || !src || asp.length === 0 || tgts.length === 0) { plan = null; return; }
     const seq = ++previewSeq;
     api.setupPreview(src, tgts, asp as Aspect[], allow)
       .then((p) => { if (seq === previewSeq) plan = p; })
@@ -288,7 +319,9 @@
   let error = $state<string | null>(null);
   let results = $state<BatchTargetResult[] | null>(null);
   const canApply = $derived(
-    fileMode
+    racksMode
+      ? mergeWrites > 0 && !busy
+      : fileMode
       ? !!sourceFile && effectiveTargets.length > 0 && !busy
       : !!batchSource && selected.size > 0 && effectiveTargets.length > 0 && !busy &&
         !!plan && !plan.source_error && (plan.char_writes.length + plan.account_writes.length > 0),
@@ -297,7 +330,9 @@
   async function apply() {
     busy = true; error = null; results = null;
     try {
-      if (fileMode) {
+      if (racksMode) {
+        results = await api.slotOrderMergeApply(effectiveTargets);
+      } else if (fileMode) {
         if (!sourceFile) return;
         results = await api.copyFiles(sourceFile, effectiveTargets);
       } else {
@@ -307,7 +342,7 @@
       // Only what actually landed. The shell re-reads any slot in this list that
       // is open and clean, so every projection-based view refreshes through the
       // `savedAt` token it already watches. Not called when apply throws.
-      onApplied?.(results.filter((r) => r.ok).map((r) => r.path));
+      onApplied?.(results.filter((r) => r.ok && r.backup_path !== null).map((r) => r.path));
     } catch (e) {
       error = errMessage(e);
     } finally {
@@ -324,7 +359,7 @@
      varies moves to the subtitle, verbatim. -->
 <Sheet
   title="Copy settings"
-  subtitle={fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}
+  subtitle={racksMode ? "Merge ship slot layouts across accounts" : fileMode ? "Copy a file onto other files" : "Copy a setup to other characters"}
   titled
   placement="work"
   onclose={onClose}
@@ -345,6 +380,7 @@
     <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="character" label="A character" />
     <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="preset" label="A preset" />
     <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="file" label="A file, copied as-is" />
+    <Field kind="radio" name="sourceKind" bind:value={sourceKind} radioValue="racks" label="Ship slot layouts, merged across the profile" />
 
     {#if sourceKind === "character"}
       <Field
@@ -376,6 +412,11 @@
       {#if allPresets().length === 0}
         <EmptyState title="No presets yet — save one from the sidebar first." />
       {/if}
+    {:else if sourceKind === "racks"}
+      <InlineMessage>
+        Every ship arranged on any ticked account ends up on all of them. Where two accounts arrange
+        the same ship differently, the most recently saved account file wins.
+      </InlineMessage>
     {:else}
       <Field
         kind="select"
@@ -397,8 +438,8 @@
     {/if}
   </section>
 
-  {#if fileMode ? !!sourceFile : !!batchSource}
-    {#if !fileMode}
+  {#if racksMode || (fileMode ? !!sourceFile : !!batchSource)}
+    {#if !fileMode && !racksMode}
       <section>
         <div class="head">What to copy</div>
         {#each ASPECTS.filter((a) => offered.includes(a.key)) as a}
@@ -415,18 +456,18 @@
 
     <section>
       <div class="head">
-        {fileMode ? "Copy onto" : "Target characters"}
+        {racksMode ? "Account files" : fileMode ? "Copy onto" : "Target characters"}
         <!-- All / None. `Clear` here meant "untick", which collided with
              "Clear list" and "Clear all remembered text" two views away. -->
         <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={selectAllTargets}>
           All
         </Button>
         <Button variant="ghost" size="sm" class="linkbtn" type="button" onclick={clearTargets}>None</Button>
-        <Field kind="checkbox" label="Show other folders" bind:value={allowOtherFolders} />
+        {#if !racksMode}<Field kind="checkbox" label="Show other folders" bind:value={allowOtherFolders} />{/if}
       </div>
       {#if candidates.length === 0}
         <EmptyState
-          title={fileMode ? "No other file of this kind in reach." : "No other character files found."} />
+          title={racksMode ? "No account files in this profile." : fileMode ? "No other file of this kind in reach." : "No other character files found."} />
       {:else}
         <!-- The row stays a hand-written wrapping label rather than a Field: its
              caption is three spans, not a string, and BatchView.spec reads the
@@ -459,7 +500,24 @@
       </section>
     {/if}
 
-    {#if fileMode}
+    {#if racksMode}
+      {#if mergePlan}
+        <section class="preview">
+          <p>Will write {mergeWrites} file(s) — each is backed up first.</p>
+          {#each mergePlan.files as f}
+            <p class:muted={!f.error && f.gained + f.changed === 0}>
+              {f.account_id !== null ? `Account ${accountLabel(f.account_id)}` : fileName(f.path)}:
+              {#if f.error}{f.error}
+              {:else if f.gained + f.changed === 0}no change
+              {:else}gains {f.gained} ship{f.gained === 1 ? "" : "s"}, {f.changed} changed{/if}
+            </p>
+          {/each}
+          {#each mergePlan.conflicts as c}
+            <InlineMessage variant="warn">⚠ Ship {c.ship_id}: kept the layout from {fileName(c.kept_from)} (newest), replacing it in {c.overridden.map(fileName).join(", ")}.</InlineMessage>
+          {/each}
+        </section>
+      {/if}
+    {:else if fileMode}
       {#if effectiveTargets.length > 0}
         <section class="preview">
           <p>Will write {effectiveTargets.length} file(s) — each is backed up first.</p>
@@ -491,8 +549,8 @@
       <Button
         variant="primary"
         disabled={!canApply}
-        disabledReason={busy ? "A copy is already running" : "Pick a source and at least one target"}
-        onclick={apply}>{busy ? "Copying…" : "Copy"}</Button>
+        disabledReason={busy ? "A copy is already running" : racksMode ? "Nothing to merge — every ticked account already has every ship" : "Pick a source and at least one target"}
+        onclick={apply}>{busy ? (racksMode ? "Merging…" : "Copying…") : racksMode ? "Merge" : "Copy"}</Button>
       {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
     </section>
 
