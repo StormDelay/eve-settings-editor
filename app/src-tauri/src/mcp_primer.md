@@ -16,7 +16,7 @@ Rules:
 4. Every save is backed up first. `list_backups` and `restore_backup` undo a save; `undo` reverts an unsaved edit.
 5. Group ids come from `groups_search`; state ids and labels come from `overview_get` under `names.states`; EVE's built-in presets come from `builtin_presets`.
 
-Beyond the overview and probes, the same files hold: the window **layout** (`layout_get`, `layout_render` for a picture, `layout_edit`), the **Neocom** bar (`neocom_get`/`neocom_edit`) and **HUD** (`hud_get`/`hud_set`) — character file; **autofill** (`autofill_get`/`autofill_set`/`autofill_clear_all`), **keybinds** (`keybinds_get`/`keybind_set`) and **chat** splits (`chat_get`/`chat_set_splits`) — account file; **fleet** settings (`fleet_get`/`fleet_edit`, `lookup_character`) — both. Two operations work across files and WRITE IMMEDIATELY rather than through `save`: **copy settings** (`copy_preview`, then `copy_apply`; `copy_files` for a whole file) and **settings presets** (`settings_presets_list`, `settings_preset_edit`) — saved bundles this app keeps, unrelated to overview presets.
+Beyond the overview and probes, the same files hold: the window **layout** (`layout_get`, `layout_render` for a picture, `layout_edit`), the **Neocom** bar (`neocom_get`/`neocom_edit`) and **HUD** (`hud_get`/`hud_set`) — character file; **autofill** (`autofill_get`/`autofill_set`/`autofill_clear_all`), **keybinds** (`keybinds_get`/`keybind_set`) and **chat** splits (`chat_get`/`chat_set_splits`) and **ship HUD racks** (`slot_order_get`/`slot_order_edit`) — account file; **fleet** settings (`fleet_get`/`fleet_edit`, `lookup_character`) — both. Two operations work across files and WRITE IMMEDIATELY rather than through `save`: **copy settings** (`copy_preview`, then `copy_apply`; `copy_files` for a whole file), **merging ship racks** across account files (`slot_order_merge_preview`, then `slot_order_merge_apply`) and **settings presets** (`settings_presets_list`, `settings_preset_edit`) — saved bundles this app keeps, unrelated to overview presets.
 
 Unsure about a concept: `eve_guide` with `overview`, `presets`, `states`, `probes`, `layout`, `keybinds` or `copy`.
 
@@ -104,6 +104,10 @@ A **stack** is a tabbed container: its `members` are windows shown as tabs, draw
 ## keybinds
 
 A binding is optional modifiers plus one key, shown as `Ctrl+Alt+Q`. `keybinds_get` lists every command with a label and group; `combo` is what the player reads, `keys` the stored codes. `keybind_set` takes the key by name (`Q`, `F1`, `Num 5`, `Page Up` — the names that appear in `combo`) and `ctrl` / `alt` / `shift` flags; omit the key to unbind. A combo another command already holds moves to the new command and `stolen` names the losers — tell the user, since that command is now unbound. `available` false means the account never opened the in-game keybinding screen and has no table to edit yet.
+
+## racks
+
+EVE remembers how the modules on the ship HUD are arranged per ship: per hull, by the ship's item id, not per ship type. It is the account file's `slotOrder`, shared by every character on the account. Each ship is 24 buttons in three rows: top, middle (drawn half a button to the right), bottom, 8 each. Each button shows one fitted slot: H1–H8 high slots (inventory flags 27–34), M1–M8 mid (19–26), L1–L8 low (11–18). A ship with no entry uses the default: high slots on top, mid in the middle, low at the bottom. Dragging a module in game swaps two slots; `slot_order_edit` swap does the same. Removing a ship's entry resets it to the default. The files never name a ship; recognise one by its id or its arrangement. `slot_order_merge_preview` / `slot_order_merge_apply` give every ship arranged on any of the chosen accounts to all of them, the most recently modified file winning where they disagree. They write immediately, like `copy_apply`.
 
 ## copy
 
