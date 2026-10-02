@@ -232,7 +232,7 @@ const WATCHLIST_KEY: &[u8] = b"fleet_watchlistcolors";
 
 /// A character id however the client stored it: `Int` today, `Long` once ids
 /// pass 2³¹ (spec §2.6). Negative or oversized values are not ids.
-fn id_of(v: &Value) -> Option<u64> {
+pub(crate) fn id_of(v: &Value) -> Option<u64> {
     match v {
         Value::Int(i) => u64::try_from(*i).ok(),
         Value::Long(bytes) if !bytes.is_empty() && bytes.len() <= 8 && bytes[bytes.len() - 1] & 0x80 == 0 => {
@@ -249,7 +249,7 @@ fn id_of(v: &Value) -> Option<u64> {
 /// id-sized Longs in a sampled file are minimal-width).
 // ponytail: no corpus file has a watch-listed id above 2³¹ yet, so the Long arm
 // is unit-tested only — the first real file with one is the test that matters.
-fn id_key(id: u64) -> Value {
+pub(crate) fn id_key(id: u64) -> Value {
     if let Ok(i) = i32::try_from(id) {
         return Value::Int(i64::from(i));
     }
