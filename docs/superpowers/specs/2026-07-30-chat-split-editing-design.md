@@ -44,7 +44,7 @@ of them is geometry.
 
 The split is **account**-scoped; the window's own `x/y/w/h` is **character**-
 scoped (`windowSizesAndPositions_1`). Cross-referencing one real pair:
-`chatchannel_player_-78564080` is a 256×424 window carrying a 104px member list
+`chatchannel_player_-70000001` is a 256×424 window carrying a 104px member list
 and a 63px input — 41% and 15% of it.
 
 Two consequences the design has to respect:

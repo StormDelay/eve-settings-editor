@@ -199,10 +199,10 @@ mod tests {
 
     #[test]
     fn describe_splits_families_details_tuples_and_stacks() {
-        assert_eq!(describe("ShipCargo_1033391582929"), Family { family: "ShipCargo".into(), detail: "1033391582929".into() });
-        assert_eq!(describe("chatchannel_player_-78564080").family, "chatchannel");
-        assert_eq!(describe("chatchannel_player_-78564080").detail, "player");
-        assert_eq!(describe("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483").detail, "private");
+        assert_eq!(describe("ShipCargo_1000000000002"), Family { family: "ShipCargo".into(), detail: "1000000000002".into() });
+        assert_eq!(describe("chatchannel_player_-70000001").family, "chatchannel");
+        assert_eq!(describe("chatchannel_player_-70000001").detail, "player");
+        assert_eq!(describe("chatchannel_private_0000000000002eee0000000000000002").detail, "private");
         assert_eq!(describe("ShipCargo").detail, "");
         assert_eq!(describe("('corpassets', 1037014783783L)").family, "corpassets");
         assert_eq!(describe("7001"), Family { family: "stack".into(), detail: "7001".into() });
@@ -212,11 +212,11 @@ mod tests {
     #[test]
     fn clutter_matches_the_frontend_rules() {
         let o = Overrides::default();
-        for id in ["ChatInvitation_1111922349", "ChannelSettingsDlg_fleet_1038711647935", "mail_readingWnd_380729425", "groupInfoWnd_494332", "contactmanagement_98477766", "ShipCargo_1033391582929", "ShipDroneBay_1033391582929", "StructureShipHangar_1033391582929", "containerWnd_1033391582929", "chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", "chatchannel_player_-78564080", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1039455460976"] {
+        for id in ["ChatInvitation_1100000001", "ChannelSettingsDlg_fleet_1000000000004", "mail_readingWnd_300000001", "groupInfoWnd_400001", "contactmanagement_98000002", "ShipCargo_1000000000002", "ShipDroneBay_1000000000002", "StructureShipHangar_1000000000002", "containerWnd_1000000000002", "chatchannel_private_0000000000002eee0000000000000002", "chatchannel_player_-70000001", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1000000000005"] {
             assert!(is_clutter(id, None, &o), "{id} should be clutter");
         }
-        assert!(!is_clutter("chatchannel_player_-78564080", Some("StormDelay Fam"), &o), "a joined player chat is a kept tab");
-        assert!(is_clutter("ShipCargo_1033391582929", Some("Cargo"), &o), "a name only rescues chat");
+        assert!(!is_clutter("chatchannel_player_-70000001", Some("Pilot Fam"), &o), "a joined player chat is a kept tab");
+        assert!(is_clutter("ShipCargo_1000000000002", Some("Cargo"), &o), "a name only rescues chat");
         for id in ["ShipCargo", "InventoryStation", "InventorySpace", "InventoryStructure", "containerContentWindow", "chatchannel_local", "chatchannel_corp", "chatchannel_alliance", "chatchannel_fleet", "chatchannel_incursion", "chatchannel_invasion", "chatchannel_newthing", "market", "overview", "probeScannerWindow", "assembleWindow"] {
             assert!(!is_clutter(id, None, &o), "{id} should not be clutter");
         }
@@ -225,9 +225,9 @@ mod tests {
     #[test]
     fn overrides_win_in_both_directions() {
         let mut o = Overrides::default();
-        o.visible.insert("ShipCargo_1033391582929".into());
+        o.visible.insert("ShipCargo_1000000000002".into());
         o.clutter.insert("market".into());
-        assert!(!is_clutter("ShipCargo_1033391582929", None, &o), "forced visible");
+        assert!(!is_clutter("ShipCargo_1000000000002", None, &o), "forced visible");
         assert!(is_clutter("market", None, &o), "forced into the clutter set");
     }
 

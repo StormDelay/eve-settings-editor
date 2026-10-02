@@ -11,7 +11,7 @@ state"; `live-verification-plan.md`, `chatchannel_corp` back in
 `ChatWindowStack`).
 
 Spike, 2026-09-28, on Pilot Echo (`core_char_96000002`, `settings_Default`),
-Bean-Intel (`chatchannel_player_-88620541`, a pinned member of
+Alpha-Intel (`chatchannel_player_-70000002`, a pinned member of
 `ChatWindowStack`). Removed the window id from every dict under `windows` **and**
 its row from the character file's `ui → chatchannels`, then logged in and out.
 With timestamps normalised, the client's rewrite differed from the backup by
@@ -20,8 +20,8 @@ exactly those removals: nothing recreated, nothing added, the other chat tabs'
 recreation. In game the channel was gone and appeared only as a join
 suggestion.
 
-The account file kept `ui → chatPlayerChannelsJoined["player_-88620541"] =
-"Bean-Intel"` through that logout, and is the likely source of the suggestion.
+The account file kept `ui → chatPlayerChannelsJoined["player_-70000002"] =
+"Alpha-Intel"` through that logout, and is the likely source of the suggestion.
 
 ## 2. Scope
 
@@ -160,10 +160,10 @@ the character must be logged out.
 - No confirm: the edit is in memory and one `Ctrl+Z` reverts it, the
   `onDeleteOrphans` precedent. The toast carries an undo action.
 - Toast by outcome:
-  - `cleaned`, `nothing_to_clean` — "Left Bean-Intel."
-  - `kept_shared` — "Left Bean-Intel. Its account settings stay: {names} still has it."
-  - `kept_unreadable` — "Left Bean-Intel. Its account settings stay: {names}'s file couldn't be read."
-  - `kept_no_account_file` — "Left Bean-Intel. Open the account file to clear its account settings too."
+  - `cleaned`, `nothing_to_clean` — "Left Alpha-Intel."
+  - `kept_shared` — "Left Alpha-Intel. Its account settings stay: {names} still has it."
+  - `kept_unreadable` — "Left Alpha-Intel. Its account settings stay: {names}'s file couldn't be read."
+  - `kept_no_account_file` — "Left Alpha-Intel. Open the account file to clear its account settings too."
 - No palette entry: no layout window action has one.
 
 ## 5. Testing
@@ -186,7 +186,7 @@ the character must be logged out.
 - **UI spec**: button present only on leavable windows; toast per outcome.
 - **Live, before release**, on Pilot Echo:
   1. Leave a private conversation; log in and out; it stays gone.
-  2. With the account side cleaned, the Bean-Intel join suggestion is gone.
+  2. With the account side cleaned, the Alpha-Intel join suggestion is gone.
      If it survives, the account cleanup is tidiness only — keep it, and make
      no promise about suggestions in the release note.
 

@@ -35,7 +35,7 @@ export const FLEET: Fleet = {
     } as Record<string, ColourEntry>)[c.broadcast] ?? c,
   ),
   watchlist: [
-    { char_id: 1001131163, rgb: [0.2, 0.5, 1.0] },
+    { char_id: 90000201, rgb: [0.2, 0.5, 1.0] },
     { char_id: 90000001, rgb: null },
   ],
   palette: [
@@ -181,11 +181,11 @@ describe("the broadcast panel", () => {
 
 describe("the watch list panel", () => {
   test("lists entries with the resolved name, the id, a swatch and a remove button", async () => {
-    calls.stub("resolve_character_names", { "1001131163": { name: "Pilot Delta", category: "character" } });
+    calls.stub("resolve_character_names", { "90000201": { name: "Pilot Delta", category: "character" } });
     mount();
     const p = await panel("Watch list colours");
     const row = (await within(p).findByText("Pilot Delta")).closest("li")!;
-    expect(within(row).getByText("1001131163")).toBeTruthy();
+    expect(within(row).getByText("90000201")).toBeTruthy();
     expect((within(row).getByLabelText("Colour for Pilot Delta") as HTMLInputElement).value).toBe("#3380ff");
     expect(within(p).getByText("character file")).toBeTruthy();
     // The unresolved id renders bare, and its unreadable colour is marked and disabled.
@@ -197,14 +197,14 @@ describe("the watch list panel", () => {
   test("recolour writes exact palette floats; remove writes null", async () => {
     mount();
     const p = await panel("Watch list colours");
-    const swatch = (await within(p).findByLabelText("Colour for 1001131163")) as HTMLInputElement;
+    const swatch = (await within(p).findByLabelText("Colour for 90000201")) as HTMLInputElement;
     await fireEvent.change(swatch, { target: { value: "#bf0000" } });
     await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(1));
-    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 1001131163, rgb: [0.75, 0.0, 0.0] });
+    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 90000201, rgb: [0.75, 0.0, 0.0] });
     const row = swatch.closest("li")!;
     await fireEvent.click(within(row).getByTitle("Remove from the list"));
     await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(2));
-    expect(calls.of("set_watchlist_colour")[1].args).toEqual({ charId: 1001131163, rgb: null });
+    expect(calls.of("set_watchlist_colour")[1].args).toEqual({ charId: 90000201, rgb: null });
   });
 
   test("add looks the name up, writes the picked colour, clears the box and toasts", async () => {
@@ -247,7 +247,7 @@ describe("the watch list panel", () => {
     await submit("Someone");
     await waitFor(() => expect(within(p).getByRole("alert").textContent?.trim()).toBe("Someone wasn't looked up — couldn't reach ESI"));
 
-    calls.stub("lookup_character", { id: 1001131163, name: "Pilot Delta" });
+    calls.stub("lookup_character", { id: 90000201, name: "Pilot Delta" });
     await submit("Pilot Delta");
     await waitFor(() => expect(within(p).getByRole("alert").textContent?.trim()).toBe("Pilot Delta is already in the list"));
     calls.never("set_watchlist_colour");

@@ -574,7 +574,7 @@ Append to `app/src/lib/windowLabels.test.ts` (add `nameOf` to its import list):
 ```ts
 // --- nameOf: EVE's own name wins, the derived one is the fallback ----------
 {
-  const real = nameOf({ id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" });
+  const real = nameOf({ id: "chatchannel_private_0000000000002eee", name: "Alliance HQ" });
   check("nameOf prefers the file's own name", real.label === "Alliance HQ");
   check("nameOf keeps the derived detail", real.detail === "private");
   check("nameOf keeps the derived family", real.family === "chatchannel");
@@ -596,7 +596,7 @@ new one (the `win` helper there builds a `WindowRect`; give it a `name`):
 ```ts
 // --- the filter searches the real channel name -----------------------------
 {
-  const named = { ...win("chatchannel_private_0ee11e4f970011ea", true, true), name: "Alliance HQ" };
+  const named = { ...win("chatchannel_private_0000000000002eee", true, true), name: "Alliance HQ" };
   check("text matches EVE's own name", windowMatches(named, { ...NO_FILTER, text: "alliance" }));
   check("text still matches the raw id", windowMatches(named, { ...NO_FILTER, text: "chatchannel" }));
   check("text still matches the derived detail", windowMatches(named, { ...NO_FILTER, text: "private" }));

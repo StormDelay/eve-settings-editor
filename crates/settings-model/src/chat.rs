@@ -653,13 +653,13 @@ mod tests {
     /// settings-dialog window, and a `chatchannels` row. `keep` is a second
     /// channel that must survive untouched.
     fn char_doc() -> Value {
-        let w = "chatchannel_player_-88620541";
+        let w = "chatchannel_player_-70000002";
         let keep = "chatchannel_player_-1";
         Value::Dict(vec![
             (b("windows"), Value::Dict(vec![
                 (b("windowSizesAndPositions_1"), wrapped(Value::Dict(vec![
                     (b(w), geom()), (b(keep), geom()),
-                    (b("ChannelSettingsDlg_player_-88620541"), geom()),
+                    (b("ChannelSettingsDlg_player_-70000002"), geom()),
                 ]))),
                 (b("openWindows"), wrapped(Value::Dict(vec![(b(w), Value::Bool(true)), (b(keep), Value::Bool(true))]))),
                 // Str key here, Bytes elsewhere: real files mix them.
@@ -671,7 +671,7 @@ mod tests {
             ])),
             (b("ui"), Value::Dict(vec![
                 (b("chatchannels"), wrapped(Value::List(vec![
-                    Value::Tuple(vec![Value::Str("player_-88620541".into()), Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())]),
+                    Value::Tuple(vec![Value::Str("player_-70000002".into()), Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())]),
                     Value::Tuple(vec![Value::Str("player_-1".into()), Value::Str("player_-1".into()), Value::Str("Keep".into())]),
                 ]))),
             ])),
@@ -702,24 +702,24 @@ mod tests {
     #[test]
     fn leave_purges_the_window_the_dialog_and_the_row() {
         let mut doc = char_doc();
-        assert_eq!(leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap(), "player_-88620541");
+        assert_eq!(leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap(), "player_-70000002");
         let keys = window_keys(&doc);
-        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("-70000002")), "left behind: {keys:?}");
         assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-1".to_string()]);
     }
 
     #[test]
     fn purges_str_and_bytes_keys_alike() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         // pinnedWindows held the id as a Str key.
-        assert!(!window_keys(&doc).contains(&"chatchannel_player_-88620541".to_string()));
+        assert!(!window_keys(&doc).contains(&"chatchannel_player_-70000002".to_string()));
     }
 
     #[test]
     fn leave_leaves_every_other_window_alone() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         let keep = window_keys(&doc).into_iter().filter(|k| k == "chatchannel_player_-1").count();
         // geometry, openWindows, stacksWindows, preferredIdxInStack3 inner dict
         assert_eq!(keep, 4);
@@ -731,22 +731,22 @@ mod tests {
         let Value::Dict(top) = &mut doc else { panic!() };
         let k = std::mem::replace(&mut top[0].0, Value::None);
         top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
-        assert!(!window_keys(&doc).iter().any(|k| k.contains("-88620541")));
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
+        assert!(!window_keys(&doc).iter().any(|k| k.contains("-70000002")));
     }
 
     #[test]
     fn the_edited_document_still_encodes() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         let bytes = blue_marshal::encode(&blue_marshal::reshare(&doc)).unwrap();
         blue_marshal::decode(&bytes).unwrap();
     }
 
     #[test]
     fn a_private_conversation_is_leavable() {
-        assert!(is_leavable("chatchannel_private_009e6df0127111ecaa569abe94f5b483"));
-        assert!(is_leavable("chatchannel_player_-88620541"));
+        assert!(is_leavable("chatchannel_private_00000000000011ee0000000000000001"));
+        assert!(is_leavable("chatchannel_player_-70000002"));
     }
 
     #[test]
@@ -774,23 +774,23 @@ mod tests {
         // A channel the character is in whose window was never opened.
         let mut doc = char_doc();
         leave_chat_char(&mut doc, "chatchannel_player_-1").unwrap();
-        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-88620541".to_string()]);
+        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-70000002".to_string()]);
     }
 
     // ---- leave_chat_account ----
 
     fn account_doc() -> Value {
-        let w = "chatchannel_player_-88620541";
+        let w = "chatchannel_player_-70000002";
         ui_doc(vec![
             (b(&format!("{w}_userlistwidth")), wrapped(Value::Int(104))),
             (b(&format!("chatinputsize_{w}")), wrapped(Value::Int(62))),
             (b(&format!("chatfontsize_{w}")), wrapped(Value::Int(13))),
             (b(&format!("chatWindowBlink_{w}")), wrapped(Value::Bool(true))),
             (b(&format!("chatCondensedUserList_{w}")), wrapped(Value::Bool(false))),
-            (b("chatCondensedUserList_player_-88620541"), wrapped(Value::Bool(false))),
+            (b("chatCondensedUserList_player_-70000002"), wrapped(Value::Bool(false))),
             (b("chatchannel_player_-1_userlistwidth"), wrapped(Value::Int(90))),
             (b("chatPlayerChannelsJoined"), wrapped(Value::Dict(vec![
-                (Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())),
+                (Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())),
                 (b("player_-1"), Value::Str("Keep".into())),
             ]))),
         ])
@@ -813,9 +813,9 @@ mod tests {
     #[test]
     fn account_side_removes_every_per_channel_key_and_the_joined_entry() {
         let mut doc = account_doc();
-        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
         let keys = ui_keys(&doc);
-        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("-70000002")), "left behind: {keys:?}");
         assert!(keys.contains(&"chatchannel_player_-1_userlistwidth".to_string()));
         assert!(keys.contains(&"neocomWidth".to_string()));
         assert_eq!(joined(&doc), vec!["player_-1".to_string()]);
@@ -824,7 +824,7 @@ mod tests {
     #[test]
     fn account_side_with_nothing_to_remove_reports_false_and_creates_nothing() {
         let mut doc = ui_doc(vec![]);
-        assert!(!leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(!leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
         assert_eq!(ui_keys(&doc), vec!["neocomWidth".to_string()]);
     }
 
@@ -834,7 +834,7 @@ mod tests {
         let Value::Dict(top) = &mut doc else { panic!() };
         let k = std::mem::replace(&mut top[0].0, Value::None);
         top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
-        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
     }
 
     #[test]

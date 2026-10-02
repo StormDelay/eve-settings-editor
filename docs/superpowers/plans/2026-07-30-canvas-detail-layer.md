@@ -372,7 +372,7 @@ section** — the same section as `neocomWidth`, not `ui` — as ordinary
 `chatCondensedUserList_<ch>` (Bool) is deliberately not read: it changes how the
 member list renders, not how wide it is, and its key naming is inconsistent —
 `chatCondensedUserList_corp` sits beside
-`chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
+`chatCondensedUserList_chatchannel_player_-70000001`, one with the window-id
 prefix and one without.
 
 Whether the input box spans the full window width or only the message pane is

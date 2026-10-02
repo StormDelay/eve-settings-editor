@@ -35,11 +35,11 @@ So the entry's "join on that and show the third element" is already built. **It 
 `chat_channel_names` keys its map on `parts[1]`. The tuples are `(key, fullChannelId, label)`:
 
 ```
-("corp",             "corp_98835672",     "Corp")
-("alliance",         "alliance_99010468", "Alliance")
-("local",            "local_30004758",    "Local")
-("player_-78564080", "player_-78564080",  "StormDelay Fam")
-("player_-88620541", "player_-88620541",  "Bean-Intel")
+("corp",             "corp_98000003",     "Corp")
+("alliance",         "alliance_99000001", "Alliance")
+("local",            "local_30000142",    "Local")
+("player_-70000001", "player_-70000001",  "Pilot Fam")
+("player_-70000002", "player_-70000002",  "Alpha-Intel")
 ```
 
 The window id is `chatchannel_` + **`parts[0]`**. Session A confirmed this in-game on 2026-07-28 and recorded it in `settings-field-reference.md`; the code was never corrected.
@@ -81,7 +81,7 @@ The test module already has `chatchannels` fixtures (search for `chatchannels` i
 ```rust
     #[test]
     fn a_standing_channel_is_named_from_the_first_tuple_element() {
-        // Real shape: ("corp", "corp_98835672", "Corp") — the window id is
+        // Real shape: ("corp", "corp_98000003", "Corp") — the window id is
         // `chatchannel_` + the FIRST element (confirmed in-game 2026-07-28),
         // while the second is the fully-qualified channel id. Joining on the
         // second matches only player_* rows, where the two happen to be equal,
@@ -92,7 +92,7 @@ The test module already has `chatchannels` fixtures (search for `chatchannels` i
                 bytes("chatchannels"),
                 Value::List(vec![Value::Tuple(vec![
                     bytes("corp"),
-                    Value::Str("corp_98835672".into()),
+                    Value::Str("corp_98000003".into()),
                     Value::Str("Corp".into()),
                 ])]),
             )])),
@@ -108,7 +108,7 @@ Match the fixture helpers the neighbouring chat tests already use (`bytes`, `win
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run from the repo root: `cargo test -p settings-model --lib a_standing_channel`
-Expected: FAIL — `assertion failed: left: None, right: Some("Corp")`. The map is keyed `"corp_98835672"`, the lookup key is `"corp"`.
+Expected: FAIL — `assertion failed: left: None, right: Some("Corp")`. The map is keyed `"corp_98000003"`, the lookup key is `"corp"`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -129,7 +129,7 @@ And correct the function's doc comment, which currently describes the wrong elem
 /// Not the second: for `player_*` rows the first two elements are the same
 /// string, so keying on the second appears to work and then silently misses
 /// every standing channel (`corp`, `alliance`, `local`), whose second element
-/// is the fully-qualified `corp_98835672` form. Measured on the 2026-07-28
+/// is the fully-qualified `corp_98000003` form. Measured on the 2026-07-28
 /// capture: the first element matched 5 of 5 and 3 of 3, the second 2 of 5 and
 /// 1 of 3.
 ///

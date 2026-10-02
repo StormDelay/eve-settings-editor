@@ -277,8 +277,8 @@ private conversation alike:
 
 | `chatchannels` entry | window id |
 |---|---|
-| `(b"corp", "corp_98835672", "Corp")` | `chatchannel_corp` |
-| `(b"alliance", "alliance_99010468", "Alliance")` | `chatchannel_alliance` |
+| `(b"corp", "corp_98000003", "Corp")` | `chatchannel_corp` |
+| `(b"alliance", "alliance_99000001", "Alliance")` | `chatchannel_alliance` |
 | `("private_40fcd4de…", "private_40fcd4de…", "Private Chat (2)")` | `chatchannel_private_40fcd4de…` |
 
 This was previously inferred rather than observed, and the worry was that a real

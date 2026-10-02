@@ -54,8 +54,8 @@ Append to `app/src/lib/windowLabels.test.ts`, immediately before the final `cons
 
   // A family entry covers the bare parent AND every spawned instance, so
   // `ShipCargo_<itemID>` needs no entry of its own.
-  check("a spawned instance follows its family", inEnv("ShipCargo_1033391582929", "space"));
-  check("a spawned instance is hidden in the other env", !inEnv("ShipCargo_1033391582929", "docked"));
+  check("a spawned instance follows its family", inEnv("ShipCargo_1000000000002", "space"));
+  check("a spawned instance is hidden in the other env", !inEnv("ShipCargo_1000000000002", "docked"));
   check("a numbered overview follows its family", inEnv("overview_1", "space"));
   check("a numbered overview is hidden when docked", !inEnv("overview_1", "docked"));
 
@@ -137,7 +137,7 @@ const SPACE_ONLY: ReadonlySet<string> = new Set([
 /** Whether a window is shown in `env`. An id is a member of a set if EITHER
  * its exact id or its family is listed, so one entry covers a family's bare
  * parent and all its spawned instances (`ShipCargo` and
- * `ShipCargo_1033391582929`; `overview` and `overview_1`).
+ * `ShipCargo_1000000000002`; `overview` and `overview_1`).
  *
  * No `detail !== ""` check, unlike isClutter: that check tells a spawned
  * instance from its bare parent, and for environment purposes they are in the

@@ -5,10 +5,10 @@ import { check } from "./test/check.ts";
 
 // --- rule 1: stringified Python tuple ids ----------------------------------
 {
-  const n = describe("('corpassets', 1037014587783L)");
+  const n = describe("('corpassets', 1000000000003L)");
   check("tuple id families on its first element", n.family === "corpassets");
   check("tuple id gets a curated label", n.label === "Corp assets");
-  check("tuple id keeps the remainder as detail", n.detail === "1037014587783L");
+  check("tuple id keeps the remainder as detail", n.detail === "1000000000003L");
 
   const nested = describe("('myPlaces', (12345, None))");
   check("nested tuple id still families on element 1", nested.family === "myPlaces");
@@ -33,16 +33,16 @@ import { check } from "./test/check.ts";
   check("chat detail is the channel", chat.detail === "local");
   check("chat family is the prefix", chat.family === "chatchannel");
 
-  const player = describe("chatchannel_player_-78564080");
+  const player = describe("chatchannel_player_-70000001");
   check("opaque suffix segments are dropped", player.detail === "player");
 
-  const guid = describe("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483");
+  const guid = describe("chatchannel_private_0000000000002eee0000000000000002");
   check("hex GUID segments are dropped too", guid.detail === "private");
 
   // Longest prefix wins: `mail` is curated, `mail_readingWnd` is a family.
-  const mail = describe("mail_readingWnd_380729425");
+  const mail = describe("mail_readingWnd_300000001");
   check("longest prefix wins over a shorter curated id", mail.label === "Mail message");
-  check("an all-opaque suffix is kept verbatim", mail.detail === "380729425");
+  check("an all-opaque suffix is kept verbatim", mail.detail === "300000001");
   check("mail message family is the long prefix", mail.family === "mail_readingWnd");
 }
 
@@ -80,15 +80,15 @@ import { check } from "./test/check.ts";
 // --- isClutter ---------------------------------------------------------
 {
   // a. whole families that only ever exist as spawned instances.
-  check("ChatInvitation is clutter", isClutter("ChatInvitation_1111922349"));
-  check("ChannelSettingsDlg is clutter", isClutter("ChannelSettingsDlg_fleet_1038711647935"));
-  check("mail_readingWnd is clutter", isClutter("mail_readingWnd_380729425"));
-  check("groupInfoWnd is clutter", isClutter("groupInfoWnd_494332"));
-  check("contactmanagement is clutter", isClutter("contactmanagement_98477766"));
-  check("a spawned ShipCargo instance is clutter", isClutter("ShipCargo_1033391582929"));
-  check("a spawned ShipDroneBay instance is clutter", isClutter("ShipDroneBay_1033391582929"));
-  check("a spawned StructureShipHangar instance is clutter", isClutter("StructureShipHangar_1033391582929"));
-  check("a containerWnd instance is clutter", isClutter("containerWnd_1033391582929"));
+  check("ChatInvitation is clutter", isClutter("ChatInvitation_1100000001"));
+  check("ChannelSettingsDlg is clutter", isClutter("ChannelSettingsDlg_fleet_1000000000004"));
+  check("mail_readingWnd is clutter", isClutter("mail_readingWnd_300000001"));
+  check("groupInfoWnd is clutter", isClutter("groupInfoWnd_400001"));
+  check("contactmanagement is clutter", isClutter("contactmanagement_98000002"));
+  check("a spawned ShipCargo instance is clutter", isClutter("ShipCargo_1000000000002"));
+  check("a spawned ShipDroneBay instance is clutter", isClutter("ShipDroneBay_1000000000002"));
+  check("a spawned StructureShipHangar instance is clutter", isClutter("StructureShipHangar_1000000000002"));
+  check("a containerWnd instance is clutter", isClutter("containerWnd_1000000000002"));
 
   // The exact case the developer asked about: a BARE parent window shares
   // its family string with the suffixed one (`describe("ShipCargo").family
@@ -104,14 +104,14 @@ import { check } from "./test/check.ts";
   // b. chat: only private/direct conversations are clutter; standing
   // channels are defined by what they are NOT, so an unrecognised future
   // channel is kept, not hidden (the safe failure direction).
-  check("a private chat is clutter", isClutter("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483"));
-  check("a player (direct) chat is clutter", isClutter("chatchannel_player_-78564080"));
+  check("a private chat is clutter", isClutter("chatchannel_private_0000000000002eee0000000000000002"));
+  check("a player (direct) chat is clutter", isClutter("chatchannel_player_-70000001"));
   // A name means the character is still in the channel — a kept tab.
-  check("a named player chat is not clutter", !isClutter("chatchannel_player_-78564080", undefined, "StormDelay Fam"));
-  check("a named private chat is not clutter", !isClutter("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", undefined, "Private Chat (2)"));
-  check("a null name still leaves a player chat clutter", isClutter("chatchannel_player_-78564080", undefined, null));
-  check("a name does not rescue a non-chat clutter window", isClutter("ShipCargo_1033391582929", undefined, "Cargo"));
-  check("a name loses to a user clutter override", isClutter("chatchannel_player_-78564080", { clutter: new Set(["chatchannel_player_-78564080"]), visible: new Set() }, "StormDelay Fam"));
+  check("a named player chat is not clutter", !isClutter("chatchannel_player_-70000001", undefined, "Pilot Fam"));
+  check("a named private chat is not clutter", !isClutter("chatchannel_private_0000000000002eee0000000000000002", undefined, "Private Chat (2)"));
+  check("a null name still leaves a player chat clutter", isClutter("chatchannel_player_-70000001", undefined, null));
+  check("a name does not rescue a non-chat clutter window", isClutter("ShipCargo_1000000000002", undefined, "Cargo"));
+  check("a name loses to a user clutter override", isClutter("chatchannel_player_-70000001", { clutter: new Set(["chatchannel_player_-70000001"]), visible: new Set() }, "Pilot Fam"));
   check("Local chat is not clutter", !isClutter("chatchannel_local"));
   check("Corp chat is not clutter", !isClutter("chatchannel_corp"));
   check("Alliance chat is not clutter", !isClutter("chatchannel_alliance"));
@@ -136,7 +136,7 @@ import { check } from "./test/check.ts";
   check("probeScannerWindow is not clutter", !isClutter("probeScannerWindow"));
 
   // e. assembleWindow: parent-vs-spawned, same rule as ShipCargo etc.
-  check("a spawned assembleWindow instance is clutter", isClutter("assembleWindow_1039455460976"));
+  check("a spawned assembleWindow instance is clutter", isClutter("assembleWindow_1000000000005"));
   check("a bare assembleWindow stays visible", !isClutter("assembleWindow"));
 
   // f. bookmarkLocationWindow deliberately lives in BOTH CLUTTER_IDS (bare
@@ -144,7 +144,7 @@ import { check } from "./test/check.ts";
   check("a bare bookmarkLocationWindow is clutter", isClutter("bookmarkLocationWindow"));
   check(
     "a spawned bookmarkLocationWindow instance is clutter",
-    isClutter("bookmarkLocationWindow_1026274319209"),
+    isClutter("bookmarkLocationWindow_1000000000001"),
   );
 
   // g. regression guard: real placeable windows must never be reclassified
@@ -167,10 +167,10 @@ import { check } from "./test/check.ts";
 // reintroduces the ambiguity 854b0d7 fixed (two unnamed chat tabs in one
 // stack both reading "Chat").
 {
-  const named = { id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" };
+  const named = { id: "chatchannel_private_0000000000002eee", name: "Alliance HQ" };
   check("displayNameOf joins the real name and the derived detail", displayNameOf(named) === "Alliance HQ · private");
 
-  const unnamed = { id: "chatchannel_private_0ee11e4f970011ea", name: null };
+  const unnamed = { id: "chatchannel_private_0000000000002eee", name: null };
   check("displayNameOf falls back to the derived label and detail", displayNameOf(unnamed) === "Chat · private");
 
   check("displayNameOf is just the label when there is no detail", displayNameOf({ id: "market" }) === "Market");
@@ -195,7 +195,7 @@ import { check } from "./test/check.ts";
 
 // --- nameOf: EVE's own name wins, the derived one is the fallback ----------
 {
-  const real = nameOf({ id: "chatchannel_private_0ee11e4f970011ea", name: "Alliance HQ" });
+  const real = nameOf({ id: "chatchannel_private_0000000000002eee", name: "Alliance HQ" });
   check("nameOf prefers the file's own name", real.label === "Alliance HQ");
   check("nameOf keeps the derived detail", real.detail === "private");
   check("nameOf keeps the derived family", real.family === "chatchannel");
@@ -282,7 +282,7 @@ import { check } from "./test/check.ts";
   // "tidy" of the tables can't quietly re-add them.
   check("ShipCargo shows in both views, not space-only", inEnv("ShipCargo", "docked") && inEnv("ShipCargo", "space"));
   check("a spawned ShipCargo instance shows in both views too",
-    inEnv("ShipCargo_1033391582929", "docked") && inEnv("ShipCargo_1033391582929", "space"));
+    inEnv("ShipCargo_1000000000002", "docked") && inEnv("ShipCargo_1000000000002", "space"));
   check("ShipDroneBay shows in both views, not space-only", inEnv("ShipDroneBay", "docked") && inEnv("ShipDroneBay", "space"));
 
   // THE safe-failure property. If someone later "tidies" the tables into a

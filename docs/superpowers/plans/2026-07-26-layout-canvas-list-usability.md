@@ -67,10 +67,10 @@ const check = (name: string, ok: boolean) => {
 
 // --- rule 1: stringified Python tuple ids ----------------------------------
 {
-  const n = describe("('corpassets', 1037014587783L)");
+  const n = describe("('corpassets', 1000000000003L)");
   check("tuple id families on its first element", n.family === "corpassets");
   check("tuple id gets a curated label", n.label === "Corp assets");
-  check("tuple id keeps the remainder as detail", n.detail === "1037014587783L");
+  check("tuple id keeps the remainder as detail", n.detail === "1000000000003L");
 
   const nested = describe("('myPlaces', (12345, None))");
   check("nested tuple id still families on element 1", nested.family === "myPlaces");
@@ -95,16 +95,16 @@ const check = (name: string, ok: boolean) => {
   check("chat detail is the channel", chat.detail === "local");
   check("chat family is the prefix", chat.family === "chatchannel");
 
-  const player = describe("chatchannel_player_-78564080");
+  const player = describe("chatchannel_player_-70000001");
   check("opaque suffix segments are dropped", player.detail === "player");
 
-  const guid = describe("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483");
+  const guid = describe("chatchannel_private_0000000000002eee0000000000000002");
   check("hex GUID segments are dropped too", guid.detail === "private");
 
   // Longest prefix wins: `mail` is curated, `mail_readingWnd` is a family.
-  const mail = describe("mail_readingWnd_380729425");
+  const mail = describe("mail_readingWnd_300000001");
   check("longest prefix wins over a shorter curated id", mail.label === "Mail message");
-  check("an all-opaque suffix is kept verbatim", mail.detail === "380729425");
+  check("an all-opaque suffix is kept verbatim", mail.detail === "300000001");
   check("mail message family is the long prefix", mail.family === "mail_readingWnd");
 }
 
@@ -148,11 +148,11 @@ const check = (name: string, ok: boolean) => {
   // "hide chat & session windows" filter would silently match nothing.
   const samples: Record<string, string> = {
     chatchannel: "chatchannel_local",
-    ChannelSettingsDlg: "ChannelSettingsDlg_fleet_1038711647935",
-    ChatInvitation: "ChatInvitation_1111922349",
-    mail_readingWnd: "mail_readingWnd_380729425",
-    contactmanagement: "contactmanagement_98477766",
-    groupInfoWnd: "groupInfoWnd_494332",
+    ChannelSettingsDlg: "ChannelSettingsDlg_fleet_1000000000004",
+    ChatInvitation: "ChatInvitation_1100000001",
+    mail_readingWnd: "mail_readingWnd_300000001",
+    contactmanagement: "contactmanagement_98000002",
+    groupInfoWnd: "groupInfoWnd_400001",
   };
   for (const fam of NOISE_FAMILIES) {
     check(`noise family ${fam} is reachable`, describe(samples[fam]).family === fam);
@@ -193,8 +193,8 @@ Create `app/src/lib/windowLabels.ts`:
 // so it unit-tests under `node --test` like layout.ts and search.ts.
 //
 // A real character file carries a median 296 windows whose ids are raw client
-// identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1038711647935`,
-// `('corpassets', 1037014587783L)`, `76`. This turns each into a readable
+// identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1000000000004`,
+// `('corpassets', 1000000000003L)`, `76`. This turns each into a readable
 // label, an instance discriminator, and a grouping key.
 //
 // The tables are deliberately incomplete: an id nobody has curated falls
@@ -333,9 +333,9 @@ function pretty(id: string): string {
 
 /**
  * The readable part of an instance suffix: leading segments up to the first
- * opaque one. `player_-78564080` → "player". When every segment is opaque
+ * opaque one. `player_-70000001` → "player". When every segment is opaque
  * there is nothing to shorten, so the suffix is kept whole
- * (`380729425` stays `380729425`).
+ * (`300000001` stays `300000001`).
  */
 function instanceDetail(rest: string): string {
   const kept: string[] = [];
@@ -349,7 +349,7 @@ function instanceDetail(rest: string): string {
 const TUPLE_ID = /^\('([^']*)'\s*,?\s*/;
 
 export function describe(id: string): WindowName {
-  // 1. Stringified Python tuple: ('corpassets', 1037014587783L). Parsed
+  // 1. Stringified Python tuple: ('corpassets', 1000000000003L). Parsed
   //    shallowly on purpose — these ids are display material only, nothing
   //    writes them, so the remainder stays an opaque string.
   const tuple = TUPLE_ID.exec(id);
@@ -617,7 +617,7 @@ export function windowMatches(w: WindowRect, f: WindowFilter): boolean {
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
   // Same contract search.ts documents for the tree: label, detail and the raw
-  // id all match, so "market", "corpassets" and "1037014587783" all work.
+  // id all match, so "market", "corpassets" and "1000000000003" all work.
   return `${n.label} ${n.detail} ${w.id}`.toLowerCase().includes(q);
 }
 

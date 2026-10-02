@@ -460,7 +460,7 @@ list and the canvas.
 
 ### Added
 - **Windows have readable names.** The Layout list and canvas showed raw client
-  ids — `ChannelSettingsDlg_fleet_1038711647935`, `('corpassets', 1037014587783L)`,
+  ids — `ChannelSettingsDlg_fleet_1000000000004`, `('corpassets', 1000000000003L)`,
   `76`. They now read as *Chat · fleet*, *Corp assets*, *Window stack · 76*, with
   the raw id still on hover, in the context menu, and one click from the
   clipboard. An id nobody has named falls back to a tidied-up version of itself,

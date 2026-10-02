@@ -14,7 +14,7 @@ use settings_model::{chat_channel_keys, is_leavable};
 const STANDING: [&str; 7] = ["local", "corp", "alliance", "fleet", "incursion", "invasion", "faction"];
 
 /// System channels the server manages, keyed `system_<ids>` — Rookie Help is
-/// `system_263238_263259` (corpus, 2026-07-12). Refused like the standing
+/// `system_200001_200002` (corpus, 2026-07-12). Refused like the standing
 /// ones: whether leaving one in the file sticks has not been tested.
 const REFUSED_PREFIXES: [&str; 1] = ["system_"];
 

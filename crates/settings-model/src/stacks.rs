@@ -655,7 +655,7 @@ mod tests {
     /// `MissingGeometry`) and made add/create write a duplicate `Bytes` key.
     #[test]
     fn str_keyed_chat_windows_stack_and_unstack() {
-        let chat = "chatchannel_player_-63306645";
+        let chat = "chatchannel_player_-70000003";
         let geom = |x: i64| Value::Tuple(vec![Value::Int(x), Value::Int(0), Value::Int(100), Value::Int(80), Value::Int(2560), Value::Int(1440)]);
         let root = || Value::Dict(vec![(b("windows"), Value::Dict(vec![
             (b("windowSizesAndPositions_1"), Value::Tuple(vec![ts(), Value::Dict(vec![

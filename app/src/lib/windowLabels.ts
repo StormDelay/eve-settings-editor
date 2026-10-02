@@ -5,8 +5,8 @@
 // and search.ts.
 //
 // A real character file carries a median 296 windows whose ids are raw client
-// identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1038711647935`,
-// `('corpassets', 1037014587783L)`, `76`. This turns each into a readable
+// identifiers: `overview_1`, `ChannelSettingsDlg_fleet_1000000000004`,
+// `('corpassets', 1000000000003L)`, `76`. This turns each into a readable
 // label, an instance discriminator, and a grouping key.
 //
 // The tables are deliberately incomplete: an id nobody has curated falls
@@ -257,9 +257,9 @@ function pretty(id: string): string {
 
 /**
  * The readable part of an instance suffix: leading segments up to the first
- * opaque one. `player_-78564080` → "player". When every segment is opaque
+ * opaque one. `player_-70000001` → "player". When every segment is opaque
  * there is nothing to shorten, so the suffix is kept whole
- * (`380729425` stays `380729425`).
+ * (`300000001` stays `300000001`).
  */
 function instanceDetail(rest: string): string {
   const kept: string[] = [];
@@ -273,7 +273,7 @@ function instanceDetail(rest: string): string {
 const TUPLE_ID = /^\('([^']*)'\s*,?\s*/;
 
 export function describe(id: string): WindowName {
-  // 1. Stringified Python tuple: ('corpassets', 1037014587783L). Parsed
+  // 1. Stringified Python tuple: ('corpassets', 1000000000003L). Parsed
   //    shallowly on purpose — these ids are display material only, nothing
   //    writes them, so the remainder stays an opaque string.
   const tuple = TUPLE_ID.exec(id);

@@ -341,7 +341,7 @@ fn char_modern() -> Value {
                 // Real section for the badge anchor — `ui` has never held it.
                 (b("notification_badge_offset"), w(tup(vec![i(2519), i(131)]))),
                 (b("notificationSettingsRepositionCount"), w(i(2))),
-                (b("lastSeenNotificationId"), w(i(1084915628))),
+                (b("lastSeenNotificationId"), w(i(1000000001))),
                 (b("lastSeenNotificationTime"), w(filetime(134_291_947_444_598_954))),
             ]),
         ),
@@ -358,8 +358,8 @@ fn char_modern() -> Value {
                 (
                     b("fleet_watchlistcolors"),
                     w(dict(vec![
-                        (i(1001131163), tup(vec![f(0.2), f(0.5), f(1.0)])),
-                        (i(1694010657), tup(vec![f(1.0), f(0.7), f(0.0)])),
+                        (i(90000201), tup(vec![f(0.2), f(0.5), f(1.0)])),
+                        (i(90000202), tup(vec![f(1.0), f(0.7), f(0.0)])),
                     ])),
                 ),
                 // Per-tab overview column widths, keyed by a tuple whose first

@@ -2094,10 +2094,10 @@ mod tests {
 
     #[test]
     fn describe_splits_families_details_tuples_and_stacks() {
-        assert_eq!(describe("ShipCargo_1033391582929"), Family { family: "ShipCargo".into(), detail: "1033391582929".into() });
-        assert_eq!(describe("chatchannel_player_-78564080").family, "chatchannel");
-        assert_eq!(describe("chatchannel_player_-78564080").detail, "player");
-        assert_eq!(describe("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483").detail, "private");
+        assert_eq!(describe("ShipCargo_1000000000002"), Family { family: "ShipCargo".into(), detail: "1000000000002".into() });
+        assert_eq!(describe("chatchannel_player_-70000001").family, "chatchannel");
+        assert_eq!(describe("chatchannel_player_-70000001").detail, "player");
+        assert_eq!(describe("chatchannel_private_0000000000002eee0000000000000002").detail, "private");
         assert_eq!(describe("ShipCargo").detail, "");
         assert_eq!(describe("('corpassets', 1037014783783L)").family, "corpassets");
         assert_eq!(describe("7001"), Family { family: "stack".into(), detail: "7001".into() });
@@ -2107,7 +2107,7 @@ mod tests {
     #[test]
     fn clutter_matches_the_frontend_rules() {
         let o = Overrides::default();
-        for id in ["ChatInvitation_1111922349", "ChannelSettingsDlg_fleet_1038711647935", "mail_readingWnd_380729425", "groupInfoWnd_494332", "contactmanagement_98477766", "ShipCargo_1033391582929", "ShipDroneBay_1033391582929", "StructureShipHangar_1033391582929", "containerWnd_1033391582929", "chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", "chatchannel_player_-78564080", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1039455460976"] {
+        for id in ["ChatInvitation_1100000001", "ChannelSettingsDlg_fleet_1000000000004", "mail_readingWnd_300000001", "groupInfoWnd_400001", "contactmanagement_98000002", "ShipCargo_1000000000002", "ShipDroneBay_1000000000002", "StructureShipHangar_1000000000002", "containerWnd_1000000000002", "chatchannel_private_0000000000002eee0000000000000002", "chatchannel_player_-70000001", "setQuantityPopup", "BugReportingWindow", "contractEndpointSearch", "enterShipPassword", "assembleWindow_1000000000005"] {
             assert!(is_clutter(id, &o), "{id} should be clutter");
         }
         for id in ["ShipCargo", "InventoryStation", "InventorySpace", "InventoryStructure", "containerContentWindow", "chatchannel_local", "chatchannel_corp", "chatchannel_alliance", "chatchannel_fleet", "chatchannel_incursion", "chatchannel_invasion", "chatchannel_newthing", "market", "overview", "probeScannerWindow", "assembleWindow"] {
@@ -2118,9 +2118,9 @@ mod tests {
     #[test]
     fn overrides_win_in_both_directions() {
         let mut o = Overrides::default();
-        o.visible.insert("ShipCargo_1033391582929".into());
+        o.visible.insert("ShipCargo_1000000000002".into());
         o.clutter.insert("market".into());
-        assert!(!is_clutter("ShipCargo_1033391582929", &o), "forced visible");
+        assert!(!is_clutter("ShipCargo_1000000000002", &o), "forced visible");
         assert!(is_clutter("market", &o), "forced into the clutter set");
     }
 
@@ -2335,7 +2335,7 @@ Add to `mod tests` in `mcp.rs`:
     fn cluttered_layout_char_bytes() -> Vec<u8> {
         let ts = || BmValue::Long(vec![0u8; 8]);
         let geom = |x: i64| BmValue::Tuple(vec![BmValue::Int(x), BmValue::Int(0), BmValue::Int(300), BmValue::Int(200), BmValue::Int(2560), BmValue::Int(1440)]);
-        let ids = ["overview", "market", "chatchannel_player_-78564080", "lobbyWnd", "9009", "fitting"];
+        let ids = ["overview", "market", "chatchannel_player_-70000001", "lobbyWnd", "9009", "fitting"];
         let sizes: Vec<(BmValue, BmValue)> = ids.iter().enumerate().map(|(i, id)| (b(id), geom(i as i64 * 100))).collect();
         let open: Vec<(BmValue, BmValue)> = ids.iter().map(|id| (b(id), BmValue::Bool(*id != "fitting"))).collect();
         encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
@@ -2354,7 +2354,7 @@ Add to `mod tests` in `mcp.rs`:
         let v = s.call("layout_get", &Args::new()).unwrap();
         let ids = ids_of(&v);
         assert!(ids.contains(&"overview".into()) && ids.contains(&"market".into()) && ids.contains(&"lobbyWnd".into()));
-        assert!(!ids.contains(&"chatchannel_player_-78564080".into()), "a private chat is clutter");
+        assert!(!ids.contains(&"chatchannel_player_-70000001".into()), "a private chat is clutter");
         assert!(!ids.contains(&"9009".into()), "an orphan frame is clutter");
         assert!(!ids.contains(&"fitting".into()), "closed by default");
         assert_eq!(v["hidden"], json!({ "closed": 1, "clutter": 2, "environment": 0, "matched": 0 }));
@@ -2384,11 +2384,11 @@ Add to `mod tests` in `mcp.rs`:
         let (s, _) = open_char(&cluttered_layout_char_bytes());
         let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
         let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
-        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-78564080"));
+        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-70000001"));
         assert_eq!(v["hidden"]["clutter"], 2);
         let v = s.call("layout_render", &args(json!({ "width": 400, "hide_clutter": false, "environment": "docked" }))).unwrap();
         let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
-        assert!(drawn.contains(&"chatchannel_player_-78564080") && !drawn.contains(&"overview"));
+        assert!(drawn.contains(&"chatchannel_player_-70000001") && !drawn.contains(&"overview"));
     }
 
     #[test]
@@ -2399,10 +2399,10 @@ Add to `mod tests` in `mcp.rs`:
         let prefs_dir = std::env::temp_dir().join(format!("mcp-prefs-{}", std::process::id()));
         std::fs::create_dir_all(&prefs_dir).unwrap();
         let prefs_path = prefs_dir.join("preferences.json");
-        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-78564080"]}}"#).unwrap();
+        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-70000001"]}}"#).unwrap();
         let s = EveMcp { prefs_path: Some(prefs_path), ..s };
         let ids = ids_of(&s.call("layout_get", &Args::new()).unwrap());
-        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-78564080".into()));
+        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-70000001".into()));
     }
 ```
 

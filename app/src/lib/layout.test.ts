@@ -260,10 +260,10 @@ check("open filter keeps the right window", open[0].id === "a");
   const market = win("market", true, true);
   const closedMarket = win("market", false, true);
   const standingChat = win("chatchannel_local", true, true);
-  const privateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", true, true);
-  const closedPrivateChat = win("chatchannel_private_0ee11e4f970011ea8e789abe94f5b483", false, true);
+  const privateChat = win("chatchannel_private_0000000000002eee0000000000000002", true, true);
+  const closedPrivateChat = win("chatchannel_private_0000000000002eee0000000000000002", false, true);
   const bareCargo = win("ShipCargo", true, true);
-  const spawnedCargo = win("ShipCargo_1033391582929", true, true);
+  const spawnedCargo = win("ShipCargo_1000000000002", true, true);
 
   check("an empty filter is not active", !filterIsActive(NO_FILTER));
   check("text makes it active", filterIsActive({ ...NO_FILTER, text: "a" }));
@@ -298,7 +298,7 @@ check("open filter keeps the right window", open[0].id === "a");
   check("hideClutter drops a CLOSED private chat too", !windowMatches(closedPrivateChat, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter keeps an OPEN standing channel", windowMatches(standingChat, { ...NO_FILTER, hideClutter: true }));
   // A resolved name means the character is still in the channel.
-  const joinedPlayerChat = { ...win("chatchannel_player_-78564080", true, true), name: "StormDelay Fam" };
+  const joinedPlayerChat = { ...win("chatchannel_player_-70000001", true, true), name: "Pilot Fam" };
   check("hideClutter keeps a joined (named) player chat", windowMatches(joinedPlayerChat, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter keeps a bare parent window (ShipCargo)", windowMatches(bareCargo, { ...NO_FILTER, hideClutter: true }));
   check("hideClutter drops a spawned instance (ShipCargo_<id>)", !windowMatches(spawnedCargo, { ...NO_FILTER, hideClutter: true }));
@@ -356,7 +356,7 @@ check("open filter keeps the right window", open[0].id === "a");
 
 // --- the filter searches the real channel name -----------------------------
 {
-  const named = { ...win("chatchannel_private_0ee11e4f970011ea", true, true), name: "Alliance HQ" };
+  const named = { ...win("chatchannel_private_0000000000002eee", true, true), name: "Alliance HQ" };
   check("text matches EVE's own name", windowMatches(named, { ...NO_FILTER, text: "alliance" }));
   check("text still matches the raw id", windowMatches(named, { ...NO_FILTER, text: "chatchannel" }));
   check("text still matches the derived detail", windowMatches(named, { ...NO_FILTER, text: "private" }));
@@ -1314,22 +1314,22 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 // ---- chat leave ----
-check("a player channel is leavable", isLeavableChat("chatchannel_player_-88620541"));
+check("a player channel is leavable", isLeavableChat("chatchannel_player_-70000002"));
 check("a private conversation is leavable", isLeavableChat("chatchannel_private_009e6df0"));
-for (const id of ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet", "chatchannel_system_263238_263259", "chatchannel_player_", "market"]) {
+for (const id of ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet", "chatchannel_system_200001_200002", "chatchannel_player_", "market"]) {
   check(`${id} is not leavable`, !isLeavableChat(id));
 }
 {
   const nameOf = (id: number) => (id === 2 ? "Other Char" : String(id));
-  check("toast: cleaned", leaveToast("Bean-Intel", { outcome: "cleaned" }, nameOf) === "Left Bean-Intel.");
-  check("toast: nothing to clean reads like cleaned", leaveToast("Bean-Intel", { outcome: "nothing_to_clean" }, nameOf) === "Left Bean-Intel.");
+  check("toast: cleaned", leaveToast("Alpha-Intel", { outcome: "cleaned" }, nameOf) === "Left Alpha-Intel.");
+  check("toast: nothing to clean reads like cleaned", leaveToast("Alpha-Intel", { outcome: "nothing_to_clean" }, nameOf) === "Left Alpha-Intel.");
   check("toast: kept, shared",
-    leaveToast("Bean-Intel", { outcome: "kept_shared", chars: [2] }, nameOf) ===
-      "Left Bean-Intel. Its account settings stay: Other Char still has it.");
+    leaveToast("Alpha-Intel", { outcome: "kept_shared", chars: [2] }, nameOf) ===
+      "Left Alpha-Intel. Its account settings stay: Other Char still has it.");
   check("toast: kept, unreadable",
-    leaveToast("Bean-Intel", { outcome: "kept_unreadable", chars: [2, 3] }, nameOf) ===
-      "Left Bean-Intel. Its account settings stay: Other Char and 3's files couldn't be read.");
+    leaveToast("Alpha-Intel", { outcome: "kept_unreadable", chars: [2, 3] }, nameOf) ===
+      "Left Alpha-Intel. Its account settings stay: Other Char and 3's files couldn't be read.");
   check("toast: no account file",
-    leaveToast("Bean-Intel", { outcome: "kept_no_account_file" }, nameOf) ===
-      "Left Bean-Intel. Open the account file to clear its account settings too.");
+    leaveToast("Alpha-Intel", { outcome: "kept_no_account_file" }, nameOf) ===
+      "Left Alpha-Intel. Open the account file to clear its account settings too.");
 }

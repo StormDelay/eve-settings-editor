@@ -693,8 +693,8 @@ mod tests {
 
     fn char_with_watchlist() -> Value {
         let map = Value::Dict(vec![
-            (Value::Int(1001131163), rgb(0.2, 0.5, 1.0)),
-            (Value::Int(1694010657), rgb(1.0, 0.7, 0.0)),
+            (Value::Int(90000201), rgb(0.2, 0.5, 1.0)),
+            (Value::Int(90000202), rgb(1.0, 0.7, 0.0)),
             (Value::Int(90000001), Value::Str("blue".into())),
         ]);
         Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("fleet_watchlistcolors"), wrapped(map))]))])
@@ -713,8 +713,8 @@ mod tests {
         assert_eq!(
             f.watchlist,
             vec![
-                WatchEntry { char_id: 1001131163, rgb: Some([0.2, 0.5, 1.0]) },
-                WatchEntry { char_id: 1694010657, rgb: Some([1.0, 0.7, 0.0]) },
+                WatchEntry { char_id: 90000201, rgb: Some([0.2, 0.5, 1.0]) },
+                WatchEntry { char_id: 90000202, rgb: Some([1.0, 0.7, 0.0]) },
                 WatchEntry { char_id: 90000001, rgb: None },
             ]
         );
@@ -725,10 +725,10 @@ mod tests {
     #[test]
     fn recolouring_overwrites_the_entry_in_place() {
         let mut c = char_with_watchlist();
-        set_watchlist_colour(&mut c, 1001131163, Some([0.75, 0.0, 0.0])).unwrap();
+        set_watchlist_colour(&mut c, 90000201, Some([0.75, 0.0, 0.0])).unwrap();
         let map = watch_map(&c);
         assert_eq!(map.len(), 3);
-        assert_eq!(map[0], (Value::Int(1001131163), rgb(0.75, 0.0, 0.0)));
+        assert_eq!(map[0], (Value::Int(90000201), rgb(0.75, 0.0, 0.0)));
     }
 
     #[test]
@@ -736,9 +736,9 @@ mod tests {
         let mut c = char_with_watchlist();
         set_watchlist_colour(&mut c, 2117000000, Some([0.2, 0.5, 1.0])).unwrap();
         assert_eq!(watch_map(&c)[3], (Value::Int(2117000000), rgb(0.2, 0.5, 1.0)));
-        set_watchlist_colour(&mut c, 1694010657, None).unwrap();
+        set_watchlist_colour(&mut c, 90000202, None).unwrap();
         let ids: Vec<&Value> = watch_map(&c).iter().map(|(k, _)| k).collect();
-        assert_eq!(ids, vec![&Value::Int(1001131163), &Value::Int(90000001), &Value::Int(2117000000)]);
+        assert_eq!(ids, vec![&Value::Int(90000201), &Value::Int(90000001), &Value::Int(2117000000)]);
         // The unreadable entry can be removed too — that is the only edit it offers.
         set_watchlist_colour(&mut c, 90000001, None).unwrap();
         assert_eq!(watch_map(&c).len(), 2);

@@ -313,7 +313,7 @@ depth was cut. The developer picked slice order: **HUD furniture first** (this
 spec); the rest are scoped, not designed.
 
 1. **Canvas & list usability.** Friendly window labels instead of raw ids
-   (`overview_1`, `"('corpassets', 1037014587783L)"`), a filter box on the window
+   (`overview_1`, `"('corpassets', 1000000000003L)"`), a filter box on the window
    list, and grouping or folding of the chat-window noise — a real character file
    carries ~200 windows, most of them `chatchannel_*` and `ChannelSettingsDlg_*`
    entries. Plus a right-click context menu replacing the direct

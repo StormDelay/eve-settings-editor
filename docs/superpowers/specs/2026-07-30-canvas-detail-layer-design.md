@@ -94,7 +94,7 @@ what remains is the id already in `layout.windows`.
 `chatCondensedUserList_<ch>` (Bool) is deliberately **not** read. It changes how
 the member list renders, not how wide it is, and its key naming is inconsistent
 in the corpus — `chatCondensedUserList_corp` sits beside
-`chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
+`chatCondensedUserList_chatchannel_player_-70000001`, one with the window-id
 prefix and one without. Decoration does not need it, and resolving that
 inconsistency is not worth doing for a shading difference.
 

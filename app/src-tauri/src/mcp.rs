@@ -3918,7 +3918,7 @@ mod tests {
     fn cluttered_layout_char_bytes() -> Vec<u8> {
         let ts = || BmValue::Long(vec![0u8; 8]);
         let geom = |x: i64| BmValue::Tuple(vec![BmValue::Int(x), BmValue::Int(0), BmValue::Int(300), BmValue::Int(200), BmValue::Int(2560), BmValue::Int(1440)]);
-        let ids = ["overview", "market", "chatchannel_player_-78564080", "lobbyWnd", "9009", "fitting"];
+        let ids = ["overview", "market", "chatchannel_player_-70000001", "lobbyWnd", "9009", "fitting"];
         let sizes: Vec<(BmValue, BmValue)> = ids.iter().enumerate().map(|(i, id)| (b(id), geom(i as i64 * 100))).collect();
         let open: Vec<(BmValue, BmValue)> = ids.iter().map(|id| (b(id), BmValue::Bool(*id != "fitting"))).collect();
         encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
@@ -3937,7 +3937,7 @@ mod tests {
         let v = s.call("layout_get", &Args::new()).unwrap();
         let ids = ids_of(&v);
         assert!(ids.contains(&"overview".into()) && ids.contains(&"market".into()) && ids.contains(&"lobbyWnd".into()));
-        assert!(!ids.contains(&"chatchannel_player_-78564080".into()), "a private chat is clutter");
+        assert!(!ids.contains(&"chatchannel_player_-70000001".into()), "a private chat is clutter");
         assert!(!ids.contains(&"9009".into()), "an orphan frame is clutter");
         assert!(!ids.contains(&"fitting".into()), "closed by default");
         assert_eq!(v["hidden"], json!({ "closed": 1, "clutter": 2, "environment": 0, "matched": 0 }));
@@ -3967,11 +3967,11 @@ mod tests {
         let (s, _) = open_char(&cluttered_layout_char_bytes());
         let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
         let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
-        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-78564080"));
+        assert!(drawn.contains(&"market") && !drawn.contains(&"chatchannel_player_-70000001"));
         assert_eq!(v["hidden"]["clutter"], 2);
         let v = s.call("layout_render", &args(json!({ "width": 400, "hide_clutter": false, "environment": "docked" }))).unwrap();
         let drawn: Vec<&str> = v["windows"].as_array().unwrap().iter().filter(|w| w["drawn"] == true).map(|w| w["id"].as_str().unwrap()).collect();
-        assert!(drawn.contains(&"chatchannel_player_-78564080") && !drawn.contains(&"overview"));
+        assert!(drawn.contains(&"chatchannel_player_-70000001") && !drawn.contains(&"overview"));
     }
 
     /// The stack bug: `C` (the anchor of m1+m2) does not itself contain "m1"
@@ -3993,10 +3993,10 @@ mod tests {
         let prefs_dir = std::env::temp_dir().join(format!("mcp-prefs-{}", std::process::id()));
         std::fs::create_dir_all(&prefs_dir).unwrap();
         let prefs_path = prefs_dir.join("preferences.json");
-        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-78564080"]}}"#).unwrap();
+        std::fs::write(&prefs_path, r#"{"layout":{"clutter":["market"],"visible":["chatchannel_player_-70000001"]}}"#).unwrap();
         let s = EveMcp { prefs_path: Some(prefs_path), ..s };
         let ids = ids_of(&s.call("layout_get", &Args::new()).unwrap());
-        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-78564080".into()));
+        assert!(!ids.contains(&"market".into()) && ids.contains(&"chatchannel_player_-70000001".into()));
     }
 
     /// `overrides()` must read `preferences.json` without `prefs::load_from`'s

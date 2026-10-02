@@ -378,7 +378,7 @@ fn reference_resolution(windows: &[WindowRect]) -> (i64, i64) {
 /// while four unit tests passed. Keying on the SECOND element looks right
 /// because `player_*` rows repeat the same string in both, and silently misses
 /// every standing channel (`corp`, `alliance`, `local`, `fleet`, `faction`),
-/// whose second element is the fully-qualified `corp_98835672` form. And the
+/// whose second element is the fully-qualified `corp_98000003` form. And the
 /// wrapper is not optional in practice — matching a bare `List` returns an empty
 /// map for every real file.
 ///
@@ -980,7 +980,7 @@ mod tests {
         // The wrapped case, which is what every real file uses, is the test
         // below; between them they pin both arms of the unwrap.
         //
-        // Keyed on the FIRST element throughout: ("corp", "corp_98835672",
+        // Keyed on the FIRST element throughout: ("corp", "corp_98000003",
         // "Corp"), window id `chatchannel_corp`.
         let doc = Value::Dict(vec![
             (bytes("windows"), windows_section(&[("chatchannel_corp", 10, 20, 300, 200)])),
@@ -988,7 +988,7 @@ mod tests {
                 bytes("chatchannels"),
                 Value::List(vec![Value::Tuple(vec![
                     bytes("corp"),
-                    Value::Str("corp_98835672".into()),
+                    Value::Str("corp_98000003".into()),
                     Value::Str("Corp".into()),
                 ])]),
             )])),
@@ -1013,7 +1013,7 @@ mod tests {
                     Value::Long(vec![0u8; 8]),
                     Value::List(vec![Value::Tuple(vec![
                         bytes("corp"),
-                        Value::Str("corp_98835672".into()),
+                        Value::Str("corp_98000003".into()),
                         Value::Str("Corp".into()),
                     ])]),
                 ]),

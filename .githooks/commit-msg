@@ -12,3 +12,5 @@ if grep -qiE 'co-authored-by|generated with \[?claude|noreply@anthropic' "$1"; t
   echo "commit-msg: no attribution trailers (Co-Authored-By, Generated with Claude Code)" >&2
   exit 1
 fi
+# Blocks ids and names from the owner's real EVE data; a no-op without that data.
+py=$(command -v python || command -v python3) && { "$py" .githooks/real-ids.py "$1" || exit 1; }

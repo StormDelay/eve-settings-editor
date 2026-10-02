@@ -717,7 +717,7 @@ export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrid
   const q = f.text.trim().toLowerCase();
   if (q === "") return true;
   // Same contract search.ts documents for the tree: label, detail and the raw
-  // id all match, so "market", "corpassets" and "1037014587783" all work.
+  // id all match, so "market", "corpassets" and "1000000000003" all work.
   return `${n.label} ${n.detail} ${w.id}`.toLowerCase().includes(q);
 }
 

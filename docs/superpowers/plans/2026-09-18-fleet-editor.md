@@ -899,8 +899,8 @@ Append to the `tests` module:
 ```rust
     fn char_with_watchlist() -> Value {
         let map = Value::Dict(vec![
-            (Value::Int(1001131163), rgb(0.2, 0.5, 1.0)),
-            (Value::Int(1694010657), rgb(1.0, 0.7, 0.0)),
+            (Value::Int(90000201), rgb(0.2, 0.5, 1.0)),
+            (Value::Int(90000202), rgb(1.0, 0.7, 0.0)),
             (Value::Int(90000001), Value::Str("blue".into())),
         ]);
         Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("fleet_watchlistcolors"), wrapped(map))]))])
@@ -919,8 +919,8 @@ Append to the `tests` module:
         assert_eq!(
             f.watchlist,
             vec![
-                WatchEntry { char_id: 1001131163, rgb: Some([0.2, 0.5, 1.0]) },
-                WatchEntry { char_id: 1694010657, rgb: Some([1.0, 0.7, 0.0]) },
+                WatchEntry { char_id: 90000201, rgb: Some([0.2, 0.5, 1.0]) },
+                WatchEntry { char_id: 90000202, rgb: Some([1.0, 0.7, 0.0]) },
                 WatchEntry { char_id: 90000001, rgb: None },
             ]
         );
@@ -931,10 +931,10 @@ Append to the `tests` module:
     #[test]
     fn recolouring_overwrites_the_entry_in_place() {
         let mut c = char_with_watchlist();
-        set_watchlist_colour(&mut c, 1001131163, Some([0.75, 0.0, 0.0])).unwrap();
+        set_watchlist_colour(&mut c, 90000201, Some([0.75, 0.0, 0.0])).unwrap();
         let map = watch_map(&c);
         assert_eq!(map.len(), 3);
-        assert_eq!(map[0], (Value::Int(1001131163), rgb(0.75, 0.0, 0.0)));
+        assert_eq!(map[0], (Value::Int(90000201), rgb(0.75, 0.0, 0.0)));
     }
 
     #[test]
@@ -942,9 +942,9 @@ Append to the `tests` module:
         let mut c = char_with_watchlist();
         set_watchlist_colour(&mut c, 2117000000, Some([0.2, 0.5, 1.0])).unwrap();
         assert_eq!(watch_map(&c)[3], (Value::Int(2117000000), rgb(0.2, 0.5, 1.0)));
-        set_watchlist_colour(&mut c, 1694010657, None).unwrap();
+        set_watchlist_colour(&mut c, 90000202, None).unwrap();
         let ids: Vec<&Value> = watch_map(&c).iter().map(|(k, _)| k).collect();
-        assert_eq!(ids, vec![&Value::Int(1001131163), &Value::Int(90000001), &Value::Int(2117000000)]);
+        assert_eq!(ids, vec![&Value::Int(90000201), &Value::Int(90000001), &Value::Int(2117000000)]);
         // The unreadable entry can be removed too — that is the only edit it offers.
         set_watchlist_colour(&mut c, 90000001, None).unwrap();
         assert_eq!(watch_map(&c).len(), 2);
@@ -1290,8 +1290,8 @@ In `gen_fixtures.rs`, inside `char_modern()`'s `ui` dict (the block that starts 
                 (
                     b("fleet_watchlistcolors"),
                     w(dict(vec![
-                        (i(1001131163), tup(vec![f(0.2), f(0.5), f(1.0)])),
-                        (i(1694010657), tup(vec![f(1.0), f(0.7), f(0.0)])),
+                        (i(90000201), tup(vec![f(0.2), f(0.5), f(1.0)])),
+                        (i(90000202), tup(vec![f(1.0), f(0.7), f(0.0)])),
                     ])),
                 ),
 ```
@@ -1587,10 +1587,10 @@ In `ops.rs`'s `tests` module, after `hud_without_a_character_file_is_an_error`:
         let path = temp_file("fleet-char", &fleet_doc_bytes());
         open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
 
-        let f = set_watchlist_colour(&state, 1001131163, Some([1.0, 0.7, 0.0])).expect("add");
+        let f = set_watchlist_colour(&state, 90000201, Some([1.0, 0.7, 0.0])).expect("add");
         assert_eq!(f.watchlist.len(), 1);
-        assert_eq!(f.watchlist[0].char_id, 1001131163);
-        let f = set_watchlist_colour(&state, 1001131163, None).expect("remove");
+        assert_eq!(f.watchlist[0].char_id, 90000201);
+        let f = set_watchlist_colour(&state, 90000201, None).expect("remove");
         assert!(f.watchlist.is_empty());
         roundtrips(&state, Slot::Char);
         assert_eq!(set_fleet_colour(&state, "Target", None).unwrap_err().code, "no_document");
@@ -2283,7 +2283,7 @@ export const FLEET: Fleet = {
     } as Record<string, ColourEntry>)[c.broadcast] ?? c,
   ),
   watchlist: [
-    { char_id: 1001131163, rgb: [0.2, 0.5, 1.0] },
+    { char_id: 90000201, rgb: [0.2, 0.5, 1.0] },
     { char_id: 90000001, rgb: null },
   ],
   palette: [
@@ -2626,11 +2626,11 @@ Append to `FleetView.spec.ts`:
 ```ts
 describe("the watch list panel", () => {
   test("lists entries with the resolved name, the id, a swatch and a remove button", async () => {
-    calls.stub("resolve_character_names", { "1001131163": { name: "Pilot Delta", category: "character" } });
+    calls.stub("resolve_character_names", { "90000201": { name: "Pilot Delta", category: "character" } });
     mount();
     const p = await panel("Watch list colours");
     const row = (await within(p).findByText("Pilot Delta")).closest("li")!;
-    expect(within(row).getByText("1001131163")).toBeTruthy();
+    expect(within(row).getByText("90000201")).toBeTruthy();
     expect((within(row).getByLabelText("Colour for Pilot Delta") as HTMLInputElement).value).toBe("#3380ff");
     expect(within(p).getByText("character file")).toBeTruthy();
     // The unresolved id renders bare, and its unreadable colour is marked and disabled.
@@ -2642,14 +2642,14 @@ describe("the watch list panel", () => {
   test("recolour writes exact palette floats; remove writes null", async () => {
     mount();
     const p = await panel("Watch list colours");
-    const swatch = (await within(p).findByLabelText("Colour for 1001131163")) as HTMLInputElement;
+    const swatch = (await within(p).findByLabelText("Colour for 90000201")) as HTMLInputElement;
     await fireEvent.change(swatch, { target: { value: "#bf0000" } });
     await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(1));
-    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 1001131163, rgb: [0.75, 0.0, 0.0] });
+    expect(calls.only("set_watchlist_colour").args).toEqual({ charId: 90000201, rgb: [0.75, 0.0, 0.0] });
     const row = swatch.closest("li")!;
     await fireEvent.click(within(row).getByTitle("Remove from the list"));
     await waitFor(() => expect(calls.of("set_watchlist_colour").length).toBe(2));
-    expect(calls.of("set_watchlist_colour")[1].args).toEqual({ charId: 1001131163, rgb: null });
+    expect(calls.of("set_watchlist_colour")[1].args).toEqual({ charId: 90000201, rgb: null });
   });
 
   test("add looks the name up, writes the picked colour, clears the box and toasts", async () => {
@@ -2689,7 +2689,7 @@ describe("the watch list panel", () => {
     await submit("Someone");
     await waitFor(() => expect(within(p).getByRole("alert").textContent).toBe("Someone wasn't looked up — couldn't reach ESI"));
 
-    calls.stub("lookup_character", { id: 1001131163, name: "Pilot Delta" });
+    calls.stub("lookup_character", { id: 90000201, name: "Pilot Delta" });
     await submit("Pilot Delta");
     await waitFor(() => expect(within(p).getByRole("alert").textContent).toBe("Pilot Delta is already in the list"));
     calls.never("set_watchlist_colour");

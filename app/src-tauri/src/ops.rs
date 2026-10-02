@@ -2204,10 +2204,10 @@ mod tests {
         let path = temp_file("fleet-char", &fleet_doc_bytes());
         open_file(&state, Slot::Char, &path.to_string_lossy()).expect("open");
 
-        let f = set_watchlist_colour(&state, 1001131163, Some([1.0, 0.7, 0.0])).expect("add");
+        let f = set_watchlist_colour(&state, 90000201, Some([1.0, 0.7, 0.0])).expect("add");
         assert_eq!(f.watchlist.len(), 1);
-        assert_eq!(f.watchlist[0].char_id, 1001131163);
-        let f = set_watchlist_colour(&state, 1001131163, None).expect("remove");
+        assert_eq!(f.watchlist[0].char_id, 90000201);
+        let f = set_watchlist_colour(&state, 90000201, None).expect("remove");
         assert!(f.watchlist.is_empty());
         roundtrips(&state, Slot::Char);
         assert_eq!(set_fleet_colour(&state, "Target", None).unwrap_err().code, "no_document");
@@ -2892,7 +2892,7 @@ tabSetup:
 
     // ---- chat_leave ----
 
-    const BEAN: &str = "chatchannel_player_-88620541";
+    const INTEL: &str = "chatchannel_player_-70000002";
 
     fn chat_char_bytes(keys: &[&str]) -> Vec<u8> {
         let ts = || Value::Long(vec![0u8; 8]);
@@ -2913,22 +2913,22 @@ tabSetup:
         let ts = || Value::Long(vec![0u8; 8]);
         let mut ui = vec![(bb("neocomWidth"), Value::Tuple(vec![ts(), Value::Int(37)]))];
         if with_keys {
-            ui.push((bb(&format!("{BEAN}_userlistwidth")), Value::Tuple(vec![ts(), Value::Int(104)])));
+            ui.push((bb(&format!("{INTEL}_userlistwidth")), Value::Tuple(vec![ts(), Value::Int(104)])));
             ui.push((bb("chatPlayerChannelsJoined"), Value::Tuple(vec![ts(), Value::Dict(vec![
-                (Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())),
+                (Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())),
             ])])));
         }
         encode(&Value::Dict(vec![(bb("ui"), Value::Dict(ui))])).unwrap()
     }
 
-    /// Open char (in Bean + one other channel) and, optionally, the account file.
+    /// Open char (in Alpha-Intel + one other channel) and, optionally, the account file.
     fn chat_state(user: Option<Vec<u8>>) -> AppState {
         let state = AppState::new();
         if let Some(u) = user {
             let upath = temp_file("chat-user", &u);
             open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
         }
-        let cpath = temp_file("chat-char", &chat_char_bytes(&["player_-88620541", "player_-1"]));
+        let cpath = temp_file("chat-char", &chat_char_bytes(&["player_-70000002", "player_-1"]));
         open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
         state
     }
@@ -2940,9 +2940,9 @@ tabSetup:
     #[test]
     fn chat_leave_cleans_the_account_when_no_sibling_has_the_channel() {
         let state = chat_state(Some(chat_user_bytes(true)));
-        let r = chat_leave(&state, BEAN, &[sibling(2, &["player_-1"])]).unwrap();
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-1"])]).unwrap();
         assert_eq!(r.account, AccountOutcome::Cleaned);
-        assert!(!r.layout.windows.iter().any(|w| w.id == BEAN));
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
         assert!(settings_model::project_chat(&tree_of(&state, Slot::User)).is_empty());
     }
 
@@ -2950,7 +2950,7 @@ tabSetup:
     fn chat_leave_keeps_the_account_when_a_sibling_has_the_channel() {
         let state = chat_state(Some(chat_user_bytes(true)));
         let user_before = tree_of(&state, Slot::User);
-        let r = chat_leave(&state, BEAN, &[sibling(2, &["player_-88620541"]), sibling(3, &[])]).unwrap();
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-70000002"]), sibling(3, &[])]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptShared { chars: vec![2] });
         assert_eq!(tree_of(&state, Slot::User), user_before);
     }
@@ -2960,7 +2960,7 @@ tabSetup:
         let state = chat_state(Some(chat_user_bytes(true)));
         let user_before = tree_of(&state, Slot::User);
         let bad = (5, temp_file("chat-sib-bad", b"not a settings file"));
-        let r = chat_leave(&state, BEAN, &[bad]).unwrap();
+        let r = chat_leave(&state, INTEL, &[bad]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptUnreadable { chars: vec![5] });
         assert_eq!(tree_of(&state, Slot::User), user_before);
     }
@@ -2968,16 +2968,16 @@ tabSetup:
     #[test]
     fn chat_leave_without_an_account_file_still_leaves() {
         let state = chat_state(None);
-        let r = chat_leave(&state, BEAN, &[]).unwrap();
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptNoAccountFile);
-        assert!(!r.layout.windows.iter().any(|w| w.id == BEAN));
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
     }
 
     #[test]
     fn chat_leave_with_no_account_keys_reports_nothing_to_clean() {
         let state = chat_state(Some(chat_user_bytes(false)));
         let d0 = depth(&state);
-        let r = chat_leave(&state, BEAN, &[]).unwrap();
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(r.account, AccountOutcome::NothingToClean);
         assert_eq!(depth(&state), d0 + 1);
     }
@@ -2987,7 +2987,7 @@ tabSetup:
         let state = chat_state(Some(chat_user_bytes(true)));
         let (u0, c0) = (tree_of(&state, Slot::User), tree_of(&state, Slot::Char));
         let d0 = depth(&state);
-        chat_leave(&state, BEAN, &[]).unwrap();
+        chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(depth(&state), d0 + 1, "one command, one undo entry");
         assert!(undo::undo(&state).is_some());
         assert_eq!(tree_of(&state, Slot::User), u0);

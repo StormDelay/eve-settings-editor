@@ -66,13 +66,13 @@
     /// settings-dialog window, and a `chatchannels` row. `keep` is a second
     /// channel that must survive untouched.
     fn char_doc() -> Value {
-        let w = "chatchannel_player_-88620541";
+        let w = "chatchannel_player_-70000002";
         let keep = "chatchannel_player_-1";
         Value::Dict(vec![
             (b("windows"), Value::Dict(vec![
                 (b("windowSizesAndPositions_1"), wrapped(Value::Dict(vec![
                     (b(w), geom()), (b(keep), geom()),
-                    (b("ChannelSettingsDlg_player_-88620541"), geom()),
+                    (b("ChannelSettingsDlg_player_-70000002"), geom()),
                 ]))),
                 (b("openWindows"), wrapped(Value::Dict(vec![(b(w), Value::Bool(true)), (b(keep), Value::Bool(true))]))),
                 // Str key here, Bytes elsewhere: real files mix them.
@@ -84,7 +84,7 @@
             ])),
             (b("ui"), Value::Dict(vec![
                 (b("chatchannels"), wrapped(Value::List(vec![
-                    Value::Tuple(vec![Value::Str("player_-88620541".into()), Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())]),
+                    Value::Tuple(vec![Value::Str("player_-70000002".into()), Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())]),
                     Value::Tuple(vec![Value::Str("player_-1".into()), Value::Str("player_-1".into()), Value::Str("Keep".into())]),
                 ]))),
             ])),
@@ -109,24 +109,24 @@
     #[test]
     fn leave_purges_the_window_the_dialog_and_the_row() {
         let mut doc = char_doc();
-        assert_eq!(leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap(), "player_-88620541");
+        assert_eq!(leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap(), "player_-70000002");
         let keys = window_keys(&doc);
-        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("-70000002")), "left behind: {keys:?}");
         assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-1".to_string()]);
     }
 
     #[test]
     fn purges_str_and_bytes_keys_alike() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         // pinnedWindows held the id as a Str key.
-        assert!(!window_keys(&doc).contains(&"chatchannel_player_-88620541".to_string()));
+        assert!(!window_keys(&doc).contains(&"chatchannel_player_-70000002".to_string()));
     }
 
     #[test]
     fn leave_leaves_every_other_window_alone() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         let keep = window_keys(&doc).into_iter().filter(|k| k == "chatchannel_player_-1").count();
         // geometry, openWindows, stacksWindows, preferredIdxInStack3 inner dict
         assert_eq!(keep, 4);
@@ -138,22 +138,22 @@
         let Value::Dict(top) = &mut doc else { panic!() };
         let k = std::mem::replace(&mut top[0].0, Value::None);
         top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
-        assert!(!window_keys(&doc).iter().any(|k| k.contains("-88620541")));
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
+        assert!(!window_keys(&doc).iter().any(|k| k.contains("-70000002")));
     }
 
     #[test]
     fn the_edited_document_still_encodes() {
         let mut doc = char_doc();
-        leave_chat_char(&mut doc, "chatchannel_player_-88620541").unwrap();
+        leave_chat_char(&mut doc, "chatchannel_player_-70000002").unwrap();
         let bytes = blue_marshal::encode(&blue_marshal::reshare(&doc)).unwrap();
         blue_marshal::decode(&bytes).unwrap();
     }
 
     #[test]
     fn a_private_conversation_is_leavable() {
-        assert!(is_leavable("chatchannel_private_009e6df0127111ecaa569abe94f5b483"));
-        assert!(is_leavable("chatchannel_player_-88620541"));
+        assert!(is_leavable("chatchannel_private_00000000000011ee0000000000000001"));
+        assert!(is_leavable("chatchannel_player_-70000002"));
     }
 
     #[test]
@@ -181,7 +181,7 @@
         // A channel the character is in whose window was never opened.
         let mut doc = char_doc();
         leave_chat_char(&mut doc, "chatchannel_player_-1").unwrap();
-        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-88620541".to_string()]);
+        assert_eq!(crate::windows::chat_channel_keys(&doc), vec!["player_-70000002".to_string()]);
     }
 ```
 
@@ -203,7 +203,7 @@ Expected: compile errors — `leave_chat_char`, `is_leavable`, `ChatLeaveError`,
 /// while four unit tests passed. Keying on the SECOND element looks right
 /// because `player_*` rows repeat the same string in both, and silently misses
 /// every standing channel (`corp`, `alliance`, `local`, `fleet`, `faction`),
-/// whose second element is the fully-qualified `corp_98835672` form. And the
+/// whose second element is the fully-qualified `corp_98000003` form. And the
 /// wrapper is not optional in practice — matching a bare `List` returns an empty
 /// map for every real file.
 ///
@@ -388,17 +388,17 @@ git commit -m "Model: leave a chat channel on the character side"
     // ---- leave_chat_account ----
 
     fn account_doc() -> Value {
-        let w = "chatchannel_player_-88620541";
+        let w = "chatchannel_player_-70000002";
         ui_doc(vec![
             (b(&format!("{w}_userlistwidth")), wrapped(Value::Int(104))),
             (b(&format!("chatinputsize_{w}")), wrapped(Value::Int(62))),
             (b(&format!("chatfontsize_{w}")), wrapped(Value::Int(13))),
             (b(&format!("chatWindowBlink_{w}")), wrapped(Value::Bool(true))),
             (b(&format!("chatCondensedUserList_{w}")), wrapped(Value::Bool(false))),
-            (b("chatCondensedUserList_player_-88620541"), wrapped(Value::Bool(false))),
+            (b("chatCondensedUserList_player_-70000002"), wrapped(Value::Bool(false))),
             (b("chatchannel_player_-1_userlistwidth"), wrapped(Value::Int(90))),
             (b("chatPlayerChannelsJoined"), wrapped(Value::Dict(vec![
-                (Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())),
+                (Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())),
                 (b("player_-1"), Value::Str("Keep".into())),
             ]))),
         ])
@@ -421,9 +421,9 @@ git commit -m "Model: leave a chat channel on the character side"
     #[test]
     fn account_side_removes_every_per_channel_key_and_the_joined_entry() {
         let mut doc = account_doc();
-        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
         let keys = ui_keys(&doc);
-        assert!(!keys.iter().any(|k| k.contains("-88620541")), "left behind: {keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("-70000002")), "left behind: {keys:?}");
         assert!(keys.contains(&"chatchannel_player_-1_userlistwidth".to_string()));
         assert!(keys.contains(&"neocomWidth".to_string()));
         assert_eq!(joined(&doc), vec!["player_-1".to_string()]);
@@ -432,7 +432,7 @@ git commit -m "Model: leave a chat channel on the character side"
     #[test]
     fn account_side_with_nothing_to_remove_reports_false_and_creates_nothing() {
         let mut doc = ui_doc(vec![]);
-        assert!(!leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(!leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
         assert_eq!(ui_keys(&doc), vec!["neocomWidth".to_string()]);
     }
 
@@ -442,7 +442,7 @@ git commit -m "Model: leave a chat channel on the character side"
         let Value::Dict(top) = &mut doc else { panic!() };
         let k = std::mem::replace(&mut top[0].0, Value::None);
         top[0].0 = Value::Shared { slot: 1, value: Box::new(k) };
-        assert!(leave_chat_account(&mut doc, "chatchannel_player_-88620541"));
+        assert!(leave_chat_account(&mut doc, "chatchannel_player_-70000002"));
     }
 
     #[test]
@@ -714,7 +714,7 @@ git commit -m "Accounts: resolve the characters that share an account file"
 ```rust
     // ---- chat_leave ----
 
-    const BEAN: &str = "chatchannel_player_-88620541";
+    const INTEL: &str = "chatchannel_player_-70000002";
 
     fn chat_char_bytes(keys: &[&str]) -> Vec<u8> {
         let ts = || Value::Long(vec![0u8; 8]);
@@ -735,22 +735,22 @@ git commit -m "Accounts: resolve the characters that share an account file"
         let ts = || Value::Long(vec![0u8; 8]);
         let mut ui = vec![(bb("neocomWidth"), Value::Tuple(vec![ts(), Value::Int(37)]))];
         if with_keys {
-            ui.push((bb(&format!("{BEAN}_userlistwidth")), Value::Tuple(vec![ts(), Value::Int(104)])));
+            ui.push((bb(&format!("{INTEL}_userlistwidth")), Value::Tuple(vec![ts(), Value::Int(104)])));
             ui.push((bb("chatPlayerChannelsJoined"), Value::Tuple(vec![ts(), Value::Dict(vec![
-                (Value::Str("player_-88620541".into()), Value::Str("Bean-Intel".into())),
+                (Value::Str("player_-70000002".into()), Value::Str("Alpha-Intel".into())),
             ])])));
         }
         encode(&Value::Dict(vec![(bb("ui"), Value::Dict(ui))])).unwrap()
     }
 
-    /// Open char (in Bean + one other channel) and, optionally, the account file.
+    /// Open char (in Alpha-Intel + one other channel) and, optionally, the account file.
     fn chat_state(user: Option<Vec<u8>>) -> AppState {
         let state = AppState::new();
         if let Some(u) = user {
             let upath = temp_file("chat-user", &u);
             open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
         }
-        let cpath = temp_file("chat-char", &chat_char_bytes(&["player_-88620541", "player_-1"]));
+        let cpath = temp_file("chat-char", &chat_char_bytes(&["player_-70000002", "player_-1"]));
         open_file(&state, Slot::Char, cpath.to_str().unwrap()).unwrap();
         state
     }
@@ -762,9 +762,9 @@ git commit -m "Accounts: resolve the characters that share an account file"
     #[test]
     fn chat_leave_cleans_the_account_when_no_sibling_has_the_channel() {
         let state = chat_state(Some(chat_user_bytes(true)));
-        let r = chat_leave(&state, BEAN, &[sibling(2, &["player_-1"])]).unwrap();
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-1"])]).unwrap();
         assert_eq!(r.account, AccountOutcome::Cleaned);
-        assert!(!r.layout.windows.iter().any(|w| w.id == BEAN));
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
         assert!(settings_model::project_chat(&tree_of(&state, Slot::User)).is_empty());
     }
 
@@ -772,7 +772,7 @@ git commit -m "Accounts: resolve the characters that share an account file"
     fn chat_leave_keeps_the_account_when_a_sibling_has_the_channel() {
         let state = chat_state(Some(chat_user_bytes(true)));
         let user_before = tree_of(&state, Slot::User);
-        let r = chat_leave(&state, BEAN, &[sibling(2, &["player_-88620541"]), sibling(3, &[])]).unwrap();
+        let r = chat_leave(&state, INTEL, &[sibling(2, &["player_-70000002"]), sibling(3, &[])]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptShared { chars: vec![2] });
         assert_eq!(tree_of(&state, Slot::User), user_before);
     }
@@ -782,7 +782,7 @@ git commit -m "Accounts: resolve the characters that share an account file"
         let state = chat_state(Some(chat_user_bytes(true)));
         let user_before = tree_of(&state, Slot::User);
         let bad = (5, temp_file("chat-sib-bad", b"not a settings file"));
-        let r = chat_leave(&state, BEAN, &[bad]).unwrap();
+        let r = chat_leave(&state, INTEL, &[bad]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptUnreadable { chars: vec![5] });
         assert_eq!(tree_of(&state, Slot::User), user_before);
     }
@@ -790,16 +790,16 @@ git commit -m "Accounts: resolve the characters that share an account file"
     #[test]
     fn chat_leave_without_an_account_file_still_leaves() {
         let state = chat_state(None);
-        let r = chat_leave(&state, BEAN, &[]).unwrap();
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(r.account, AccountOutcome::KeptNoAccountFile);
-        assert!(!r.layout.windows.iter().any(|w| w.id == BEAN));
+        assert!(!r.layout.windows.iter().any(|w| w.id == INTEL));
     }
 
     #[test]
     fn chat_leave_with_no_account_keys_reports_nothing_to_clean() {
         let state = chat_state(Some(chat_user_bytes(false)));
         let d0 = depth(&state);
-        let r = chat_leave(&state, BEAN, &[]).unwrap();
+        let r = chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(r.account, AccountOutcome::NothingToClean);
         assert_eq!(depth(&state), d0 + 1);
     }
@@ -809,7 +809,7 @@ git commit -m "Accounts: resolve the characters that share an account file"
         let state = chat_state(Some(chat_user_bytes(true)));
         let (u0, c0) = (tree_of(&state, Slot::User), tree_of(&state, Slot::Char));
         let d0 = depth(&state);
-        chat_leave(&state, BEAN, &[]).unwrap();
+        chat_leave(&state, INTEL, &[]).unwrap();
         assert_eq!(depth(&state), d0 + 1, "one command, one undo entry");
         assert!(undo::undo(&state).is_some());
         assert_eq!(tree_of(&state, Slot::User), u0);
@@ -1099,7 +1099,7 @@ import { isLeavableChat, leaveToast } from "./layout";
 
 describe("chat leave", () => {
   test("only player channels and private conversations are leavable", () => {
-    expect(isLeavableChat("chatchannel_player_-88620541")).toBe(true);
+    expect(isLeavableChat("chatchannel_player_-70000002")).toBe(true);
     expect(isLeavableChat("chatchannel_private_009e6df0")).toBe(true);
     for (const id of ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet", "chatchannel_player_", "market"]) {
       expect(isLeavableChat(id)).toBe(false);
@@ -1108,16 +1108,16 @@ describe("chat leave", () => {
 
   test("toast wording per account outcome", () => {
     const nameOf = (id: number) => (id === 2 ? "Other Char" : String(id));
-    expect(leaveToast("Bean-Intel", { outcome: "cleaned" }, nameOf)).toBe("Left Bean-Intel.");
-    expect(leaveToast("Bean-Intel", { outcome: "nothing_to_clean" }, nameOf)).toBe("Left Bean-Intel.");
-    expect(leaveToast("Bean-Intel", { outcome: "kept_shared", chars: [2] }, nameOf)).toBe(
-      "Left Bean-Intel. Its account settings stay: Other Char still has it.",
+    expect(leaveToast("Alpha-Intel", { outcome: "cleaned" }, nameOf)).toBe("Left Alpha-Intel.");
+    expect(leaveToast("Alpha-Intel", { outcome: "nothing_to_clean" }, nameOf)).toBe("Left Alpha-Intel.");
+    expect(leaveToast("Alpha-Intel", { outcome: "kept_shared", chars: [2] }, nameOf)).toBe(
+      "Left Alpha-Intel. Its account settings stay: Other Char still has it.",
     );
-    expect(leaveToast("Bean-Intel", { outcome: "kept_unreadable", chars: [2, 3] }, nameOf)).toBe(
-      "Left Bean-Intel. Its account settings stay: Other Char and 3's files couldn't be read.",
+    expect(leaveToast("Alpha-Intel", { outcome: "kept_unreadable", chars: [2, 3] }, nameOf)).toBe(
+      "Left Alpha-Intel. Its account settings stay: Other Char and 3's files couldn't be read.",
     );
-    expect(leaveToast("Bean-Intel", { outcome: "kept_no_account_file" }, nameOf)).toBe(
-      "Left Bean-Intel. Open the account file to clear its account settings too.",
+    expect(leaveToast("Alpha-Intel", { outcome: "kept_no_account_file" }, nameOf)).toBe(
+      "Left Alpha-Intel. Open the account file to clear its account settings too.",
     );
   });
 });
@@ -1286,8 +1286,8 @@ git commit -m "UI: leave a chat channel from the layout editor"
 ```markdown
 ### Leaving a chat channel
 
-Verified in game 2026-09-28 on Pilot Echo (`core_char_96000002`), Bean-Intel
-(`chatchannel_player_-88620541`, a pinned member of `ChatWindowStack`).
+Verified in game 2026-09-28 on Pilot Echo (`core_char_96000002`), Alpha-Intel
+(`chatchannel_player_-70000002`, a pinned member of `ChatWindowStack`).
 
 **The character file's `ui → chatchannels` row is what brings a chat window
 back.** Removing only the window's entries under `windows` (what a layout copy
@@ -1321,6 +1321,6 @@ git commit -m "Docs: leaving a chat channel, and the spec's planning amendments"
 
 - [ ] **Step 4: Live check (the user, in game)** — needs a build and the user's EVE client; do not attempt it autonomously. Hand the user:
   1. With Pilot Echo logged out, open it in the app (character + account file), select a private conversation window, **Leave conversation**, save. Log in, check the conversation is gone, log out.
-  2. Leave one more player channel on Pilot Echo whose toast reads just "Left <name>. Save to write it to disk." — the account side was cleaned — then save, log in, and check whether that channel's join suggestion is gone. (Bean-Intel itself cannot be used: the spike already removed its window and row, so there is nothing left to leave; its `chatPlayerChannelsJoined` entry stays until EVE or a later tidy-up drops it.)
+  2. Leave one more player channel on Pilot Echo whose toast reads just "Left <name>. Save to write it to disk." — the account side was cleaned — then save, log in, and check whether that channel's join suggestion is gone. (Alpha-Intel itself cannot be used: the spike already removed its window and row, so there is nothing left to leave; its `chatPlayerChannelsJoined` entry stays until EVE or a later tidy-up drops it.)
   3. Record the result in `docs/format-notes.md` under "Leaving a chat channel" (suggestion gone / suggestion survives) and commit. If the suggestion survives, the release note makes no promise about suggestions (spec §5).
 ```

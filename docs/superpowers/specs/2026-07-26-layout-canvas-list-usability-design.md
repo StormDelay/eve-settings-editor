@@ -23,8 +23,8 @@ The Layout editor is unusable at real scale. Measured over the corpus
 Only ~23 % of a character's windows are flagged open, and those are what the
 canvas draws — 68 overlapping blue boxes, most of them chat noise the player has
 never positioned deliberately. The list is worse: 296 rows labelled with raw
-window ids (`ChannelSettingsDlg_fleet_1038711647935`,
-`('corpassets', 1037014587783L)`, `76`), no filter, no grouping.
+window ids (`ChannelSettingsDlg_fleet_1000000000004`,
+`('corpassets', 1000000000003L)`, `76`), no filter, no grouping.
 
 The window id families, by share of all window rows across the corpus:
 
@@ -88,7 +88,7 @@ export function describe(id: string): WindowName;
 
 Resolution order, first match wins:
 
-1. **Stringified Python tuple** — `('corpassets', 1037014587783L)`,
+1. **Stringified Python tuple** — `('corpassets', 1000000000003L)`,
    `('myPlaces', (12345, None))`, `('RolesSummary', 'Container Access')`. Take
    the first element as the family, look it up in `CURATED`, and render the
    remainder as `detail`. Parsing is deliberately shallow: a regex for the
@@ -98,7 +98,7 @@ Resolution order, first match wins:
    `detail: <id>`, `family: "stack"`.
 3. **Parameterized family** — the id starts with a known `PARAM` prefix
    followed by `_`. The prefix's curated label becomes `label`, the suffix
-   becomes `detail`. **Longest prefix wins**: `mail_readingWnd_380729425` is a
+   becomes `detail`. **Longest prefix wins**: `mail_readingWnd_300000001` is a
    Mail message, not a `mail` instance, and adding a shorter overlapping prefix
    later must not change an existing longer match. Seed table (extend as the
    corpus shows more):
@@ -117,7 +117,7 @@ Resolution order, first match wins:
    | `containerWnd` | Container |
    | `overview` | Overview |
 
-   `chatchannel_player_-78564080` yields `detail: "player"` — the suffix is
+   `chatchannel_player_-70000001` yields `detail: "player"` — the suffix is
    truncated at the first segment that is numeric, hex-GUID-shaped, or negative,
    because the raw ids are long and meaningless to the reader. The untruncated
    id remains available (see §5).
@@ -166,7 +166,7 @@ make rectangles disappear, or the canvas stops being a picture of the screen.
 both the window list and the input to `stackUnits`:
 
 - a text box, matching case-insensitively against `label`, `detail` and the raw
-  id, so `market`, `corpassets` and `1037014587783` all find what you expect
+  id, so `market`, `corpassets` and `1000000000003` all find what you expect
   (the same contract `search.ts` documents for the tree);
 - `Open only` — drops windows without the `openWindows` flag (296 rows → ~68);
 - `Hide chat & session windows` — drops the six noise families named in §1

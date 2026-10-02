@@ -1284,7 +1284,7 @@ the mistake before it shipped, the same way `tests/hud_corpus.rs` caught
 `chatCondensedUserList_<ch>` (Bool) is deliberately not read: it changes how the
 member list renders, not how wide it is, and its key naming is inconsistent —
 `chatCondensedUserList_corp` sits beside
-`chatCondensedUserList_chatchannel_player_-78564080`, one with the window-id
+`chatCondensedUserList_chatchannel_player_-70000001`, one with the window-id
 prefix and one without.
 
 **The input box spans the FULL window width**, and the member list stops on top
@@ -1313,8 +1313,8 @@ a refused write leaves the document byte-identical.
 
 ### Leaving a chat channel
 
-Verified in game 2026-09-28 on Pilot Echo (`core_char_96000002`), Bean-Intel
-(`chatchannel_player_-88620541`, a pinned member of `ChatWindowStack`).
+Verified in game 2026-09-28 on Pilot Echo (`core_char_96000002`), Alpha-Intel
+(`chatchannel_player_-70000002`, a pinned member of `ChatWindowStack`).
 
 **The character file's `ui → chatchannels` row is what brings a chat window
 back.** Removing only the window's entries under `windows` (what a layout copy
@@ -1337,7 +1337,7 @@ and goes with it.
 Only `player_*` and `private_*` keys can be left. Besides the standing channels
 (`local`, `corp`, `alliance`, `fleet`, `incursion`, `invasion`, `faction`), the
 corpus holds a third, server-managed kind: `system_<ids>` — Rookie Help is
-`system_263238_263259`. It is refused too; whether leaving one in the file
+`system_200001_200002`. It is refused too; whether leaving one in the file
 sticks has not been tested. `tests/chat_leave_corpus.rs` fails on any key of a
 kind nobody has classified.
 
