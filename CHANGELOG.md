@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.42.0] - 2026-10-02
+
+Arrange each ship's HUD slots, and share the arrangements across all your accounts.
+
+### Added
+- **Racks view.** Lists every ship with a saved HUD slot layout in the account file: drag to swap two slots, add or remove a ship, or copy one ship's layout onto others.
+- **Merge ship slot layouts.** The batch view collects the slot layouts from every ticked account file of a profile and writes the full set back into each, so every account finds every ship arranged.
+- The assistant can read and edit ship slot layouts, and merge them across accounts.
+- **The merge writes every ticked account file immediately** (each is backed up first); where two files arrange the same ship differently, the newest file wins.
+
+### Changed
+- The assistant knows which probe axis points north.
+
 ## [0.41.0] - 2026-09-28
 
 See exactly how your overview columns look in game, and let the assistant size them.
