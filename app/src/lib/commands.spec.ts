@@ -30,7 +30,7 @@ describe("registry invariants", () => {
    *  it is a proper noun. "Remove Window" was the headline casing bug and this
    *  is what stops the next one. */
   test("labels are sentence case", () => {
-    const PROPER = new Set(["EVE", "Settings", "Editor", "Overview", "Autofill", "Keybinds", "Probes", "Layout", "Raw", "Accounts", "Fleet"]);
+    const PROPER = new Set(["EVE", "Settings", "Editor", "Overview", "Autofill", "Keybinds", "Probes", "Layout", "Raw", "Accounts", "Fleet", "Racks"]);
     for (const c of COMMANDS) {
       expect(c.label[0], `${c.id}`).toBe(c.label[0].toUpperCase());
       for (const w of c.label.split(/[\s—]+/).slice(1)) {

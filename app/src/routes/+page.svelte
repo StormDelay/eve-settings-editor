@@ -14,6 +14,7 @@
   import KeybindsView from "$lib/KeybindsView.svelte";
   import ProbeFormationsView from "$lib/ProbeFormationsView.svelte";
   import FleetView from "$lib/FleetView.svelte";
+  import RacksView from "$lib/RacksView.svelte";
   import BatchView from "$lib/BatchView.svelte";
   import ShortcutsSheet from "$lib/ShortcutsSheet.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -121,7 +122,7 @@
 
   // The views that edit account-scoped data — the same set the four
   // copy-pasted banners covered.
-  const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes", "fleet"];
+  const ACCOUNT_SCOPED: View[] = ["overview", "autofill", "keybinds", "probes", "fleet", "racks"];
   // The views that have something to inspect, and the whole of the rule.
   //
   // Phase 2 drew this column on EVERY tab, reasoning that one which comes and
@@ -690,6 +691,14 @@
             onShowAccounts={() => (sheet = "accounts")}
             onUserDirty={() => { subject.dirty.user = true; noteEdit(); }}
             onCharDirty={() => { subject.dirty.char = true; noteEdit(); }} />
+        </div>
+      {:else if view === "racks"}
+        <div class="scroll">
+          <RacksView
+            userOpen={subject.slots.user?.status === "opened"}
+            refreshToken={subject.savedAt}
+            userId={subject.userId}
+            onUserDirty={() => { subject.dirty.user = true; noteEdit(); }} />
         </div>
       {:else}
         {#if subject.slots.user?.status === "opened"}

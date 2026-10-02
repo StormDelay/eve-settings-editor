@@ -80,7 +80,8 @@ const CHORDS: Record<string, string> = {
   "4": "go.keybinds",
   "5": "go.probes",
   "6": "go.fleet",
-  "7": "go.raw",
+  "7": "go.racks",
+  "8": "go.raw",
 };
 
 /**
