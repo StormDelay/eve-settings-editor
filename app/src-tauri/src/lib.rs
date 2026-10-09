@@ -337,6 +337,10 @@ fn overview_create_window_mapping(state: tauri::State<'_, AppState>) -> Result<s
     ops::overview_create_window_mapping(&state)
 }
 #[tauri::command]
+fn overview_create(state: tauri::State<'_, AppState>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::overview_create(&state)
+}
+#[tauri::command]
 fn preset_create(state: tauri::State<'_, AppState>, from: String, new_name: String) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::preset_create(&state, from, new_name)
 }
@@ -811,7 +815,7 @@ pub fn run() {
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             overview_copy_columns, overview_fit,
             tab_create, tab_rename, tab_rename_pieces, tab_name_parse, tab_name_format, tab_delete, tab_reorder, tab_move,
-            overview_window_add, overview_window_remove, overview_create_window_mapping,
+            overview_window_add, overview_window_remove, overview_create_window_mapping, overview_create,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
             pack_preview, pack_import, pack_export,

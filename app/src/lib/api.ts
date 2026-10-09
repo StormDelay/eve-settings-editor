@@ -410,6 +410,9 @@ export interface OverviewColumns {
   windows: OverviewWindow[];
   presets: Preset[];
   appearance: Appearance;
+  /** Present (and true) only when the file has no `overview` container at all:
+   *  nothing can be edited until `overviewCreate` or a pack import mints one. */
+  no_container?: true;
 }
 
 export type PackSummary = { sections: [string, number][]; ignored: string[] };
@@ -688,6 +691,7 @@ export const api = {
   overviewWindowRemove: (windowIdx: number) =>
     invoke<OverviewColumns>("overview_window_remove", { windowIdx }),
   overviewCreateWindowMapping: () => invoke<OverviewColumns>("overview_create_window_mapping"),
+  overviewCreate: () => invoke<OverviewColumns>("overview_create"),
   presetCreate: (from: string, newName: string) =>
     invoke<OverviewColumns>("preset_create", { from, newName }),
   presetRename: (oldName: string, newName: string) =>

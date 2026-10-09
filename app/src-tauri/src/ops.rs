@@ -20,7 +20,7 @@ use settings_model::{
     Document, Fidelity, LoadError, Mutation, Node, OverviewColumns, Profile, SaveReport,
     WindowLayout,
     unstack, add_to_stack, reorder_stack, create_stack, delete_orphan_frames, StackError,
-    create_tab, create_window_mapping, rename_tab, delete_tab, remap_tab_scoped_settings, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
+    create_overview, create_tab, create_window_mapping, rename_tab, delete_tab, remap_tab_scoped_settings, reorder_tabs_in_window, move_tab, set_tab_preset, OverviewTabError,
     add_overview_window, remove_overview_window, add_overview_window_geometry, remove_overview_window_geometry,
     create_preset, delete_preset, fork_preset, rename_preset, set_preset_groups,
     project_hud, set_hud_value, Hud, HudScope,
@@ -808,6 +808,12 @@ pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: O
 /// 0's char-side geometry key already exists on any account with an overview.
 pub fn overview_create_window_mapping(state: &AppState) -> Result<OverviewColumns, ErrDto> {
     edit_user_tabs(state, |v| create_window_mapping(v).map(|_| ()))
+}
+
+/// Give an account file with no overview settings an empty container, so the
+/// tab editor has somewhere to write. In-memory like every edit; the user saves.
+pub fn overview_create(state: &AppState) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tabs(state, create_overview)
 }
 
 pub fn preset_create(state: &AppState, from: String, new_name: String) -> Result<OverviewColumns, ErrDto> {
@@ -1864,6 +1870,27 @@ mod tests {
         let guard = state.user.lock().unwrap();
         let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();
         assert_eq!(blue_marshal::decode(&bytes).unwrap(), guard.as_ref().unwrap().value);
+    }
+
+    /// The view's "Create overview settings": a file with no container gains an
+    /// empty one, a tab can then be added, and undo takes the mint back out.
+    #[test]
+    fn overview_create_mints_a_container_the_tab_editor_can_use() {
+        let bb = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let doc = Value::Dict(vec![(bb("other"), Value::Int(1))]);
+        let path = temp_file("ov-create", &encode(&doc).unwrap());
+        let state = AppState::new();
+        open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+        assert!(overview_columns(&state).unwrap().no_container);
+
+        let cols = overview_create(&state).unwrap();
+        assert!(!cols.no_container);
+        let cols = tab_create(&state, 0, "Main".into(), None).unwrap();
+        assert_eq!(cols.tabs[0].name, "Main");
+
+        assert!(undo::undo(&state).is_some());
+        assert!(undo::undo(&state).is_some());
+        assert!(overview_columns(&state).unwrap().no_container, "undo removes the minted container");
     }
 
     fn autofill_user_bytes() -> Vec<u8> {

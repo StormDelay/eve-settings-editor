@@ -261,6 +261,12 @@
     });
   }
 
+  // A file with no overview container — a fresh account, or a preset pruned to
+  // other aspects. The mint is an ordinary in-memory edit: undoable, saved by Save.
+  async function createOverview() {
+    if (await edit(() => api.overviewCreate(), "pack", "The overview settings weren't created")) onUserDirty();
+  }
+
   // Pack import/export is account-wide, so it lives in the view's ⋯ rather than
   // inside one sub-tab. Import marks the slot dirty; the user still saves.
   let packBusy = $state(false);
@@ -388,6 +394,20 @@
       </div>
     {:else if error}
       <div class="scroll"><InlineMessage variant="error">{error}</InlineMessage></div>
+    {:else if data?.no_container}
+      <div class="scroll">
+        <EmptyState
+          title="No overview settings"
+          description="This account file has none yet. Create them to add tabs, or import an overview pack.">
+          {#snippet action()}
+            <Button onclick={createOverview}>Create overview settings</Button>
+            <Button onclick={importPack} disabled={packBusy}>Import overview pack…</Button>
+          {/snippet}
+        </EmptyState>
+        {#if at("pack")}
+          <InlineMessage variant="error" detail={editError!.detail}>{editError!.text}</InlineMessage>
+        {/if}
+      </div>
     {:else if data}
       <div class="sub-row">
         {#if data.tabs.length > 0}

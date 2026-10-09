@@ -29,6 +29,11 @@ pub struct OverviewColumns {
     pub tabs: Vec<OverviewTab>,
     pub presets: Vec<Preset>,
     pub appearance: Appearance,
+    /// The file has no `overview` container at all — distinct from one with zero
+    /// tabs, since nothing but `create_overview` or a pack import can write to it.
+    /// Serialized only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_container: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -113,7 +118,7 @@ pub struct OverviewColumn {
 pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColumns {
     let mut sh = SharedTable::new();
     collect_shared(user, &mut sh);
-    let empty = OverviewColumns { windows: vec![], tabs: vec![], presets: vec![], appearance: Appearance::default() };
+    let empty = OverviewColumns { windows: vec![], tabs: vec![], presets: vec![], appearance: Appearance::default(), no_container: true };
     let Some(overview) = overview_container(user, &sh) else { return empty };
 
     let windows = window_groups(overview, &sh);
@@ -122,7 +127,7 @@ pub fn project_overview(user: &Value, char_tree: Option<&Value>) -> OverviewColu
         .unwrap_or_default();
     let presets = presets_with_states(overview, &sh);
     let appearance = appearance(overview, user, &sh);
-    OverviewColumns { windows, tabs, presets, appearance }
+    OverviewColumns { windows, tabs, presets, appearance, no_container: false }
 }
 
 /// One account-scoped state list. Empty when the key is absent, which is the
