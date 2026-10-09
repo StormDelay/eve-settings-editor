@@ -255,7 +255,7 @@ Workflow:
   femtometres over the radius — float noise reading as "outside". It measures from
   the origin now, where 16000 is exact.
 
-- [ ] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
+- [x] **A cross-folder batch's ACCOUNT write picks an arbitrary profile folder.**
   `ops.rs`'s `scoped_files` returns `HashMap<u64, PathBuf>` maps keyed by id
   alone. With `allow_other_folders` it walks every profile, so an account id
   present in several `settings_*` folders — the normal case; this install has
@@ -268,7 +268,13 @@ Workflow:
   decision before it can be fixed:** should the account write follow each target
   character's own folder (one write per folder, so a cross-folder batch can
   write the same account several times), or should a cross-folder batch refuse
-  account-scoped aspects outright? _Added 2026-08-04._
+  account-scoped aspects outright? _Added 2026-08-04._ _Done 2026-10-09: the
+  account write follows each target's own folder. `setup.rs`'s planner maps are
+  keyed by (folder, id), so a cross-folder batch writes and backs up one account
+  file per (folder, account) pair, and the Batch preview names the folder of
+  each one outside the picked folder. The same collapse also hid a target whose
+  char id existed in another folder, and could read a character source's
+  account from the wrong folder; both are fixed by the same keying._
 
 - [ ] **Confirm in-client that a probe formation with fewer than 8 probes loads.**
   The formation editor accepts 1–8 probes, but every one of the 123 corpus

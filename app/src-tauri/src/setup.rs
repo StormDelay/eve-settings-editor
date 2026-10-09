@@ -155,24 +155,35 @@ fn account_of(store: &accounts::AccountsStore, char_id: u64) -> Option<u64> {
     store.accounts.iter().find(|(_, a)| a.characters.contains(&char_id)).map(|(&uid, _)| uid)
 }
 
+/// A settings file's address: its profile folder and the id in its name. An id
+/// alone names no file — every `settings_*` folder holds its own copy of the
+/// same characters and accounts.
+pub type FileKey = (PathBuf, u64);
+
 /// Pure planner. All disk-dependent inputs (discovered file paths, the store,
 /// each char's stored screen resolution) are passed in, so this is unit-tested
 /// without a filesystem. Paths are already folder-scoped by the caller.
+///
+/// A target's account file is the one in the target's OWN folder: a
+/// cross-folder batch writes one account file per (folder, account) pair, so
+/// the same account id can be written in several folders.
 pub fn plan_setup(
-    char_paths: &HashMap<u64, PathBuf>,
-    user_paths: &HashMap<u64, PathBuf>,
+    char_paths: &HashMap<FileKey, PathBuf>,
+    user_paths: &HashMap<FileKey, PathBuf>,
     store: &accounts::AccountsStore,
-    resolutions: &HashMap<u64, (i64, i64)>,
-    source_char: Option<u64>,
-    target_chars: &[u64],
+    resolutions: &HashMap<FileKey, (i64, i64)>,
+    source_char: Option<&FileKey>,
+    target_chars: &[FileKey],
     aspects: &[Aspect],
 ) -> SetupPlan {
     let w = aspect_writes(aspects);
     let mut plan = SetupPlan::default();
 
-    let source_account = source_char.and_then(|c| account_of(store, c));
+    // The source's own account file, as a key: never written over itself.
+    let source_account =
+        source_char.and_then(|(dir, c)| account_of(store, *c).map(|uid| (dir.clone(), uid)));
     if w.writes_account() && source_char.is_some() {
-        match source_account {
+        match &source_account {
             None => {
                 plan.source_error = Some(
                     "The source character has no paired account — pair it in the Accounts view first."
@@ -180,36 +191,37 @@ pub fn plan_setup(
                 );
                 return plan;
             }
-            Some(uid) if !user_paths.contains_key(&uid) => {
+            Some(key) if !user_paths.contains_key(key) => {
                 plan.source_error = Some("The source character's account file was not found.".into());
                 return plan;
             }
             _ => {}
         }
     }
-    let src_res = source_char.and_then(|c| resolutions.get(&c).copied());
+    let src_res = source_char.and_then(|c| resolutions.get(c).copied());
 
-    let mut included: Vec<u64> = Vec::new();
-    let mut seen: HashSet<u64> = HashSet::new();
-    for &t in target_chars {
+    let mut included: Vec<&FileKey> = Vec::new();
+    let mut seen: HashSet<&FileKey> = HashSet::new();
+    for t in target_chars {
+        let (dir, id) = t;
         // A repeated id would plan the same file twice — two writes and two
         // backups of one target. The UI passes a set, so this is a guard on the
         // command boundary rather than a fix for anything observed.
         if Some(t) == source_char || !seen.insert(t) {
             continue;
         }
-        if !char_paths.contains_key(&t) {
-            plan.excluded.push(ExcludedTarget { char_id: t, reason: "Character file not found in this folder.".into() });
+        if !char_paths.contains_key(t) {
+            plan.excluded.push(ExcludedTarget { char_id: *id, reason: "Character file not found in this folder.".into() });
             continue;
         }
         if w.writes_account() {
-            match account_of(store, t) {
+            match account_of(store, *id) {
                 None => {
-                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "No account paired — pair it in the Accounts view to include.".into() });
+                    plan.excluded.push(ExcludedTarget { char_id: *id, reason: "No account paired — pair it in the Accounts view to include.".into() });
                     continue;
                 }
-                Some(uid) if !user_paths.contains_key(&uid) => {
-                    plan.excluded.push(ExcludedTarget { char_id: t, reason: "Account file not found in this folder.".into() });
+                Some(uid) if !user_paths.contains_key(&(dir.clone(), uid)) => {
+                    plan.excluded.push(ExcludedTarget { char_id: *id, reason: "Account file not found in this folder.".into() });
                     continue;
                 }
                 _ => {}
@@ -220,27 +232,28 @@ pub fn plan_setup(
 
     if w.writes_char() {
         for &t in &included {
-            let path = char_paths[&t].to_string_lossy().into_owned();
+            let path = char_paths[t].to_string_lossy().into_owned();
             let resolution_mismatch = w.copies_char_geometry()
-                && match (src_res, resolutions.get(&t).copied()) {
+                && match (src_res, resolutions.get(t).copied()) {
                     (Some(s), Some(d)) => s != d && s != (0, 0) && d != (0, 0),
                     _ => false,
                 };
-            plan.char_writes.push(CharWrite { char_id: t, path, full_copy: w.char_full_copy, resolution_mismatch });
+            plan.char_writes.push(CharWrite { char_id: t.1, path, full_copy: w.char_full_copy, resolution_mismatch });
         }
     }
 
     if w.writes_account() {
-        let mut by_account: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
-        for &t in &included {
-            let uid = account_of(store, t).expect("included target is paired");
-            by_account.entry(uid).or_default().push(t);
+        let mut by_account: BTreeMap<FileKey, Vec<u64>> = BTreeMap::new();
+        for &(dir, id) in &included {
+            let uid = account_of(store, *id).expect("included target is paired");
+            by_account.entry((dir.clone(), uid)).or_default().push(*id);
         }
-        for (uid, selected_on_acct) in by_account {
-            if Some(uid) == source_account {
+        for (key, selected_on_acct) in by_account {
+            if Some(&key) == source_account.as_ref() {
                 continue; // already carries the source's settings
             }
-            let path = user_paths[&uid].to_string_lossy().into_owned();
+            let uid = key.1;
+            let path = user_paths[&key].to_string_lossy().into_owned();
             let selected: HashSet<u64> = selected_on_acct.into_iter().collect();
             let collateral: Vec<u64> = store
                 .accounts
@@ -268,14 +281,14 @@ fn locate_source(roots: &[PathBuf], source_char_path: &str) -> Option<(u64, Path
 }
 
 /// Discover, folder-scope to `anchor_dir` (unless `allow_other_folders`), and
-/// split into char/user id->path maps. The anchor is passed in rather than
+/// split into char/user (folder, id)->path maps. The anchor is passed in rather than
 /// derived from a source path, because a preset source has no profile of its
 /// own — the batch view supplies the profile the targets are chosen from.
 fn scoped_files(
     roots: &[PathBuf],
     anchor_dir: Option<&Path>,
     allow_other_folders: bool,
-) -> (HashMap<u64, PathBuf>, HashMap<u64, PathBuf>) {
+) -> (HashMap<FileKey, PathBuf>, HashMap<FileKey, PathBuf>) {
     let mut char_paths = HashMap::new();
     let mut user_paths = HashMap::new();
     for p in discover(roots) {
@@ -285,8 +298,8 @@ fn scoped_files(
         for f in &p.files {
             let Some(id) = f.id else { continue };
             match f.kind {
-                FileKind::Char => { char_paths.insert(id, f.path.clone()); }
-                FileKind::User => { user_paths.insert(id, f.path.clone()); }
+                FileKind::Char => { char_paths.insert((p.dir.clone(), id), f.path.clone()); }
+                FileKind::User => { user_paths.insert((p.dir.clone(), id), f.path.clone()); }
                 FileKind::Other => {}
             }
         }
@@ -316,27 +329,34 @@ struct SourceSides {
     anchor: Option<PathBuf>,
 }
 
+impl SourceSides {
+    /// A character source's own file key: its profile folder and id.
+    fn char_key(&self) -> Option<FileKey> {
+        Some((self.anchor.clone()?, self.char_id?))
+    }
+}
+
 /// Each char's stored screen resolution (reference_w, reference_h), for the
 /// resolution-mismatch warning. Only the source + requested targets are read.
-fn gather_resolutions(char_paths: &HashMap<u64, PathBuf>, ids: &[u64]) -> HashMap<u64, (i64, i64)> {
+fn gather_resolutions(char_paths: &HashMap<FileKey, PathBuf>, ids: &[FileKey]) -> HashMap<FileKey, (i64, i64)> {
     let mut out = HashMap::new();
-    for &id in ids {
-        let Some(path) = char_paths.get(&id) else { continue };
+    for id in ids {
+        let Some(path) = char_paths.get(id) else { continue };
         let Ok(bytes) = fs::read(path) else { continue };
         let Ok(value) = blue_marshal::decode(&bytes) else { continue };
         let wl = project_window_layout(&value, None);
-        out.insert(id, (wl.reference_w, wl.reference_h));
+        out.insert(id.clone(), (wl.reference_w, wl.reference_h));
     }
     out
 }
 
-/// Map target file paths to char ids within the scoped char map.
-fn target_ids(char_paths: &HashMap<u64, PathBuf>, target_char_paths: &[String]) -> Vec<u64> {
+/// Map target file paths to their keys within the scoped char map.
+fn target_ids(char_paths: &HashMap<FileKey, PathBuf>, target_char_paths: &[String]) -> Vec<FileKey> {
     target_char_paths
         .iter()
         .filter_map(|t| {
             let tp = Path::new(t);
-            char_paths.iter().find(|(_, p)| p.as_path() == tp).map(|(&id, _)| id)
+            char_paths.iter().find(|(_, p)| p.as_path() == tp).map(|(k, _)| k.clone())
         })
         .collect()
 }
@@ -382,9 +402,11 @@ fn resolve_source(
                 return Err("Source file not found.".into());
             };
             let store = accounts::load_store(dir);
+            // The source's own folder's account file, whatever the flag: the
+            // same account id is in every folder.
             let user_path = account_of(&store, id).and_then(|uid| {
                 let (_, users) = scoped_files(roots, Some(&profile_dir), allow_other_folders);
-                users.get(&uid).cloned()
+                users.get(&(profile_dir.clone(), uid)).cloned()
             });
             Ok(SourceSides {
                 char_path: PathBuf::from(path),
@@ -486,9 +508,7 @@ fn preview_with_sides(
     // Some, so no mismatch could ever be reported.
     let resolutions = if w.copies_char_geometry() && sides.char_id.is_some() {
         let mut ids = targets.clone();
-        if let Some(id) = sides.char_id {
-            ids.push(id);
-        }
+        ids.extend(sides.char_key());
         gather_resolutions(&char_paths, &ids)
     } else {
         HashMap::new()
@@ -498,7 +518,7 @@ fn preview_with_sides(
         &user_paths,
         &store,
         &resolutions,
-        sides.char_id,
+        sides.char_key().as_ref(),
         &targets,
         aspects,
     );
@@ -1138,8 +1158,15 @@ mod tests {
         s.accounts.insert(20, accounts::Account { alias: None, characters: vec![3] });
         s
     }
-    fn paths(ids: &[u64], prefix: &str) -> HashMap<u64, PathBuf> {
-        ids.iter().map(|&i| (i, PathBuf::from(format!("{prefix}{i}.dat")))).collect()
+    /// Every planner test below sits in one folder, `D`.
+    fn k(id: u64) -> FileKey {
+        (PathBuf::from("D"), id)
+    }
+    fn ks(ids: &[u64]) -> Vec<FileKey> {
+        ids.iter().map(|&i| k(i)).collect()
+    }
+    fn paths(ids: &[u64], prefix: &str) -> HashMap<FileKey, PathBuf> {
+        ids.iter().map(|&i| (k(i), PathBuf::from(format!("{prefix}{i}.dat")))).collect()
     }
 
     #[test]
@@ -1147,7 +1174,7 @@ mod tests {
         // Source char 3 (account 20). Targets 1 and 2 both on account 10.
         let cp = paths(&[1, 2, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 2], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1, 2]), &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 2, "both targets get a char (widths) write");
         assert_eq!(plan.account_writes.len(), 1, "one account write for account 10, deduped");
         assert_eq!(plan.account_writes[0].user_id, 10);
@@ -1161,7 +1188,7 @@ mod tests {
         // Source char 3. Target 1 on account 10 (whose other char 2 is NOT selected).
         let cp = paths(&[1, 2, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1]), &[Aspect::Overview]);
         assert_eq!(plan.account_writes.len(), 1);
         assert_eq!(plan.account_writes[0].collateral_char_ids, vec![2], "char 2 is collateral");
     }
@@ -1170,7 +1197,7 @@ mod tests {
     fn account_aspect_excludes_an_unpaired_target() {
         let cp = paths(&[1, 3, 4], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 4], &[Aspect::Autofill]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1, 4]), &[Aspect::Autofill]);
         assert_eq!(plan.excluded.len(), 1);
         assert_eq!(plan.excluded[0].char_id, 4);
         assert_eq!(plan.account_writes.len(), 1, "only the paired target's account is written");
@@ -1184,7 +1211,7 @@ mod tests {
         // out) — updated in place rather than left contradicting the spec.
         let cp = paths(&[1, 3, 4], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 4], &[Aspect::Layout]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1, 4]), &[Aspect::Layout]);
         assert!(
             plan.excluded.iter().any(|e| e.char_id == 4 && e.reason.contains("No account paired")),
             "an unpaired target cannot receive the account-side HUD fields"
@@ -1198,9 +1225,26 @@ mod tests {
         // Source char 1 (account 10). Target char 2, same account 10.
         let cp = paths(&[1, 2], "char");
         let up = paths(&[10], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(1), &[2], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(1)), &ks(&[2]), &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 1, "target still gets its widths");
         assert!(plan.account_writes.is_empty(), "same account already has the source's overview");
+    }
+
+    #[test]
+    fn a_cross_folder_batch_writes_each_targets_own_folders_account_file() {
+        // Source char 1 (account 10) in D. Targets: char 2 in D and E, char 1
+        // in E. Account 10 has a file in both folders.
+        let e = |id: u64| (PathBuf::from("E"), id);
+        let mut cp = paths(&[1, 2], "D/char");
+        cp.insert(e(1), PathBuf::from("E/char1.dat"));
+        cp.insert(e(2), PathBuf::from("E/char2.dat"));
+        let mut up = paths(&[10], "D/user");
+        up.insert(e(10), PathBuf::from("E/user10.dat"));
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(1)), &[k(2), e(2), e(1)], &[Aspect::Overview]);
+        assert_eq!(plan.char_writes.len(), 3, "the same char id in two folders is two files");
+        let accts: Vec<&str> = plan.account_writes.iter().map(|w| w.path.as_str()).collect();
+        assert_eq!(accts, vec!["E/user10.dat"], "E's copy of the source's account is written, D's own is not");
+        assert!(plan.account_writes[0].collateral_char_ids.is_empty());
     }
 
     #[test]
@@ -1219,7 +1263,7 @@ mod tests {
     fn unpaired_source_with_account_aspect_is_a_source_error() {
         let cp = paths(&[3, 4], "char");
         let up = paths(&[20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(4), &[3], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(4)), &ks(&[3]), &[Aspect::Overview]);
         assert!(plan.source_error.is_some());
         assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty());
     }
@@ -1229,7 +1273,7 @@ mod tests {
         // Char 3 is paired to account 20, but this folder holds no file for it.
         let cp = paths(&[1, 3], "char");
         let up = paths(&[10], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1]), &[Aspect::Overview]);
         assert!(
             plan.source_error.as_deref().unwrap_or("").contains("account file was not found"),
             "got: {:?}",
@@ -1243,7 +1287,7 @@ mod tests {
         // Target 1 is paired to account 10, whose file is not in this folder.
         let cp = paths(&[1, 3], "char");
         let up = paths(&[20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1]), &[Aspect::Overview]);
         assert_eq!(plan.excluded.len(), 1);
         assert!(plan.excluded[0].reason.contains("Account file not found"), "got: {}", plan.excluded[0].reason);
         assert!(plan.char_writes.is_empty(), "an excluded target gets no char write either");
@@ -1253,7 +1297,7 @@ mod tests {
     fn a_target_with_no_character_file_in_the_folder_is_excluded() {
         let cp = paths(&[3], "char"); // char 1 has no file here
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1]), &[Aspect::Overview]);
         assert_eq!(plan.excluded.len(), 1);
         assert!(plan.excluded[0].reason.contains("Character file not found"), "got: {}", plan.excluded[0].reason);
     }
@@ -1262,7 +1306,7 @@ mod tests {
     fn an_empty_target_list_plans_nothing_and_is_not_an_error() {
         let cp = paths(&[1, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[]), &[Aspect::Overview]);
         assert!(plan.char_writes.is_empty() && plan.account_writes.is_empty() && plan.excluded.is_empty());
         assert!(plan.source_error.is_none(), "nothing to do is not a source problem");
     }
@@ -1271,7 +1315,7 @@ mod tests {
     fn a_repeated_target_is_planned_once() {
         let cp = paths(&[1, 3], "char");
         let up = paths(&[10, 20], "user");
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(3), &[1, 1], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &HashMap::new(), Some(&k(3)), &ks(&[1, 1]), &[Aspect::Overview]);
         assert_eq!(plan.char_writes.len(), 1, "one write, not two — each write backs the target up");
         assert_eq!(plan.account_writes.len(), 1);
     }
@@ -1281,9 +1325,9 @@ mod tests {
         let cp = paths(&[1, 3], "char");
         let up = paths(&[10, 20], "user");
         let mut res = HashMap::new();
-        res.insert(3u64, (2560i64, 1440i64)); // source
-        res.insert(1u64, (1920i64, 1080i64)); // target differs
-        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, Some(3), &[1], &[Aspect::Layout]);
+        res.insert(k(3), (2560i64, 1440i64)); // source
+        res.insert(k(1), (1920i64, 1080i64)); // target differs
+        let plan = plan_setup(&cp, &up, &store_2accounts(), &res, Some(&k(3)), &ks(&[1]), &[Aspect::Layout]);
         assert!(plan.char_writes[0].resolution_mismatch);
     }
 
@@ -1295,7 +1339,7 @@ mod tests {
         let mut store = accounts::AccountsStore::default();
         store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] });
         store.accounts.insert(20, accounts::Account { alias: None, characters: vec![2] });
-        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &[1, 2], &[Aspect::Overview]);
+        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &ks(&[1, 2]), &[Aspect::Overview]);
         assert!(plan.source_error.is_none(), "a preset source needs no paired account");
         assert_eq!(plan.char_writes.len(), 2, "both targets get their overview widths");
         assert_eq!(plan.account_writes.len(), 2, "neither account is skipped as 'the source's'");
@@ -1308,7 +1352,7 @@ mod tests {
         let up = paths(&[10], "user");
         let mut store = accounts::AccountsStore::default();
         store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] }); // char 2 unpaired
-        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &[1, 2], &[Aspect::Autofill]);
+        let plan = plan_setup(&cp, &up, &store, &HashMap::new(), None, &ks(&[1, 2]), &[Aspect::Autofill]);
         assert_eq!(plan.excluded.len(), 1);
         assert_eq!(plan.excluded[0].char_id, 2);
     }
@@ -1325,8 +1369,8 @@ mod tests {
         let mut store = accounts::AccountsStore::default();
         store.accounts.insert(10, accounts::Account { alias: None, characters: vec![1] });
         let mut res = HashMap::new();
-        res.insert(1u64, (1920i64, 1080i64));
-        let plan = plan_setup(&cp, &up, &store, &res, None, &[1], &[Aspect::Layout]);
+        res.insert(k(1), (1920i64, 1080i64));
+        let plan = plan_setup(&cp, &up, &store, &res, None, &ks(&[1]), &[Aspect::Layout]);
         assert_eq!(plan.char_writes.len(), 1);
         assert!(!plan.char_writes[0].resolution_mismatch);
     }
@@ -1763,6 +1807,62 @@ mod tests {
             vec![(Category::Overview, Some(Value::Dict(vec![(bb("marker"), bb("FROM_DEFAULT"))])))],
             "must carry the source's OWN profile's account settings, not another profile's"
         );
+    }
+
+    #[test]
+    fn a_cross_folder_batch_writes_and_backs_up_the_account_file_in_every_targets_folder() {
+        // Two profile folders, each holding char 801 on account 950 — the same
+        // account id in both. Targets in both: each folder's own account file
+        // is written and backed up, never one arbitrary folder's twice.
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        fn overview_doc(marker: &str) -> Vec<u8> {
+            encode(&Value::Dict(vec![(bb("overview"), Value::Dict(vec![(bb("marker"), bb(marker))]))])).unwrap()
+        }
+        let base = std::env::temp_dir().join(format!("app-cross-folder-accounts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let install = base.join("root").join("c_eve_sharedcache_tq_tranquility");
+        let (a, b) = (install.join("settings_Default"), install.join("settings_Zulu"));
+        let empty = encode(&Value::Dict(vec![])).unwrap();
+        for prof in [&a, &b] {
+            std::fs::create_dir_all(prof).unwrap();
+            std::fs::write(prof.join("core_char_801.dat"), &empty).unwrap();
+            std::fs::write(prof.join("core_user_950.dat"), overview_doc("OLD")).unwrap();
+        }
+        std::fs::write(a.join("core_char_800.dat"), &empty).unwrap();
+        std::fs::write(a.join("core_user_900.dat"), overview_doc("SRC")).unwrap();
+
+        let app_dir = base.join("appdata");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(900, accounts::Account { alias: None, characters: vec![800] });
+        store.accounts.insert(950, accounts::Account { alias: None, characters: vec![801] });
+        std::fs::write(app_dir.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+        let roots = vec![base.join("root")];
+        let source = BatchSource::Character { path: a.join("core_char_800.dat").to_string_lossy().into_owned() };
+        let tgt: Vec<String> =
+            [&a, &b].iter().map(|p| p.join("core_char_801.dat").to_string_lossy().into_owned()).collect();
+
+        let plan = setup_preview(&roots, &app_dir, &source, &tgt, &[Aspect::Overview], true);
+        let mut planned: Vec<PathBuf> = plan.account_writes.iter().map(|w| PathBuf::from(&w.path)).collect();
+        planned.sort();
+        assert_eq!(planned, vec![a.join("core_user_950.dat"), b.join("core_user_950.dat")], "{plan:?}");
+
+        let results = setup_apply(&roots, &app_dir, &source, &tgt, &[Aspect::Overview], true).unwrap();
+        for prof in [&a, &b] {
+            let user = prof.join("core_user_950.dat");
+            let r = results.iter().find(|r| Path::new(&r.path) == user).unwrap_or_else(|| panic!("{results:?}"));
+            assert!(r.ok, "{r:?}");
+            let backup = std::fs::read(r.backup_path.as_deref().unwrap()).unwrap();
+            assert_eq!(backup, overview_doc("OLD"), "each folder's own file is backed up");
+            let val = blue_marshal::decode(&std::fs::read(&user).unwrap()).unwrap();
+            assert_eq!(
+                extract_categories(&val, &[Category::Overview]),
+                vec![(Category::Overview, Some(Value::Dict(vec![(bb("marker"), bb("SRC"))])))]
+            );
+        }
+        assert_eq!(std::fs::read(a.join("core_user_900.dat")).unwrap(), overview_doc("SRC"), "source untouched");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     fn merge_root(tag: &str) -> (PathBuf, PathBuf) {

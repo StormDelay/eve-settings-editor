@@ -285,6 +285,7 @@
     : "Nothing to merge — every ticked account already has every ship",
   );
   const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  const dirOf = (p: string) => p.slice(0, p.length - fileName(p).length - 1);
 
   // Preview from the backend whenever source/aspects/targets settle. Guarded
   // by a request token so a slow, stale response can't clobber a newer plan.
@@ -556,7 +557,7 @@
             <InlineMessage variant="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</InlineMessage>
           {/each}
           {#each plan.account_writes as w}
-            <InlineMessage variant="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</InlineMessage>
+            <InlineMessage variant="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{dirOf(w.path) === folder ? "" : ` in ${folderLabelOf(dirOf(w.path))}`}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</InlineMessage>
           {/each}
           {#each plan.excluded as ex}
             <p class="muted">Excluded {nameOfChar(ex.char_id, `char ${ex.char_id}`)} — {ex.reason}</p>
