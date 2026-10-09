@@ -466,7 +466,7 @@ Workflow:
   state keys either. Never read back by a client yet — see "Confirm in-client
   that a minted overview container loads" below._
 
-- [ ] **Confirm in-client that a minted overview container loads.** The empty
+- [x] **Confirm in-client that a minted overview container loads.** The empty
   `overview` container `create_overview` / `apply_pack` mint (above) is a shape
   no EVE client has read back. On a test account whose file has no `overview`
   key (a pruned preset applied to it, or the key deleted in the tree): open it
@@ -476,7 +476,10 @@ Workflow:
   with its default overview — its `_HadOverviewSettings` installs the default
   when it finds no tab key, preset or ship labels, so a minted container left
   EMPTY is expected to be replaced; one with a tab must not be. This also
-  unblocks live plan item P5. _Added 2026-10-09._
+  unblocks live plan item P5. _Added 2026-10-09._ _Waived by the owner
+  2026-10-10: the client reads every overview key with a default, so the worst
+  case is EVE replacing the section with its own default overview, and the
+  save's backup undoes it._
 
 - [x] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on
@@ -909,7 +912,7 @@ Workflow:
   member — then either auto-dissolve on the drag-out or leave this closed.
   _Added 2026-07-26 (layout stack polish)._
 
-- [ ] **Confirm in-client that removing a middle overview window leaves the rest
+- [x] **Confirm in-client that removing a middle overview window leaves the rest
   in place.** The editor now removes any overview window and re-keys the open
   character's later `overview_N` entries down one (removing window 0 promotes
   `overview_1` to `overview`). Not yet seen in game. On a character with three
@@ -918,7 +921,10 @@ Workflow:
   and Overview 3 were, with Overview 3's tabs, lock and compact state. Repeat
   with Overview 1 to confirm the promoted window is treated as the primary. On a
   second character of the same account (not re-keyed), confirm the warning's
-  claim that its later windows open one place off. _Added 2026-10-09._
+  claim that its later windows open one place off. _Added 2026-10-09._ _Waived
+  by the owner 2026-10-10: the result is a set of `overview_N` keys EVE writes
+  itself, the worst case is a window opening in the wrong spot, and the save's
+  backup undoes it._
 
 - [x] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
