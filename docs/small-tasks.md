@@ -294,9 +294,11 @@ Workflow:
   by a test — so a splitter drag means punching a hole in it, adding `Drag`
   variants and adding hit-test exclusions; and at a typical canvas scale of ~0.3
   a chat window's input band is about 19 screen px tall, which is not a drag
-  target. Worth revisiting only if the canvas gains a zoom. Wiring
-  `set_overview_width` into the Layout view is the smaller, independent half.
-  _Added 2026-07-30, narrowed from the detail layer's original entry._
+  target. Worth revisiting only if the canvas gains a zoom. ~~Wiring
+  `set_overview_width` into the Layout view is the smaller, independent half.~~
+  _Added 2026-07-30, narrowed from the detail layer's original entry. The
+  `set_overview_width` half done 2026-10-09: a selected overview window shows
+  number fields for its first tab's visible columns, the tab the canvas draws._
 
 - [x] **The overview and chat internals have never been measured.** _Closed
   2026-08-01. The entry was stale the day after it was written, and the premise

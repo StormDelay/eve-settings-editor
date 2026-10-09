@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { WindowRect, BoolFlag, NodePath, Stack, ChatPanel } from "$lib/api";
+  import type { WindowRect, BoolFlag, NodePath, Stack, ChatPanel, OverviewColumns, OverviewTab } from "$lib/api";
+  import { overviewIndex } from "$lib/detail";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, isOrphanFrame, isLeavableChat, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
@@ -33,8 +34,11 @@
     userOpen,
     sharedNames,
     onSetChatSplits,
+    columns = null,
+    onSetOverviewWidth = () => {},
     stackError = null,
     chatError = null,
+    widthError = null,
     filter = { ...NO_FILTER },
   }: {
     windows: WindowRect[];
@@ -43,6 +47,7 @@
      *  belongs to: the stack list, and the chat split fields. */
     stackError?: { text: string; detail: string } | null;
     chatError?: { text: string; detail: string } | null;
+    widthError?: { text: string; detail: string } | null;
     selectedId: string | null;
     readOnly: boolean;
     onSelect: (id: string) => void;
@@ -77,10 +82,21 @@
      * because these two fields are account-wide. */
     sharedNames: string[];
     onSetChatSplits: (ids: string[], userlistWidth: number | null, inputHeight: number | null) => void;
+    /** The overview projection, for an overview window's column widths. Null
+     * when no account file is open: the tabs live there, the widths here. */
+    columns?: OverviewColumns | null;
+    onSetOverviewWidth?: (tabIndex: number, column: string, width: number) => void;
     /** Owned by LayoutView, whose toolbar renders the controls; the list and
      * the canvas apply the same predicate. */
     filter?: WindowFilter;
   } = $props();
+
+  /** An overview window's first tab, in the window's own order. */
+  function firstTabOf(id: string): OverviewTab | undefined {
+    const ov = overviewIndex(id);
+    const first = columns?.windows.find((x) => x.index === ov)?.tab_indices[0];
+    return ov === null ? undefined : columns?.tabs.find((t) => t.index === first);
+  }
 
   // Per-row selection for the two "stack with…" pickers, cleared as soon as the
   // pick is acted on so each control returns to its prompt.
@@ -323,7 +339,42 @@
         <InlineMessage variant="error" detail={chatError.detail}>{chatError.text}</InlineMessage>
       {/if}
     {/if}
+    {@render overviewWidths(firstTabOf(w.id))}
   </div>
+{/snippet}
+
+{#snippet overviewWidths(firstTab: OverviewTab | undefined)}
+  {#if firstTab}
+    <!-- The FIRST tab, because it is the one the canvas draws: nothing in the
+         files records which tab is selected (detail.ts, overviewParts). The
+         other tabs' widths are in Overview → Columns. -->
+    <div class="ov-widths">
+      <div class="ov-head">Column widths · {firstTab.name}</div>
+      <div class="fields">
+        {#each firstTab.columns.filter((c) => c.visible) as c (c.name)}
+          <Field
+            kind="number"
+            label={c.label}
+            layout="column"
+            width="5rem"
+            min={0}
+            value={c.width ?? ""}
+            disabled={readOnly}
+            disabledReason="This file is read-only"
+            onchange={(e) => {
+              const el = e.currentTarget as HTMLInputElement;
+              const v = Number(el.value);
+              // Blank or non-numeric writes nothing and snaps back, as ChatSplit does.
+              if (el.value.trim() !== "" && Number.isFinite(v)) onSetOverviewWidth(firstTab.index, c.name, Math.round(v));
+              else el.value = String(c.width ?? "");
+            }} />
+        {/each}
+      </div>
+      {#if widthError}
+        <InlineMessage variant="error" detail={widthError.detail}>{widthError.text}</InlineMessage>
+      {/if}
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet freeRow(w: WindowRect)}
@@ -688,5 +739,22 @@
   }
   .fam-member .row-head {
     padding-left: var(--s4);
+  }
+  /* ChatSplit's frame, for the block that sits where it would. Wraps: an
+     overview shows eight or more columns, a chat split two fields. */
+  .ov-widths {
+    border-top: 1px solid var(--border);
+    margin-top: var(--s1);
+    padding-top: var(--s1);
+  }
+  .ov-head {
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+    margin-bottom: var(--s1);
+  }
+  .ov-widths .fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
   }
 </style>
