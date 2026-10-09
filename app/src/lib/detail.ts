@@ -511,7 +511,7 @@ export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): Det
 /**
  * The overview window index a canvas window id names: `overview` is window 0,
  * `overview_N` is window N — the positional link `overview_tabs.rs` documents
- * on `add_overview_window` and enforces on `remove_overview_window`.
+ * on `add_overview_window` and re-keys on `remove_overview_window_geometry`.
  *
  * Anchored at both ends so `overviewsettings` cannot match.
  */

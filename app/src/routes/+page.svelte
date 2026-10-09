@@ -630,6 +630,7 @@
          itself for that reason. -->
     <OverviewView
       {scopeLabel}
+      sharedNames={subject.sharedNames}
       userOpen={subject.slots.user?.status === "opened"}
       userId={subject.userId}
       charId={subject.charId}

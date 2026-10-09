@@ -123,16 +123,11 @@
     const items: MenuItem[] = [{ label: "New tab in this window", run: () => startCreate(g) }];
     if (g.windowIdx === null) return items;
     const only = data.windows.length <= 1;
-    const notLast = g.windowIdx !== data.windows.length - 1;
     items.push({
       label: "Remove this window",
       run: () => onRemoveWindow(g.windowIdx as number),
-      disabled: only || notLast,
-      hint: only
-        ? "This is the only overview window"
-        : notLast
-          ? "Only the last overview window can be removed — EVE numbers windows by position"
-          : undefined,
+      disabled: only,
+      hint: only ? "This is the only overview window" : undefined,
     });
     return items;
   }

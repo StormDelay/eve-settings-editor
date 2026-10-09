@@ -304,6 +304,50 @@ describe("the width-swap warning", () => {
   });
 });
 
+describe("removing a window that is not the last", () => {
+  const three = inWindows([tab(0, "main"), tab(1, "Mining"), tab(2, "Scan")], [
+    { index: 0, tab_indices: [0] }, { index: 1, tab_indices: [1] }, { index: 2, tab_indices: [2] },
+  ]);
+  const two = inWindows([tab(0, "main"), tab(1, "Mining"), tab(2, "Scan")], [
+    { index: 0, tab_indices: [0, 1] }, { index: 1, tab_indices: [2] },
+  ]);
+
+  async function remove(windowName: string, over: Record<string, unknown>) {
+    toasts.splice(0, toasts.length);
+    calls.stub("overview_columns", three);
+    calls.stub("overview_window_remove", two);
+    mount(over);
+    await findRow("Mining");
+    await fireEvent.click(screen.getByRole("button", { name: `${windowName} actions` }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Remove this window" }));
+    await waitFor(() => expect(calls.of("overview_window_remove").length).toBe(1));
+  }
+
+  test("names the other characters whose positions did not move", async () => {
+    await remove("Overview 2", { sharedNames: ["Pilot Two"] });
+    await waitFor(() => expect(toasts.length).toBe(2));
+    expect(toasts[1].message).toMatch(/Overview 3 and later are now one number lower/);
+    expect(toasts[1].message).toMatch(/Pilot Two still has the old window positions/);
+  });
+
+  test("says every character is off when no character file is open", async () => {
+    await remove("Overview 1", { charOpen: false, sharedNames: [] });
+    await waitFor(() => expect(toasts.length).toBe(2));
+    expect(toasts[1].message).toMatch(/Every character on this account still has the old window positions/);
+  });
+
+  test("says nothing extra when the open character is the only one", async () => {
+    await remove("Overview 2", { sharedNames: [] });
+    await waitFor(() => expect(toasts.length).toBe(1));
+  });
+
+  test("says nothing extra for the last window", async () => {
+    await remove("Overview 3", { sharedNames: ["Pilot Two"] });
+    await waitFor(() => expect(toasts.length).toBe(1));
+    expect(toasts[0].message).toMatch(/Removed Overview 3/);
+  });
+});
+
 // Account-wide and rare, so they are behind a visible ⋯ rather than wedged into
 // the sub-tab strip as two non-tab children of a tablist.
 describe("the view menu", () => {

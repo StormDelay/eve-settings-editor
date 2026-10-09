@@ -40,8 +40,6 @@ pub enum OverviewTabError {
     /// Refused: there are no tabs to map, and a mapping whose window lists no
     /// tabs hides the entire overview.
     NoTabsToMap,
-    /// Refused: only the last overview window can be removed for now.
-    NotLastWindow { index: usize },
     /// No preset with this name in `overviewProfilePresets`.
     UnknownPreset { name: String },
     /// A preset with the target name already exists.
@@ -63,7 +61,6 @@ impl std::fmt::Display for OverviewTabError {
             OverviewTabError::NoWindowMapping => write!(f, "This account does not use per-window tabs, so there are no windows to change. EVE removes the tab-to-window mapping whenever an overview pack is imported through the client, and the overview works normally without it."),
             OverviewTabError::WindowMappingExists => write!(f, "This account already uses per-window tabs."),
             OverviewTabError::NoTabsToMap => write!(f, "There are no overview tabs to map to a window."),
-            OverviewTabError::NotLastWindow { index } => write!(f, "Only the last overview window can be removed (tried {index})."),
             OverviewTabError::UnknownPreset { name } => write!(f, "Preset \"{name}\" does not exist."),
             OverviewTabError::PresetExists { name } => write!(f, "A preset named \"{name}\" already exists."),
             OverviewTabError::LastPreset => write!(f, "An overview must keep at least one preset."),
@@ -644,10 +641,15 @@ pub fn add_overview_window(v: &mut Value, name: &str, from_tab: Option<i64>) -> 
     Ok(new_window_idx)
 }
 
-/// Remove an overview window (user-file grouping half). Reassigns the window's
-/// tabs onto window 0 (no tab loss), then drops the inner list. Last-window-only:
-/// the positional link to the char-file `overview_N` keys makes middle removal a
-/// re-key cascade (deferred).
+/// Remove any overview window (user-file grouping half). Reassigns the window's
+/// tabs onto the primary window's strip (no tab loss), then drops the inner
+/// list, so every later window moves down one position. The char-file half is
+/// `remove_overview_window_geometry`, which shifts the `overview_N` keys to
+/// match: the link between the two files is positional.
+///
+/// Removing window 0 sends its tabs to window 1, which becomes the new primary.
+/// The merged strip is sorted ascending, since EVE draws a window's tabs in
+/// ascending tab index and never writes a strip in any other order.
 pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
@@ -666,19 +668,18 @@ pub fn remove_overview_window(v: &mut Value, window_idx: usize) -> Result<(), Ov
         if window_idx >= count {
             return Err(OverviewTabError::UnknownWindow { index: window_idx });
         }
-        if window_idx != count - 1 {
-            return Err(OverviewTabError::NotLastWindow { index: window_idx });
-        }
         let removed: Vec<Value> = list_inner(&groups[window_idx]).cloned().unwrap_or_default();
-        // Rehome the tabs before dropping the window. If window 0 is not a list
-        // there is nowhere to put them, and continuing would delete them from every
-        // window at once — a tab that exists in `tabsettings_new` but appears in no
-        // window is invisible in-game. Refuse instead of silently dropping, which is
-        // what the `if let Some` this replaced did.
-        let Some(w0) = groups.get_mut(0).and_then(list_inner_mut) else {
-            return Err(OverviewTabError::UnknownWindow { index: 0 });
+        // Rehome the tabs before dropping the window, onto whichever window is
+        // the primary afterwards. If it is not a list there is nowhere to put
+        // them, and continuing would delete them from every window at once — a
+        // tab that exists in `tabsettings_new` but appears in no window is
+        // invisible in-game. Refuse instead of silently dropping.
+        let target = if window_idx == 0 { 1 } else { 0 };
+        let Some(strip) = groups.get_mut(target).and_then(list_inner_mut) else {
+            return Err(OverviewTabError::UnknownWindow { index: target });
         };
-        w0.extend(removed);
+        strip.extend(removed);
+        strip.sort_by_key(|e| as_int(e).unwrap_or(i64::MAX));
         groups.remove(window_idx);
     }
     compact_tabs(ov);
@@ -725,20 +726,79 @@ pub fn add_overview_window_geometry(v: &mut Value, window_idx: usize) {
     }
 }
 
-/// Char-file inverse of `add_overview_window_geometry`: drop `overview_{window_idx}`
-/// from every `windows` subdict. No-op for `window_idx == 0` or when absent.
-pub fn remove_overview_window_geometry(v: &mut Value, window_idx: usize) {
-    if window_idx == 0 {
-        return;
+/// The char-file window id of overview window `idx`: the primary is `overview`,
+/// the rest `overview_{idx}`.
+fn overview_window_id(idx: usize) -> String {
+    if idx == 0 { "overview".to_string() } else { format!("overview_{idx}") }
+}
+
+/// The position a window id names, or `None` for any other window. Round-trips
+/// through `overview_window_id`, so `overview_01` or `overview_+1` are not ids.
+fn overview_window_pos(id: &str) -> Option<usize> {
+    if id == "overview" {
+        return Some(0);
     }
+    let n: usize = id.strip_prefix("overview_")?.parse().ok()?;
+    (n > 0 && overview_window_id(n) == id).then_some(n)
+}
+
+/// A window-id key as text, in any of the string shapes real files use.
+fn id_text(k: &Value) -> Option<&str> {
+    match k {
+        Value::Bytes(b) => std::str::from_utf8(b).ok(),
+        Value::Str(s) | Value::StrUcs2(s) => Some(s),
+        _ => None,
+    }
+}
+
+/// Drop window `removed`'s entry from one dict and move every later overview
+/// window down one id, keeping each key's string shape. Recurses into values
+/// that are dicts, which is where `preferredIdxInStack3` keeps a stack's
+/// members, so an overview window sitting in a stack follows too.
+fn shift_overview_ids(entries: &mut Entries, removed: usize) {
+    entries.retain(|(k, _)| id_text(k).and_then(overview_window_pos) != Some(removed));
+    for (k, val) in entries.iter_mut() {
+        if let Some(p) = id_text(k).and_then(overview_window_pos).filter(|&p| p > removed) {
+            let id = overview_window_id(p - 1);
+            *k = match k {
+                Value::Str(_) => Value::Str(id),
+                Value::StrUcs2(_) => Value::StrUcs2(id),
+                _ => Value::Bytes(id.into_bytes()),
+            };
+        }
+        if let Some(inner) = dict_inner_mut(val) {
+            shift_overview_ids(inner, removed);
+        }
+    }
+}
+
+/// Char-file half of `remove_overview_window`: drop window `window_idx`'s entry
+/// from every `windows` subdict and re-key every later window down one, so each
+/// remaining window keeps its own position, size and flags. Removing window 0
+/// promotes `overview_1` to `overview`, the primary key.
+///
+/// The link is positional — `tabsByWindowInstanceID[i]` is the window keyed
+/// `overview` (i = 0) or `overview_{i}` — so without the re-key every window
+/// after the removed one would open where its neighbour used to be. Measured
+/// over 345 real character files, `overview_N` ids occur only as keys of the
+/// `windows` subdicts (`windowSizesAndPositions_1`, `openWindows`,
+/// `minimizedWindows`, `lockedWindows`, `compactWindows`,
+/// `isLightBackgroundWindows`, `pinnedWindows`); every subdict is walked rather
+/// than that list, so `collapsedWindows`, `isOverlayedWindows` and the two stack
+/// dicts are covered too. No account-file key names a window besides the
+/// positional list itself.
+///
+/// Only the character file passed here moves. The account's other characters
+/// keep their old keys, which the UI says when it removes a window that is not
+/// the last.
+pub fn remove_overview_window_geometry(v: &mut Value, window_idx: usize) {
     inline_all(v);
-    let key = format!("overview_{window_idx}");
     let Value::Dict(root) = v else { return };
     let Some((_, wins)) = root.iter_mut().find(|(k, _)| is_b(k, b"windows")) else { return };
     let Value::Dict(subdicts) = wins else { return };
     for (_, subval) in subdicts.iter_mut() {
         if let Some(entries) = dict_inner_mut(subval) {
-            entries.retain(|(k, _)| !is_b(k, key.as_bytes()));
+            shift_overview_ids(entries, window_idx);
         }
     }
 }
@@ -1167,10 +1227,50 @@ mod tests {
         assert_eq!(tab_name(&v, 1), "B", "no tab deleted");
     }
 
+    /// Three windows: 0 = [0, 3], 1 = [1], 2 = [2].
+    fn user_three_windows() -> Value {
+        let tab = |p: &str| Value::Dict(vec![
+            (Value::Str("name".into()), Value::Str(p.to_string())),
+            (Value::Bytes(b"overview".to_vec()), Value::Bytes(b"P".to_vec())),
+        ]);
+        let strip = |ix: &[i64]| Value::List(ix.iter().map(|&i| Value::Int(i)).collect());
+        let overview = Value::Dict(vec![
+            (Value::Bytes(b"tabsettings_new".to_vec()),
+             Value::Tuple(vec![ts(), Value::Dict(vec![
+                 (Value::Int(0), tab("A")), (Value::Int(1), tab("B")),
+                 (Value::Int(2), tab("C")), (Value::Int(3), tab("D")),
+             ])])),
+            (Value::Bytes(b"tabsByWindowInstanceID".to_vec()),
+             Value::Tuple(vec![ts(), Value::List(vec![strip(&[0, 3]), strip(&[1]), strip(&[2])])])),
+        ]);
+        Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), overview)])
+    }
+
+    fn window_count_of(v: &Value) -> usize {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, ov) = root.iter().find(|(k, _)| is_b(k, b"overview")).unwrap();
+        let Value::Dict(ovd) = ov else { panic!() };
+        let (_, g) = ovd.iter().find(|(k, _)| is_b(k, b"tabsByWindowInstanceID")).unwrap();
+        list_inner(g).unwrap().len()
+    }
+
     #[test]
-    fn remove_non_last_window_is_refused() {
-        let mut v = user_two_windows();
-        assert!(matches!(remove_overview_window(&mut v, 0), Err(OverviewTabError::NotLastWindow { index: 0 })));
+    fn remove_a_middle_window_reassigns_its_tabs_and_shifts_the_rest_down() {
+        let mut v = user_three_windows();
+        remove_overview_window(&mut v, 1).unwrap();
+        assert_eq!(window_count_of(&v), 2);
+        assert_eq!(window_indices(&v, 0), vec![0, 1, 3], "tab 1 joined window 0, strip ascending");
+        assert_eq!(window_indices(&v, 1), vec![2], "old window 2 is window 1 now");
+        assert_eq!(tab_name(&v, 1), "B", "no tab renumbered or lost");
+    }
+
+    #[test]
+    fn remove_window_zero_promotes_the_next_window_to_primary() {
+        let mut v = user_three_windows();
+        remove_overview_window(&mut v, 0).unwrap();
+        assert_eq!(window_count_of(&v), 2);
+        assert_eq!(window_indices(&v, 0), vec![0, 1, 3], "old window 1 is primary and holds window 0's tabs");
+        assert_eq!(window_indices(&v, 1), vec![2]);
     }
 
     #[test]
@@ -1283,6 +1383,116 @@ mod tests {
             .iter().filter(|k| k.as_slice() == b"overview_1").count();
         assert_eq!(count, 1, "not double-added");
         assert_eq!(geom_xy(&v, b"overview_1"), (1040, 140), "not offset twice");
+    }
+
+    /// A char tree with three overview windows spread over geometry, three flag
+    /// subdicts (one holding only the primary, one keyed by `Str` ids) and a
+    /// stack that holds `overview_2`.
+    fn char_three_overviews() -> Value {
+        let geom = |x: i64| Value::Tuple(vec![
+            Value::Int(x), Value::Int(100), Value::Int(400), Value::Int(300),
+            Value::Int(2560), Value::Int(1440),
+        ]);
+        let b = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        let sub = |entries: Vec<(Value, Value)>|
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(entries)]);
+        let windows = Value::Dict(vec![
+            (b("__version__"), Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Int(1)])),
+            (b("windowSizesAndPositions_1"), sub(vec![
+                (b("overview"), geom(1000)), (b("overview_1"), geom(1100)),
+                (b("overview_2"), geom(1200)), (b("market"), geom(10)), (b("7001"), geom(1200)),
+            ])),
+            (b("openWindows"), sub(vec![
+                (b("overview"), Value::Bool(true)), (b("overview_1"), Value::Bool(false)),
+                (b("overview_2"), Value::Bool(true)),
+            ])),
+            (b("lockedWindows"), sub(vec![(b("overview"), Value::Bool(true))])),
+            (b("compactWindows"), sub(vec![
+                (Value::Str("overview_1".into()), Value::Bool(true)),
+                (Value::Str("overview_2".into()), Value::Bool(false)),
+            ])),
+            (b("stacksWindows"), sub(vec![(b("overview_2"), b("7001")), (b("market"), b("7001"))])),
+            (b("preferredIdxInStack3"), sub(vec![
+                (b("7001"), Value::Dict(vec![(b("overview_2"), Value::Int(0)), (b("market"), Value::Int(1))])),
+            ])),
+        ]);
+        Value::Dict(vec![(b("windows"), windows)])
+    }
+
+    /// One `windows` subdict's entries.
+    fn subdict<'a>(v: &'a Value, name: &[u8]) -> &'a Entries {
+        let Value::Dict(root) = v else { panic!() };
+        let (_, wins) = root.iter().find(|(k, _)| is_b(k, b"windows")).unwrap();
+        let Value::Dict(subs) = wins else { panic!() };
+        let (_, sv) = subs.iter().find(|(k, _)| is_b(k, name)).unwrap();
+        dict_inner(sv).unwrap()
+    }
+
+    /// Every id in one `windows` subdict, any string shape, in order.
+    fn ids(v: &Value, name: &[u8]) -> Vec<String> {
+        subdict(v, name).iter().map(|(k, _)| id_text(k).unwrap().to_string()).collect()
+    }
+
+    /// The members of stack `7001`, in order.
+    fn stack_members(v: &Value) -> Vec<String> {
+        let (_, members) = subdict(v, b"preferredIdxInStack3").iter().find(|(k, _)| is_b(k, b"7001")).unwrap();
+        dict_inner(members).unwrap().iter().map(|(k, _)| id_text(k).unwrap().to_string()).collect()
+    }
+
+    fn open_flag(v: &Value, id: &str) -> bool {
+        let (_, f) = subdict(v, b"openWindows").iter().find(|(k, _)| id_text(k) == Some(id)).unwrap();
+        matches!(f, Value::Bool(true))
+    }
+
+    #[test]
+    fn remove_middle_geometry_shifts_every_later_overview_key_down() {
+        let mut v = char_three_overviews();
+        remove_overview_window_geometry(&mut v, 1);
+        assert_eq!(ids(&v, b"windowSizesAndPositions_1"), ["overview", "overview_1", "market", "7001"]);
+        assert_eq!(geom_xy(&v, b"overview"), (1000, 100), "primary untouched");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1200, 100), "the old overview_2 rect, now overview_1");
+        assert_eq!(ids(&v, b"openWindows"), ["overview", "overview_1"]);
+        assert!(open_flag(&v, "overview_1"), "the old overview_2 flag came along");
+        assert_eq!(ids(&v, b"lockedWindows"), ["overview"]);
+        assert_eq!(
+            subdict(&v, b"compactWindows"),
+            &vec![(Value::Str("overview_1".into()), Value::Bool(false))],
+            "Str ids shift too, keeping their shape and value",
+        );
+        assert_eq!(ids(&v, b"stacksWindows"), ["overview_1", "market"]);
+        assert_eq!(stack_members(&v), ["overview_1", "market"]);
+    }
+
+    #[test]
+    fn remove_geometry_of_window_zero_promotes_overview_1_to_primary() {
+        let mut v = char_three_overviews();
+        remove_overview_window_geometry(&mut v, 0);
+        assert_eq!(ids(&v, b"windowSizesAndPositions_1"), ["overview", "overview_1", "market", "7001"]);
+        assert_eq!(geom_xy(&v, b"overview"), (1100, 100), "the old overview_1 is the primary now");
+        assert_eq!(geom_xy(&v, b"overview_1"), (1200, 100));
+        assert_eq!(ids(&v, b"openWindows"), ["overview", "overview_1"]);
+        assert!(!open_flag(&v, "overview"), "the new primary carries its own flag, not the old one");
+        assert!(ids(&v, b"lockedWindows").is_empty(), "the old primary's lock went with it");
+        assert_eq!(ids(&v, b"compactWindows"), ["overview", "overview_1"]);
+        assert_eq!(stack_members(&v), ["overview_1", "market"]);
+    }
+
+    #[test]
+    fn remove_last_geometry_shifts_nothing() {
+        let mut v = char_three_overviews();
+        remove_overview_window_geometry(&mut v, 2);
+        assert_eq!(ids(&v, b"windowSizesAndPositions_1"), ["overview", "overview_1", "market", "7001"]);
+        assert_eq!(geom_xy(&v, b"overview_1"), (1100, 100));
+        assert_eq!(stack_members(&v), ["market"], "a stacked window leaves its stack");
+    }
+
+    #[test]
+    fn overview_window_pos_reads_only_real_ids() {
+        assert_eq!(overview_window_pos("overview"), Some(0));
+        assert_eq!(overview_window_pos("overview_12"), Some(12));
+        for id in ["overview_0", "overview_01", "overview_+1", "overview_", "overviewsettings", "overview_x"] {
+            assert_eq!(overview_window_pos(id), None, "{id}");
+        }
     }
 
     #[test]

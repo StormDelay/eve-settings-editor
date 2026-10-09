@@ -213,12 +213,15 @@ describe("drag", () => {
 describe("the window menu", () => {
   // Present-and-disabled, never absent: the button this replaces appeared and
   // disappeared as the selection moved between windows.
-  test("Remove this window is present but disabled on a non-last window", async () => {
-    mount();
+  // Any window can go now: the backend re-keys the later windows' positions.
+  test("Remove this window is enabled on the first window too", async () => {
+    const { onRemoveWindow } = mount();
     await fireEvent.click(screen.getByRole("button", { name: "Overview 1 actions" }));
     const item = screen.getByRole("menuitem", { name: "Remove this window" }) as HTMLButtonElement;
-    expect(item.disabled).toBe(true);
-    expect(item.title).toMatch(/only the last overview window/i);
+    expect(item.disabled).toBe(false);
+    expect(item.title).toBe("");
+    await fireEvent.click(item);
+    expect(onRemoveWindow).toHaveBeenCalledWith(0);
   });
 
   test("Remove this window is enabled on the last window", async () => {
