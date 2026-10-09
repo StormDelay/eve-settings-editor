@@ -400,13 +400,29 @@ function dirtyNames(): string {
 export async function confirmDiscardIfDirty(): Promise<boolean> {
   if (!subject.dirty.char && !subject.dirty.user) return true;
   const many = subject.dirty.char && subject.dirty.user;
-  return confirmDialog({
+  const ok = await confirmDialog({
     title: "Discard unsaved changes?",
     body: `${dirtyNames()} ${many ? "have" : "has"} edits that haven't been saved. Opening another file throws them away.`,
     confirm: "Discard and open",
     cancel: "Keep editing",
     danger: true,
   });
+  if (!ok) return false;
+  // Callers swap ONE slot, and pairing keeps the other when it belongs to the
+  // same account — so without this its edits outlived the "Discard", still
+  // dirty, while the open below cleared the undo history that could reach them.
+  // Re-read both, as discardChanges does, for the same half-reverted-pair reason.
+  try {
+    for (const t of slotsToReload(subject.slots)) {
+      subject.slots[t.slot] = await api.open(t.slot, t.path);
+      subject.dirty[t.slot] = false;
+    }
+    forgetUndoHistory();
+    return true;
+  } catch (e) {
+    shellErrors.open = { text: `Your changes weren't discarded — ${errText(e)}`, detail: errMessage(e) };
+    return false;
+  }
 }
 
 /// Throw the unsaved edits away and re-read the open file(s) from disk.
