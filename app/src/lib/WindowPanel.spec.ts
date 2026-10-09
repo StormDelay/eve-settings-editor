@@ -263,3 +263,13 @@ describe("overview column widths", () => {
     expect(field("NAME").disabled).toBe(true);
   });
 });
+
+describe("a stack's frame row", () => {
+  test("puts EVE's label after the name, inside the truncating name button", () => {
+    const stack = { container_id: "frame_1", container_label: "Character: Information", anchor_id: "a", members: ["a", "b"] };
+    mount([win("frame_1"), win("a"), win("b")], { stacks: [stack] });
+    const head = document.querySelector(".row.frame > .row-head") as HTMLElement;
+    expect(head.querySelector("button.name .detail")?.textContent).toBe("Character: Information");
+    expect(head.querySelector(":scope > .detail")).toBeNull();
+  });
+});

@@ -241,7 +241,7 @@
   }
 </script>
 
-{#snippet rowHead(w: WindowRect)}
+{#snippet rowHead(w: WindowRect, extra?: string | null)}
   {@const n = nameOf(w)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
   <Field
@@ -257,7 +257,7 @@
     title={w.id}
     onclick={() => onSelect(w.id)}
     oncontextmenu={(e) => openMenu(e, rowMenu(w))}>
-    {n.label}{#if n.detail}<span class="detail">{n.detail}</span>{/if}
+    {n.label}{#if n.detail}<span class="detail">{n.detail}</span>{/if}{#if extra}<span class="detail">{extra}</span>{/if}
   </button>
   {#if !w.renderable}
     <Chip tone="warn" size="sm" title="Geometry is not a 6-tuple — edit in the raw tree">
@@ -479,10 +479,10 @@
             <span class="frame-label" title="Stack frame">frame</span>
             <!-- "frame" is the type marker (always present, even for an
                  unpaired character with no tabgroups entry); the real label,
-                 when EVE has one, shows alongside it — the row then names
-                 both what it is and which stack it is. -->
-            {#if label}<span class="detail">{label}</span>{/if}
-            {@render rowHead(containerWindow)}
+                 when EVE has one, follows the name inside the name button, so
+                 it truncates with it and the open checkbox stays in line with
+                 every other row's. -->
+            {@render rowHead(containerWindow, label)}
             <Chip tone="neutral" size="sm">{matched.length}</Chip>
           </div>
           {#if stack.container_id === selectedId && containerWindow.geom}
