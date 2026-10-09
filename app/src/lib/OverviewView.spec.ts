@@ -15,6 +15,9 @@ import type { Appearance, OverviewColumns, OverviewTab } from "$lib/api";
 const tab = (index: number, name: string): OverviewTab => ({
   index,
   name,
+  pieces: [{ text: name }],
+  editable: true,
+  color: null,
   // A real tab always names a preset; the sub-tabs read it and an empty string
   // is not the same thing as "no preset" to them.
   preset: "PvP",
@@ -48,10 +51,10 @@ const list = () => document.querySelector(".tablist") as HTMLElement;
 const row = (name: string) => within(list()).getByText(name).closest('[role="option"]') as HTMLElement;
 const findRow = (name: string) => waitFor(() => row(name));
 /** Open the inline rename editor on the nth row and hand back its input. */
-async function renameEditor(nth = 0) {
+async function renameEditor(nth = 0, label = "Piece 1 text") {
   await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
   await fireEvent.click(screen.getByRole("menuitem", { name: "Rename tab…" }));
-  return screen.getByLabelText("Tab name") as HTMLInputElement;
+  return screen.getByLabelText(label) as HTMLInputElement;
 }
 
 function mount(over: Record<string, unknown> = {}) {
@@ -152,113 +155,68 @@ describe("tab selection", () => {
   });
 });
 
-// Tab names carry EVE's markup (see tabName.ts). The colour swatch and the B
-// button rewrite that string through `tab_rename` — there is no command of
-// their own — so what these pin is the string that goes over the wire.
+// Tab names carry EVE's markup, parsed and written in Rust (tab_name.rs). The
+// row editor hands back styled pieces — sent through `tab_rename_pieces`, so
+// Rust writes the tags — or raw markup, sent verbatim through `tab_rename`.
+// What these pin is which command runs, with what, and when nothing does.
 describe("tab name markup", () => {
-  const marked = "<color=0xFFFF6F75>   <b>main</b>   </color>";
+  const marked: OverviewTab = {
+    ...tab(0, "<color=0xFFFF6F75>   <b>main</b>   </color>"),
+    pieces: [{ text: "   ", color: "FFFF6F75" }, { text: "main", color: "FFFF6F75", bold: true }, { text: "   ", color: "FFFF6F75" }],
+  };
 
   test("the list shows the readable name, not the markup", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
+    calls.stub("overview_columns", columns(marked));
     mount();
     expect(await findRow("main")).toBeTruthy();
   });
 
-  // Colour and bold are edited in the row's own editor, beside the text: all
-  // three are one markup-bearing string in the file, so they commit as ONE
-  // rename when the editor closes.
-  test("picking a colour rewrites the name, keeping the text and the bold", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
+  test("a piece edit goes to the backend as pieces", async () => {
+    calls.stub("overview_columns", columns(marked));
     mount();
     await findRow("main");
 
-    const box = await renameEditor();
-    await fireEvent.click(screen.getByLabelText("Tab name colour"));
-    await fireEvent.click(screen.getByLabelText("#40ff40"));
-    await fireEvent.keyDown(box, { key: "Enter" });
+    await renameEditor();
+    await fireEvent.click(screen.getByLabelText("Piece 2 bold"));
+    await fireEvent.keyDown(screen.getByLabelText("Piece 2 text"), { key: "Enter" });
 
-    expect(calls.only("tab_rename").args).toEqual({
+    expect(calls.only("tab_rename_pieces").args).toEqual({
       tabIdx: 0,
-      // Padding survives — it is how a tab is widened in game.
-      name: "<color=0xFF40FF40><b>   main   </b></color>",
+      pieces: [{ text: "   ", color: "FFFF6F75" }, { text: "main", color: "FFFF6F75" }, { text: "   ", color: "FFFF6F75" }],
     });
-  });
-
-  test("clearing the colour drops the span and nothing else", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
-    mount();
-    await findRow("main");
-
-    const box = await renameEditor();
-    await fireEvent.click(screen.getByLabelText("Tab name colour"));
-    await fireEvent.click(screen.getByText("No colour"));
-    await fireEvent.keyDown(box, { key: "Enter" });
-
-    expect((calls.only("tab_rename").args as { name: string }).name).toBe("<b>   main   </b>");
-  });
-
-  test("the B button toggles bold off", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
-    mount();
-    await findRow("main");
-
-    const box = await renameEditor();
-    await fireEvent.click(screen.getByTitle("Bold tab name"));
-    await fireEvent.keyDown(box, { key: "Enter" });
-
-    expect((calls.only("tab_rename").args as { name: string }).name).toBe("<color=0xFFFF6F75>   main   </color>");
-  });
-
-  // A name the parser can't decompose must never be silently rewritten by the
-  // act of looking at it — only an explicit colour or bold change may replace
-  // it. Opening the editor on one and committing it untouched has to write
-  // nothing, because it re-emits as itself.
-  test("an unparseable name is left alone and shows no colour", async () => {
-    const weird = "<color=0xFFFF0000>a</color><color=0xFF00FF00>b</color>";
-    calls.stub("overview_columns", columns(tab(0, weird)));
-    mount();
-    await findRow(weird);
-
-    calls.never("tab_rename");
-
-    const box = await renameEditor();
-    expect(box.value).toBe(weird);
-    expect(screen.getByLabelText("Tab name colour").textContent?.trim()).toBe("—");
-    await fireEvent.keyDown(box, { key: "Enter" });
     calls.never("tab_rename");
   });
 
-  test("renaming keeps the colour and the typed spacing", async () => {
-    calls.stub("overview_columns", columns(tab(0, marked)));
+  // Opening the editor on a name and committing it untouched must write
+  // nothing — the pieces compare equal after the writer's normalisation.
+  test("a piece edit that changes nothing is not a write", async () => {
+    calls.stub("overview_columns", columns(marked));
     mount();
     await findRow("main");
 
-    // The row's editor is seeded with the readable text, padding and all.
     const box = await renameEditor();
-    expect(box.value).toBe("   main   ");
-
-    await fireEvent.input(box, { target: { value: "  fleet  " } });
     await fireEvent.keyDown(box, { key: "Enter" });
-
-    expect((calls.only("tab_rename").args as { name: string }).name)
-      .toBe("<color=0xFFFF6F75><b>  fleet  </b></color>");
+    calls.never("tab_rename_pieces");
+    calls.never("tab_rename");
   });
 
-  // A plain name, deliberately: `formatTabName` is the inverse of
-  // `parseTabName` only UP TO TAG NESTING — it re-emits
-  // `<color=…>   <b>x</b>   </color>` as `<color=…><b>   x   </b></color>`,
-  // same rendering, different bytes. That round trip is a real write and always
-  // has been (tabName.ts says so). What must never write is a name that comes
-  // back byte-identical.
-  test("a rename that changes nothing is not a write", async () => {
-    calls.stub("overview_columns", columns(tab(0, "main")));
+  // A name using markup the pieces can't carry is edited raw and written
+  // verbatim, and an untouched one is not written at all.
+  test("raw markup goes to the backend verbatim, and only when changed", async () => {
+    const raw: OverviewTab = { ...tab(0, "<uppercase>main</uppercase>"), pieces: [{ text: "main", uppercase: true }], editable: false };
+    calls.stub("tab_name_parse", { pieces: [{ text: "main", uppercase: true }], editable: false });
+    calls.stub("overview_columns", columns(raw));
     mount();
     await findRow("main");
 
-    const box = await renameEditor();
+    let box = await renameEditor(0, "Tab name markup");
     await fireEvent.keyDown(box, { key: "Enter" });
-
     calls.never("tab_rename");
+
+    box = await renameEditor(0, "Tab name markup");
+    await fireEvent.input(box, { target: { value: "<uppercase>fleet</uppercase>" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(calls.only("tab_rename").args).toEqual({ tabIdx: 0, name: "<uppercase>fleet</uppercase>" });
   });
 });
 

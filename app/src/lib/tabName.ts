@@ -1,28 +1,10 @@
-// Overview tab names are markup-bearing strings. EVE renders a small tag set in
-// them, and overview packs are the main reason they matter: `overview_pack.rs`
-// writes a tab's `name` and nothing else, so a pack colours its tabs by
-// embedding markup in the name rather than by setting the tab's `color` key.
-//
-// Real names from the corpus (testdata/dumps, 134 account files):
-//
-//   "<color=0xFFFFFFFF>  *  </color>"
-//   "<color=0xFFFF6F75>   <b>main</b>   </color>"
-//   "<b> Exit! </b>"
-//   "  main  "
-//
-// `<color=0xAARRGGBB>` and `<b>` are the only tags that occur on a tab name
-// anywhere in that corpus. `<fontsize=N>` occurs too, but only on bracket
-// labels' pre/post strings, so it is deliberately not handled here.
+// Overview tab names, drawn the way EVE draws them. The markup is parsed and
+// written in Rust (`crates/settings-model/src/tab_name.rs`), which hands every
+// tab over as styled `pieces`; this module only turns those into CSS.
 //
 // Pure — no Svelte, no Tauri — so it unit-tests alongside groups.ts.
 
-export interface TabName {
-  /** `AARRGGBB`, uppercase, or null for an uncoloured name. */
-  color: string | null;
-  bold: boolean;
-  /** The name itself, tags removed and spacing kept verbatim. */
-  text: string;
-}
+import type { OverviewTab, TabPiece } from "./api";
 
 /** EVE's in-game colour picker: a 3x8 hue wheel at 15-degree steps, as `RRGGBB`. */
 export const EVE_PALETTE: string[] = [
@@ -31,54 +13,63 @@ export const EVE_PALETTE: string[] = [
   "4040ff", "6f40ff", "9f40ff", "cf40ff", "ff40ff", "ff40cf", "ff409f", "ff406f",
 ];
 
-const COLOR_SPAN = /^<color=0x([0-9a-fA-F]{8})>([\s\S]*)<\/color>$/;
+/** What the name editor commits: styled pieces for Rust to write as markup,
+ *  or raw markup written verbatim. */
+export type TabNameEdit = { pieces: TabPiece[] } | { raw: string };
 
-/**
- * Split a stored name into the parts the editor exposes.
- *
- * Names padded with spaces (`"  main  "`, `"  3  "`) are how a tab is widened
- * in game, so `text` keeps its spacing exactly — dropping it would silently
- * resize the user's overview.
- *
- * Anything that does not fit `[colour][bold]text` — nested spans, two colours,
- * a tag this doesn't know — comes back as plain text carrying the raw string.
- * The Rename box still edits it, the swatch just shows no colour, and nothing
- * rewrites it until the user explicitly picks a colour or toggles bold.
- */
-export function parseTabName(raw: string): TabName {
-  const plain: TabName = { color: null, bold: false, text: raw };
-  const span = COLOR_SPAN.exec(raw);
-  const color = span ? span[1].toUpperCase() : null;
-  let inner = span ? span[2] : raw;
-
-  // `<b>` sits INSIDE the colour span but need not wrap all of it: the corpus
-  // has `<color=…>   <b>main</b>   </color>`, padding outside the bold. So the
-  // tags are stripped wherever they are rather than matched as a wrapper.
-  const bold = inner.includes("<b>") && inner.includes("</b>");
-  if (bold) inner = inner.split("<b>").join("").split("</b>").join("");
-
-  if (inner.includes("<") || inner.includes(">")) return plain;
-  return { color, bold, text: inner };
-}
-
-/**
- * The inverse, up to tag nesting: `<color=…>   <b>main</b>   </color>` re-emits
- * as `<color=…><b>   main   </b></color>`. Same rendering, different bytes —
- * acceptable because a name is only rewritten when the user changes something,
- * and re-applying this is stable (see tabName.test.ts).
- */
-export function formatTabName(n: TabName): string {
-  let out = n.bold ? `<b>${n.text}</b>` : n.text;
-  if (n.color) out = `<color=0x${n.color}>${out}</color>`;
-  return out;
-}
-
-/** The readable text alone — for `<option>`s, which can't carry the markup. */
-export function plainTabName(raw: string): string {
-  return parseTabName(raw).text;
-}
+/** A tab label's font size: `EVE_MEDIUM_FONTSIZE` at the Medium client setting. */
+export const TAB_FONT_PX = 14;
 
 /** `AARRGGBB` as a CSS colour, alpha last the way CSS wants it. */
 export function cssColor(color: string): string {
   return `#${color.slice(2)}${color.slice(0, 2)}`;
+}
+
+/** One piece's inline style. `base` is the tab's own colour key, which the
+ *  client wraps around the whole name, so a piece's own colour wins over it.
+ *  Sizes scale against the row's font, so a 16px piece is 16/14 of the row. */
+export function pieceStyle(p: TabPiece, base: string | null = null): string {
+  const color = p.color ?? base;
+  return [
+    color ? `color:${cssColor(color)}` : "",
+    p.bold ? "font-weight:700" : "",
+    p.italic ? "font-style:italic" : "",
+    p.underline ? "text-decoration:underline" : "",
+    p.size ? `font-size:${(p.size / TAB_FONT_PX).toFixed(3)}em` : "",
+    p.spacing ? `letter-spacing:${p.spacing}px` : "",
+    p.uppercase ? "text-transform:uppercase" : "",
+  ].filter(Boolean).join(";");
+}
+
+/** The readable text alone — for headings, toasts and `<option>`s. */
+export function plainTabName(tab: Pick<OverviewTab, "pieces">): string {
+  return tab.pieces.filter((p) => !p.hidden).map((p) => p.text).join("");
+}
+
+/** Two piece lists the same once empty pieces are dropped and neighbours of one
+ *  style merged — the normalisation `tab_name::format` applies on write. */
+export function samePieces(a: TabPiece[], b: TabPiece[]): boolean {
+  const norm = (ps: TabPiece[]) => {
+    const out: TabPiece[] = [];
+    for (const p of ps) {
+      if (!p.text) continue;
+      const style = JSON.stringify({ ...strip(p), text: "" });
+      const last = out[out.length - 1];
+      if (last && JSON.stringify({ ...strip(last), text: "" }) === style) last.text += p.text;
+      else out.push({ ...strip(p) });
+    }
+    return JSON.stringify(out);
+  };
+  return norm(a) === norm(b);
+}
+
+/** A piece without its unset fields, so `{bold: false}` equals `{}`. */
+function strip(p: TabPiece): TabPiece {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(p).sort()) {
+    const v = (p as unknown as Record<string, unknown>)[k];
+    if (v !== undefined && v !== null && v !== false && v !== "") out[k] = v;
+  }
+  out.text = p.text;
+  return out as unknown as TabPiece;
 }

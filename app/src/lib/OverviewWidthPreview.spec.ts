@@ -8,7 +8,7 @@ import { calls } from "$lib/test/setup";
 import type { Fit, OverviewTab } from "$lib/api";
 
 const tab: OverviewTab = {
-  index: 3, name: "Main", preset: "All", inherits: false,
+  index: 3, name: "Main", preset: "All", inherits: false, pieces: [{ text: "Main" }], editable: true, color: null,
   columns: [{ name: "VELOCITY", label: "Velocity", visible: true, width: 45 }],
 };
 const props = { tab, charOpen: false, onWidth: () => {} };

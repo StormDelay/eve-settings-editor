@@ -30,6 +30,8 @@ The four `overview_*_edit` tools take `ops`, applied in order as one undo step. 
 
 Column widths are pixels, and EVE cuts text that doesn't fit at a whole letter — it never wraps. `overview_column_fit` shows exactly what each header and value shows at the current widths, measured with EVE's own fonts at the player's font size, and gives `min_width`, the narrowest width that shows a value whole. To size a column snugly, pass the values it must fit, take `min_width`, and set it with `overview_columns_edit`'s `set_width`.
 
+Tab names are EVE markup, drawn by EVE's text label. `overview_get` gives each tab's stored `name` and its `pieces`: runs of text with `color` (`AARRGGBB`), `bold`, `italic`, `underline`, `size` (pixels; the tab default is 14) and `spacing` (extra pixels per letter). To style a name, rename it with `pieces` and the markup is written for you. Rules EVE applies: spaces outside every tag are trimmed, spaces inside a tag are kept (that is how a tab is widened); a colour needs all eight hex digits — `<color=0xFF4040>` is read with alpha 0 and draws nothing; text inside `<hint>` is not drawn. `warnings` names anything that will not show. A tab's own `color` (EVE's tab colour picker) tints the whole name; colours in the markup win over it. Raw names may also use `<uppercase>`, `<font color= size=>`, named colours (`Orange`) and `&lt; &gt; &amp;`; such a name has `editable` false and is renamed with `name`, not `pieces`.
+
 `overview_pack_preview`, `overview_pack_import` and `overview_pack_export` handle EVE's shareable overview packs (YAML files players exchange). Preview before importing.
 
 ## presets

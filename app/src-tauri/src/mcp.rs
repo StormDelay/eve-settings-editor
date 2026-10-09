@@ -786,7 +786,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "overview_get",
-            description: "The open account's overview: windows (which tabs each shows), tabs (index, name, preset, columns with order/visible/width), presets (groups, filtered_states, always_shown_states), appearance (background and flag state lists, colours, bools), plus names.states and names.groups labelling every id used. Needs the account file open; column widths need the character file too.",
+            description: "The open account's overview: windows (which tabs each shows), tabs (index, name — the stored markup —, pieces — the name as EVE draws it: styled runs of text —, editable, warnings, color — the tab's own colour key —, preset, columns with order/visible/width), presets (groups, filtered_states, always_shown_states), appearance (background and flag state lists, colours, bools), plus names.states and names.groups labelling every id used. Needs the account file open; column widths need the character file too.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -826,12 +826,18 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "overview_tabs_edit",
-            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name}; delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name} or {tab, pieces: [{text, color?: AARRGGBB, bold?, italic?, underline?, size?, spacing?}]} (pieces write the markup for you; a name whose editable is false uses tags pieces can't write — rename it with name); delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
             schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
                 "tab": { "type": "integer" }, "window": { "type": "integer" }, "name": { "type": "string" },
                 "from_tab": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer" } },
                 "from_window": { "type": "integer" }, "to_window": { "type": "integer" }, "pos": { "type": "integer" },
-                "preset": { "type": "string" }
+                "preset": { "type": "string" },
+                "pieces": { "type": "array", "items": { "type": "object", "properties": {
+                    "text": { "type": "string" }, "color": { "type": "string", "description": "AARRGGBB hex (RRGGBB = opaque)" },
+                    "bold": { "type": "boolean" }, "italic": { "type": "boolean" }, "underline": { "type": "boolean" },
+                    "size": { "type": "integer", "description": "pixels; omit for the tab's default (14 at EVE's Medium font size)" },
+                    "spacing": { "type": "integer", "description": "extra pixels after each letter" }
+                }, "required": ["text"] } }
             })), &["ops"]),
         },
         ToolDef {
@@ -2189,7 +2195,10 @@ fn tabs_op(state: &AppState, a: &Args) -> Result<(), Value> {
     let op: String = req(a, "op")?;
     match op.as_str() {
         "create" => ops::tab_create(state, req(a, "window")?, req(a, "name")?, opt(a, "from_tab")?),
-        "rename" => ops::tab_rename(state, req(a, "tab")?, req(a, "name")?),
+        "rename" => match opt::<Vec<settings_model::tab_name::Piece>>(a, "pieces")? {
+            Some(pieces) => ops::tab_rename_pieces(state, req(a, "tab")?, pieces),
+            None => ops::tab_rename(state, req(a, "tab")?, req(a, "name")?),
+        },
         "delete" => ops::tab_delete(state, req(a, "tab")?),
         "reorder" => ops::tab_reorder(state, req(a, "window")?, req(a, "order")?),
         "move" => ops::tab_move(state, req(a, "tab")?, req(a, "from_window")?, req(a, "to_window")?, req(a, "pos")?),
@@ -3256,6 +3265,22 @@ mod tests {
         assert_eq!(v["tabs"][1]["name"], "Rocks");
         let v = s.call("overview_tabs_edit", &args(json!({ "ops": [{ "op": "delete", "tab": 1 }] }))).unwrap();
         assert_eq!(v["tabs"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rename_with_pieces_writes_the_markup_and_reads_back_as_pieces() {
+        let (s, _) = open_user(&overview_user_bytes());
+        let v = s.call("overview_tabs_edit", &args(json!({ "ops": [{ "op": "rename", "tab": 0, "pieces": [
+            { "text": "*", "color": "A8C8E8" },
+            { "text": " main", "bold": true }
+        ]}]}))).unwrap();
+        assert_eq!(v["tabs"][0]["name"], "<color=0xFFA8C8E8>*</color><b> main</b>");
+        assert_eq!(v["tabs"][0]["pieces"][1], json!({ "text": " main", "bold": true }));
+        assert_eq!(v["tabs"][0]["editable"], true);
+        let e = s.call("overview_tabs_edit", &args(json!({ "ops": [{ "op": "rename", "tab": 0, "pieces": [
+            { "text": "x", "color": "nope" }
+        ]}]}))).unwrap_err();
+        assert!(e.to_string().contains("AARRGGBB"), "{e}");
     }
 
     #[test]

@@ -26,6 +26,9 @@ const data: OverviewColumns = {
       name: "Default",
       preset: "All",
       inherits: false,
+      pieces: [{ text: "Default" }],
+      editable: true,
+      color: null,
       columns: [{ name: "NAME", label: "Name", visible: true, width: 120 }],
     },
   ],
@@ -39,9 +42,9 @@ const data: OverviewColumns = {
 // target list also pins that it is shown readable rather than raw.
 const multi: OverviewColumns = {
   tabs: [
-    { index: 0, name: "  main  ", preset: "All", inherits: false, columns: [{ name: "NAME", label: "Name", visible: true, width: 120 }] },
-    { index: 1, name: "<color=0xFFFF6F75><b>pvp</b></color>", preset: "All", inherits: false, columns: [] },
-    { index: 2, name: "loose", preset: "All", inherits: false, columns: [] },
+    { index: 0, name: "  main  ", preset: "All", inherits: false, pieces: [{ text: "main" }], editable: true, color: null, columns: [{ name: "NAME", label: "Name", visible: true, width: 120 }] },
+    { index: 1, name: "<color=0xFFFF6F75><b>pvp</b></color>", preset: "All", inherits: false, pieces: [{ text: "pvp", color: "FFFF6F75", bold: true }], editable: true, color: null, columns: [] },
+    { index: 2, name: "loose", preset: "All", inherits: false, pieces: [{ text: "loose" }], editable: true, color: null, columns: [] },
   ],
   windows: [{ index: 0, tab_indices: [0] }, { index: 1, tab_indices: [1] }],
   presets: [],

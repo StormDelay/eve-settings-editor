@@ -29,6 +29,7 @@ use settings_model::{
     project_fleet, set_broadcast_colour, set_fleet_field as model_set_fleet_field,
     set_watchlist_colour as model_set_watchlist_colour, Fleet,
     project_slot_orders, slot_order_add, slot_order_copy, slot_order_remove, slot_order_set, slot_order_swap, SlotEntry,
+    tab_name::{self, Piece},
 };
 
 use crate::accounts;
@@ -748,6 +749,12 @@ where
 
 pub fn tab_rename(state: &AppState, tab_idx: i64, name: String) -> Result<OverviewColumns, ErrDto> {
     edit_user_tabs(state, |v| rename_tab(v, tab_idx, &name))
+}
+
+/// Rename a tab from styled pieces: `tab_name::format` writes the markup.
+pub fn tab_rename_pieces(state: &AppState, tab_idx: i64, pieces: Vec<Piece>) -> Result<OverviewColumns, ErrDto> {
+    let name = tab_name::format(&pieces).map_err(|e| ErrDto::new("tab_name", e))?;
+    tab_rename(state, tab_idx, name)
 }
 
 /// Delete a tab from the account file, then carry the surviving tabs' char-side
