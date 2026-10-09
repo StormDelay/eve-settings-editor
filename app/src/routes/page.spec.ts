@@ -81,7 +81,7 @@ async function mount(profiles: Profile[], roster: AccountRoster = { accounts: []
     tabs: [],
     windows: [],
     presets: [],
-    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], flag_colors: [], palette: [], bools: [], defaulted: false },
   });
   // Both the app menu's proposal count and the Accounts view read this.
   calls.stub("launcher_proposals", { proposals: [], known: 0 });
@@ -407,7 +407,7 @@ test("Ctrl+F on Overview switches to Filters and focuses the group filter", asyn
     tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, columns: [] }],
     windows: [{ index: 0, tab_indices: [0] }],
     presets: [{ name: "Mine", groups: [], filtered_states: [], always_shown_states: [] }],
-    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], flag_colors: [], palette: [], bools: [], defaulted: false },
   });
   await openFile("core_char_950.dat");
   await waitFor(() => expect(subject.slots.user?.status).toBe("opened"));

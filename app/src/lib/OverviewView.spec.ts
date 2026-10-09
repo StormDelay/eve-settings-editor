@@ -26,6 +26,8 @@ const appearance: Appearance = {
   background: { enabled: [], order: [] },
   flag: { enabled: [], order: [] },
   colors: [],
+  flag_colors: [],
+  palette: [],
   bools: [],
   defaulted: false,
 };

@@ -49,11 +49,19 @@
     class?: string;
     children: Snippet;
   } = $props();
+
+  // Drop feedback, owned here so every draggable list gets it. `dragleave`
+  // also fires on entering a child, so only leaving the row itself counts.
+  let over = $state(false);
+  const leave = (e: DragEvent) => {
+    if (!(e.currentTarget as Node).contains(e.relatedTarget as Node | null)) over = false;
+  };
 </script>
 
 <div
   class="row {klass}"
   class:selected
+  class:over
   class:indent1={indent === 1}
   class:indent2={indent === 2}
   role={selected === undefined ? undefined : "option"}
@@ -61,9 +69,10 @@
   {title}
   draggable={draggable ? "true" : undefined}
   {ondragstart}
-  {ondragover}
-  {ondrop}
-  {ondragend}
+  ondragover={ondrop ? (e: DragEvent) => { over = true; ondragover?.(e); } : ondragover}
+  ondragleave={ondrop ? leave : undefined}
+  ondrop={ondrop ? (e: DragEvent) => { over = false; ondrop(e); } : undefined}
+  ondragend={(e: DragEvent) => { over = false; ondragend?.(e); }}
   {oncontextmenu}>
   <!-- aria-hidden: the grip is a texture, and the drag it affords is not
        keyboard-operable anyway. Announcing it would only add noise. -->
@@ -97,6 +106,10 @@
   }
   .selected {
     background: var(--accent-dim);
+  }
+  .over {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
   .indent1 {
     padding-left: var(--s5);

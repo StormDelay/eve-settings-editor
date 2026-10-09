@@ -159,22 +159,28 @@ Workflow:
   margin for `OverviewView`'s strip, working only because sub-tabs are hidden
   rather than unmounted). **What genuinely remains:**
 
-  1. **No drop feedback on any of the three draggable lists.** `ListRow` sets
+  _Items 1–3 done 2026-10-09: `ListRow` outlines the row under a drag whenever
+  it takes a drop, so all three lists get it; `OverviewTabList` shows a "Drop
+  here to move to the end" zone under each window while a tab is dragged, which
+  is both the end position and the way into an empty window. Rows in Other no
+  longer pretend to take a drop._
+
+  1. ~~**No drop feedback on any of the three draggable lists.** `ListRow` sets
      `dropEffect` and nothing else — no drag-over class, no insertion line
      (`ListRow.svelte:54-67`). Consumers: `OverviewTabList.svelte:322-331`,
      `OverviewColumnsTab.svelte:200-208`, `OverviewAppearanceTab.svelte:164-172`.
      Phase 4 deliberately multiplied drag exposure (§4.3.1); the feedback never
-     followed.
-  2. **An empty overview window is not a drop target.** `drop()` is wired only to
+     followed.~~
+  2. ~~**An empty overview window is not a drop target.** `drop()` is wired only to
      rows (`OverviewTabList.svelte:330`), and a group with no tabs renders a
      header and nothing else. Reachable by dragging a window's last tab out, and
      real accounts ship empty windows (`format-notes.md:838-841`). The only way
-     back in is the row `⋯`.
-  3. **Cross-window drag cannot drop at the END of the target window.** `pos` is
+     back in is the row `⋯`.~~
+  3. ~~**Cross-window drag cannot drop at the END of the target window.** `pos` is
      the index of the row dropped *on*, so the last position is unreachable —
      while the `⋯` `Move to Overview N` route does the exact opposite and only
      ever appends. Neither route covers the whole strip, and position is
-     load-bearing, because the backend renumbers to strip order.
+     load-bearing, because the backend renumbers to strip order.~~
   4. **Reordering within a window is mouse-only.** `rowMenu` offers Rename, Delete
      and Move-to-window (`OverviewTabList.svelte:95-118`) but no up/down. Cross-
      window has a keyboard route; the operation that actually renumbers the tab
@@ -472,7 +478,7 @@ Workflow:
   never written, but if EVE tints a colortag differently from its row, those
   fallbacks are wrong.
 
-- [ ] **`Appearance.flag_colors` and `Appearance.palette` are optional in TS but
+- [x] **`Appearance.flag_colors` and `Appearance.palette` are optional in TS but
   never absent in Rust.** Declared optional at `api.ts:321,324` purely so six
   existing appearance fixtures (`OverviewView.spec.ts`, `OverviewFiltersTab.spec.ts`,
   `OverviewColumnsTab.spec.ts`, `OverviewTabList.spec.ts`, `detail.test.ts`,
@@ -481,7 +487,8 @@ Workflow:
   compile-time check. Making them required and adding them to the six fixtures is
   a clean, mechanical follow-up. The tidier shape it also declined — folding the
   colours into `StateSurface` instead of leaving `Appearance.colors` beside them
-  — is a bigger change and a separate call. _Added 2026-08-15 (colortag surface)._
+  — is a bigger change and a separate call. _Added 2026-08-15 (colortag surface);
+  required 2026-10-09, fixtures updated._
 
 - [ ] **The state colour swatch is a free colour picker, not EVE's palette.**
   `OverviewAppearanceTab.svelte:154` is a bare `<input type="color">`, so any of

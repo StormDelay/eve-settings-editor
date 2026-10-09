@@ -13,6 +13,8 @@ const appearance = {
   background: { enabled: [], order: [] },
   flag: { enabled: [], order: [] },
   colors: [] as [number, [number, number, number, number]][],
+  flag_colors: [] as [number, [number, number, number, number]][],
+  palette: [] as [string, [number, number, number, number]][],
   bools: [] as [string, boolean][],
   defaulted: false,
 };

@@ -209,6 +209,7 @@
   // Drag. Every row is draggable — not only the ones in a window holding two or
   // more tabs, which is the rule that made reorder silently unavailable.
   let drag = $state<{ tabIdx: number; windowIdx: number; pos: number } | null>(null);
+  let dropEnd = $state<string | null>(null);
 
   function drop(g: Group, pos: number) {
     const d = drag;
@@ -327,7 +328,7 @@
               }}
               ondragover={(e: DragEvent) => { e.preventDefault();
                 if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
-              ondrop={(e: DragEvent) => { e.preventDefault(); drop(g, i); }}
+              ondrop={g.windowIdx === null ? undefined : (e: DragEvent) => { e.preventDefault(); drop(g, i); }}
               ondragend={() => (drag = null)}>
               <!-- The one truthful rendering of a tab in the app: its real
                    colour and weight, the way it looks in game. -->
@@ -336,6 +337,17 @@
             {/if}
           </li>
         {/each}
+        <!-- Rows only take a drop BEFORE themselves, so the end of a window,
+             and an empty window, need a target of their own. -->
+        {#if drag && g.windowIdx !== null}
+          <li class="drop-end" class:over={dropEnd === g.key}
+              ondragover={(e: DragEvent) => { e.preventDefault(); dropEnd = g.key;
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+              ondragleave={() => (dropEnd = null)}
+              ondrop={(e: DragEvent) => { e.preventDefault(); dropEnd = null; drop(g, g.tabs.length); }}>
+            Drop here to move to the end
+          </li>
+        {/if}
         {#if pending?.kind === "tab" && pending.windowIdx === g.windowIdx}
           <li>
             <Field bind:value={pending.value} bind:element={nameInput}
@@ -394,6 +406,14 @@
     padding: var(--s2);
   }
   .groups { flex: 1; min-height: 0; overflow: auto; }
+  .drop-end {
+    padding: var(--s1) var(--s2);
+    border: 1px dashed var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-muted);
+    font-size: var(--t-caption);
+  }
+  .drop-end.over { border-color: var(--accent); color: var(--text); }
   /* The same side padding ListRow gives a row, so the group's "⋯" lands in the
      same column as every row's "⋯" instead of one step further out. */
   .group-head { display: flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); }
