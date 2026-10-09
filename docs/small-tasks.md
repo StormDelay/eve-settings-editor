@@ -679,10 +679,12 @@ Workflow:
      no client at all.
   2. A stack the **editor** minted should still read `Window stack · N`: per
      `format-notes.md`, an editor-created stack gets no `tabgroups` entry.
-  3. The frame row's new label renders between the FRAME marker and the open
+  3. ~~The frame row's new label renders between the FRAME marker and the open
      checkbox, and its `span.detail` is a bare flex child with no `nowrap` — judge
      whether a long label like "Character: Information" should sit after the name
-     instead.
+     instead.~~ _Done 2026-10-09: it now follows the name inside the name button,
+     which already truncates on one line, so the checkbox lines up with every
+     other row's._
   4. ~~Preferences round trip.~~ **DONE 2026-08-15 — as tests, not as a manual
      pass. Neither 4 nor 5 ever needed a client, which is why they went first.**
      The `#[cfg(windows)]` copy-vs-rename test that CI has never once executed
