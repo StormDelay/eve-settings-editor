@@ -216,8 +216,8 @@ describe("overview column widths", () => {
   const col = (name: string, width: number | null, visible = true) => ({ name, label: name, visible, width });
   const columns = {
     tabs: [
-      { index: 0, name: "PvP", preset: "p", inherits: false, columns: [col("NAME", 120), col("DISTANCE", null), col("TYPE", 80, false)] },
-      { index: 1, name: "Mining", preset: "p", inherits: false, columns: [col("NAME", 300)] },
+      { index: 0, name: "<color=0xffff0000>PvP</color>", pieces: [{ text: "PvP", color: "FFFF0000" }], preset: "p", inherits: false, columns: [col("NAME", 120), col("DISTANCE", null), col("TYPE", 80, false)] },
+      { index: 1, name: "Mining", pieces: [{ text: "Mining" }], preset: "p", inherits: false, columns: [col("NAME", 300)] },
     ],
     // The second window lists Mining first: the panel follows the window's own order.
     windows: [{ index: 0, tab_indices: [0] }, { index: 1, tab_indices: [1, 0] }],

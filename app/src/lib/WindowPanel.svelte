@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WindowRect, BoolFlag, NodePath, Stack, ChatPanel, OverviewColumns, OverviewTab } from "$lib/api";
   import { overviewIndex } from "$lib/detail";
+  import { plainTabName } from "$lib/tabName";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
   import { windowMatches, isOrphanFrame, isLeavableChat, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
@@ -349,7 +350,7 @@
          files records which tab is selected (detail.ts, overviewParts). The
          other tabs' widths are in Overview → Columns. -->
     <div class="ov-widths">
-      <div class="ov-head">Column widths · {firstTab.name}</div>
+      <div class="ov-head">Column widths · {plainTabName(firstTab).trim()}</div>
       <div class="fields">
         {#each firstTab.columns.filter((c) => c.visible) as c (c.name)}
           <Field
