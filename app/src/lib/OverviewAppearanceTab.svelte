@@ -10,6 +10,7 @@
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
   import ListRow from "./ui/ListRow.svelte";
+  import PanelHeader from "./ui/PanelHeader.svelte";
   import Tabs from "./ui/Tabs.svelte";
 
   let { data, onChanged, onUserDirty }:
@@ -131,6 +132,8 @@
 </script>
 
 {#if appearance}
+  <!-- The tab list beside this keeps a row highlighted; this pane ignores it. -->
+  <div class="pane-head"><PanelHeader title="Appearance" subtitle="Account-wide: applies to every tab" level={4} /></div>
   {#if error}
     <InlineMessage variant="error" detail={error.detail}>{error.text}</InlineMessage>
   {/if}
@@ -239,6 +242,7 @@
 {/if}
 
 <style>
+  .pane-head { margin-bottom: var(--s2); }
   /* The checkbox and colour-input dark-control rules are gone — Field owns
      both, and the local surface strip is Tabs.
 

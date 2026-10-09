@@ -56,6 +56,13 @@ async function colortag() {
   await waitFor(() => expect(tab.getAttribute("aria-selected")).toBe("true"));
 }
 
+// It takes no tab: the pane says so rather than ignoring the selection silently.
+test("says Appearance is account-wide", () => {
+  mount();
+  expect(document.querySelector("h4")?.textContent).toBe("Appearance");
+  expect(document.body.textContent).toMatch(/account-wide: applies to every tab/i);
+});
+
 describe("the colortag surface", () => {
   test("offers a colour control, showing the stored flag colour", async () => {
     mount();
