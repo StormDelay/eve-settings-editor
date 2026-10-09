@@ -91,13 +91,26 @@
   /** The group the selection is in, so the footer's `+ Tab` creates beside it. */
   const selectedGroup = $derived(groups.find((g) => g.tabs.some((t) => t.index === tabIndex)) ?? null);
 
-  function rowMenu(t: OverviewTab, g: Group): MenuItem[] {
+  function rowMenu(t: OverviewTab, g: Group, i: number): MenuItem[] {
+    const loose = g.windowIdx === null;
+    const looseHint = "This tab isn't assigned to a window — EVE decides where it appears";
+    // The keyboard route for the drag's reorder: the same `onReorder`, one step.
+    const step = (to: number) => () => {
+      const order = g.tabs.map((x) => x.index);
+      order.splice(i, 1);
+      order.splice(to, 0, t.index);
+      onReorder(g.windowIdx as number, order);
+    };
     const items: MenuItem[] = [
       // Renaming happens ON the row. A rename started here and finished in a
       // panel below was two places for one gesture, and it left a Name field
       // sitting there permanently for the 99% of the time nobody is renaming.
       { label: "Rename tab…", run: () => startRename(t) },
       { label: "Delete tab", run: () => onDeleteTab(t.index) },
+      { label: "Move up", run: step(i - 1), disabled: loose || i === 0,
+        hint: loose ? looseHint : i === 0 ? "Already first in this window" : undefined },
+      { label: "Move down", run: step(i + 1), disabled: loose || i === g.tabs.length - 1,
+        hint: loose ? looseHint : i === g.tabs.length - 1 ? "Already last in this window" : undefined },
     ];
     // Cross-window drag is the fast route; this is the keyboard one, and the
     // one that still works when the two windows are scrolled apart. Present and
@@ -107,10 +120,8 @@
       items.push({
         label: `Move to Overview ${w.index + 1}`,
         run: () => onMove(t.index, g.windowIdx as number, w.index, w.tab_indices.length),
-        disabled: g.windowIdx === null,
-        hint: g.windowIdx === null
-          ? "This tab isn't assigned to a window — EVE decides where it appears"
-          : undefined,
+        disabled: loose,
+        hint: loose ? looseHint : undefined,
       });
     }
     return items;
@@ -120,7 +131,11 @@
   // cases, which is what the vanishing "Remove Window" button was communicating
   // by disappearing.
   function groupMenu(g: Group): MenuItem[] {
-    const items: MenuItem[] = [{ label: "New tab in this window", run: () => startCreate(g) }];
+    // Other has no window: the view puts its new tab in Overview 1, so say so.
+    const items: MenuItem[] = [{
+      label: g.windowIdx === null ? "New tab (goes to Overview 1)" : "New tab in this window",
+      run: () => startCreate(g),
+    }];
     if (g.windowIdx === null) return items;
     const only = data.windows.length <= 1;
     const notLast = g.windowIdx !== data.windows.length - 1;
@@ -221,7 +236,7 @@
   {#if data.tabs.length === 0}
     <EmptyState
       title="No overview tabs"
-      description="This account file holds none. Importing an overview pack adds some." />
+      description="This account file holds none. Add one with + Tab, or import an overview pack." />
   {/if}
   <!-- The strip's own failures, above the strip. -->
   {#if editError && ["strip", "actions", "move"].includes(editError.where)}
@@ -247,7 +262,7 @@
             <ListRow
               selected={t.index === tabIndex}
               onclick={() => onSelect(t.index)}
-              actions={rowMenu(t, g)}
+              actions={rowMenu(t, g, i)}
               oncontextmenu={(e: MouseEvent) => e.preventDefault()}
               draggable={g.windowIdx !== null}
               ondragstart={(e: DragEvent) => {
@@ -320,9 +335,9 @@
       </Button>
       <Button onclick={() => (pending = null)}>Cancel</Button>
     {:else if !pending}
-      <Button size="sm" onclick={() => startCreate(selectedGroup)}
-              disabled={data.tabs.length === 0}
-              disabledReason="This account file has no overview tabs">+ Tab</Button>
+      <!-- With no selection (a zero-tab account) the entry opens under the
+           first group, which is where the view creates it. -->
+      <Button size="sm" onclick={() => startCreate(selectedGroup ?? groups[0])}>+ Tab</Button>
       <Button size="sm" onclick={() => (pending = { kind: "window", windowIdx: null, value: "Overview" })}
               disabled={data.windows.length === 0}
               disabledReason="This account doesn't assign tabs to windows — set that up first"

@@ -1750,6 +1750,32 @@ mod tests {
         assert_eq!(cols.tabs[0].name, "Combat");
     }
 
+    /// The `+ Tab` button on a zero-tab account: the command path, not just the
+    /// codec's no-sibling branch. Windowless, and with one empty window — the
+    /// view sends window 0 for both.
+    #[test]
+    fn tab_create_works_on_an_account_with_no_tabs() {
+        let bb = |s: &str| Value::Bytes(s.as_bytes().to_vec());
+        for windows in [None, Some(Value::List(vec![Value::List(vec![])]))] {
+            let mut ov = vec![(bb("tabsettings_new"), Value::Dict(vec![]))];
+            if let Some(w) = windows.clone() { ov.push((bb("tabsByWindowInstanceID"), w)); }
+            let user = Value::Dict(vec![(bb("overview"), Value::Dict(ov))]);
+            let path = temp_file("tabcreate_empty", &encode(&user).unwrap());
+            let state = AppState::new();
+            open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
+            assert!(overview_columns(&state).unwrap().tabs.is_empty());
+
+            let cols = tab_create(&state, 0, "Main".into(), None).unwrap();
+            assert_eq!(cols.tabs.len(), 1);
+            assert_eq!(cols.tabs[0].name, "Main");
+            if windows.is_some() {
+                assert_eq!(cols.windows[0].tab_indices, vec![cols.tabs[0].index]);
+            } else {
+                assert!(cols.windows.is_empty(), "no mapping fabricated");
+            }
+        }
+    }
+
     /// Deleting a tab renumbers the account's tab table, and the character file
     /// keys column widths and sort order by tab index — so the delete has to carry
     /// them across, or deleting one tab changes every tab above it. This is the
