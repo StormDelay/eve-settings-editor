@@ -297,7 +297,7 @@ import { check } from "./test/check.ts";
     ],
     windows: [{ index: 0, tab_indices: [0, 1] }, { index: 1, tab_indices: [] }],
     presets: [],
-    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], flag_colors: [], palette: [], bools: [], defaulted: false },
   };
 
   const parts = overviewParts(cols, 0, { w: 400, h: 300 });
@@ -408,7 +408,7 @@ import { check } from "./test/check.ts";
              columns: [{ name: "icon", label: "ICON", visible: true, width: 30 }] }],
     windows: [{ index: 0, tab_indices: [0] }],
     presets: [],
-    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], bools: [], defaulted: false },
+    appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], flag_colors: [], palette: [], bools: [], defaulted: false },
   };
 
   check("an overview window gets column parts",

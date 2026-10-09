@@ -371,12 +371,11 @@ export interface Appearance {
   background: StateSurface;
   flag: StateSurface;
   colors: [number, Rgba][];
-  /** Colortag-surface colours. The backend always sends these two; they are
-   *  optional here so the fixtures that predate them still typecheck. */
-  flag_colors?: [number, Rgba][];
+  /** Colortag-surface colours. */
+  flag_colors: [number, Rgba][];
   /** EVE's palette, `[name, rgba]` — the only colours a pack export can name.
    *  INCOMPLETE: 6 of EVE's 8 names, `green` and `purple` not yet captured. */
-  palette?: [string, Rgba][];
+  palette: [string, Rgba][];
   bools: [string, boolean][];
   defaulted: boolean;
 }

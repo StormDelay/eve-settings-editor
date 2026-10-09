@@ -14,6 +14,8 @@ const appearance = {
   background: { enabled: [], order: [] },
   flag: { enabled: [], order: [] },
   colors: [] as [number, [number, number, number, number]][],
+  flag_colors: [] as [number, [number, number, number, number]][],
+  palette: [] as [string, [number, number, number, number]][],
   bools: [] as [string, boolean][],
   defaulted: false,
 };
@@ -142,6 +144,35 @@ describe("drag", () => {
     await fireEvent.drop(row("Travel"));
     expect(onMove).toHaveBeenCalledWith(0, 0, 1, 0);
     expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  // A row only takes a drop before itself, so the end of a window needs its
+  // own target — it is the only way into an empty window by drag.
+  test("dropping on a window's end zone moves the tab to its end", async () => {
+    const { onMove } = mount();
+    expect(screen.queryByText(/Drop here/)).toBeNull();
+    await fireEvent.dragStart(row("main"));
+    const zones = screen.getAllByText(/Drop here/);
+    expect(zones).toHaveLength(2); // one per window, none for Other
+    await fireEvent.drop(zones[1]);
+    expect(onMove).toHaveBeenCalledWith(0, 0, 1, 1);
+    expect(screen.queryByText(/Drop here/)).toBeNull();
+  });
+
+  test("the end zone reorders within the window too", async () => {
+    const { onReorder } = mount();
+    await fireEvent.dragStart(row("main"));
+    await fireEvent.drop(screen.getAllByText(/Drop here/)[0]);
+    expect(onReorder).toHaveBeenCalledWith(0, [1, 0]);
+  });
+
+  test("the row being dragged over is marked", async () => {
+    mount();
+    await fireEvent.dragStart(row("main"));
+    await fireEvent.dragOver(row("Mining"));
+    expect(row("Mining").classList.contains("over")).toBe(true);
+    await fireEvent.drop(row("Mining"));
+    expect(row("Mining").classList.contains("over")).toBe(false);
   });
 });
 
