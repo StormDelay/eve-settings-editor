@@ -740,7 +740,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "save",
-            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path. The current workspace only, or every workspace with all: true. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
+            description: "Write every slot with unsaved edits to disk: encode, verify by decoding, back up the current file, then replace it atomically. Returns each backup path; an account save that carries a tab reorder, move or delete also rewrites the other characters' files in that folder (backed up, listed under `linked`). The current workspace only, or every workspace with all: true. Fails with `conflict` if the file changed on disk since open (the EVE client or the editor wrote it) — ask the user before retrying with force. If a later slot fails, the result still lists what was already saved. Only edit a character that is logged out.",
             schema: || obj(json!({
                 "force": { "type": "boolean", "description": "Overwrite a file that changed on disk since open. Only after the user agrees." },
                 "all": { "type": "boolean", "description": "Save every workspace, not just the current one." }
@@ -826,7 +826,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "overview_tabs_edit",
-            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name} or {tab, pieces: [{text, color?: AARRGGBB, bold?, italic?, underline?, size?, spacing?}]} (pieces write the markup for you; a name whose editable is false uses tags pieces can't write — rename it with name); delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name} or {tab, pieces: [{text, color?: AARRGGBB, bold?, italic?, underline?, size?, spacing?}]} (pieces write the markup for you; a name whose editable is false uses tags pieces can't write — rename it with name); delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos} (delete, reorder and move carry each tab's column widths and sort with it, for the account's other characters when the account is saved); set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
             schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
                 "tab": { "type": "integer" }, "window": { "type": "integer" }, "name": { "type": "string" },
                 "from_tab": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer" } },
@@ -1682,7 +1682,7 @@ fn slot_label(slot: Slot) -> &'static str {
 /// Save one workspace's dirty slots, account first. `(saved, skipped)` on
 /// success; on failure the error carries `saved` and `skipped` so far, so a
 /// half-saved pair is never mistaken for a save that touched nothing.
-fn save_state(state: &AppState, force: bool) -> Result<(Vec<Value>, Vec<&'static str>), Value> {
+fn save_state(state: &AppState, force: bool, dir: &Path) -> Result<(Vec<Value>, Vec<&'static str>), Value> {
     let mut saved = Vec::new();
     let mut skipped = Vec::new();
     for (slot, name) in [(Slot::User, "user"), (Slot::Char, "char")] {
@@ -1691,8 +1691,14 @@ fn save_state(state: &AppState, force: bool) -> Result<(Vec<Value>, Vec<&'static
             skipped.push(name);
             continue;
         }
-        match ops::save_document(state, slot, force) {
-            Ok(report) => saved.push(json!({ "slot": name, "path": path, "backup_path": report.backup_path })),
+        match ops::save_document(state, slot, force, &ops::linked_chars(state, dir)) {
+            Ok(out) => {
+                let mut row = json!({ "slot": name, "path": path, "backup_path": out.report.backup_path });
+                if !out.linked.is_empty() {
+                    row["linked"] = json!(out.linked);
+                }
+                saved.push(row)
+            }
             Err(e) => {
                 let mut v = match e.code.as_str() {
                     "conflict" => err(
@@ -1980,7 +1986,7 @@ impl EveMcp {
         let force: bool = opt(args, "force")?.unwrap_or(false);
         let all: bool = opt(args, "all")?.unwrap_or(false);
         if !all {
-            let (saved, skipped) = save_state(&self.state(), force)?;
+            let (saved, skipped) = save_state(&self.state(), force, &self.dir)?;
             return Ok(json!({ "saved": saved, "skipped": skipped }));
         }
         // Every workspace, in map order. A failure stops the loop and carries
@@ -1988,7 +1994,7 @@ impl EveMcp {
         let all_ws: Vec<AppState> = self.workspaces.lock().unwrap().values().cloned().collect();
         let mut saved = Vec::new();
         for ws in &all_ws {
-            match save_state(ws, force) {
+            match save_state(ws, force, &self.dir) {
                 Ok((mut s, _)) => saved.append(&mut s),
                 Err(mut e) => {
                     let mut earlier = saved;

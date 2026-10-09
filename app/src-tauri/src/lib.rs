@@ -118,11 +118,13 @@ fn undo_state(state: tauri::State<'_, AppState>) -> undo::UndoState {
 
 #[tauri::command]
 fn save_document(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     slot: ops::Slot,
     force: bool,
-) -> Result<settings_model::SaveReport, ErrDto> {
-    ops::save_document(&state, slot, force)
+) -> Result<ops::SaveOutcome, ErrDto> {
+    let linked = ops::linked_chars(&state, &app_dir(&app));
+    ops::save_document(&state, slot, force, &linked)
 }
 
 #[tauri::command]

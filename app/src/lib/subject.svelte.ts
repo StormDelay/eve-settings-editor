@@ -19,7 +19,7 @@
 //! selection are facts about where the user is LOOKING, read only by the shell.
 //! See `02-shell.md` §6.2.
 
-import { api, errMessage, errText, type ErrDto, type OpenOutcome, type Profile, type Slot } from "./api";
+import { api, errMessage, errText, type BatchTargetResult, type ErrDto, type OpenOutcome, type Profile, type Slot } from "./api";
 import { names, resolveNames } from "./names.svelte";
 import { accountsStore, aliasFor, loadRoster } from "./accounts.svelte";
 import { byResolvedName } from "./filesort.svelte";
@@ -489,6 +489,7 @@ export async function loadCharacter(charId: number): Promise<void> {
  */
 export async function saveFile(force = false): Promise<void> {
   const saved: string[] = [];
+  const linked: BatchTargetResult[] = [];
   shellErrors.save = null;
   for (const slot of ["char", "user"] as const) {
     const o = subject.slots[slot];
@@ -497,7 +498,7 @@ export async function saveFile(force = false): Promise<void> {
     const doc = o as Extract<OpenOutcome, { status: "opened" }>;
     const who = (slot === "char" ? subject.charName : subject.userAlias) ?? doc.file_name;
     try {
-      await api.save(slot, force);
+      linked.push(...((await api.save(slot, force))?.linked ?? []));
       subject.dirty[slot] = false;
       subject.savedAt += 1;
       saved.push(who);
@@ -517,7 +518,7 @@ export async function saveFile(force = false): Promise<void> {
         });
         if (overwrite) {
           try {
-            await api.save(slot, true);
+            linked.push(...((await api.save(slot, true))?.linked ?? []));
             subject.dirty[slot] = false;
             subject.savedAt += 1;
             saved.push(who);
@@ -533,7 +534,19 @@ export async function saveFile(force = false): Promise<void> {
       }
     }
   }
+  // An account save that carries a tab reorder also moves the per-tab widths in
+  // the account's other characters' files. Those are files the user never
+  // opened, so the toast says it happened and a failure says which.
+  const moved = linked.filter((l) => l.ok).length;
+  const failed = linked.filter((l) => !l.ok);
+  if (failed.length && !shellErrors.save) {
+    shellErrors.save = {
+      text: `Tab widths weren't moved for ${failed.length} other character${failed.length === 1 ? "" : "s"} on this account.`,
+      detail: failed.map((f) => `${f.path}: ${f.error}`).join("\n"),
+    };
+  }
   if (saved.length) {
-    toast(`Saved ${saved.join(" and ")}.`, { variant: "success" });
+    const also = moved ? ` Moved tab widths for ${moved} other character${moved === 1 ? "" : "s"} too.` : "";
+    toast(`Saved ${saved.join(" and ")}.${also}`, { variant: "success" });
   }
 }

@@ -231,14 +231,15 @@
     warnWidthSwap();
   }
 
-  // The shipped ceiling, surfaced at the one moment it is actionable. Per-tab
-  // column widths are keyed (overviewScroll2, tabIndex) in the CHARACTER file,
-  // so renumbering leaves them on the slot rather than on the tab. The remap is
-  // its own branch (docs/small-tasks.md); with no character open there are no
-  // widths on screen to be wrong, so there is nothing to say.
+  // Per-tab column widths are keyed (overviewScroll2, tabIndex) in each
+  // CHARACTER file, so a renumbering moves them: the open character's now, the
+  // account's other characters' when the account is saved. What it cannot reach
+  // is a character logged in at the time — EVE rewrites that file at logout, in
+  // the old order. With no character open there are no widths on screen, so
+  // there is nothing to say.
   function warnWidthSwap() {
     if (!charOpen) return;
-    toast("Tabs renumbered. Column widths stay with the position — check widths on the tabs you moved.", { variant: "warn" });
+    toast("Column widths moved with the tabs, for every character on this account when you save. A character logged in at the time keeps the old order.", { variant: "warn" });
   }
 
   // A windowless account is normal: EVE's own overview importer deletes the

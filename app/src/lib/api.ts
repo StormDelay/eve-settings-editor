@@ -63,6 +63,9 @@ export interface Profile {
 export interface SaveReport {
   backup_path: string;
   bytes_written: number;
+  /** The account's other characters whose per-tab widths an account save moved
+   *  (a tab reorder, move or delete); empty otherwise. */
+  linked?: BatchTargetResult[];
 }
 
 export interface UndoState {
