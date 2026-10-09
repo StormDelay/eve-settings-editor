@@ -886,8 +886,10 @@ pub fn overview_window_add(state: &AppState, name: String, from_tab: Option<i64>
     overview_columns(state)
 }
 
-/// Remove the last overview window: drop the grouping in the user file and the
-/// paired `overview_N` geometry in the char file (best-effort, as above).
+/// Remove any overview window: drop the grouping in the user file, then drop its
+/// `overview_N` geometry in the char file and shift every later window's key
+/// down one (best-effort, as above). Only the open character is re-keyed; the
+/// account's other characters keep their old keys, which the UI warns about.
 pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<OverviewColumns, ErrDto> {
     let _group = undo::group(state);
     edit_slot(

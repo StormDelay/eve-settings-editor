@@ -19,10 +19,13 @@
   import Tabs from "./ui/Tabs.svelte";
   import { toast } from "./ui/toasts.svelte";
 
-  let { userOpen, userId, charId, charOpen, refreshToken, scopeLabel = "",
+  let { userOpen, userId, charId, charOpen, refreshToken, scopeLabel = "", sharedNames = [],
         onUserDirty, onCharDirty, onWindowAdded, onShowAccounts, focusSearch = $bindable(undefined) }:
     { userOpen: boolean; userId: number | null; charId: number | null; charOpen: boolean; refreshToken: number;
       scopeLabel?: string;
+      /** The account's other characters, whose window positions a window
+       *  removal cannot move. */
+      sharedNames?: string[];
       onUserDirty: () => void; onCharDirty: () => void;
       onWindowAdded: (windowId: string) => void; onShowAccounts: () => void;
       /** The shell's Ctrl+F. Overview's only search box is the group filter on
@@ -181,6 +184,7 @@
   async function removeWindow(windowIdx: number) {
     if (!data || data.windows.length <= 1) return;
     const moved = data.windows.find((w) => w.index === windowIdx)?.tab_indices.length ?? 0;
+    const shifted = windowIdx < data.windows.length - 1;
     // Edits both slots (grouping + geometry) — mark both dirty so saveFile
     // doesn't skip the char slot.
     if (!(await edit(() => api.overviewWindowRemove(windowIdx), "actions", "That window wasn't removed"))) return;
@@ -188,9 +192,25 @@
       `Removed Overview ${windowIdx + 1}. Its ${moved} tab${moved === 1 ? "" : "s"} moved to Overview 1.`,
       { action: undoAction() },
     );
+    if (shifted) warnStalePositions(windowIdx);
     tabIndex = data.tabs[0]?.index ?? null;
     onUserDirty();
     onCharDirty();
+  }
+
+  // EVE ties an overview window to its position, and each character keeps its
+  // own positions. Removing a window that is not the last moves every later
+  // window down one, and only the open character file is re-keyed to match:
+  // every other character on the account keeps the old keys, so there each
+  // later window opens where the one before it used to be. With no character
+  // open, nothing was re-keyed at all.
+  function warnStalePositions(windowIdx: number) {
+    const who = charOpen ? sharedNames : ["Every character on this account"];
+    if (who.length === 0) return;
+    toast(
+      `Overview ${windowIdx + 2} and later are now one number lower. ${who.join(", ")} still ${who.length === 1 ? "has" : "have"} the old window positions, so in game those windows open one place off. Move them there, or copy this layout across.`,
+      { variant: "warn" },
+    );
   }
 
   // Reordering or moving a tab RENUMBERS the tab table — EVE draws a window's

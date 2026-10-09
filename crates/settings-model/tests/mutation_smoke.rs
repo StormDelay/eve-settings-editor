@@ -326,6 +326,31 @@ fn overview_window_add_and_remove_survive_across_both_files() {
     );
 }
 
+/// Removing a middle window re-keys the later window's geometry on the real
+/// shape: three windows in, two out, the old `overview_2` rect now `overview_1`.
+#[test]
+fn overview_middle_window_remove_rekeys_across_both_files() {
+    let mut user = fixture(MODERN_USER);
+    let mut char_tree = fixture(MODERN_CHAR);
+    let rect = |c: &Value, id: &str| {
+        let w = window_layout(c, None).windows.into_iter().find(|w| w.id == id).expect(id);
+        let g = w.geom.expect("geometry");
+        (g.x, g.y, g.w, g.h)
+    };
+    let old_second = rect(&char_tree, "overview_2");
+
+    remove_overview_window(&mut user, 1).expect("remove a middle window");
+    remove_overview_window_geometry(&mut char_tree, 1);
+    let user_back = saved(&user);
+    let char_back = saved(&char_tree);
+    assert_eq!(project_overview(&user_back, Some(&char_back)).windows.len(), 2);
+    assert_eq!(rect(&char_back, "overview_1"), old_second, "the third window kept its own rect");
+    assert!(
+        !window_layout(&char_back, None).windows.iter().any(|w| w.id == "overview_2"),
+        "no overview_2 left behind"
+    );
+}
+
 /// The legacy account has no `tabsettings_new`. The first structural edit has to
 /// migrate the key, which is a rename of a dict key on a real-shaped tree.
 #[test]

@@ -909,7 +909,18 @@ Workflow:
   member — then either auto-dissolve on the drag-out or leave this closed.
   _Added 2026-07-26 (layout stack polish)._
 
-- [ ] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
+- [ ] **Confirm in-client that removing a middle overview window leaves the rest
+  in place.** The editor now removes any overview window and re-keys the open
+  character's later `overview_N` entries down one (removing window 0 promotes
+  `overview_1` to `overview`). Not yet seen in game. On a character with three
+  overview windows at distinct, recognisable positions: remove Overview 2 in the
+  editor, save, log in, and check that the remaining two open where Overview 1
+  and Overview 3 were, with Overview 3's tabs, lock and compact state. Repeat
+  with Overview 1 to confirm the promoted window is treated as the primary. On a
+  second character of the same account (not re-keyed), confirm the warning's
+  claim that its later windows open one place off. _Added 2026-10-09._
+
+- [x] **Revisit the remove-overview-window "last-window-only" restriction.** Phase B
   of overview tab management only lets the user remove the *last* overview window,
   because the `tabsByWindowInstanceID` position ↔ char-file `overview_N` key link is
   positional: removing a middle window shifts every later window's position out from
@@ -918,7 +929,19 @@ Workflow:
   removable). Deferred as fiddly cross-file surgery for a rare need. Revisit if users
   want to remove a specific middle window — either implement the re-key cascade, or
   add window-reorder first so a middle window can be moved to the end before removal.
-  _Added 2026-07-20 (Phase B design)._
+  _Added 2026-07-20 (Phase B design)._ _Done 2026-10-09: the full re-key cascade.
+  Any window but the only one can be removed; its tabs join the primary strip
+  (window 1's when window 0 goes), sorted ascending. `remove_overview_window_geometry`
+  drops the window from every char `windows` subdict and shifts each later
+  `overview_N` down one, recursing into dict values so a stacked overview window
+  follows in `preferredIdxInStack3`. Measured over 345 real character files,
+  `overview_N` occurs only as a key of seven subdicts (`windowSizesAndPositions_1`,
+  `openWindows`, `minimizedWindows`, `lockedWindows`, `compactWindows`,
+  `isLightBackgroundWindows`, `pinnedWindows`); no account-file key names a
+  window besides the positional list. Only the open character is re-keyed, so
+  the UI warns, naming the account's other characters (or every character when
+  none is open), that their later windows open one place off. In-client check is
+  the Open entry above._
 
 - [x] **Overview tab-management Phase B follow-ups (whole-branch review, all
   ship-as-debt).** Non-blocking minors from the Phase B (add/remove overview
