@@ -398,10 +398,10 @@ pub fn save_document(state: &AppState, slot: Slot, force: bool, linked: &[(u64, 
     Ok(SaveOutcome { report, linked })
 }
 
-// ponytail: the open character is excluded (its remap is in memory, saved with
-// it), so a character switched INTO the editor between an unsaved reorder and
-// the account save keeps the old numbering — it was read after the reorder. The
-// fix is remapping a character file as it opens while a renumbering is pending.
+// The open character is excluded: its remap is in memory, saved with it. No
+// other character can be switched in while a reorder is unsaved — the app's
+// "Discard and open" and MCP `open {discard}` both re-read the account file,
+// which drops the pending remap with the reorder.
 fn remap_char_files(linked: &[(u64, PathBuf)], map: &[i64]) -> Vec<crate::setup::TargetResult> {
     linked
         .iter()

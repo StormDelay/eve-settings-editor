@@ -144,7 +144,7 @@ Workflow:
   an account's other characters have char files the editor does not have open, so
   it is half a fix — or keep leaving widths on the slot? Nothing more should be
   built here until that is answered. _Added 2026-08-14 (UI redesign Phase 4,
-  §4.3.1); narrowed to the open decision 2026-08-15._ _Done 2026-10-09: decided that widths and sort follow the tab for every character on the account. Reorder, move and delete remap the open character in memory, and the account's other characters in the same folder on disk when the account file is saved (each backed up, reported per file); the toast and the sentence under the width boxes now say so, including that a character logged in at the time keeps the old order. Ceiling (a `ponytail:` in `ops.rs`): a character switched into the editor between an unsaved reorder and the account save is not remapped._
+  §4.3.1); narrowed to the open decision 2026-08-15._ _Done 2026-10-09: decided that widths and sort follow the tab for every character on the account. Reorder, move and delete remap the open character in memory, and the account's other characters in the same folder on disk when the account file is saved (each backed up, reported per file); the toast and the sentence under the width boxes now say so, including that a character logged in at the time keeps the old order. Switching characters before that save is not a gap: "Discard and open" now re-reads the account file too (it used to keep its edits), so the unsaved reorder goes with it._
 
 - [x] **Overview tab-management roughness, re-filed after the fresh look.** The
   old entry (item (7) of the 2026-07-19 bundle, below) deferred "the UI/UX is
