@@ -58,14 +58,17 @@
   };
 </script>
 
+<!-- Selection is `aria-current` on the button, not `role="option"` on the row:
+     an option needs a listbox around it and cannot hold a button, and none of
+     the lists using this are listboxes — they are sets of buttons. The drag and context-menu handlers are pointer
+     extras; the button and the "⋯" menu are what a keyboard reaches. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="row {klass}"
   class:selected
   class:over
   class:indent1={indent === 1}
   class:indent2={indent === 2}
-  role={selected === undefined ? undefined : "option"}
-  aria-selected={selected === undefined ? undefined : selected}
   {title}
   draggable={draggable ? "true" : undefined}
   {ondragstart}
@@ -83,6 +86,7 @@
       type="button"
       class="label"
       {disabled}
+      aria-current={selected ? "true" : undefined}
       title={disabled ? disabledReason : undefined}
       {onclick}>{@render children()}</button>
   {:else}

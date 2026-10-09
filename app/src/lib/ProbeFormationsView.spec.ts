@@ -195,7 +195,7 @@ describe("editing", () => {
 describe("ordering", () => {
   const a: Formation = { id: 0, name: "a", probes: [[1, 2, 3]], ranges: [74798935350] };
   const b: Formation = { id: 1, name: "b", probes: [[4, 5, 6]], ranges: [74798935350] };
-  const row = (name: string) => screen.getByText(name).closest('[role="option"]') as HTMLElement;
+  const row = (name: string) => screen.getByText(name).closest(".row") as HTMLElement;
 
   async function openTwo() {
     calls.stub("probe_formations", { formations: [a, b], selected: 0 } satisfies Formations);

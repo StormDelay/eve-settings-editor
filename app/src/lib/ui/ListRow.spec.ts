@@ -25,19 +25,17 @@ describe("ListRow", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  test("selected is announced, and unselected rows say so too", () => {
-    const { unmount } = render(ListRow, { selected: true, children: text("Astra") });
-    expect(screen.getByRole("option", { selected: true })).toBeTruthy();
+  // An option needs a listbox and cannot hold a button; these lists are sets
+  // of buttons, so the selected one is the current one.
+  test("selected is announced on the button, and nothing claims to be an option", () => {
+    const onclick = vi.fn();
+    const { container, unmount } = render(ListRow, { selected: true, onclick, children: text("Astra") });
+    expect(screen.getByRole("button", { name: "Astra", current: true })).toBeTruthy();
+    expect(container.querySelector("[role='option']")).toBeNull();
     unmount();
 
-    render(ListRow, { selected: false, children: text("Astra") });
-    expect(screen.getByRole("option", { selected: false })).toBeTruthy();
-  });
-
-  // A row that is not part of a selectable set should not claim to be one.
-  test("a row with no selection state carries no option role", () => {
-    const { container } = render(ListRow, { children: text("Astra") });
-    expect(container.querySelector("[role='option']")).toBeNull();
+    render(ListRow, { selected: false, onclick, children: text("Astra") });
+    expect(screen.getByRole("button", { name: "Astra", current: false })).toBeTruthy();
   });
 
   test("all four drag handlers forward", async () => {

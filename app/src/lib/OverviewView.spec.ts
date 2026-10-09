@@ -48,7 +48,7 @@ const inWindows = (tabs: OverviewTab[], windows: { index: number; tab_indices: n
 /** A row of the tab list, found by the name it shows. Scoped to the list: a tab
  *  and a preset can share a name, and the Filters sub-tab renders both. */
 const list = () => document.querySelector(".tablist") as HTMLElement;
-const row = (name: string) => within(list()).getByText(name).closest('[role="option"]') as HTMLElement;
+const row = (name: string) => within(list()).getByText(name).closest(".row") as HTMLElement;
 const findRow = (name: string) => waitFor(() => row(name));
 /** Open the inline rename editor on the nth row and hand back its input. */
 async function renameEditor(nth = 0, label = "Piece 1 text") {
@@ -120,7 +120,7 @@ describe("tab selection", () => {
     calls.stub("overview_columns", columns(tab(0, "PvP"), tab(1, "Mining")));
     mount();
     await findRow("PvP");
-    expect(row("PvP").getAttribute("aria-selected")).toBe("true");
+    expect(row("PvP").querySelector(".label")?.getAttribute("aria-current")).toBe("true");
   });
 
   test("every tab is offered", async () => {
@@ -237,7 +237,7 @@ describe("the selection survives the renumbering", () => {
     await fireEvent.drop(row("main"));
 
     // The same TAB, not the same index.
-    await waitFor(() => expect(row("Mining").getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(row("Mining").querySelector(".label")?.getAttribute("aria-current")).toBe("true"));
   });
 
   test("after a move into another window", async () => {
@@ -258,7 +258,7 @@ describe("the selection survives the renumbering", () => {
     await fireEvent.drop(row("Travel"));
 
     expect(calls.only("tab_move").args).toEqual({ tabIdx: 1, fromWindow: 0, toWindow: 1, pos: 0 });
-    await waitFor(() => expect(row("main").getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(row("main").querySelector(".label")?.getAttribute("aria-current")).toBe("true"));
   });
 
   test("a drop in place is not an edit", async () => {
