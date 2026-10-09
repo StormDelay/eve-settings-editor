@@ -15,7 +15,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 use blue_marshal::Value;
 
 use crate::overview_states::OVERVIEW_BOOLS;
-use crate::overview_tabs::overview_mut;
+use crate::overview_tabs::overview_mut_or_create;
 use crate::treewalk::{
     collect_shared, effective, inline_all, is_bytes as is_b, root_child_dict, Entries, SharedTable,
 };
@@ -398,9 +398,10 @@ fn label_value(n: &Node) -> Value {
 /// Apply every section the pack defines. Sections it omits are left untouched.
 ///
 /// ATOMICITY: every replacement value is built BEFORE the first mutation, so a
-/// pack that fails conversion leaves the document exactly as it was. The only
-/// error after that point is a missing `overview` container, which is checked
-/// first.
+/// pack that fails conversion leaves the document exactly as it was. A file
+/// with no `overview` container gets one minted (`overview_mut_or_create`); the
+/// only error after the build phase is a root that is not a dict, or an
+/// `overview` key whose payload is unreadable.
 pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
     let mut report = PackReport::default();
     for name in &pack.ignored {
@@ -580,7 +581,8 @@ pub fn apply_pack(v: &mut Value, pack: &Pack) -> Result<PackReport, PackError> {
 
     // --- mutate phase ---
     inline_all(v);
-    let ov = overview_mut(v).map_err(|_| PackError::NoOverview)?;
+    // A file with no container gets one: the pack is what fills it.
+    let ov = overview_mut_or_create(v).map_err(|_| PackError::NoOverview)?;
     for (key, value) in writes {
         put(ov, key, value);
     }
@@ -1320,8 +1322,21 @@ userSettings:
     }
 
     #[test]
-    fn applying_a_pack_to_a_file_with_no_overview_container_errors() {
+    fn applying_a_pack_to_a_file_with_no_overview_container_mints_one() {
         let mut doc = Value::Dict(vec![(b("windows"), Value::Dict(vec![]))]);
+        let pack = parse_pack(FIXTURE).unwrap();
+        apply_pack(&mut doc, &pack).unwrap();
+        let (back, _) = read_pack(&doc);
+        assert_eq!(back.get("backgroundStates"), pack.get("backgroundStates"));
+        assert!(back.get("presets").is_some());
+        assert!(back.get("tabSetup").is_some(), "the pack's tab landed in the minted container");
+        let Value::Dict(root) = &doc else { panic!() };
+        assert_eq!(root.len(), 2, "one container minted beside the untouched section");
+    }
+
+    #[test]
+    fn a_root_that_is_not_a_dict_still_errors() {
+        let mut doc = Value::List(vec![]);
         let pack = parse_pack("backgroundStates:\n- 44\n").unwrap();
         assert!(matches!(apply_pack(&mut doc, &pack), Err(PackError::NoOverview)));
     }

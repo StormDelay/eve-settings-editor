@@ -440,7 +440,7 @@ Workflow:
   Cross-check any ambiguous row by binding it in-game and reading which id moves
   in `customCmds`. _Added 2026-07-27._
 
-- [ ] **Nothing can create an `overview` container from nothing.** A document
+- [x] **Nothing can create an `overview` container from nothing.** A document
   with no `overview` key — a pruned preset, or a genuinely fresh account — is a
   dead end: `overview_tabs::overview_mut` requires the key and returns
   `NoOverview`, and it is the only way in for both the tab editor and
@@ -454,7 +454,29 @@ Workflow:
   as written — neither building nor importing works. Needs a decision on the
   minimum container EVE accepts before it is code: `overview-states.json` has
   the default state lists and orders, so the shape is derivable, but it is a
-  design call, not a bug fix. _Added 2026-07-27._
+  design call, not a bug fix. _Added 2026-07-27._ _Done 2026-10-09: decided
+  "mint everywhere". `overview_tabs::overview_mut_or_create` mints an EMPTY
+  `overview` section dict, and both `apply_pack` and the new `create_overview`
+  (the Overview view's "Create overview settings", MCP `overview_tabs_edit`
+  op `create_overview`) route through it; the pinned test is now
+  `applying_a_pack_to_a_file_with_no_overview_container_mints_one`. Empty, not
+  pre-filled from `overview-states.json`: the client's `presetservice` reads
+  every overview key through `Get(key, default)` and falls back to its default
+  preset for an unknown preset name, and a clean account carries none of the
+  state keys either. Never read back by a client yet — see "Confirm in-client
+  that a minted overview container loads" below._
+
+- [ ] **Confirm in-client that a minted overview container loads.** The empty
+  `overview` container `create_overview` / `apply_pack` mint (above) is a shape
+  no EVE client has read back. On a test account whose file has no `overview`
+  key (a pruned preset applied to it, or the key deleted in the tree): open it
+  in the editor, click **Create overview settings**, add a tab (or import a
+  pack), save, log the character in, and check the overview shows that tab.
+  Then log out and confirm the client kept the tab rather than replacing it
+  with its default overview — its `_HadOverviewSettings` installs the default
+  when it finds no tab key, preset or ship labels, so a minted container left
+  EMPTY is expected to be replaced; one with a tab must not be. This also
+  unblocks live plan item P5. _Added 2026-10-09._
 
 - [x] **Colortag-surface colours are invisible to the editor.** The model reads
   background colours only — `overview_states.rs::background_color_id` filters on

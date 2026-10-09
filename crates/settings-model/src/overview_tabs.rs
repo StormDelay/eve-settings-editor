@@ -119,6 +119,43 @@ pub(crate) fn overview_mut(v: &mut Value) -> Result<&mut Entries, OverviewTabErr
     dict_inner_mut(ov).ok_or(OverviewTabError::NoOverview)
 }
 
+/// `overview_mut`, minting the container first when the file has none — a
+/// genuinely fresh account, or a preset pruned to other aspects. Tree already
+/// inlined: a Ref-keyed `overview` would otherwise be missed and duplicated.
+///
+/// The mint is an EMPTY section dict, and that is the whole minimum:
+/// - Shape: root sections are plain dicts holding `(timestamp, payload)` keys,
+///   not themselves wrapped — `chat.rs::mint` writes into `ui` the same way,
+///   and `tests/overview_tabs_realshape.rs` mirrors real files.
+/// - No keys: EVE's `presetservice` reads every overview key through
+///   `settings.user.overview.Get(key, default)`, and an unknown or empty preset
+///   name falls back to the default preset (`GetPresetFromKey`). The four state
+///   lists are absent on a clean account too (format-notes "Overview states"),
+///   so `overview-states.json`'s defaults are the client's, not ours to write.
+/// - The client's `_HadOverviewSettings` treats a file with no tab key, preset
+///   or ship labels as never configured and installs its default overview; the
+///   first tab or pack written here is what makes it keep ours. So an empty
+///   container on its own is inert, never harmful.
+///
+/// Every key the editors then add mints itself on first write (`tabs_mut`,
+/// `groups_mut`, `overview_pack::put`). No-op when the key exists, even one
+/// whose payload is unreadable: that stays `NoOverview` rather than gaining a
+/// duplicate.
+pub(crate) fn overview_mut_or_create(v: &mut Value) -> Result<&mut Entries, OverviewTabError> {
+    let Value::Dict(root) = v else { return Err(OverviewTabError::NoOverview) };
+    if !root.iter().any(|(k, _)| is_b(k, b"overview")) {
+        root.push((Value::Bytes(b"overview".to_vec()), Value::Dict(Vec::new())));
+    }
+    overview_mut(v)
+}
+
+/// Give a file with no overview settings an empty `overview` container, so the
+/// tab editor and pack import have somewhere to write. See `overview_mut_or_create`.
+pub fn create_overview(v: &mut Value) -> Result<(), OverviewTabError> {
+    inline_all(v);
+    overview_mut_or_create(v).map(drop)
+}
+
 /// Mutable tab dict under `tabsettings_new`, migrating a legacy `tabsettings`
 /// key first (the two are structurally identical; EVE reads `tabsettings_new`).
 /// Created empty if neither key exists.
@@ -872,6 +909,32 @@ mod tests {
         let outer = list_inner(g).unwrap();
         let inner = list_inner(&outer[window]).unwrap();
         inner.iter().filter_map(as_int).collect()
+    }
+
+    #[test]
+    fn create_overview_mints_an_empty_section_beside_the_others() {
+        let mut v = Value::Dict(vec![(Value::Bytes(b"ui".to_vec()), Value::Dict(vec![]))]);
+        create_overview(&mut v).unwrap();
+        assert_eq!(v, Value::Dict(vec![
+            (Value::Bytes(b"ui".to_vec()), Value::Dict(vec![])),
+            (Value::Bytes(b"overview".to_vec()), Value::Dict(vec![])),
+        ]));
+        // The tab editor works on it from there: the first tab mints the table.
+        let idx = create_tab(&mut v, 0, "Main", None).unwrap();
+        assert_eq!(tab_name(&v, idx), "Main");
+    }
+
+    #[test]
+    fn create_overview_leaves_an_existing_container_alone() {
+        let mut v = user_with_tabs();
+        let before = v.clone();
+        create_overview(&mut v).unwrap();
+        assert_eq!(v, before);
+        // Present but unreadable is refused, never duplicated.
+        let mut odd = Value::Dict(vec![(Value::Bytes(b"overview".to_vec()), Value::Int(1))]);
+        assert_eq!(create_overview(&mut odd), Err(OverviewTabError::NoOverview));
+        let Value::Dict(root) = &odd else { panic!() };
+        assert_eq!(root.len(), 1);
     }
 
     #[test]

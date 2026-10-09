@@ -124,6 +124,30 @@ describe("gating on the account file", () => {
     expect(calls.of("tab_create")[0].args).toMatchObject({ windowIdx: 0, name: "Main", fromTab: null });
     expect(onUserDirty).toHaveBeenCalled();
   });
+
+  // No container at all is not the zero-tab case: nothing can write to it until
+  // one is minted, so the view offers that instead of a dead tab editor.
+  test("a file with no overview settings can create them", async () => {
+    calls.stub("overview_columns", { ...columns(), presets: [], no_container: true });
+    calls.stub("overview_create", { ...columns(), presets: [] });
+    const { onUserDirty } = mount();
+    await screen.findByText(/no overview settings/i);
+    expect(screen.queryByRole("button", { name: "Overview actions" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Create overview settings" }));
+    expect(calls.of("overview_create").length).toBe(1);
+    expect(await screen.findByText(/no overview tabs/i)).toBeTruthy();
+    expect(screen.queryByText(/no overview settings/i)).toBeNull();
+    expect(onUserDirty).toHaveBeenCalled();
+  });
+
+  test("a failed create says so and leaves the file clean", async () => {
+    calls.stub("overview_columns", { ...columns(), no_container: true });
+    calls.stub("overview_create", () => { throw { code: "no_overview", message: "This file has no overview settings." }; });
+    const { onUserDirty } = mount();
+    await fireEvent.click(await screen.findByRole("button", { name: "Create overview settings" }));
+    expect(await screen.findByText(/weren't created/i)).toBeTruthy();
+    expect(onUserDirty).not.toHaveBeenCalled();
+  });
 });
 
 // The <select> that used to answer `getByLabelText("Tab")` is gone: the tab

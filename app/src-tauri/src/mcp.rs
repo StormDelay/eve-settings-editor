@@ -826,8 +826,8 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "overview_tabs_edit",
-            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name} or {tab, pieces: [{text, color?: AARRGGBB, bold?, italic?, underline?, size?, spacing?}]} (pieces write the markup for you; a name whose editable is false uses tags pieces can't write — rename it with name); delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
-            schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping"], json!({
+            description: "Edit windows and tabs, as a batch (one undo step; first failure rolls back). Ops: create {window, name, from_tab?} (clone from_tab's columns); rename {tab, name} or {tab, pieces: [{text, color?: AARRGGBB, bold?, italic?, underline?, size?, spacing?}]} (pieces write the markup for you; a name whose editable is false uses tags pieces can't write — rename it with name); delete {tab}; reorder {window, order: [tab indices]}; move {tab, from_window, to_window, pos}; set_preset {tab, preset} (a preset name from overview_get); window_add {name, from_tab?}; window_remove {window} (only the last window can be removed); create_window_mapping {} (for an account whose file has no window list yet); create_overview {} (for a file whose overview_get says no_container: true — gives it an empty overview to add tabs to; overview_pack_import does this by itself). Returns the overview as overview_get does. Nothing reaches disk until save. Unsure: eve_guide overview.",
+            schema: || obj(op_item(&["create", "rename", "delete", "reorder", "move", "set_preset", "window_add", "window_remove", "create_window_mapping", "create_overview"], json!({
                 "tab": { "type": "integer" }, "window": { "type": "integer" }, "name": { "type": "string" },
                 "from_tab": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer" } },
                 "from_window": { "type": "integer" }, "to_window": { "type": "integer" }, "pos": { "type": "integer" },
@@ -2206,6 +2206,7 @@ fn tabs_op(state: &AppState, a: &Args) -> Result<(), Value> {
         "window_add" => ops::overview_window_add(state, req(a, "name")?, opt(a, "from_tab")?),
         "window_remove" => ops::overview_window_remove(state, req(a, "window")?),
         "create_window_mapping" => ops::overview_create_window_mapping(state),
+        "create_overview" => ops::overview_create(state),
         _ => return Err(unknown_op(&op)),
     }
     .map(drop)
