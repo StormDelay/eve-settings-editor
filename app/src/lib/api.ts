@@ -345,9 +345,35 @@ export interface OverviewColumn {
   visible: boolean;
   width: number | null;
 }
+/** One run of a tab name as EVE draws it (`tab_name.rs`). Absent = unset. */
+export interface TabPiece {
+  text: string;
+  /** `AARRGGBB`. */
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** Pixels; absent = the tab default, `TAB_FONT_PX`. */
+  size?: number;
+  /** Extra pixels after every letter. */
+  spacing?: number;
+  /** Read-only: `<uppercase>`, which the editor displays but does not write. */
+  uppercase?: boolean;
+  /** Read-only: inside `<hint>`, so not drawn on the tab. */
+  hidden?: boolean;
+}
 export interface OverviewTab {
   index: number;
+  /** The stored markup. */
   name: string;
+  /** The name as the client draws it. */
+  pieces: TabPiece[];
+  /** False when the name uses markup `pieces` can't write back: edit it raw. */
+  editable: boolean;
+  /** Why parts of the name won't show in game. */
+  warnings?: string[];
+  /** The tab's own `color` key as `AARRGGBB`; tints the whole name. */
+  color: string | null;
   preset: string;
   inherits: boolean;
   columns: OverviewColumn[];
@@ -644,6 +670,13 @@ export const api = {
     invoke<OverviewColumns>("tab_create", { windowIdx, name, fromTab }),
   tabRename: (tabIdx: number, name: string) =>
     invoke<OverviewColumns>("tab_rename", { tabIdx, name }),
+  tabRenamePieces: (tabIdx: number, pieces: TabPiece[]) =>
+    invoke<OverviewColumns>("tab_rename_pieces", { tabIdx, pieces }),
+  /** Pure: how EVE would draw a raw name. */
+  tabNameParse: (raw: string) =>
+    invoke<{ pieces: TabPiece[]; editable: boolean; warnings?: string[] }>("tab_name_parse", { raw }),
+  /** Pure: the markup `tabRenamePieces` would write. */
+  tabNameFormat: (pieces: TabPiece[]) => invoke<string>("tab_name_format", { pieces }),
   tabDelete: (tabIdx: number) =>
     invoke<OverviewColumns>("tab_delete", { tabIdx }),
   tabReorder: (windowIdx: number, order: number[]) =>

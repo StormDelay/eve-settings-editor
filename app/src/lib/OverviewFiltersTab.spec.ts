@@ -12,7 +12,7 @@ import { calls } from "$lib/test/setup";
 import type { OverviewColumns } from "$lib/api";
 
 const data: OverviewColumns = {
-  tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, columns: [] }],
+  tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, pieces: [{ text: "Default" }], editable: true, color: null, columns: [] }],
   windows: [{ index: 0, tab_indices: [0] }],
   // A stored preset with no groups: the checklist is editable, and nothing is
   // pre-ticked, so a row count is a clean count of what got rendered.

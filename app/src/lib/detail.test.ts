@@ -291,9 +291,9 @@ import { check } from "./test/check.ts";
     ({ name: name.toUpperCase(), label: name.toUpperCase(), visible, width });
   const cols: OverviewColumns = {
     tabs: [
-      { index: 0, name: "General", preset: "p", inherits: false,
+      { index: 0, name: "General", preset: "p", inherits: false, pieces: [{ text: "General" }], editable: true, color: null,
         columns: [col("icon", true, 30), col("distance", true, 90), col("name", false, 200), col("type", true, null)] },
-      { index: 1, name: "Mining", preset: "p", inherits: false, columns: [col("icon", true, 30)] },
+      { index: 1, name: "Mining", preset: "p", inherits: false, pieces: [{ text: "Mining" }], editable: true, color: null, columns: [col("icon", true, 30)] },
     ],
     windows: [{ index: 0, tab_indices: [0, 1] }, { index: 1, tab_indices: [] }],
     presets: [],
@@ -404,7 +404,7 @@ import { check } from "./test/check.ts";
     { window_id: "chatchannel_local", userlist_width: 135, input_height: 64 },
   ];
   const cols: OverviewColumns = {
-    tabs: [{ index: 0, name: "General", preset: "p", inherits: false,
+    tabs: [{ index: 0, name: "General", preset: "p", inherits: false, pieces: [{ text: "General" }], editable: true, color: null,
              columns: [{ name: "icon", label: "ICON", visible: true, width: 30 }] }],
     windows: [{ index: 0, tab_indices: [0] }],
     presets: [],

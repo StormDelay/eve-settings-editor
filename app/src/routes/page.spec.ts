@@ -404,7 +404,7 @@ test("Ctrl+F on Overview switches to Filters and focuses the group filter", asyn
   // preset is stored, which is what makes the Filters checklist editable and
   // gives it a filter box at all.
   calls.stub("overview_columns", {
-    tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, columns: [] }],
+    tabs: [{ index: 0, name: "Default", preset: "Mine", inherits: false, pieces: [{ text: "Default" }], editable: true, color: null, columns: [] }],
     windows: [{ index: 0, tab_indices: [0] }],
     presets: [{ name: "Mine", groups: [], filtered_states: [], always_shown_states: [] }],
     appearance: { background: { enabled: [], order: [] }, flag: { enabled: [], order: [] }, colors: [], flag_colors: [], palette: [], bools: [], defaulted: false },

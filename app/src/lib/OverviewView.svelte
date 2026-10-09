@@ -6,7 +6,7 @@
   import { confirmDialog } from "./ui/confirm.svelte";
   import { undoAction } from "./undo.svelte";
   import { documentDir } from "@tauri-apps/api/path";
-  import { plainTabName, formatTabName, type TabName } from "./tabName";
+  import { plainTabName, samePieces, type TabNameEdit } from "./tabName";
   import OverviewColumnsTab from "./OverviewColumnsTab.svelte";
   import OverviewFiltersTab from "./OverviewFiltersTab.svelte";
   import OverviewAppearanceTab from "./OverviewAppearanceTab.svelte";
@@ -133,23 +133,23 @@
     if (w) onWindowAdded(w.index === 0 ? "overview" : `overview_${w.index}`);
   }
 
-  // Name, colour and bold all rewrite the same markup-bearing string, so they
-  // share one command — see tabName.ts. The inspector composes the string for
-  // colour and bold; this only writes it.
-  async function renameTab(idx: number, next: string) {
-    if (await edit(() => api.tabRename(idx, next), "name", "The tab name wasn't changed")) onUserDirty();
-  }
-
-  // The row editor edits the decomposed name — text, colour, weight — and hands
-  // back all three at once, because in the file they are one markup-bearing
-  // string. A name that comes back unchanged is not an edit, and an unparseable
-  // one re-emits as itself, which is what keeps `parseTabName`'s give-up case
-  // from being rewritten by the mere act of opening the editor on it.
-  function renameTabName(idx: number, name: TabName) {
-    const current = data?.tabs.find((t) => t.index === idx)?.name ?? "";
-    const next = formatTabName(name);
-    if (next === current) return;
-    void renameTab(idx, next);
+  // The row editor hands back either styled pieces — Rust writes the markup —
+  // or raw markup, written verbatim. An edit that changes nothing is not a
+  // write: pieces compare after the normalisation the writer applies, raw
+  // markup compares byte for byte, so merely opening the editor on a name
+  // never rewrites it.
+  async function renameTab(idx: number, change: TabNameEdit) {
+    const current = data?.tabs.find((t) => t.index === idx);
+    if (!current) return;
+    let call: () => Promise<OverviewColumns>;
+    if ("pieces" in change) {
+      if (current.editable && samePieces(change.pieces, current.pieces)) return;
+      call = () => api.tabRenamePieces(idx, change.pieces);
+    } else {
+      if (change.raw === current.name) return;
+      call = () => api.tabRename(idx, change.raw);
+    }
+    if (await edit(call, "name", "The tab name wasn't changed")) onUserDirty();
   }
 
   // The confirm this replaces said "This can't be undone." It could: the delete
@@ -164,7 +164,7 @@
   async function deleteTab(idx: number) {
     const target = data?.tabs.find((t) => t.index === idx);
     if (!target) return;
-    const name = plainTabName(target.name);
+    const name = plainTabName(target);
     if (!(await edit(() => api.tabDelete(idx), "actions", "That tab wasn't deleted"))) return;
     toast(`Deleted “${name}”. Save to write it to disk.`, { action: undoAction() });
     tabIndex = data?.tabs[0]?.index ?? null;
@@ -428,7 +428,9 @@
             onAddWindow={addWindow}
             onRemoveWindow={removeWindow}
             onDeleteTab={deleteTab}
-            onRenameTab={renameTabName}
+            onRenameTab={renameTab}
+            parseName={api.tabNameParse}
+            formatName={api.tabNameFormat}
             onReorder={reorder}
             onMove={moveTab}
             onSetUpWindowMapping={setUpWindowMapping}

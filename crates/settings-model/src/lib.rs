@@ -33,6 +33,7 @@ mod overview_presets;
 mod overview_states;
 mod overview_pack;
 mod probe_pack;
+pub mod tab_name;
 
 #[cfg(test)]
 mod testkit;

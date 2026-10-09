@@ -8,7 +8,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import OverviewTabList from "$lib/OverviewTabList.svelte";
-import type { OverviewColumns } from "$lib/api";
+import type { OverviewColumns, OverviewTab, TabPiece } from "$lib/api";
 
 const appearance = {
   background: { enabled: [], order: [] },
@@ -23,9 +23,17 @@ const appearance = {
 const t = (index: number, name: string) => ({
   index,
   name,
+  pieces: [{ text: name }],
+  editable: true,
+  color: null,
   preset: "All",
   inherits: false,
   columns: [],
+});
+
+/** A tab whose name parses to `pieces` — what Rust hands over for markup. */
+const styled = (index: number, name: string, pieces: TabPiece[], extra: Partial<OverviewTab> = {}): OverviewTab => ({
+  ...t(index, name), pieces, ...extra,
 });
 
 // Two windows and an orphan: Overview 2 holds exactly one tab, which is the
@@ -53,6 +61,10 @@ function mount(over: Partial<Record<string, unknown>> = {}) {
     onReorder: vi.fn(),
     onMove: vi.fn(),
     onSetUpWindowMapping: vi.fn(),
+    // The backend's parser and writer, stood in for: the editor only previews
+    // and switches modes through them.
+    parseName: vi.fn(async (raw: string) => ({ pieces: [{ text: raw }], editable: true })),
+    formatName: vi.fn(async (pieces: TabPiece[]) => pieces.map((p) => p.text).join("")),
   };
   render(OverviewTabList, { data, tabIndex: 0, ...spies, ...over } as never);
   return spies;
@@ -91,14 +103,36 @@ describe("the shape of the list", () => {
 
   // The one place in the app a tab looks the way it looks in game. An <option>
   // could not carry this, which is why the <select> was the picker that went.
-  test("a tab's real colour and bold reach the DOM", () => {
+  test("each piece reaches the DOM in its own style", () => {
     mount({
-      data: { ...data, tabs: [t(0, "<color=0xFFFF6F75><b>main</b></color>"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
+      data: { ...data, tabs: [
+        styled(0, "<color=0xFFA8C8E8>*</color> <b><i>main</i></b>", [
+          { text: "*", color: "FFA8C8E8" }, { text: " " }, { text: "main", bold: true, italic: true, size: 16 },
+        ]),
+        t(1, "Mining"), t(2, "Travel"), t(3, "loose"),
+      ] },
     });
-    const style = (screen.getByText("main") as HTMLElement).style;
-    // #FF6F75, alpha last the way CSS wants it — jsdom reports it resolved.
-    expect(style.color).toBe("rgb(255, 111, 117)");
-    expect(style.fontWeight).toBe("700");
+    // #A8C8E8 — jsdom reports colours resolved.
+    expect((screen.getByText("*") as HTMLElement).style.color).toBe("rgb(168, 200, 232)");
+    const main = (screen.getByText("main") as HTMLElement).style;
+    expect([main.fontWeight, main.fontStyle, main.fontSize]).toEqual(["700", "italic", "1.143em"]);
+  });
+
+  // The client wraps the whole name in the tab's own colour key.
+  test("the tab's own colour tints the pieces that have none", () => {
+    mount({ data: { ...data, tabs: [styled(0, "main", [{ text: "main" }], { color: "FF7FFF1F" }), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] } });
+    expect((screen.getByText("main") as HTMLElement).style.color).toBe("rgb(127, 255, 31)");
+  });
+
+  // Text EVE won't draw is not shown, and the row says so.
+  test("a name that won't show fully in game is flagged", () => {
+    mount({ data: { ...data, tabs: [
+      styled(0, "a<hint=x>b</hint>", [{ text: "a" }, { text: "b", hidden: true }],
+        { editable: false, warnings: ["text inside <hint> is not drawn on the tab"] }),
+      t(1, "Mining"), t(2, "Travel"), t(3, "loose"),
+    ] } });
+    expect(screen.queryByText("b")).toBeNull();
+    expect(screen.getByRole("img", { name: "Won't show fully in game" }).getAttribute("title")).toContain("hint");
   });
 
   test("the selected tab is the selected row", () => {
@@ -224,90 +258,114 @@ describe("renaming in place", () => {
   async function startRename(nth: number) {
     await fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
     await fireEvent.click(screen.getByRole("menuitem", { name: "Rename tab…" }));
-    return screen.getByLabelText("Tab name") as HTMLInputElement;
   }
+  const text = (n: number) => screen.getByLabelText(`Piece ${n} text`) as HTMLInputElement;
+  const withTabs = (first: OverviewTab) => ({ data: { ...data, tabs: [first, t(1, "Mining"), t(2, "Travel"), t(3, "loose")] } });
 
   test("Rename selects the row and turns it into an editor", async () => {
     const { onSelect } = mount();
-    const box = await startRename(1);
+    await startRename(1);
     expect(onSelect).toHaveBeenCalledWith(1);
     // The row it replaced is gone while the editor is up.
     expect(screen.queryByRole("button", { name: "Mining" })).toBeNull();
-    expect(box.value).toBe("Mining");
+    expect(text(1).value).toBe("Mining");
   });
 
-  // Padding is how a tab is widened in game, so the editor is seeded with the
-  // readable text spacing and all, and sends it back verbatim.
-  test("the editor carries the typed spacing both ways", async () => {
-    const { onRenameTab } = mount({
-      data: { ...data, tabs: [t(0, "   main   "), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
-    });
-    const box = await startRename(0);
-    expect(box.value).toBe("   main   ");
-
-    await fireEvent.input(box, { target: { value: "  fleet  " } });
-    await fireEvent.keyDown(box, { key: "Enter" });
-    // The whole decomposed name, because the editor owns all three parts.
-    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "  fleet  ", color: null, bold: false });
+  // Spaces inside a piece are how a tab is widened in game, so they go out
+  // verbatim.
+  test("typed spacing goes out verbatim", async () => {
+    const { onRenameTab } = mount();
+    await startRename(0);
+    await fireEvent.input(text(1), { target: { value: "  fleet  " } });
+    await fireEvent.keyDown(text(1), { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { pieces: [{ text: "  fleet  " }] });
   });
 
-  // Colour and bold are edited beside the text and ride out on the same commit:
-  // in the file they are one markup-bearing string, so splitting them across
-  // two panes was splitting one property in half.
-  test("the colour and the weight commit with the text, as one rename", async () => {
-    const { onRenameTab } = mount({
-      data: { ...data, tabs: [t(0, "main"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
-    });
-    const box = await startRename(0);
-
-    await fireEvent.click(screen.getByLabelText("Tab name colour"));
+  test("every piece setting commits with the text, as one rename", async () => {
+    const { onRenameTab } = mount();
+    await startRename(0);
+    await fireEvent.click(screen.getByLabelText("Piece 1 colour"));
     await fireEvent.click(screen.getByLabelText("#40ff40"));
-    await fireEvent.click(screen.getByTitle("Bold tab name"));
-    await fireEvent.keyDown(box, { key: "Enter" });
-
-    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "main", color: "FF40FF40", bold: true });
+    for (const what of ["bold", "italic", "underline"]) await fireEvent.click(screen.getByLabelText(`Piece 1 ${what}`));
+    await fireEvent.input(screen.getByLabelText("Piece 1 size"), { target: { value: "16" } });
+    await fireEvent.input(screen.getByLabelText("Piece 1 letter spacing"), { target: { value: "2" } });
+    await fireEvent.keyDown(text(1), { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { pieces: [
+      { text: "main", color: "FF40FF40", bold: true, italic: true, underline: true, size: 16, spacing: 2 },
+    ] });
   });
 
-  test("the editor opens carrying the tab's existing colour and weight", async () => {
-    const { onRenameTab } = mount({
-      data: { ...data, tabs: [t(0, "<color=0xFFFF6F75><b>main</b></color>"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
-    });
-    const box = await startRename(0);
-    await fireEvent.keyDown(box, { key: "Enter" });
-    expect(onRenameTab).toHaveBeenCalledWith(0, { text: "main", color: "FFFF6F75", bold: true });
+  test("a second piece can be added, styled on its own, and removed", async () => {
+    const { onRenameTab } = mount();
+    await startRename(0);
+    expect((screen.getByLabelText("Remove piece 1") as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByText("+ Piece"));
+    await fireEvent.input(text(2), { target: { value: " ops" } });
+    await fireEvent.click(screen.getByLabelText("Piece 2 bold"));
+    await fireEvent.keyDown(text(2), { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { pieces: [{ text: "main" }, { text: " ops", bold: true }] });
   });
 
-  // It is seeded from the READABLE text, never the stored markup — the view
-  // composes the colour and bold back around whatever comes out.
-  test("a marked-up name opens as its readable text", async () => {
-    mount({
-      data: { ...data, tabs: [t(0, "<color=0xFFFF6F75><b>main</b></color>"), t(1, "Mining"), t(2, "Travel"), t(3, "loose")] },
-    });
-    expect((await startRename(0)).value).toBe("main");
+  test("the editor opens on the tab's own pieces", async () => {
+    const { onRenameTab } = mount(withTabs(styled(0, "<color=0xFFA8C8E8>*</color><b> main</b>", [
+      { text: "*", color: "FFA8C8E8" }, { text: " main", bold: true },
+    ])));
+    await startRename(0);
+    expect([text(1).value, text(2).value]).toEqual(["*", " main"]);
+    expect(screen.getByLabelText("Piece 2 bold").getAttribute("aria-pressed")).toBe("true");
+    await fireEvent.keyDown(text(1), { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { pieces: [{ text: "*", color: "FFA8C8E8" }, { text: " main", bold: true }] });
+  });
+
+  // A name using markup the pieces can't carry must not be rebuilt from them:
+  // that would drop the markup. It opens as raw markup instead.
+  test("a name the pieces can't carry opens as raw markup and commits raw", async () => {
+    const { onRenameTab } = mount(withTabs(styled(0, "<uppercase>up</uppercase>", [{ text: "up", uppercase: true }], { editable: false })));
+    await startRename(0);
+    const box = screen.getByLabelText("Tab name markup") as HTMLInputElement;
+    expect(box.value).toBe("<uppercase>up</uppercase>");
+    await fireEvent.input(box, { target: { value: "<uppercase>down</uppercase>" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onRenameTab).toHaveBeenCalledWith(0, { raw: "<uppercase>down</uppercase>" });
+  });
+
+  test("Edit markup switches to the markup the pieces would write", async () => {
+    const { formatName } = mount();
+    await startRename(0);
+    await fireEvent.click(screen.getByText("Edit markup"));
+    expect(formatName).toHaveBeenCalledWith([{ text: "main" }]);
+    expect(((await screen.findByLabelText("Tab name markup")) as HTMLInputElement).value).toBe("main");
   });
 
   test("Escape cancels and writes nothing", async () => {
     const { onRenameTab } = mount();
-    const box = await startRename(1);
-    await fireEvent.input(box, { target: { value: "Ore" } });
-    await fireEvent.keyDown(box, { key: "Escape" });
+    await startRename(1);
+    await fireEvent.input(text(1), { target: { value: "Ore" } });
+    await fireEvent.keyDown(text(1), { key: "Escape" });
     expect(onRenameTab).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Mining" })).toBeTruthy();
   });
 
   test("leaving the editor commits, the way the box it replaces did", async () => {
     const { onRenameTab } = mount();
-    const box = await startRename(1);
-    await fireEvent.input(box, { target: { value: "Ore" } });
-    await fireEvent.focusOut(box, { relatedTarget: null });
-    expect(onRenameTab).toHaveBeenCalledWith(1, { text: "Ore", color: null, bold: false });
+    await startRename(1);
+    await fireEvent.input(text(1), { target: { value: "Ore" } });
+    await fireEvent.focusOut(text(1), { relatedTarget: null });
+    expect(onRenameTab).toHaveBeenCalledWith(1, { pieces: [{ text: "Ore" }] });
+  });
+
+  test("moving focus between the editor's own controls does not commit", async () => {
+    const { onRenameTab } = mount();
+    await startRename(1);
+    await fireEvent.focusOut(text(1), { relatedTarget: screen.getByLabelText("Piece 1 bold") });
+    expect(onRenameTab).not.toHaveBeenCalled();
   });
 
   test("an empty name is not a rename", async () => {
     const { onRenameTab } = mount();
-    const box = await startRename(1);
-    await fireEvent.input(box, { target: { value: "   " } });
-    await fireEvent.keyDown(box, { key: "Enter" });
+    await startRename(1);
+    await fireEvent.input(text(1), { target: { value: "   " } });
+    await fireEvent.keyDown(text(1), { key: "Enter" });
     expect(onRenameTab).not.toHaveBeenCalled();
   });
 });

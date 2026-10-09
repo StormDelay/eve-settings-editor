@@ -146,7 +146,7 @@
       <!-- What travels, then where it goes: the two questions are separate and
            the panel asks them in that order. -->
       <section>
-        <h4>What to copy from <strong>{plainTabName(tab.name).trim()}</strong></h4>
+        <h4>What to copy from <strong>{plainTabName(tab).trim()}</strong></h4>
         <div class="copy-parts">
           <Field kind="checkbox" label="Column order" bind:value={parts.order} />
           <Field kind="checkbox" label="Visible columns" bind:value={parts.visible} />
@@ -171,7 +171,7 @@
           {#each targetGroups as g (g.label)}
             {#if g.label}<span class="copy-group">{g.label}</span>{/if}
             {#each g.tabs as t (t.index)}
-              <Field kind="checkbox" label={plainTabName(t.name).trim()} bind:value={picked[t.index]} />
+              <Field kind="checkbox" label={plainTabName(t).trim()} bind:value={picked[t.index]} />
             {/each}
           {/each}
         </div>

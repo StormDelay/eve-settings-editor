@@ -1410,6 +1410,38 @@ carried, so the denominator was recovered rather than assumed.
 draws nothing for those rather than guess, and a *minted* value has no
 denominator to recover, so it has to assume M (`layout.ts`'s `TARGET_MARGIN`, 72).
 
+### Overview tab names (client code + in-game check, 2026-10-09)
+
+A tab name is drawn by an ordinary `Label`, so it takes the label's whole
+markup language. `overviewWindow._ConstructTabs` does three things first:
+`name.strip()` (spaces outside every tag never reach the screen; spaces inside
+a tag do, which is how packs widen tabs), then, when the tab's own `color` key
+is set, wraps the name as `<color=%s>%s</color>` with `Color.RGBtoHex(*color)`
+(so markup colours inside the name win), then `tabGroup.AddTab`. The key is
+written by the in-game tab colour picker as a tuple of three floats, e.g.
+`(0.498, 1.0, 0.122)`; most tabs carry `None`.
+
+The markup is tokenised natively (`trinity.ParseLabelText`,
+`Tr2LabelTextParser.cpp` in `_trinity_dx11.dll`) and applied in
+`carbonui/control/label.py` (`Parse*Open/Close`, `UpdateMeasurerProperties`):
+
+| Markup | Behaviour | In game (a test window of one tab per tag) |
+|---|---|---|
+| `<color=V>` | stack; innermost wins. `V` is a name (`StringColorToHex`, matched after Python `capitalize()`: Black, Green, Silver, Lime, Gray/Grey, Olive, White, Yellow, Maroon, Navy, Red, Blue, Purple, Teal, Fuchsia, Aqua, Orange, Transparent, Lightred, Lightblue, Lightgreen), else `#`→`0x` and `long(V, 0)` as AARRGGBB; colourblind mode may remap it | all three forms and half alpha draw; **`0xRRGGBB` (6 digits) is alpha 0 and draws nothing** |
+| `<b> <i> <u> <uppercase>` | counters | all draw |
+| `<fontsize=N>` | stack; N is pixels, negative N a font-size preset (`check_convert_font_size`) | 8 and 16 draw; the strip stays one line |
+| `<letterspace=N>` | stack, extra pixels per letter | draws |
+| `<font color= size= file=>` | the HTML-ish form of colour and size | draws |
+| `<hint=…>` | tooltip | **the text vanishes from the tab** |
+| `<left> <right> <center>`, `<url>`/`<a href>`, `<localized>` | alignment, link, localisation | nothing visible on a one-line tab |
+| `&lt; &gt; &amp; &nbsp;` | entities | `&lt;esc&amp;&gt;` reads `<esc&>` |
+
+The tab label's base size is `EVE_MEDIUM_FONTSIZE` (14 at the Medium client
+font setting). Every tab name across this machine's account files (48 distinct)
+uses only `<color>` and `<b>`, often colour on part of a name
+(`<color=…>*</color>  main`). `crates/settings-model/src/tab_name.rs` mirrors
+these rules; it is the one parser and writer, shared by the app and MCP.
+
 ### Overview columns (experiments 3a–3b: added a column, reordered columns)
 
 Column visibility and order are **per overview tab**, stored in

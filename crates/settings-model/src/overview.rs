@@ -88,7 +88,15 @@ pub struct OverviewWindow {
 #[derive(Debug, Serialize, PartialEq)]
 pub struct OverviewTab {
     pub index: i64,
+    /// The stored, markup-bearing name.
     pub name: String,
+    /// The name as the client draws it: `pieces`, `editable`, `warnings`.
+    #[serde(flatten)]
+    pub formatting: crate::tab_name::TabName,
+    /// The tab's own `color` key as `AARRGGBB`, set by EVE's in-game tab colour
+    /// picker. The client wraps the whole name in it, so markup colours inside
+    /// the name win over it.
+    pub color: Option<String>,
     pub preset: String,
     pub inherits: bool,
     pub columns: Vec<OverviewColumn>,
@@ -176,6 +184,22 @@ fn window_groups(overview: &Entries, sh: &SharedTable) -> Vec<OverviewWindow> {
     }).collect()
 }
 
+/// `(r, g, b[, a])` floats as `AARRGGBB`, the way `Color.RGBtoHex` reads them.
+fn tab_color(v: &Value, sh: &SharedTable) -> Option<String> {
+    let Value::Tuple(items) = effective(v, sh) else { return None };
+    let f: Vec<f64> = items.iter().map(|x| match effective(x, sh) {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f64),
+        _ => None,
+    }).collect::<Option<_>>()?;
+    let byte = |x: f64| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+    match f.as_slice() {
+        [r, g, b] => Some(format!("FF{:02X}{:02X}{:02X}", byte(*r), byte(*g), byte(*b))),
+        [r, g, b, a] => Some(format!("{:02X}{:02X}{:02X}{:02X}", byte(*a), byte(*r), byte(*g), byte(*b))),
+        _ => None,
+    }
+}
+
 fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&Value>, sh: &SharedTable) -> Option<OverviewTab> {
     let index = as_int(effective(key, sh))?;
     let fields = as_dict(tab, sh)?;
@@ -217,7 +241,9 @@ fn project_tab(key: &Value, tab: &Value, overview: &Entries, char_tree: Option<&
             name: tok.clone(),
         })
         .collect();
-    Some(OverviewTab { index, name, preset, inherits, columns })
+    let color = find_child(fields, b"color", sh).and_then(|v| tab_color(v, sh));
+    let formatting = crate::tab_name::parse(&name);
+    Some(OverviewTab { index, name, formatting, color, preset, inherits, columns })
 }
 
 /// The account-global default columns an inheriting tab shows: `(order, visible)`
@@ -824,6 +850,26 @@ mod tests {
         assert_eq!(t.columns[1].width, None);
         // Prettified label, raw token preserved.
         assert_eq!(t.columns[0].label, "Name");
+    }
+
+    /// The tab's own `color` key — three floats, as EVE's tab colour picker
+    /// writes it — rides out as AARRGGBB beside the parsed name.
+    #[test]
+    fn projects_the_tab_colour_key_and_the_parsed_name() {
+        let mut user = user_with_tab();
+        let Value::Dict(root) = &mut user else { unreachable!() };
+        let Value::Dict(ov) = &mut root[0].1 else { unreachable!() };
+        let Value::Tuple(ts) = &mut ov[0].1 else { unreachable!() };
+        let Value::Dict(tabs) = &mut ts[1] else { unreachable!() };
+        let Value::Dict(tab) = &mut tabs[0].1 else { unreachable!() };
+        tab[0].1 = Value::Str("<color=0xFFA8C8E8>*</color> PvP".into());
+        tab.push((bytes("color"), Value::Tuple(vec![Value::Float(0.498), Value::Float(1.0), Value::Float(0.122)])));
+        let t = &project_overview(&user, None).tabs[0];
+        assert_eq!(t.color.as_deref(), Some("FF7FFF1F"));
+        assert_eq!(t.formatting.pieces.len(), 2);
+        assert_eq!(t.formatting.pieces[0].color.as_deref(), Some("FFA8C8E8"));
+        assert!(t.formatting.editable);
+        assert_eq!(project_overview(&user_with_tab(), None).tabs[0].color, None);
     }
 
     #[test]

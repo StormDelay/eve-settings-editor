@@ -299,6 +299,20 @@ fn tab_rename(state: tauri::State<'_, AppState>, tab_idx: i64, name: String) -> 
     ops::tab_rename(&state, tab_idx, name)
 }
 #[tauri::command]
+fn tab_rename_pieces(state: tauri::State<'_, AppState>, tab_idx: i64, pieces: Vec<settings_model::tab_name::Piece>) -> Result<settings_model::OverviewColumns, ErrDto> {
+    ops::tab_rename_pieces(&state, tab_idx, pieces)
+}
+/// Pure: how the client would draw a raw name, for the raw-markup editor's preview.
+#[tauri::command]
+fn tab_name_parse(raw: String) -> settings_model::tab_name::TabName {
+    settings_model::tab_name::parse(&raw)
+}
+/// Pure: the markup `tab_rename_pieces` would write, for switching the editor to raw markup.
+#[tauri::command]
+fn tab_name_format(pieces: Vec<settings_model::tab_name::Piece>) -> Result<String, ErrDto> {
+    settings_model::tab_name::format(&pieces).map_err(|e| ErrDto::new("tab_name", e))
+}
+#[tauri::command]
 fn tab_delete(state: tauri::State<'_, AppState>, tab_idx: i64) -> Result<settings_model::OverviewColumns, ErrDto> {
     ops::tab_delete(&state, tab_idx)
 }
@@ -796,7 +810,7 @@ pub fn run() {
             begin_capture, resolve_capture, clear_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
             overview_copy_columns, overview_fit,
-            tab_create, tab_rename, tab_delete, tab_reorder, tab_move,
+            tab_create, tab_rename, tab_rename_pieces, tab_name_parse, tab_name_format, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove, overview_create_window_mapping,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,
             overview_set_states, overview_set_state_color, overview_set_bool, preset_set_states,
