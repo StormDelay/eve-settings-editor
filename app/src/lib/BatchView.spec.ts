@@ -307,6 +307,26 @@ test("the account warning says a layout copy can reset fields to EVE's defaults"
   expect(screen.getByText(/Autofill \(remembered text\) changed/)).toBeTruthy();
 });
 
+test("a cross-folder copy names the folder of each account write outside the picked one", async () => {
+  // The same account id has a file in every profile folder; a cross-folder
+  // batch writes each target's own, so the two warnings must be told apart.
+  const ZULU = "C:/eve/settings_Zulu";
+  calls.stub("setup_preview", {
+    ...PLAN,
+    account_writes: [
+      { user_id: 80000001, path: `${DIR}/core_user_80000001.dat`, full_copy: false, collateral_char_ids: [] },
+      { user_id: 80000001, path: `${ZULU}/core_user_80000001.dat`, full_copy: false, collateral_char_ids: [] },
+    ],
+  } as never);
+  await mount();
+  await fireEvent.click(targetBox(90000002));
+  await fireEvent.click(aspect("Autofill (remembered text)"));
+  const warnings = await screen.findAllByText(/Autofill \(remembered text\) changed/);
+  expect(warnings).toHaveLength(2);
+  expect(warnings.filter((w) => w.textContent!.includes(`in ${ZULU}`))).toHaveLength(1);
+  expect(screen.getByText(/Will write 3 file/)).toBeTruthy();
+});
+
 test("warns when a target is the file currently open", async () => {
   // 90000001 is the open document. Point the source elsewhere so it becomes a
   // selectable target, then select it: the apply would write behind the copy on
