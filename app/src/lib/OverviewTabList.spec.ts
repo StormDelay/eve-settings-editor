@@ -249,6 +249,14 @@ describe("the window menu", () => {
 
     expect(onCreateTab).toHaveBeenCalledWith("Travel 2", 1);
   });
+
+  // Other has no window; the view lands its new tab in Overview 1.
+  test("Other's New tab says where the tab will land", async () => {
+    mount();
+    await fireEvent.click(screen.getByRole("button", { name: "Other actions" }));
+    expect(screen.queryByRole("menuitem", { name: "New tab in this window" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "New tab (goes to Overview 1)" })).toBeTruthy();
+  });
 });
 
 // Renaming happens ON the row. Started from a menu here and finished in a panel
@@ -371,6 +379,45 @@ describe("renaming in place", () => {
 });
 
 describe("the row menu", () => {
+  const item = (name: string) => screen.getByRole("menuitem", { name }) as HTMLButtonElement;
+  const openMenu = (nth: number) => fireEvent.click(screen.getAllByRole("button", { name: "More actions" })[nth]);
+
+  // The keyboard route for reordering, through the same callback the drag uses.
+  test("Move down and Move up reorder within the window", async () => {
+    const { onReorder } = mount();
+    await openMenu(0);
+    await fireEvent.click(item("Move down"));
+    expect(onReorder).toHaveBeenCalledWith(0, [1, 0]);
+    await openMenu(1);
+    await fireEvent.click(item("Move up"));
+    expect(onReorder).toHaveBeenLastCalledWith(0, [1, 0]);
+  });
+
+  test("Move up is disabled on a window's first tab", async () => {
+    mount();
+    await openMenu(0);
+    expect(item("Move up").disabled).toBe(true);
+    expect(item("Move up").title).toMatch(/already first/i);
+    expect(item("Move down").disabled).toBe(false);
+  });
+
+  test("Move down is disabled on a window's last tab", async () => {
+    mount();
+    await openMenu(1);
+    expect(item("Move down").disabled).toBe(true);
+    expect(item("Move down").title).toMatch(/already last/i);
+    expect(item("Move up").disabled).toBe(false);
+  });
+
+  test("Move up and Move down are disabled for a tab in no window", async () => {
+    const { onReorder } = mount();
+    await openMenu(3);
+    for (const name of ["Move up", "Move down"]) {
+      expect(item(name).disabled).toBe(true);
+      expect(item(name).title).toMatch(/isn't assigned to a window/i);
+    }
+    expect(onReorder).not.toHaveBeenCalled();
+  });
 
   test("Delete tab names the row it was opened on", async () => {
     const { onDeleteTab } = mount();
@@ -388,6 +435,28 @@ describe("the footer", () => {
     await fireEvent.input(box, { target: { value: "Scout" } });
     await fireEvent.keyDown(box, { key: "Enter" });
     expect(onCreateTab).toHaveBeenCalledWith("Scout", 1);
+  });
+
+  // The backend's no-sibling branch makes a first tab; the entry opens under the
+  // first group, which is where the view puts it.
+  test("+ Tab works on an account with no tabs", async () => {
+    const { onCreateTab } = mount({ tabIndex: null, data: { ...data, tabs: [], windows: [{ index: 0, tab_indices: [] }] } });
+    const b = screen.getByRole("button", { name: "+ Tab" }) as HTMLButtonElement;
+    expect(b.disabled).toBe(false);
+    await fireEvent.click(b);
+    const box = screen.getByLabelText("Tab name") as HTMLInputElement;
+    await fireEvent.input(box, { target: { value: "Main" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onCreateTab).toHaveBeenCalledWith("Main", 0);
+  });
+
+  test("+ Tab works on a windowless account with no tabs", async () => {
+    const { onCreateTab } = mount({ tabIndex: null, data: { ...windowless, tabs: [] } });
+    await fireEvent.click(screen.getByRole("button", { name: "+ Tab" }));
+    const box = screen.getByLabelText("Tab name") as HTMLInputElement;
+    await fireEvent.input(box, { target: { value: "Main" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    expect(onCreateTab).toHaveBeenCalledWith("Main", null);
   });
 
   test("+ Window asks for the first tab's name", async () => {

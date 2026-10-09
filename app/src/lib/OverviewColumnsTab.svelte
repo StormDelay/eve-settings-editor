@@ -6,6 +6,7 @@
   import InlineMessage from "./ui/InlineMessage.svelte";
   import ListRow from "./ui/ListRow.svelte";
   import OverviewWidthPreview from "./OverviewWidthPreview.svelte";
+  import PanelHeader from "./ui/PanelHeader.svelte";
   import Sheet from "./ui/Sheet.svelte";
   import { toast } from "./ui/toasts.svelte";
 
@@ -126,6 +127,9 @@
 </script>
 
 {#if tab}
+  <!-- Names the tab being edited: the list beside it highlights a row, but
+       nothing in this pane said which. -->
+  <div class="pane-head"><PanelHeader title="Columns · {plainTabName(tab).trim()}" level={4} /></div>
   <div class="col-actions">
     <Button onclick={openCopy} disabled={copyOpen || (data?.tabs.length ?? 0) < 2}
             disabledReason={copyOpen ? "The copy panel is already open" : "There is no other tab to copy onto"}
@@ -251,6 +255,7 @@
 {/if}
 
 <style>
+  .pane-head { margin-bottom: var(--s2); }
   /* The width input's dark-native-control rule is gone — Field owns it. */
   /* A reading width, NOT the work column's width. `ListRow` pushes its trailing
      control to the container's right edge, which is right for a row in a 20rem

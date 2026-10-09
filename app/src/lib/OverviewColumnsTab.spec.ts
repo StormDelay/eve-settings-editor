@@ -53,6 +53,12 @@ const multi: OverviewColumns = {
 
 const noop = () => {};
 
+// The tab list highlights a row; the pane names it too, drawn rather than raw.
+test("the pane is headed with the tab's drawn name", () => {
+  render(OverviewColumnsTab, { data: multi, tabIndex: 1, charOpen: true, onChanged: noop, onUserDirty: noop, onCharDirty: noop });
+  expect(screen.getByRole("heading", { name: "Columns · pvp" })).toBeTruthy();
+});
+
 describe("the column width field", () => {
   test("is editable whenever a character document is open", () => {
     render(OverviewColumnsTab, {

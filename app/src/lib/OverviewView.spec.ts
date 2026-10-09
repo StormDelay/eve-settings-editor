@@ -110,6 +110,20 @@ describe("gating on the account file", () => {
     mount();
     expect(await screen.findByText(/no overview tabs/i)).toBeTruthy();
   });
+
+  test("an account with no tabs can create its first one", async () => {
+    calls.stub("overview_columns", columns());
+    calls.stub("tab_create", columns(tab(0, "Main")));
+    const { onUserDirty } = mount();
+    await screen.findByText(/no overview tabs/i);
+    await fireEvent.click(screen.getByRole("button", { name: "+ Tab" }));
+    const box = screen.getByLabelText("Tab name") as HTMLInputElement;
+    await fireEvent.input(box, { target: { value: "Main" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+    await findRow("Main");
+    expect(calls.of("tab_create")[0].args).toMatchObject({ windowIdx: 0, name: "Main", fromTab: null });
+    expect(onUserDirty).toHaveBeenCalled();
+  });
 });
 
 // The <select> that used to answer `getByLabelText("Tab")` is gone: the tab
