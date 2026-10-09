@@ -146,7 +146,7 @@ Workflow:
   built here until that is answered. _Added 2026-08-14 (UI redesign Phase 4,
   §4.3.1); narrowed to the open decision 2026-08-15._
 
-- [ ] **Overview tab-management roughness, re-filed after the fresh look.** The
+- [x] **Overview tab-management roughness, re-filed after the fresh look.** The
   old entry (item (7) of the 2026-07-19 bundle, below) deferred "the UI/UX is
   rough" behind three slices, all of which shipped, and then Phase 4 of the
   redesign rewrote this view outright. The fresh look it asked for is done, and
@@ -183,31 +183,37 @@ Workflow:
      while the `⋯` `Move to Overview N` route does the exact opposite and only
      ever appends. Neither route covers the whole strip, and position is
      load-bearing, because the backend renumbers to strip order.~~
-  4. **Reordering within a window is mouse-only.** `rowMenu` offers Rename, Delete
+  4. ~~**Reordering within a window is mouse-only.** `rowMenu` offers Rename, Delete
      and Move-to-window (`OverviewTabList.svelte:95-118`) but no up/down. Cross-
      window has a keyboard route; the operation that actually renumbers the tab
-     table does not.
-  5. **The "Other" group's menu says "New tab in this window" when there is no
+     table does not.~~ _Done 2026-10-09: the row `⋯` has Move up / Move down through
+     the drag's `onReorder`, disabled at the window's ends and for tabs in no window._
+  5. ~~**The "Other" group's menu says "New tab in this window" when there is no
      window** (`OverviewTabList.svelte:124`). The name-entry row then opens under
      *Other* while the tab lands in Overview 1 — deliberate and documented, but
-     the label and the landing place disagree.
-  6. **`+ Tab` is disabled on a zero-tab account although the backend supports
+     the label and the landing place disagree.~~ _Done 2026-10-09: Other's item
+     reads "New tab (goes to Overview 1)"._
+  6. ~~**`+ Tab` is disabled on a zero-tab account although the backend supports
      it.** `create_tab` has an explicit no-sibling branch
      (`overview_tabs.rs:426-430`) documented as "only reachable when the account
      has no tabs" — currently unreachable from the UI, where importing a pack is
-     the only way in.
+     the only way in.~~ _Done 2026-10-09: `+ Tab` is always enabled and opens its
+     entry under the first group; an `ops` test pins `tab_create` on a zero-tab
+     account, windowless and with an empty window._
   7. ~~**`role="option"` rows with no `listbox` ancestor.** `ListRow.svelte:59-60`
      emits it whenever `selected` is passed, and `grep -rn listbox app/src`
      returns nothing. This hits **every** `selected` ListRow app-wide, so it is
      really an app-wide a11y item that happens to show up here.~~ _Done 2026-10-09: the selected row's button
      carries `aria-current` instead; nothing in the app is a listbox._
-  8. **Nothing in the work pane names the tab being edited, and Appearance ignores
+  8. ~~**Nothing in the work pane names the tab being edited, and Appearance ignores
      the selection silently.** `OverviewColumnsTab.svelte:127-132` has no header
      though the spec's own mock shows `Columns · main`
      (`04-overview-and-inspector.md:352`), and `OverviewAppearanceTab` takes no
      `tabIndex` at all — yet the tab list beside it keeps a row highlighted, and
      nothing says Appearance is account-wide. The inspector's account/character
-     scope chips went out with the inspector and were never replaced.
+     scope chips went out with the inspector and were never replaced.~~ _Done
+     2026-10-09: Columns is headed "Columns · <drawn tab name>"; Appearance is
+     headed "Appearance — Account-wide: applies to every tab"._
 
   **Where these cluster is the point:** Filters and Appearance were never walked
   during the 0.35.0 live pass — the Phase 4 memo says so outright — and that is
