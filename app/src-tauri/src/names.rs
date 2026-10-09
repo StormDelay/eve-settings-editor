@@ -98,7 +98,6 @@ fn parse_ids(bytes: &[u8]) -> Result<Option<Found>, FetchError> {
 fn post_ids(client: &reqwest::blocking::Client, name: &str) -> Result<Option<Found>, FetchError> {
     let resp = client
         .post(ESI_IDS_URL)
-        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
         .json(&[name])
         .send()
         .map_err(|e| FetchError(e.to_string()))?;
@@ -142,6 +141,16 @@ const ESI_URL: &str = "https://esi.evetech.net/latest/universe/names/";
 #[derive(Debug)]
 pub struct FetchError(pub String);
 
+/// The blocking client every ESI and GitHub call goes through (groups.rs,
+/// update.rs too), so the User-Agent is set once.
+pub(crate) fn client(timeout_secs: u64) -> Result<reqwest::blocking::Client, FetchError> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .user_agent("eve-settings-editor")
+        .build()
+        .map_err(|e| FetchError(e.to_string()))
+}
+
 /// Parse an ESI `/universe/names` success body (a JSON array). An ESI error
 /// body is a JSON object and fails here — treated as a fetch failure.
 fn parse_names(bytes: &[u8]) -> Result<Vec<EsiName>, FetchError> {
@@ -162,7 +171,6 @@ enum PostOutcome {
 fn post_names(client: &reqwest::blocking::Client, ids: &[u64]) -> PostOutcome {
     let resp = match client
         .post(ESI_URL)
-        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
         .json(&ids)
         .send()
     {
@@ -216,10 +224,7 @@ where
 /// contains invalid ones. Blocking client (run off the async runtime via the
 /// command's `spawn_blocking`), built once and reused across any sub-requests.
 fn esi_fetch(ids: &[u64]) -> Result<Vec<EsiName>, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| FetchError(e.to_string()))?;
+    let client = client(15)?;
     salvage_resolve(ids, &|batch| post_names(&client, batch))
 }
 
@@ -305,10 +310,7 @@ where
 /// Production wiring: `lookup_with` over the real ESI client. Blocking — call
 /// it from a worker thread.
 pub fn lookup_blocking(dir: &Path, query: &str) -> Result<Option<Found>, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| FetchError(e.to_string()))?;
+    let client = client(15)?;
     lookup_with(dir, query, esi_fetch, |q| post_ids(&client, q))
 }
 

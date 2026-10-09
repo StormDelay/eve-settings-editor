@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::names::{client, FetchError};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupEntry {
     pub id: i64,
@@ -27,9 +29,6 @@ struct GroupCache {
     /// Resolved additions beyond the bundle, by group id.
     groups: HashMap<i64, GroupEntry>,
 }
-
-#[derive(Debug)]
-pub struct FetchError(pub String);
 
 fn cache_path(dir: &Path) -> PathBuf {
     dir.join("groups-cache.json")
@@ -93,7 +92,6 @@ const ESI: &str = "https://esi.evetech.net/latest";
 fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<reqwest::blocking::Response, FetchError> {
     client
         .get(url)
-        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
         .send()
         .map_err(|e| FetchError(e.to_string()))
         .and_then(|r| if r.status().is_success() { Ok(r) } else { Err(FetchError(format!("ESI status {}", r.status()))) })
@@ -103,10 +101,7 @@ fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<reqwest::bl
 /// resolve each new id (+ its category name), and return the raw entries (the
 /// caller applies the relevance filter). Untested (network), like names::esi_fetch.
 fn esi_fetch_delta(known: &HashSet<i64>) -> Result<Vec<GroupEntry>, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| FetchError(e.to_string()))?;
+    let client = client(30)?;
 
     // Enumerate all current group ids across X-Pages.
     let mut all: Vec<i64> = Vec::new();
@@ -145,10 +140,7 @@ fn esi_fetch_delta(known: &HashSet<i64>) -> Result<Vec<GroupEntry>, FetchError> 
 }
 
 fn fetch_server_version() -> Option<String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .ok()?;
+    let client = client(15).ok()?;
     let resp = http_get(&client, &format!("{ESI}/status/")).ok()?;
     let status: serde_json::Value = resp.json().ok()?;
     status.get("server_version").and_then(|v| v.as_str()).map(|s| s.to_string())
