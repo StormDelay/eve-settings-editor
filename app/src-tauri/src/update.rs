@@ -75,13 +75,9 @@ fn install_kind() -> (&'static str, &'static str) {
 
 /// Untested (network), like names::esi_fetch.
 pub fn check_blocking() -> Result<Option<Update>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let rel: Release = client
+    let rel: Release = crate::names::client(10)
+        .map_err(|e| e.0)?
         .get(LATEST)
-        .header(reqwest::header::USER_AGENT, "eve-settings-editor")
         .send()
         .and_then(|r| r.error_for_status())
         .and_then(|r| r.json())
