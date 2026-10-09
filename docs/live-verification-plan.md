@@ -630,7 +630,7 @@ was dropped. "Source" is where the outstanding item is currently recorded.
 | P2 | A preset is editable: edit, re-apply, edit landed | 0.20.0 | A / B2 | preset spec §12.2 |
 | P3 | `Everything` preset onto a brand-new install | 0.20.0 | **B / B3** | preset spec §12.3 |
 | P4 | Pruned preset: honest empty states in every editor | 0.20.0 | offline | preset spec §12.4 |
-| P5 | Overview preset minted from nothing inside a preset — ~~blocked~~ implementable since 2026-10-09 (`create_overview`), not yet run; see small-tasks "Confirm in-client that a minted overview container loads" | 0.20.0 | — | preset spec §12.4 |
+| P5 | Overview preset minted from nothing inside a preset — ~~blocked~~ implementable since 2026-10-09 (`create_overview`); in-game run waived by the owner 2026-10-10, see small-tasks "Confirm in-client that a minted overview container loads" | 0.20.0 | — | preset spec §12.4 |
 | P6 | Export → import → the copy behaves identically | 0.20.0 | A / B2 | preset spec §12.5 |
 | P7 | Column width editable with a preset open | 0.20.0 | offline | preset spec §12.6, §5.1 |
 | P8 | Missing `preset.json` offers pruned aspects, never `Everything` | 0.20.0 | offline | preset spec §3.1 |
