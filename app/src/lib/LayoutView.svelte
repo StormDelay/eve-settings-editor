@@ -146,6 +146,7 @@
   let stackError = $state<Msg | null>(null);
   let hudError = $state<(Msg & { name: string }) | null>(null);
   let chatError = $state<Msg | null>(null);
+  let widthError = $state<Msg | null>(null);
   let neocomError = $state<Msg | null>(null);
 
   const totalCount = $derived(drawnWindowCount(allUnits));
@@ -388,6 +389,17 @@
 
   /** Write one or more channels' splits and take the refreshed projection. The
    * splits live in the account document, so that is the slot that goes dirty. */
+  async function setOverviewWidth(tabIndex: number, column: string, width: number) {
+    widthError = null;
+    try {
+      columns = await api.setOverviewWidth(tabIndex, column, width);
+      onDirty("char");
+    } catch (e) {
+      widthError = { text: `That width wasn't stored — ${errText(e)}`, detail: errMessage(e) };
+      columns = await api.overviewColumns().catch(() => columns);
+    }
+  }
+
   async function setChatSplits(ids: string[], userlistWidth: number | null, inputHeight: number | null) {
     chatError = null;
     try {
@@ -1158,6 +1170,9 @@
         {userOpen}
         {sharedNames}
         onSetChatSplits={setChatSplits}
+        {columns}
+        onSetOverviewWidth={setOverviewWidth}
+        {widthError}
         {filter} />
     </aside>
   </div>

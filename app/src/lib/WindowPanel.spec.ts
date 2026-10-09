@@ -211,3 +211,55 @@ describe("Leave channel", () => {
     expect((screen.getByRole("button", { name: "Leave channel" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe("overview column widths", () => {
+  const col = (name: string, width: number | null, visible = true) => ({ name, label: name, visible, width });
+  const columns = {
+    tabs: [
+      { index: 0, name: "<color=0xffff0000>PvP</color>", pieces: [{ text: "PvP", color: "FFFF0000" }], preset: "p", inherits: false, columns: [col("NAME", 120), col("DISTANCE", null), col("TYPE", 80, false)] },
+      { index: 1, name: "Mining", pieces: [{ text: "Mining" }], preset: "p", inherits: false, columns: [col("NAME", 300)] },
+    ],
+    // The second window lists Mining first: the panel follows the window's own order.
+    windows: [{ index: 0, tab_indices: [0] }, { index: 1, tab_indices: [1, 0] }],
+    presets: [], appearance: {},
+  };
+  const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  test("the selected overview window edits its first tab's visible columns", async () => {
+    const onSetOverviewWidth = vi.fn();
+    mount([win("overview")], { selectedId: "overview", columns, onSetOverviewWidth });
+    expect(screen.getByText("Column widths · PvP")).toBeTruthy();
+    expect(field("NAME").value).toBe("120");
+    expect(field("DISTANCE").value).toBe("");
+    expect(screen.queryByLabelText("TYPE")).toBeNull();
+
+    field("DISTANCE").value = "95.4";
+    await fireEvent.change(field("DISTANCE"));
+    expect(onSetOverviewWidth).toHaveBeenCalledWith(0, "DISTANCE", 95);
+  });
+
+  test("overview_1 is the second window", () => {
+    mount([win("overview_1")], { selectedId: "overview_1", columns });
+    expect(screen.getByText("Column widths · Mining")).toBeTruthy();
+    expect(field("NAME").value).toBe("300");
+  });
+
+  test("a blank box writes nothing and snaps back", async () => {
+    const onSetOverviewWidth = vi.fn();
+    mount([win("overview")], { selectedId: "overview", columns, onSetOverviewWidth });
+    field("NAME").value = "";
+    await fireEvent.change(field("NAME"));
+    expect(onSetOverviewWidth).not.toHaveBeenCalled();
+    expect(field("NAME").value).toBe("120");
+  });
+
+  test("absent without an account file", () => {
+    mount([win("overview")], { selectedId: "overview" });
+    expect(screen.queryByText(/Column widths/)).toBeNull();
+  });
+
+  test("disabled on a read-only character file", () => {
+    mount([win("overview")], { selectedId: "overview", columns, readOnly: true });
+    expect(field("NAME").disabled).toBe(true);
+  });
+});

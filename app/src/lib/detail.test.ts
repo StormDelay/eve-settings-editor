@@ -293,7 +293,7 @@ import { check } from "./test/check.ts";
     tabs: [
       { index: 0, name: "General", preset: "p", inherits: false, pieces: [{ text: "General" }], editable: true, color: null,
         columns: [col("icon", true, 30), col("distance", true, 90), col("name", false, 200), col("type", true, null)] },
-      { index: 1, name: "Mining", preset: "p", inherits: false, pieces: [{ text: "Mining" }], editable: true, color: null, columns: [col("icon", true, 30)] },
+      { index: 1, name: "<b>Mining</b>", preset: "p", inherits: false, pieces: [{ text: "Mining", bold: true }], editable: true, color: null, columns: [col("icon", true, 30)] },
     ],
     windows: [{ index: 0, tab_indices: [0, 1] }, { index: 1, tab_indices: [] }],
     presets: [],
@@ -311,7 +311,7 @@ import { check } from "./test/check.ts";
   // are 72.5 and 67 — different widths, which an equal split could never give.
   check("tabs are sized by their label, not by the window", tabs[0].w === 72.5 && tabs[1].w === 67);
   check("tabs are packed left to right", tabs[0].x === 52 && tabs[1].x === 124.5);
-  check("tab cells are labelled with the tab name", tabs[0].label === "General");
+  check("tab cells are labelled with the drawn name, not its markup", tabs[0].label === "General" && tabs[1].label === "Mining");
   // EVE keeps tabs on one line and runs out of room; it never wraps to a second
   // row. A tab that does not fit is simply not drawn.
   const cramped = overviewParts(cols, 0, { w: 130, h: 300 }).filter((p) => p.kind === "cell");

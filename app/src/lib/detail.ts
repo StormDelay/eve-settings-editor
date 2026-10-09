@@ -7,6 +7,7 @@
 import type { ChatPanel, NeocomBar, OverviewColumns, Stack } from "./api";
 import { HUD_NOMINAL, type DrawUnit } from "./layout.ts";
 import { effectiveWidth } from "./overviewRender.ts";
+import { plainTabName } from "./tabName.ts";
 
 /**
  * One drawn piece of a rectangle's internals.
@@ -446,9 +447,11 @@ export function overviewParts(
   // of room, it never wraps to a second row.
   let tx = OVERVIEW.tabsX;
   for (const t of tabs) {
-    const w = t.name.length * OVERVIEW.charWidth + OVERVIEW.tabPad;
+    // The drawn text, not the stored name: that can carry `<color>` markup.
+    const label = plainTabName(t);
+    const w = label.length * OVERVIEW.charWidth + OVERVIEW.tabPad;
     if (tx + w > rect.w) break;
-    out.push({ kind: "cell", x: tx, y: 0, w, h: OVERVIEW.tabStrip, label: t.name });
+    out.push({ kind: "cell", x: tx, y: 0, w, h: OVERVIEW.tabStrip, label });
     tx += w;
   }
 
