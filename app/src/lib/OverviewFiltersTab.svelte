@@ -9,6 +9,8 @@
   import { revealAndFocus } from "./keymap";
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
+  import SearchField from "./ui/SearchField.svelte";
+  import { accel } from "./keys";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import { toast } from "./ui/toasts.svelte";
   import { undoAction } from "./undo.svelte";
@@ -301,10 +303,10 @@
           <span class="contents-title">Shows: {labelFor(tab.preset)}</span>
           <!-- controlClass, not class: the spec reads `.group-filter`'s value,
                so the hook has to land on the input. -->
-          <Field
+          <SearchField
+            nouns="groups"
+            shortcut={accel("F")}
             controlClass="group-filter"
-            ariaLabel="Filter groups"
-            placeholder="Filter groups"
             bind:element={filterBox}
             bind:value={typedFilter} />
         </div>

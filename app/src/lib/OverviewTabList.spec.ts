@@ -71,7 +71,7 @@ function mount(over: Partial<Record<string, unknown>> = {}) {
 }
 
 /** A row, found by the name it shows. */
-const row = (name: string) => screen.getByText(name).closest('[role="option"]') as HTMLElement;
+const row = (name: string) => screen.getByText(name).closest(".row") as HTMLElement;
 
 describe("the shape of the list", () => {
   test("tabs are grouped by window, in tab_indices order, under Overview {n+1}", () => {
@@ -83,7 +83,7 @@ describe("the shape of the list", () => {
     // Read the label buttons, not the whole row: the row also carries a drag
     // grip and a "⋯". main before Mining — the stored strip order IS the
     // in-game order, so the list renders it rather than sorting it.
-    const shown = [...w1.querySelectorAll('[role="option"] button.label')].map((b) => b.textContent?.trim());
+    const shown = [...w1.querySelectorAll('.row button.label')].map((b) => b.textContent?.trim());
     expect(shown.slice(0, 2)).toEqual(["main", "Mining"]);
   });
 
@@ -137,8 +137,8 @@ describe("the shape of the list", () => {
 
   test("the selected tab is the selected row", () => {
     mount({ tabIndex: 2 });
-    expect(row("Travel").getAttribute("aria-selected")).toBe("true");
-    expect(row("main").getAttribute("aria-selected")).toBe("false");
+    expect(row("Travel").querySelector(".label")?.getAttribute("aria-current")).toBe("true");
+    expect(row("main").querySelector(".label")?.getAttribute("aria-current")).toBeNull();
   });
 
   test("clicking a row selects it", async () => {

@@ -111,7 +111,9 @@ Workflow:
   target — passes no `shortcut` either, so the hint is not the established
   pattern, and the swap would have changed the box's behaviour (Escape-to-clear,
   clear button) beyond the ask. Worth doing for all five boxes at once if it is
-  worth doing at all.
+  worth doing at all. _Done 2026-10-09 for the two boxes `Ctrl+F` reaches
+  that lacked it, Layout's window filter and this one; the other three already
+  showed it. Racks and the subject switcher are not `Ctrl+F` targets._
 
 - [ ] **Reordering two overview tabs swaps their per-tab column widths.** Widths
   and the per-tab sort setting live in the *character* file keyed
@@ -194,10 +196,11 @@ Workflow:
      (`overview_tabs.rs:426-430`) documented as "only reachable when the account
      has no tabs" — currently unreachable from the UI, where importing a pack is
      the only way in.
-  7. **`role="option"` rows with no `listbox` ancestor.** `ListRow.svelte:59-60`
+  7. ~~**`role="option"` rows with no `listbox` ancestor.** `ListRow.svelte:59-60`
      emits it whenever `selected` is passed, and `grep -rn listbox app/src`
      returns nothing. This hits **every** `selected` ListRow app-wide, so it is
-     really an app-wide a11y item that happens to show up here.
+     really an app-wide a11y item that happens to show up here.~~ _Done 2026-10-09: the selected row's button
+     carries `aria-current` instead; nothing in the app is a listbox._
   8. **Nothing in the work pane names the tab being edited, and Appearance ignores
      the selection silently.** `OverviewColumnsTab.svelte:127-132` has no header
      though the spec's own mock shows `Columns · main`

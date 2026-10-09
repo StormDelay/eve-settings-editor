@@ -18,6 +18,7 @@
   import EmptyState from "./ui/EmptyState.svelte";
   import Field from "./ui/Field.svelte";
   import SearchField from "./ui/SearchField.svelte";
+  import { accel } from "./keys";
   import { revealAndFocus } from "./keymap";
   import { clutterOverrides, overrideCount, clearClutterOverrides, setClutterOverride, detailOn, setDetail, targetCount, setTargetCount, effectCount, setEffectCount } from "$lib/prefs.svelte";
   import WindowPanel from "$lib/WindowPanel.svelte";
@@ -920,12 +921,9 @@
            it when the inspector was collapsed. Everything here narrows or
            redraws the picture; the list in the inspector follows along. -->
       <div class="toolbar">
-        <!-- aria-label passed as a raw attribute so it stays "Filter windows"
-             exactly: SearchField names the box from its built placeholder,
-             which carries a trailing ellipsis. -->
         <SearchField
           nouns="windows"
-          aria-label="Filter windows"
+          shortcut={accel("F")}
           bind:element={filterInput}
           bind:value={filter.text} />
         <!-- The one filter whose name overclaims, so it is the one that most
