@@ -671,10 +671,10 @@ pub struct TargetResult {
     pub error: Option<String>,
 }
 
-fn ok_result(path: &str, backup: String) -> TargetResult {
+pub(crate) fn ok_result(path: &str, backup: String) -> TargetResult {
     TargetResult { path: path.to_string(), ok: true, backup_path: Some(backup), error: None }
 }
-fn err_result(path: &str, error: String) -> TargetResult {
+pub(crate) fn err_result(path: &str, error: String) -> TargetResult {
     TargetResult { path: path.to_string(), ok: false, backup_path: None, error: Some(error) }
 }
 

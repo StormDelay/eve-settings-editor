@@ -312,9 +312,9 @@ describe("the selection survives the renumbering", () => {
   });
 });
 
-// The shipped ceiling of §4.3.1: per-tab column widths live in the CHARACTER
-// file keyed by tab index, so renumbering leaves them on the position. Said
-// once, at the moment it happens, and only when there are widths on screen.
+// Per-tab column widths live in each CHARACTER file keyed by tab index, so a
+// renumbering moves them — and cannot reach a character logged in at the time.
+// Said once, at the moment it happens, and only when there are widths on screen.
 describe("the width-swap warning", () => {
   const before = inWindows([tab(0, "main"), tab(1, "Mining")], [{ index: 0, tab_indices: [0, 1] }]);
   const after = inWindows([tab(0, "Mining"), tab(1, "main")], [{ index: 0, tab_indices: [0, 1] }]);
@@ -332,7 +332,8 @@ describe("the width-swap warning", () => {
   test("fires once with a character open", async () => {
     await reorder(true);
     await waitFor(() => expect(toasts.length).toBe(1));
-    expect(toasts[0].message).toMatch(/widths stay with the position/i);
+    expect(toasts[0].message).toMatch(/moved with the tabs, for every character/i);
+    expect(toasts[0].message).toMatch(/logged in at the time keeps the old order/i);
   });
 
   test("says nothing with no character open", async () => {

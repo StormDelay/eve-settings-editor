@@ -121,6 +121,9 @@ pub struct Entry {
     /// Restored with the trees, which is what makes the unsaved badge exact
     /// across an undo rather than merely plausible.
     counters: [u64; 2],
+    /// `History::tab_origin` before this step: a tab edit renumbers the account
+    /// file, so undoing it must put the numbering it is tracked against back too.
+    tab_origin: Vec<i64>,
     /// Unique across the process, never reused: undo/redo move entries, a new
     /// edit after an undo is a new entry. What live mode's `undo` gate keys on.
     serial: u64,
@@ -132,6 +135,7 @@ impl Entry {
         u: &mut Option<Document>,
         c: &mut Option<Document>,
         counters: &mut [u64; 2],
+        tab_origin: &mut Vec<i64>,
     ) {
         debug_assert_eq!(
             self.char.is_some(),
@@ -145,6 +149,7 @@ impl Entry {
             s.restore(d);
         }
         *counters = self.counters;
+        *tab_origin = self.tab_origin;
     }
 
     /// Put ONE slot back, for the ungrouped error path: `apply_mutations` runs
@@ -180,6 +185,15 @@ pub struct History {
     group: Option<bool>,
     /// The next `Entry::serial`. Monotone; never restored by undo.
     next_serial: u64,
+    /// For each tab of the account document in memory, its index in the account
+    /// file as it was LOADED (-1: a tab added since). Empty: no tab has been
+    /// renumbered. Restored by undo with the trees.
+    tab_origin: Vec<i64>,
+    /// The same, for the account file as it now stands on DISK: set by each save.
+    /// Never restored by undo — the disk does not change when memory does. The
+    /// two together are what lets a save tell the account's other characters
+    /// how their per-tab settings move, even after an undo past an earlier save.
+    disk_origin: Vec<i64>,
 }
 
 /// What a write found when it looked for a before-state. Three outcomes rather
@@ -227,6 +241,7 @@ impl History {
                 None => None,
             },
             counters: self.counters,
+            tab_origin: self.tab_origin.clone(),
             serial: 0,
         })
     }
@@ -277,7 +292,7 @@ impl History {
             return;
         }
         let entry = self.undo.pop_back().expect("a filled group has its entry");
-        entry.restore_into(u, c, &mut self.counters);
+        entry.restore_into(u, c, &mut self.counters, &mut self.tab_origin);
         self.group = Some(false);
     }
 
@@ -294,7 +309,7 @@ impl History {
             now.serial = entry.serial;
             self.redo.push(now);
         }
-        entry.restore_into(u, c, &mut self.counters);
+        entry.restore_into(u, c, &mut self.counters, &mut self.tab_origin);
         true
     }
 
@@ -304,7 +319,7 @@ impl History {
             now.serial = entry.serial;
             self.undo.push_back(now);
         }
-        entry.restore_into(u, c, &mut self.counters);
+        entry.restore_into(u, c, &mut self.counters, &mut self.tab_origin);
         true
     }
 
@@ -319,6 +334,57 @@ impl History {
         self.redo.clear();
         self.counters[idx(slot)] = 0;
         self.saved[idx(slot)] = 0;
+        if matches!(slot, Slot::User) {
+            self.tab_origin.clear();
+            self.disk_origin.clear();
+        }
+    }
+
+    /// A tab edit renumbered the account document: `previous` is each tab's
+    /// index before it, in the new order (what `delete_tab` and the reorders
+    /// return). Empty is a no-op.
+    pub fn follow_tabs(&mut self, previous: &[i64]) {
+        if previous.is_empty() {
+            return;
+        }
+        let was = std::mem::take(&mut self.tab_origin);
+        self.tab_origin = previous
+            .iter()
+            .map(|&p| if was.is_empty() { p } else { was.get(p as usize).copied().unwrap_or(-1) })
+            .collect();
+    }
+
+    /// What saving the account document does to its tab numbering, as the map
+    /// `remap_tab_scoped_settings` takes: each tab's index in the file on disk
+    /// now, in the order being written (-1: not on disk). Empty when it does
+    /// not renumber anything. Moves the disk baseline, so call it on a
+    /// successful account save only.
+    pub fn take_tab_remap(&mut self) -> Vec<i64> {
+        let disk = std::mem::replace(&mut self.disk_origin, self.tab_origin.clone());
+        // Empty means "as loaded", whose length nothing records — but every tab
+        // the disk numbering names lies within 0..=max, and one beyond it has
+        // no settings on disk to carry anyway.
+        let now: Vec<i64> = match (self.tab_origin.is_empty(), disk.iter().max()) {
+            (false, _) => self.tab_origin.clone(),
+            (true, Some(&max)) => (0..=max).collect(),
+            (true, None) => return Vec::new(),
+        };
+        let map: Vec<i64> = now
+            .iter()
+            .map(|&o| {
+                if o < 0 {
+                    -1
+                } else if disk.is_empty() {
+                    o
+                } else {
+                    disk.iter().position(|&d| d == o).map_or(-1, |p| p as i64)
+                }
+            })
+            .collect();
+        if map.iter().enumerate().all(|(i, &n)| n == i as i64) {
+            return Vec::new();
+        }
+        map
     }
 
     /// On a successful save only. The stack is deliberately NOT cleared: you can
@@ -571,7 +637,7 @@ mod tests {
     /// noticing that a rule existed.
     #[test]
     fn try_edit_char_callers_are_snapshotted() {
-        const KNOWN: &[&str] = &["tab_delete", "overview_window_add", "overview_window_remove"];
+        const KNOWN: &[&str] = &["edit_user_tab_numbering", "overview_window_add", "overview_window_remove"];
         let fns = fns_of(ops_src());
         let found: Vec<&str> = fns
             .iter()

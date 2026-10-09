@@ -293,14 +293,12 @@ pub(crate) fn compact_tabs(ov: &mut Entries) -> Vec<i64> {
 /// or the same tab twice in one window. Half a renumbering is a tab wearing
 /// another tab's settings, which is worse than a reorder that did nothing.
 ///
-/// ponytail: user-file only. A character's per-tab COLUMN WIDTHS are keyed
-/// `(overviewScroll2, tabIndex)` in its own char file, so renumbering leaves
-/// them on the slot rather than on the tab and two reordered tabs swap widths.
-/// Deliberate: an account's other characters each have their own char file that
-/// the editor does not have open, so remapping the one that is open would be
-/// half a fix, and the client renumbers on its own deletes anyway. Not left for
-/// someone to rediscover — the width remap is its own branch.
-fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) {
+/// User-file only, so it returns what it did: the window's `(old, new)` index
+/// pairs, empty when nothing moved. A character's per-tab column widths and sort
+/// setting are keyed `(overviewScroll2, tabIndex)` in its own char file, and the
+/// callers turn this into the map `remap_tab_scoped_settings` needs so they
+/// follow the tab instead of staying on the slot.
+fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) -> Vec<(i64, i64)> {
     let want: Vec<i64> = ov
         .iter()
         .find(|(k, _)| is_b(k, b"tabsByWindowInstanceID"))
@@ -312,10 +310,10 @@ fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) {
     let mut slots = want.clone();
     slots.sort_unstable();
     if want == slots {
-        return; // already ascending — the game already shows this order
+        return Vec::new(); // already ascending — the game already shows this order
     }
     if slots.windows(2).any(|w| w[0] == w[1]) {
-        return; // a tab listed twice would map to two different new indices
+        return Vec::new(); // a tab listed twice would map to two different new indices
     }
     // The window's own tabs, old index -> new index. Short lists (a window's
     // tabs), so a linear scan beats a map.
@@ -327,14 +325,14 @@ fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) {
             .iter_mut()
             .find(|(k, _)| is_b(k, b"tabsettings_new") || is_b(k, b"tabsettings"))
         else {
-            return;
+            return Vec::new();
         };
-        let Some(tabs) = dict_inner_mut(tv) else { return };
+        let Some(tabs) = dict_inner_mut(tv) else { return Vec::new() };
         if tabs.iter().any(|(k, _)| as_int(k).is_none()) {
-            return;
+            return Vec::new();
         }
         if want.iter().any(|n| !tabs.iter().any(|(k, _)| as_int(k) == Some(*n))) {
-            return;
+            return Vec::new();
         }
         for (k, _) in tabs.iter_mut() {
             if let Some(n) = as_int(k).and_then(at) {
@@ -357,6 +355,7 @@ fn renumber_to_strip_order(ov: &mut Entries, window_idx: usize) {
             }
         }
     }
+    map
 }
 
 /// Set a tab's name, preserving an existing name entry's value variant (real
@@ -521,7 +520,9 @@ pub fn delete_tab(v: &mut Value, tab_idx: i64) -> Result<Vec<i64>, OverviewTabEr
     Ok(compact_tabs(ov))
 }
 
-pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<(), OverviewTabError> {
+/// Returns the tabs' previous indices in their new order (see `delete_tab`), or
+/// empty when no tab changed index — what `remap_tab_scoped_settings` takes.
+pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -> Result<Vec<i64>, OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
     // `groups_mut` CREATES the mapping when it is absent, so this guard has to
@@ -550,12 +551,12 @@ pub fn reorder_tabs_in_window(v: &mut Value, window_idx: usize, order: &[i64]) -
     }
     // The strip alone is invisible in game — the order has to become the tabs'
     // index order, so this is the edit, not a tidy-up after it.
-    renumber_to_strip_order(ov, window_idx);
-    compact_tabs(ov);
-    Ok(())
+    let moved = renumber_to_strip_order(ov, window_idx);
+    Ok(previous_indices(&moved, compact_tabs(ov)))
 }
 
-pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<(), OverviewTabError> {
+/// Returns the same map as `reorder_tabs_in_window`.
+pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<Vec<i64>, OverviewTabError> {
     inline_all(v);
     let ov = overview_mut(v)?;
     // Without this, moving an index no tab has inserts a phantom entry into the
@@ -587,9 +588,22 @@ pub fn move_tab(v: &mut Value, tab_idx: i64, from_window: usize, to_window: usiz
     }
     // `pos` is a position in the destination window's tab strip, and a position
     // is only real once the indices carry it — same as `reorder_tabs_in_window`.
-    renumber_to_strip_order(ov, to_window);
-    compact_tabs(ov);
-    Ok(())
+    let moved = renumber_to_strip_order(ov, to_window);
+    Ok(previous_indices(&moved, compact_tabs(ov)))
+}
+
+/// Compose a strip renumbering (`(old, new)` pairs) with the compaction after it
+/// (indices before compaction, in their new order) into each tab's index before
+/// BOTH, in its final order. Empty when that is the identity: nothing moved.
+fn previous_indices(moved: &[(i64, i64)], compacted: Vec<i64>) -> Vec<i64> {
+    let out: Vec<i64> = compacted
+        .into_iter()
+        .map(|n| moved.iter().find(|(_, new)| *new == n).map_or(n, |(old, _)| *old))
+        .collect();
+    if out.iter().enumerate().all(|(i, &n)| n == i as i64) {
+        return Vec::new();
+    }
+    out
 }
 
 /// Give an account an explicit tab-to-window mapping: one window listing every
@@ -2076,6 +2090,50 @@ mod tests {
             "tab C kept its own widths after moving from index 2 to 1",
         );
         assert_eq!(tab_name(&user, 1), "C", "and it is tab C that now sits at 1");
+    }
+
+    /// The decision of 2026-10-09: a reorder reports the map too, so a tab's
+    /// widths and sort follow it instead of staying on the slot.
+    #[test]
+    fn a_reorder_reports_the_map_that_moves_widths_with_the_tab() {
+        let mut user = user_with_tabs();
+        create_tab(&mut user, 0, "B", Some(0)).unwrap(); // tab 1
+        create_tab(&mut user, 0, "C", Some(0)).unwrap(); // tab 2
+        let surviving = reorder_tabs_in_window(&mut user, 0, &[2, 0, 1]).unwrap();
+        assert_eq!(surviving, vec![2, 0, 1], "old indices, in their new order");
+
+        let mut ch = char_with_tab_settings();
+        remap_tab_scoped_settings(&mut ch, &surviving);
+        let mut sizes = scroll_entries(&ch, b"SortHeadersSizes");
+        sizes.sort();
+        assert_eq!(
+            sizes,
+            vec![(0, "120".to_string()), (1, "100".to_string()), (2, "110".to_string())],
+            "tab C, now first, kept its own widths",
+        );
+        assert_eq!(tab_name(&user, 0), "C");
+    }
+
+    /// A drop in place renumbers nothing, and must not look like a renumbering:
+    /// a non-empty identity map would write every character's file for nothing.
+    #[test]
+    fn a_reorder_that_moves_nothing_reports_an_empty_map() {
+        let mut user = user_with_tabs();
+        create_tab(&mut user, 0, "B", Some(0)).unwrap();
+        assert_eq!(reorder_tabs_in_window(&mut user, 0, &[0, 1]).unwrap(), Vec::<i64>::new());
+    }
+
+    /// A cross-window move renumbers the destination window's slots; the map
+    /// names each tab's index before the move.
+    #[test]
+    fn a_move_reports_the_map_too() {
+        let mut v = user_four_tabs_two_windows(); // w0 = [0 A, 2 C], w1 = [1 B, 3 D]
+        let surviving = move_tab(&mut v, 3, 1, 0, 0).unwrap(); // D to the front of w0
+        for (new, &old) in surviving.iter().enumerate() {
+            let name = ["A", "B", "C", "D"][old as usize];
+            assert_eq!(tab_name(&v, new as i64), name, "map entry {new} names the tab now there");
+        }
+        assert_eq!(tab_name(&v, 0), "D");
     }
 
     /// An EXISTING wrapper's own timestamp must survive — the repair is for a

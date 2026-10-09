@@ -353,7 +353,26 @@ pub fn apply_mutations(state: &AppState, slot: Slot, mutations: &[Mutation]) -> 
     )
 }
 
-pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveReport, ErrDto> {
+/// A save, plus what it did to the account's other characters' files.
+#[derive(Debug, Serialize)]
+pub struct SaveOutcome {
+    #[serde(flatten)]
+    pub report: SaveReport,
+    /// One row per character file whose per-tab settings this save moved: an
+    /// ACCOUNT save that carries a tab reorder, move or delete. Empty otherwise.
+    pub linked: Vec<crate::setup::TargetResult>,
+}
+
+/// Save one slot. `linked` is the account's other characters in the same folder
+/// (`linked_chars`); only an account save that renumbered tabs touches them.
+///
+/// Those writes happen HERE, at save, and not when the tab moved: until the
+/// account file is saved its old order is what the game shows, and a reorder
+/// that is discarded or undone must not leave widths moved in files the user
+/// never opened. Each is the copy-settings write — loaded fresh, edited, saved
+/// through the full chain with a backup first — and a failure is reported per
+/// file rather than failing a save that has already reached disk.
+pub fn save_document(state: &AppState, slot: Slot, force: bool, linked: &[(u64, PathBuf)]) -> Result<SaveOutcome, ErrDto> {
     let mut guard = state.doc(slot).lock().unwrap();
     let doc = guard.as_mut().ok_or_else(|| ErrDto::new("no_document", "no file open"))?;
     let report = save(doc, force).map_err(|e| {
@@ -370,8 +389,37 @@ pub fn save_document(state: &AppState, slot: Slot, force: bool) -> Result<SaveRe
     // PAST a save, and the file is then correctly reported unsaved again,
     // because memory now differs from disk. That falls out of the counters
     // rather than needing a rule.
-    state.history.lock().unwrap().mark_saved(slot);
-    Ok(report)
+    let mut history = state.history.lock().unwrap();
+    history.mark_saved(slot);
+    let map = if matches!(slot, Slot::User) { history.take_tab_remap() } else { Vec::new() };
+    drop(history);
+    drop(guard);
+    let linked = if map.is_empty() { Vec::new() } else { remap_char_files(linked, &map) };
+    Ok(SaveOutcome { report, linked })
+}
+
+// ponytail: the open character is excluded (its remap is in memory, saved with
+// it), so a character switched INTO the editor between an unsaved reorder and
+// the account save keeps the old numbering — it was read after the reorder. The
+// fix is remapping a character file as it opens while a renumbering is pending.
+fn remap_char_files(linked: &[(u64, PathBuf)], map: &[i64]) -> Vec<crate::setup::TargetResult> {
+    linked
+        .iter()
+        .map(|(_, path)| {
+            let p = path.to_string_lossy();
+            let write = || -> Result<PathBuf, String> {
+                let mut doc = Document::load(path).map_err(|e| format!("{e:?}"))?;
+                remap_tab_scoped_settings(&mut doc.value, map);
+                doc.value = blue_marshal::reshare(&doc.value);
+                // Loaded just now, so there is no stale baseline to conflict with.
+                save(&mut doc, true).map(|r| r.backup_path).map_err(|e| format!("{e:?}"))
+            };
+            match write() {
+                Ok(bk) => crate::setup::ok_result(&p, bk.to_string_lossy().into_owned()),
+                Err(e) => crate::setup::err_result(&p, e),
+            }
+        })
+        .collect()
 }
 
 pub fn list_file_backups(state: &AppState, slot: Slot) -> Result<Vec<settings_model::BackupInfo>, ErrDto> {
@@ -757,44 +805,43 @@ pub fn tab_rename_pieces(state: &AppState, tab_idx: i64, pieces: Vec<Piece>) -> 
     tab_rename(state, tab_idx, name)
 }
 
-/// Delete a tab from the account file, then carry the surviving tabs' char-side
-/// per-tab settings (column widths, sort column and direction) onto their new
-/// indices. Deleting a tab renumbers the account's tab table, and those settings
-/// are keyed by tab index — without the second half, deleting one tab silently
-/// changed every tab above it.
+/// A tab edit that renumbers the account's tab table: the account write, then
+/// the char-side half. Per-tab settings (column widths, sort column and
+/// direction) are keyed by tab index in each CHARACTER file, so without it a
+/// reorder swapped two tabs' widths and a delete re-pointed every tab above it
+/// at its neighbour's.
 ///
-/// The char write is best-effort, as with the overview-window commands: a
-/// character that is not open is not a reason to refuse the delete.
-///
-// ponytail: only the OPEN character is fixed up. Other characters paired to this
-// account keep their settings on the old numbering until someone opens them —
-// remapping those means writing files the user never opened, which is a
-// cross-file op with its own backup chain (deliberately deferred; see the
-// 0.33 decision).
-pub fn tab_delete(state: &AppState, tab_idx: i64) -> Result<OverviewColumns, ErrDto> {
-    // Suppresses nothing today — `try_edit_char` does not push — and carried
-    // anyway, deliberately. It makes the guard the DECLARATION "this command
-    // writes more than once", which is what lets tripwire B be a general rule
-    // with no hand-maintained list; a list is exactly what failed in tripwire A.
-    // And it is the only thing standing between this command and a two-press
-    // regression if `try_edit_char` is ever changed.
+/// The OPEN character is remapped here, in memory, best-effort as with the
+/// overview-window commands: no character open is not a reason to refuse the
+/// edit. The account's other characters are remapped on disk when the account
+/// file is SAVED (`save_document`), from the numbering `History` tracks — an
+/// unsaved reorder must not move widths in files the user cannot discard.
+fn edit_user_tab_numbering<F>(state: &AppState, edit: F) -> Result<OverviewColumns, ErrDto>
+where
+    F: FnOnce(&mut Value) -> Result<Vec<i64>, OverviewTabError>,
+{
+    // Two writes, one undo step. `try_edit_char` does not push, so this guard
+    // suppresses nothing today — carried anyway because it DECLARES "this
+    // command writes more than once", which tripwire B keys on.
     let _group = undo::group(state);
-    let surviving = edit_slot(
-        state,
-        Slot::User,
-        |v| delete_tab(v, tab_idx),
-        |e| coded_err("tab", e),
-    )?;
-    try_edit_char(state, |v| remap_tab_scoped_settings(v, &surviving));
+    let previous = edit_slot(state, Slot::User, edit, |e| coded_err("tab", e))?;
+    if !previous.is_empty() {
+        try_edit_char(state, |v| remap_tab_scoped_settings(v, &previous));
+        state.history.lock().unwrap().follow_tabs(&previous);
+    }
     overview_columns(state)
 }
 
+pub fn tab_delete(state: &AppState, tab_idx: i64) -> Result<OverviewColumns, ErrDto> {
+    edit_user_tab_numbering(state, |v| delete_tab(v, tab_idx))
+}
+
 pub fn tab_reorder(state: &AppState, window_idx: usize, order: Vec<i64>) -> Result<OverviewColumns, ErrDto> {
-    edit_user_tabs(state, |v| reorder_tabs_in_window(v, window_idx, &order))
+    edit_user_tab_numbering(state, |v| reorder_tabs_in_window(v, window_idx, &order))
 }
 
 pub fn tab_move(state: &AppState, tab_idx: i64, from_window: usize, to_window: usize, pos: usize) -> Result<OverviewColumns, ErrDto> {
-    edit_user_tabs(state, |v| move_tab(v, tab_idx, from_window, to_window, pos))
+    edit_user_tab_numbering(state, |v| move_tab(v, tab_idx, from_window, to_window, pos))
 }
 
 pub fn tab_create(state: &AppState, window_idx: usize, name: String, from_tab: Option<i64>) -> Result<OverviewColumns, ErrDto> {
@@ -913,7 +960,7 @@ pub fn overview_window_remove(state: &AppState, window_idx: usize) -> Result<Ove
 /// This function does NOT push an undo entry. Every call site MUST already have
 /// run an `edit_slot`/`edit_reshared` earlier in the SAME Tauri command, whose
 /// entry captured both slots, and that command MUST hold an `undo::group`
-/// guard. Today that is `tab_delete`, `overview_window_add` and
+/// guard. Today that is `edit_user_tab_numbering`, `overview_window_add` and
 /// `overview_window_remove`.
 ///
 /// A caller that breaks this rule produces a char-side change no `Ctrl+Z` can
@@ -1431,8 +1478,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tree.children[0].children[0].display, "\"edited\"");
-        let report = save_document(&state, Slot::Char, false).unwrap();
-        assert!(report.backup_path.exists());
+        let report = save_document(&state, Slot::Char, false, &[]).unwrap();
+        assert!(report.report.backup_path.exists());
         // Re-open from disk in a fresh state: the edit persisted, Editable.
         let state2 = AppState::new();
         match open_file(&state2, Slot::Char, path.to_str().unwrap()).unwrap() {
@@ -1467,7 +1514,7 @@ mod tests {
         assert_eq!(tree.children[0].children[0].display, "10");
         assert_eq!(tree.children[0].children[1].display, "20");
 
-        save_document(&state, Slot::Char, false).unwrap();
+        save_document(&state, Slot::Char, false, &[]).unwrap();
         let state2 = AppState::new();
         match open_file(&state2, Slot::Char, path.to_str().unwrap()).unwrap() {
             OpenOutcome::Opened { tree, .. } => {
@@ -1482,9 +1529,9 @@ mod tests {
     fn save_conflict_surfaces_the_conflict_code() {
         let (state, path) = open_sample("conflict");
         fs::write(&path, encode(&Value::Dict(vec![])).unwrap()).unwrap();
-        let err = save_document(&state, Slot::Char, false).unwrap_err();
+        let err = save_document(&state, Slot::Char, false, &[]).unwrap_err();
         assert_eq!(err.code, "conflict");
-        save_document(&state, Slot::Char, true).unwrap();
+        save_document(&state, Slot::Char, true, &[]).unwrap();
     }
 
     #[test]
@@ -1499,7 +1546,7 @@ mod tests {
             },
         )
         .unwrap();
-        save_document(&state, Slot::Char, false).unwrap();
+        save_document(&state, Slot::Char, false, &[]).unwrap();
         let backups = list_file_backups(&state, Slot::Char).unwrap();
         assert_eq!(backups.len(), 1, "the pre-save backup");
         // Restore the original -> the reopened tree shows "a" again.
@@ -1834,6 +1881,131 @@ mod tests {
         };
         assert_eq!(width(&cols.tabs[0]), Some(100), "tab A untouched");
         assert_eq!(width(&cols.tabs[1]), Some(120), "tab C kept its own width, not tab B's");
+    }
+
+    /// One account, two characters in its folder, the first open. A reorder
+    /// moves the open one's widths in memory and the other's on disk when the
+    /// account is SAVED — never before — each backed up first.
+    fn reorder_fixture(tag: &str) -> (AppState, PathBuf, PathBuf, PathBuf, PathBuf) {
+        fn bb(s: &str) -> Value { Value::Bytes(s.as_bytes().to_vec()) }
+        let tab = |n: &str| Value::Dict(vec![
+            (bb("bracket"), bb("_BracketFilterShowAll")),
+            (bb("color"), Value::None),
+            (Value::Str("name".into()), Value::Str(n.into())),
+            (bb("overview"), bb("P")),
+        ]);
+        let user = Value::Dict(vec![(bb("overview"), Value::Dict(vec![
+            (bb("tabsettings_new"), Value::Dict(vec![
+                (Value::Int(0), tab("A")), (Value::Int(1), tab("B")), (Value::Int(2), tab("C")),
+            ])),
+            (bb("tabsByWindowInstanceID"), Value::List(vec![Value::List(vec![
+                Value::Int(0), Value::Int(1), Value::Int(2),
+            ])])),
+            (bb("overviewColumnOrder"), Value::List(vec![bb("NAME")])),
+            (bb("overviewColumns"), Value::List(vec![bb("NAME")])),
+        ]))]);
+        let scroll = |n: i64| Value::Tuple(vec![bb("overviewScroll2"), Value::Int(n)]);
+        let widths = |w: i64| Value::Dict(vec![(bb("NAME"), Value::Int(w))]);
+        let ch =Value::Dict(vec![(bb("ui"), Value::Dict(vec![
+            (bb("SortHeadersSizes"), Value::Dict(vec![
+                (scroll(0), widths(100)), (scroll(1), widths(110)), (scroll(2), widths(120)),
+            ])),
+        ]))]);
+        let base = std::env::temp_dir().join(format!("reorder-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (prof, app) = (base.join("settings_Default"), base.join("appdata"));
+        fs::create_dir_all(&prof).unwrap();
+        fs::create_dir_all(&app).unwrap();
+        let upath = prof.join("core_user_90000010.dat");
+        let (open, other) = (prof.join("core_char_90000001.dat"), prof.join("core_char_90000002.dat"));
+        fs::write(&upath, encode(&user).unwrap()).unwrap();
+        fs::write(&open, encode(&ch).unwrap()).unwrap();
+        fs::write(&other, encode(&ch).unwrap()).unwrap();
+        let mut store = accounts::AccountsStore::default();
+        store.accounts.insert(90000010, accounts::Account { alias: None, characters: vec![90000001, 90000002] });
+        fs::write(app.join("accounts.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+        let state = AppState::new();
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap();
+        open_file(&state, Slot::Char, open.to_str().unwrap()).unwrap();
+        (state, app, open, other, prof)
+    }
+
+    /// NAME width per tab index, read from a character file ON DISK.
+    fn disk_widths(path: &Path) -> Vec<(i64, i64)> {
+        fn get<'a>(v: &'a Value, key: &[u8]) -> &'a Value {
+            let v = match v { Value::Tuple(t) if t.len() == 2 => &t[1], v => v }; // (timestamp, value)
+            let Value::Dict(d) = v else { panic!("not a dict") };
+            &d.iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == key)).unwrap().1
+        }
+        let v = blue_marshal::decode(&fs::read(path).unwrap()).unwrap();
+        let sizes = get(get(&v, b"ui"), b"SortHeadersSizes");
+        let sizes = match sizes { Value::Tuple(t) if t.len() == 2 => &t[1], v => v };
+        let Value::Dict(d) = sizes else { panic!("sizes") };
+        let mut out: Vec<(i64, i64)> = d.iter().filter_map(|(k, w)| {
+            let Value::Tuple(t) = k else { return None };
+            let (Value::Int(n), Value::Dict(w)) = (&t[1], w) else { return None };
+            let Value::Int(px) = w[0].1 else { return None };
+            Some((*n, px))
+        }).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn a_reorder_moves_every_characters_widths_with_the_tab_at_account_save() {
+        let (state, app, open, other, _prof) = reorder_fixture("save");
+        let linked = linked_chars(&state, &app);
+        assert_eq!(linked, vec![(90000002, other.clone())], "the account's other character, not the open one");
+
+        tab_reorder(&state, 0, vec![2, 0, 1]).unwrap(); // C, A, B
+        let cols = overview_columns(&state).unwrap();
+        let width = |i: usize| cols.tabs[i].columns.iter().find(|c| c.name == "NAME").and_then(|c| c.width);
+        assert_eq!((cols.tabs[0].name.as_str(), width(0)), ("C", Some(120)), "the open character's width moved in memory");
+        assert_eq!(disk_widths(&other), vec![(0, 100), (1, 110), (2, 120)], "nothing written before the save");
+
+        let moved = vec![(0, 120), (1, 100), (2, 110)];
+        save_document(&state, Slot::Char, false, &linked).unwrap();
+        let out = save_document(&state, Slot::User, false, &linked).unwrap();
+        assert_eq!(disk_widths(&open), moved, "the open character, saved with its own slot");
+        assert_eq!(disk_widths(&other), moved, "the character that was never opened");
+        assert_eq!(out.linked.len(), 1);
+        assert!(out.linked[0].ok, "{:?}", out.linked[0]);
+        let backup = PathBuf::from(out.linked[0].backup_path.as_ref().unwrap());
+        assert_eq!(disk_widths(&backup), vec![(0, 100), (1, 110), (2, 120)], "backed up before the write");
+
+        // A second save with nothing renumbered since writes nobody's file.
+        tab_rename(&state, 0, "C2".into()).unwrap();
+        assert!(save_document(&state, Slot::User, false, &linked).unwrap().linked.is_empty());
+    }
+
+    /// The disk baseline is what a save is measured against, not the load: undo
+    /// past a save and save again, and the other character goes back too.
+    #[test]
+    fn undoing_a_saved_reorder_and_saving_moves_the_widths_back() {
+        let (state, app, _open, other, _prof) = reorder_fixture("undo");
+        let linked = linked_chars(&state, &app);
+        tab_reorder(&state, 0, vec![2, 0, 1]).unwrap();
+        save_document(&state, Slot::User, false, &linked).unwrap();
+        assert_eq!(disk_widths(&other), vec![(0, 120), (1, 100), (2, 110)]);
+
+        assert!(undo::undo(&state).is_some());
+        save_document(&state, Slot::User, false, &linked).unwrap();
+        assert_eq!(disk_widths(&other), vec![(0, 100), (1, 110), (2, 120)]);
+    }
+
+    /// A reorder that is discarded — never saved — leaves the other character's
+    /// file alone: reopening the account forgets the pending renumbering.
+    #[test]
+    fn a_discarded_reorder_writes_no_other_characters_file() {
+        let (state, app, _open, other, prof) = reorder_fixture("discard");
+        let linked = linked_chars(&state, &app);
+        tab_reorder(&state, 0, vec![2, 0, 1]).unwrap();
+        let upath = prof.join("core_user_90000010.dat");
+        open_file(&state, Slot::User, upath.to_str().unwrap()).unwrap(); // Discard re-reads
+        tab_rename(&state, 0, "A2".into()).unwrap();
+        assert!(save_document(&state, Slot::User, false, &linked).unwrap().linked.is_empty());
+        assert_eq!(disk_widths(&other), vec![(0, 100), (1, 110), (2, 120)]);
     }
 
     #[test]
@@ -2835,7 +3007,7 @@ tabSetup:
         open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
 
         set_overview_visible(&state, 0, "TYPE", true).unwrap(); // edit A
-        save_document(&state, Slot::User, false).unwrap();
+        save_document(&state, Slot::User, false, &[]).unwrap();
         set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap(); // edit B
 
         let r = undo::undo(&state).unwrap(); // back to post-A
@@ -2849,7 +3021,7 @@ tabSetup:
         open_file(&state, Slot::User, path.to_str().unwrap()).unwrap();
 
         set_overview_visible(&state, 0, "TYPE", true).unwrap(); // edit A
-        save_document(&state, Slot::User, false).unwrap();
+        save_document(&state, Slot::User, false, &[]).unwrap();
         set_overview_order(&state, 0, vec!["TYPE".into(), "NAME".into()]).unwrap(); // edit B
 
         undo::undo(&state).unwrap(); // post-A: clean
