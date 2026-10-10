@@ -149,6 +149,7 @@
       </colgroup>
       <tbody>
         {#each entries as e (e.command)}
+          {@const def = defaultFor(e.command)}
           <tr class:malformed={e.malformed}>
             <td class="label" title={e.command}>{labelFor(e.command)}</td>
             <td class="combo">
@@ -174,17 +175,19 @@
                 <InlineMessage variant="error" detail={rowError.detail}>{rowError.text}</InlineMessage>
               {/if}
             </td>
-            <td class="default">{keysToLabel(defaultFor(e.command))}</td>
+            <!-- `undefined`: a command newer than tools/gen-command-defaults.py's
+                 last run, so its default is not known — not "unbound". -->
+            <td class="default">{def === undefined ? "—" : keysToLabel(def)}</td>
             <td>
               <!-- Was `.mini`, and so invisible: it sits outside any `.row`. -->
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                disabled={defaultFor(e.command) === null}
-                disabledReason="EVE's default for this command hasn't been captured yet"
-                title="Reset to EVE's default ({keysToLabel(defaultFor(e.command))})"
-                onclick={() => commit(e.command, defaultFor(e.command))}>↺</Button>
+                disabled={def === undefined}
+                disabledReason="EVE's default for this command isn't known to this version of the editor"
+                title="Reset to EVE's default ({keysToLabel(def ?? null)})"
+                onclick={() => commit(e.command, def ?? null)}>↺</Button>
             </td>
           </tr>
         {/each}

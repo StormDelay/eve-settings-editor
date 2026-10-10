@@ -1,4 +1,4 @@
-// Command labels, groups and (eventually) factory defaults for the keybinding
+// Command labels, groups and factory defaults for the keybinding
 // editor. Labels come from EVE's own localization data via
 // tools/gen-command-names.py; see docs/superpowers/specs/2026-07-26-keybindings-editor-design.md §3.
 import names from "./data/command-names.json" with { type: "json" };
@@ -7,7 +7,7 @@ import vkLabels from "./data/vk-labels.json" with { type: "json" };
 
 type NameEntry = { label: string; group: string };
 const NAMES = names as Record<string, NameEntry>;
-const DEFAULTS = defaults as Record<string, number[]>;
+const DEFAULTS = defaults as Record<string, number[] | null>;
 
 /** Display order for the grouped list. Anything unlisted sorts last. */
 export const GROUP_ORDER = [
@@ -32,20 +32,13 @@ export function groupFor(command: string): string {
   return NAMES[command]?.group ?? "Misc";
 }
 
-/** EVE's factory binding, or null. The catalog ships EMPTY, and **cannot be
- *  filled from a settings file** — confirmed in-game 2026-07-27: "Reset to
- *  default" writes `customCmds: {}`, an *empty* dict. `customCmds` only ever
- *  holds overrides, so a reset erases the table rather than spelling out the
- *  defaults, and there is nothing to capture. (The design spec's §4 plan of
- *  capturing them from a reset-to-default logout is therefore dead — do not
- *  retry it.)
- *
- *  Fill this by transcribing EVE's keybinding screen instead. Partial data is
- *  fine and is the expected way in: this returns null per command, so each
- *  entry added lights up its own Default cell and per-row reset button while
- *  every other row is unaffected. */
-export function defaultFor(command: string): number[] | null {
-  return DEFAULTS[command] ?? null;
+/** EVE's factory binding: the keys, `null` for a command EVE ships unbound,
+ *  or `undefined` for one the table does not know (a client update added it).
+ *  Not in any settings file — "Reset to default" writes `customCmds: {}`,
+ *  because `customCmds` only ever holds overrides — so the table is generated
+ *  from the client's own code by tools/gen-command-defaults.py. */
+export function defaultFor(command: string): number[] | null | undefined {
+  return DEFAULTS[command];
 }
 
 function decamel(command: string): string {

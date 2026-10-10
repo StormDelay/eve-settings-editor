@@ -1,8 +1,9 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
 import { labelFor, groupFor, GROUP_ORDER, defaultFor } from "./keybinds.ts";
+import defaults from "./data/command-defaults.json" with { type: "json" };
 import names from "./data/command-names.json" with { type: "json" };
 
-import { check } from "./test/check.ts";
+import { check, eq } from "./test/check.ts";
 
 check("resolves a client-provided label", labelFor("CmdActivateHighPowerSlot1") === "Activate High Power Slot 1");
 check("resolves a fleet broadcast label", labelFor("CmdFleetBroadcast_HealArmor") === "Broadcast: Need Armor");
@@ -23,7 +24,15 @@ check("windows group", groupFor("OpenFitting") === "Windows");
 check("unknown falls back to Misc", groupFor("CmdSomeFutureThing") === "Misc");
 check("every group used is in GROUP_ORDER", GROUP_ORDER.includes(groupFor("CmdActivateHighPowerSlot1")));
 
-check("defaults are empty until captured", defaultFor("CmdActivateHighPowerSlot1") === null);
+// Spot checks against the live client's keybinding screen.
+check("F1 activates high slot 1", eq(defaultFor("CmdActivateHighPowerSlot1"), [112]));
+check("Alt+F1 activates mid slot 1", eq(defaultFor("CmdActivateMediumPowerSlot1"), [18, 112]));
+check("Ctrl+R reloads", eq(defaultFor("CmdReloadAmmo"), [17, 82]));
+check("modifiers come in EVE's stored order", (Object.values(defaults) as (number[] | null)[]).every(
+  (k) => !k || eq(k.filter((c) => [17, 18, 16].includes(c)), [17, 18, 16].filter((c) => k.includes(c)))));
+check("a command EVE ships unbound is null", defaultFor("CmdExitStation") === null);
+check("a command the table lacks is undefined", defaultFor("CmdSomeFutureThing") === undefined);
+check("locked commands are not listed", defaultFor("OnEsc") === undefined);
 
 // The catalog is generated, so a bad regen or merge can silently shrink it and
 // every probe above still passes as long as its handful of keys survive. 101 is
