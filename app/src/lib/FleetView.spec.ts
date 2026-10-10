@@ -298,7 +298,9 @@ describe("the formation panel", () => {
   test("shows the three numbers and the finder toggle, defaults where absent", async () => {
     mount();
     const p = await panel("Formation");
-    expect((within(p).getByLabelText("Formation") as HTMLInputElement).value).toBe("0");
+    const formation = within(p).getByLabelText("Formation") as HTMLSelectElement;
+    expect(formation.value).toBe("0");
+    expect(formation.selectedOptions[0].textContent).toBe("Point");
     expect((within(p).getByLabelText("Size") as HTMLInputElement).value).toBe("20000");
     expect((within(p).getByLabelText("Spacing") as HTMLInputElement).value).toBe("2000");
     expect((within(p).getByLabelText("Show only my corp, alliance and high-standing fleets") as HTMLInputElement).checked).toBe(true);
@@ -315,6 +317,20 @@ describe("the formation panel", () => {
     await fireEvent.click(within(p).getByLabelText("Show only my corp, alliance and high-standing fleets"));
     await waitFor(() => expect(calls.of("set_fleet_field").length).toBe(2));
     expect(calls.of("set_fleet_field")[1].args).toEqual({ name: "finder_group_only", text: "0" });
+  });
+
+  test("the formation is picked by name and written as its id", async () => {
+    mount();
+    const p = await panel("Formation");
+    await fireEvent.change(within(p).getByLabelText("Formation"), { target: { value: "4" } });
+    await waitFor(() => expect(calls.only("set_fleet_field").args).toEqual({ name: "formation", text: "4" }));
+  });
+
+  test("a formation id outside EVE's six still shows, as its raw id", async () => {
+    mount({ fields: FLEET.fields.map((f) => (f.name === "formation" ? { ...f, value: "9" } : f)) });
+    const formation = within(await panel("Formation")).getByLabelText("Formation") as HTMLSelectElement;
+    expect(formation.value).toBe("9");
+    expect(formation.selectedOptions[0].textContent).toBe("9");
   });
 
   test("a refused number edit reports on this panel and puts the field back", async () => {

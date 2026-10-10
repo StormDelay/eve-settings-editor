@@ -1013,7 +1013,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "fleet_get",
-            description: "The fleet settings across both files: fields (broadcast toggles, formation, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set|unreadable, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
+            description: "The fleet settings across both files: fields (broadcast toggles, formation — 0 Point, 1 Sphere, 2 Plane, 3 Wall, 4 Arrow, 5 Relative —, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set|unreadable, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage, errText, type Fleet, type FoundCharacter, type HudEntry, type Rgb } from "./api";
-  import { BROADCASTS, SHOW_OWN, listenField } from "./fleet";
+  import { BROADCASTS, FORMATIONS, SHOW_OWN, listenField } from "./fleet";
   import { hexToRgb, rgbToHex, snapToPalette, UNSET_HEX } from "./colour";
   import { names, resolveNames } from "./names.svelte";
   import { toast } from "./ui/toasts.svelte";
@@ -162,8 +162,19 @@
     }
     el.value = shown(name);
   };
+  // A value outside EVE's six (a newer client's) stays visible as its raw id.
+  const formationOptions = $derived.by(() => {
+    const v = shown("formation");
+    const known = FORMATIONS.map((f) => ({ value: f.id, label: f.label }));
+    return known.some((o) => o.value === v) ? known : [...known, { value: v, label: v }];
+  });
+  // Same put-back as `numberEdit`: a refused pick must not stay on screen.
+  const formationEdit = async (ev: Event) => {
+    const el = ev.target as HTMLSelectElement;
+    await setFormationField("formation", el.value);
+    el.value = shown("formation");
+  };
   const NUMBERS: { name: string; label: string; step: number }[] = [
-    { name: "formation", label: "Formation", step: 1 },
     { name: "formation_size", label: "Size", step: 100 },
     { name: "formation_spacing", label: "Spacing", step: 100 },
   ];
@@ -289,13 +300,20 @@
              control in the label column on some rows and a caption in it on
              others, so nothing lines up. A bare Field plus a leading label
              span keeps every control in the same track. -->
+        <div class="row">
+          <span class="label">Formation</span>
+          <Field kind="select" ariaLabel="Formation" width="8rem" options={formationOptions}
+            value={shown("formation")} disabled={unavailable("formation")} disabledReason={NOT_EDITABLE}
+            onchange={formationEdit} />
+          <span></span>
+        </div>
         {#each NUMBERS as n (n.name)}
           <div class="row">
             <span class="label">{n.label}</span>
             <Field kind="number" ariaLabel={n.label} min={0} step={n.step} width="8rem"
               value={shown(n.name)} disabled={unavailable(n.name)} disabledReason={NOT_EDITABLE}
               onchange={numberEdit(n.name)} />
-            {#if n.name !== "formation"}<span class="meta">m</span>{:else}<span></span>{/if}
+            <span class="meta">m</span>
           </div>
         {/each}
         <div class="row">

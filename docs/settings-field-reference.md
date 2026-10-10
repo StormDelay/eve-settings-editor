@@ -244,7 +244,8 @@ ordered list of panel/mode pairs.
 `sensorSuiteEnabled` (332) `Bool`.
 
 **Fleet.** Modelled by the app's Fleet view (`fleet.rs`): `setFleetFormation`
-(280) `Int`, `setFleetFormationSize` (280) `Int`, `setFleetFormationSpacing`
+(280) `Int` — 0 Point, 1 Sphere, 2 Plane, 3 Wall, 4 Arrow, 5 Relative
+(the client's `evefleet/const.py`), `setFleetFormationSize` (280) `Int`, `setFleetFormationSpacing`
 (278) `Int`, `fleet_watchlistcolors` (177) dict `{<charID>: (r, g, b)}` — all
 keys `Int` so far, `Long` once ids pass 2³¹,
 `fleetfinder_showGroupAndHighStandingsFleets` (292) `Int`. Not modelled:
