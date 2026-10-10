@@ -68,24 +68,45 @@ fn child_inner<'a>(win: &'a mut Vec<(Value, Value)>, name: &[u8]) -> &'a mut Vec
     }
 }
 
+/// Take `member` out of its stack. When that leaves a single member, it comes
+/// out too and the stack is gone, as the client does it (`WindowStack.RemoveWnd`
+/// in carbonui/window/stack.py): it releases the last window where the stack
+/// stood — members already share the stack's rect — unless the stack is
+/// collapsed, which keeps its one member. The emptied frame keeps its geometry,
+/// as in the client; `delete_orphan_frames` clears those.
 pub fn unstack(v: &mut Value, member: &str) -> Result<(), StackError> {
     inline_all(v);
     let win = windows_mut(v)?;
     let mb = member.as_bytes();
     let sw = child_inner(win, b"stacksWindows");
-    let before = sw.len();
-    sw.retain(|(k, _)| !is_b(k, mb));
-    if sw.len() == before {
+    let Some(i) = sw.iter().position(|(k, _)| is_b(k, mb)) else {
         return Err(StackError::NotStacked { member: member.to_string() });
+    };
+    let container = decode_id(&sw.remove(i).1);
+    let rest: Vec<String> = sw.iter().filter(|(_, c)| decode_id(c) == container).map(|(k, _)| decode_id(k)).collect();
+    let mut leaving = vec![member.to_string()];
+    if let [last] = rest.as_slice() {
+        if !flag_on(win, "collapsedWindows", &container) {
+            child_inner(win, b"stacksWindows").retain(|(k, _)| decode_id(k) != *last);
+            leaving.push(last.clone());
+        }
     }
-    // Remove the member from every preferredIdxInStack3[container] dict.
+    // Remove the leavers from every preferredIdxInStack3[container] dict.
     let pref = child_inner(win, b"preferredIdxInStack3");
     for (_, inner) in pref.iter_mut() {
         if let Value::Dict(d) = inner {
-            d.retain(|(k, _)| !is_b(k, mb));
+            d.retain(|(k, _)| !leaving.contains(&decode_id(k)));
         }
     }
     Ok(())
+}
+
+/// `windows[flags][id]` is `True`. Read-only: never creates the flag dict.
+fn flag_on(win: &[(Value, Value)], flags: &str, id: &str) -> bool {
+    win.iter()
+        .find(|(k, _)| is_b(k, flags.as_bytes()))
+        .and_then(|(_, d)| dict_of(d))
+        .is_some_and(|d| d.iter().any(|(k, v)| decode_id(k) == id && *v == Value::Bool(true)))
 }
 
 /// Delete every orphaned stack frame, returning the ids removed.
@@ -342,15 +363,46 @@ mod tests {
         d.iter().map(|(k, _)| match k { Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(), _ => String::new() }).collect()
     }
 
+    fn pref_of(v: &Value, container: &[u8]) -> Vec<String> {
+        let (_, cdict) = pref(v).iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == container)).unwrap();
+        let Value::Dict(inner) = cdict else { panic!() };
+        keys(inner)
+    }
+
     #[test]
     fn unstack_removes_the_member_from_both_dicts() {
         let mut v = root();
+        add_to_stack(&mut v, "m3", "C").unwrap();
+        unstack(&mut v, "m1").unwrap();
+        assert_eq!(keys(sw(&v)), vec!["m2".to_string(), "m3".to_string()]);
+        assert_eq!(pref_of(&v, b"C"), vec!["m2".to_string(), "m3".to_string()]);
+    }
+
+    #[test]
+    fn unstacking_the_second_to_last_member_dissolves_the_stack() {
+        // The client releases the last window too (WindowStack.RemoveWnd).
+        let mut v = root();
+        unstack(&mut v, "m1").unwrap();
+        assert!(keys(sw(&v)).is_empty());
+        assert!(pref_of(&v, b"C").is_empty());
+    }
+
+    #[test]
+    fn a_collapsed_stack_keeps_its_last_member() {
+        let mut v = root();
+        win_mut(&mut v).push((b("collapsedWindows"), Value::Tuple(vec![ts(), Value::Dict(vec![(b("C"), Value::Bool(true))])])));
         unstack(&mut v, "m1").unwrap();
         assert_eq!(keys(sw(&v)), vec!["m2".to_string()]);
-        // preferredIdxInStack3[C] no longer lists m1.
-        let (_, cdict) = pref(&v).iter().find(|(k, _)| matches!(k, Value::Bytes(b) if b == b"C")).unwrap();
-        let Value::Dict(inner) = cdict else { panic!() };
-        assert_eq!(keys(inner), vec!["m2".to_string()]);
+        assert_eq!(pref_of(&v, b"C"), vec!["m2".to_string()]);
+    }
+
+    #[test]
+    fn dissolving_one_stack_leaves_another_alone() {
+        let mut v = root();
+        add_to_stack(&mut v, "n1", "D").unwrap();
+        add_to_stack(&mut v, "n2", "D").unwrap();
+        unstack(&mut v, "m1").unwrap();
+        assert_eq!(keys(sw(&v)), vec!["n1".to_string(), "n2".to_string()]);
     }
 
     #[test]
