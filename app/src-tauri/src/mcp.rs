@@ -160,11 +160,12 @@ fn vk_code(name: &str) -> Option<i64> {
 /// Command → (label, group), the UI's `command-names.json`.
 const COMMAND_NAMES_JSON: &str = include_str!("../../src/lib/data/command-names.json");
 
+/// A command with no `label` in the JSON is shown by its raw name.
 fn command_names() -> HashMap<String, (String, String)> {
     #[derive(serde::Deserialize)]
-    struct Entry { label: String, group: String }
+    struct Entry { label: Option<String>, group: String }
     let raw: HashMap<String, Entry> = serde_json::from_str(COMMAND_NAMES_JSON).expect("command-names.json");
-    raw.into_iter().map(|(k, e)| (k, (e.label, e.group))).collect()
+    raw.into_iter().map(|(k, e)| (e.label.unwrap_or_else(|| k.clone()), e.group, k)).map(|(l, g, k)| (k, (l, g))).collect()
 }
 
 /// `[17, 81]` → "Ctrl+Q", as `keybinds.ts`'s `keysToLabel` renders it.
@@ -188,6 +189,7 @@ fn keybinds_view(k: &settings_model::Keybinds) -> Value {
         json!({
             "command": e.command, "label": label, "group": group,
             "keys": e.keys, "combo": e.keys.as_deref().map(combo_label), "malformed": e.malformed,
+            "custom": e.custom,
         })
     }).collect();
     json!({ "entries": entries, "available": k.available })
@@ -986,7 +988,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "keybinds_get",
-            description: "Returns {entries: [...], available}: each entry is {command, label, group, keys, combo, malformed} where combo reads like \"Ctrl+Q\" and keys are the stored codes; available is false when the account never opened the in-game keybinding screen. Needs the account file open. Key names for keybind_set are the ones you see in combo.",
+            description: "Returns {entries: [...], available}: every rebindable command, each {command, label, group, keys, combo, malformed, custom}. keys/combo (\"Ctrl+Q\") are what EVE will use: the file's binding when custom is true, else EVE's default (null = unbound). group is the in-game keybinding tab. available is false only when the account file has no keybinding table. Needs the account file open. Key names for keybind_set are the ones you see in combo.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -1013,7 +1015,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "fleet_get",
-            description: "The fleet settings across both files: fields (broadcast toggles, formation, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set|unreadable, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
+            description: "The fleet settings across both files: fields (broadcast toggles, formation — 0 Point, 1 Sphere, 2 Plane, 3 Wall, 4 Arrow, 5 Relative —, fleet finder — {name, kind, value, default, scope}), colours per broadcast type ({broadcast, state: absent|cleared|set|unreadable, rgb, default}), the watch list ({char_id, name, rgb}) and EVE's nine-colour palette. Needs at least one file open; char_open/user_open say which sides are present.",
             schema: || obj(json!({}), &[]),
         },
         ToolDef {
@@ -3526,6 +3528,24 @@ mod tests {
         let ap = e.iter().find(|x| x["command"] == "CmdToggleAutopilot").unwrap();
         assert_eq!(ap["combo"], Value::Null);
         assert_eq!(ap["keys"], Value::Null);
+    }
+
+    /// The shipped defaults (command-defaults.json): CmdReloadAmmo is Ctrl+R
+    /// by default and the fixture file has no row for it.
+    #[test]
+    fn a_command_the_file_lacks_shows_its_default_and_can_lose_it() {
+        let (s, _) = open_user(&keybinds_user_bytes());
+        let find = |v: &Value, path: &[&str]| {
+            let mut e = v;
+            for p in path { e = &e[*p]; }
+            e.as_array().unwrap().iter().find(|x| x["command"] == "CmdReloadAmmo").unwrap().clone()
+        };
+        let reload = find(&s.call("keybinds_get", &Args::new()).unwrap(), &["entries"]);
+        assert_eq!((reload["combo"].clone(), reload["custom"].clone()), (json!("Ctrl+R"), json!(false)));
+        let v = s.call("keybind_set", &args(json!({ "command": "CmdToggleAutopilot", "key": "r", "ctrl": true }))).unwrap();
+        assert_eq!(v["stolen"], json!(["CmdReloadAmmo"]));
+        let reload = find(&v, &["keybinds", "entries"]);
+        assert_eq!((reload["keys"].clone(), reload["custom"].clone()), (Value::Null, json!(true)));
     }
 
     #[test]

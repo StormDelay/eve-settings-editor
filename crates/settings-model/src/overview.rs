@@ -68,7 +68,7 @@ pub struct Appearance {
     /// name, since `overview_pack::color_name` matches exactly. Build data
     /// rather than account data, carried on the payload the appearance editor
     /// already loads so it can mark a colour a pack export would drop.
-    /// INCOMPLETE — 6 of EVE's 8 names; see `overview_pack::PALETTE`.
+    /// All twelve of the client's names; see `overview_pack::PALETTE`.
     pub palette: Vec<(&'static str, [f64; 4])>,
     pub bools: Vec<(String, bool)>,
     /// True when the file carried none of the four state keys — the account has

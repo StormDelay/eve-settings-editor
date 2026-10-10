@@ -10,6 +10,8 @@
 //!   2. The root `cmd` key can be a `Ref`/`Shared` like its siblings, so the
 //!      lookup resolves through `effective` rather than matching Bytes.
 
+use std::collections::BTreeMap;
+
 use blue_marshal::Value;
 use serde::Serialize;
 
@@ -21,6 +23,12 @@ pub const MOD_ALT: i64 = 18;
 pub const MOD_SHIFT: i64 = 16;
 pub(crate) const MODIFIERS: [i64; 3] = [MOD_CTRL, MOD_ALT, MOD_SHIFT];
 
+/// EVE's factory bindings, every rebindable command: `Some(keys)`, or `None`
+/// for one it ships unbound. Not in any settings file — the app generates it
+/// from the client's code (`tools/gen-commands.py`). A command in this map
+/// may be written to `customCmds` even when the file lacks it, as EVE does.
+pub type Defaults = BTreeMap<String, Option<Vec<i64>>>;
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct KeybindEntry {
     pub command: String,
@@ -30,18 +38,23 @@ pub struct KeybindEntry {
     /// `keys: None` so the row reads honestly instead of silently blank; the
     /// raw value survives save untouched unless the user rebinds the row.
     pub malformed: bool,
+    /// The file stores this command. False when `keys` is EVE's default.
+    pub custom: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Keybinds {
     pub entries: Vec<KeybindEntry>,
-    /// False when there is no account file, no `cmd -> customCmds`, or the
-    /// table is empty — the last is a real state for an account that has never
-    /// opened the in-game keybinding screen (spec §2.5).
+    /// False when there is no account file or no `cmd -> customCmds`. An
+    /// empty table is available: every command is at its default.
     pub available: bool,
 }
 
-pub fn project_keybinds(user: Option<&Value>) -> Keybinds {
+/// Every command's effective binding: the file's `customCmds` rows, then each
+/// `defaults` command the file lacks, at its default — unless a stored binding
+/// already uses that combination, in which case the client drops the default
+/// on load (`CommandMap.AddCommand`) and the command is unbound.
+pub fn project_keybinds(user: Option<&Value>, defaults: &Defaults) -> Keybinds {
     let empty = Keybinds { entries: Vec::new(), available: false };
     let Some(user) = user else { return empty };
 
@@ -51,17 +64,25 @@ pub fn project_keybinds(user: Option<&Value>) -> Keybinds {
     let Some(cmd) = find_child(root, b"cmd", &sh).and_then(|v| as_dict(v, &sh)) else { return empty };
     let Some(table) = find_child(cmd, b"customCmds", &sh).and_then(|v| as_dict(v, &sh)) else { return empty };
 
-    let entries: Vec<KeybindEntry> = table
+    let mut entries: Vec<KeybindEntry> = table
         .iter()
         .filter_map(|(k, v)| {
             let command = text(k, &sh)?;
             let (keys, malformed) = read_binding(effective(v, &sh), &sh);
-            Some(KeybindEntry { command, keys, malformed })
+            Some(KeybindEntry { command, keys, malformed, custom: true })
         })
         .collect();
+    let stored: Vec<Vec<i64>> = entries.iter().filter_map(|e| e.keys.clone()).collect();
+    let in_file: Vec<String> = entries.iter().map(|e| e.command.clone()).collect();
+    for (command, default) in defaults {
+        if in_file.contains(command) {
+            continue;
+        }
+        let keys = default.clone().filter(|d| !stored.contains(d));
+        entries.push(KeybindEntry { command: command.clone(), keys, malformed: false, custom: false });
+    }
 
-    let available = !entries.is_empty();
-    Keybinds { entries, available }
+    Keybinds { entries, available: true }
 }
 
 /// Values are reported exactly as stored — no re-canonicalisation. The corpus
@@ -88,8 +109,7 @@ fn read_binding(v: &Value, sh: &SharedTable) -> (Option<Vec<i64>>, bool) {
 pub enum KeybindError {
     /// No `cmd -> customCmds` in this file.
     NoTable,
-    /// This client build's table has no such command (spec §2.4 — the table is
-    /// the command set; the editor never mints rows).
+    /// Neither the file nor the defaults know this command.
     UnknownCommand,
     /// No non-modifier code supplied.
     NoKey,
@@ -99,8 +119,12 @@ pub enum KeybindError {
 }
 
 /// Bind `command` to `keys` (or unbind it with `None`), stealing the
-/// combination from any other command that holds it — which is what EVE does,
-/// and why no corpus file contains a duplicate.
+/// combination from any other command that holds it — which is what EVE does
+/// (`ClearMappedCmd` writes the loser's `None`), and why no corpus file
+/// contains a duplicate. A loser holding it only by default gets a `None` row.
+///
+/// `command` must be in the file or in `defaults`; a known command the file
+/// lacks gets a row, as the client's `RemapCommand` adds one.
 ///
 /// Returns the commands whose binding was cleared, so the caller can say what
 /// it took. Leaves the `customCmds` timestamp untouched.
@@ -108,19 +132,23 @@ pub fn set_keybind(
     user: &mut Value,
     command: &str,
     keys: Option<Vec<i64>>,
+    defaults: &Defaults,
 ) -> Result<Vec<String>, KeybindError> {
     // Validate BEFORE mutating: a rejected write must change nothing.
     let canon = keys.map(|k| canonical(&k)).transpose()?;
 
     inline_all(user);
     let table = custom_cmds_mut(user).ok_or(KeybindError::NoTable)?;
-    if !table.iter().any(|(k, _)| is_bytes(k, command.as_bytes())) {
+    let in_file = |t: &Entries, name: &str| t.iter().any(|(k, _)| is_bytes(k, name.as_bytes()));
+    if !in_file(table, command) && !defaults.contains_key(command) {
         return Err(KeybindError::UnknownCommand);
     }
 
     let mut stolen = Vec::new();
     if let Some(c) = &canon {
         let want = Value::Tuple(c.iter().map(|&n| Value::Int(n)).collect());
+        // A stored binding on this combo already overrides every default of it.
+        let defaults_hold_it = !table.iter().any(|(_, v)| *v == want);
         for (k, v) in table.iter_mut() {
             if is_bytes(k, command.as_bytes()) || *v != want {
                 continue;
@@ -130,12 +158,23 @@ pub fn set_keybind(
             }
             *v = Value::None;
         }
+        if defaults_hold_it {
+            for (name, d) in defaults {
+                if name != command && d.as_ref() == Some(c) && !in_file(table, name) {
+                    table.push((Value::Bytes(name.as_bytes().to_vec()), Value::None));
+                    stolen.push(name.clone());
+                }
+            }
+        }
     }
 
+    if !in_file(table, command) {
+        table.push((Value::Bytes(command.as_bytes().to_vec()), Value::None));
+    }
     let (_, slot) = table
         .iter_mut()
         .find(|(k, _)| is_bytes(k, command.as_bytes()))
-        .expect("presence checked above");
+        .expect("row ensured above");
     *slot = match &canon {
         Some(c) => Value::Tuple(c.iter().map(|&n| Value::Int(n)).collect()),
         None => Value::None,
@@ -202,7 +241,7 @@ mod tests {
 
     #[test]
     fn projects_every_command_in_file_order() {
-        let k = project_keybinds(Some(&user_with_binds()));
+        let k = project_keybinds(Some(&user_with_binds()), &Default::default());
         assert!(k.available);
         assert_eq!(k.entries.len(), 4);
         assert_eq!(k.entries[0].command, "CmdActivateHighPowerSlot1");
@@ -211,7 +250,7 @@ mod tests {
 
     #[test]
     fn projects_bound_and_unbound_values() {
-        let k = project_keybinds(Some(&user_with_binds()));
+        let k = project_keybinds(Some(&user_with_binds()), &Default::default());
         assert_eq!(entry(&k, "CmdActivateHighPowerSlot1").keys, Some(vec![81]));
         assert_eq!(entry(&k, "CmdActivateMediumPowerSlot1").keys, Some(vec![17, 83]));
         assert_eq!(entry(&k, "CmdDronesEngage").keys, Some(vec![18, 16, 68]));
@@ -222,22 +261,78 @@ mod tests {
 
     #[test]
     fn no_file_and_no_section_are_unavailable() {
-        assert!(!project_keybinds(None).available);
-        assert!(!project_keybinds(Some(&Value::Dict(vec![]))).available);
+        assert!(!project_keybinds(None, &Default::default()).available);
+        assert!(!project_keybinds(Some(&Value::Dict(vec![])), &Default::default()).available);
     }
 
-    /// Spec §2.5: a live account that never opened the keybinding screen has
-    /// the section but an EMPTY table. That drives the view's empty state.
+    /// An account that never opened the in-game keybinding screen carries the
+    /// section but an EMPTY table: every command is at its default.
     #[test]
-    fn an_empty_table_is_unavailable() {
+    fn an_empty_table_shows_every_default() {
         let cmd = Value::Dict(vec![(
             b("customCmds"),
             Value::Tuple(vec![ts(), Value::Dict(vec![])]),
         )]);
         let user = Value::Dict(vec![(b("cmd"), cmd)]);
-        let k = project_keybinds(Some(&user));
-        assert!(!k.available);
-        assert!(k.entries.is_empty());
+        let k = project_keybinds(Some(&user), &defaults());
+        assert!(k.available);
+        assert_eq!(entry(&k, "CmdReloadAmmo").keys, Some(vec![17, 82]));
+        assert!(!entry(&k, "CmdReloadAmmo").custom);
+    }
+
+    /// Two commands EVE binds by default, one it ships unbound, and one the
+    /// fixture file also stores (CmdToggleAutopilot, as None).
+    fn defaults() -> Defaults {
+        [
+            ("CmdReloadAmmo", Some(vec![17, 82])),
+            ("CmdApproachItem", Some(vec![81])),
+            ("CmdExitStation", None),
+            ("CmdToggleAutopilot", Some(vec![17, 83])),
+        ]
+        .into_iter()
+        .map(|(c, k)| (c.to_string(), k))
+        .collect()
+    }
+
+    #[test]
+    fn a_command_the_file_lacks_shows_at_its_default() {
+        let k = project_keybinds(Some(&user_with_binds()), &defaults());
+        let reload = entry(&k, "CmdReloadAmmo");
+        assert_eq!((reload.keys.clone(), reload.custom), (Some(vec![17, 82]), false));
+        assert_eq!(entry(&k, "CmdExitStation").keys, None);
+        // The file's row wins over the default.
+        let autopilot = entry(&k, "CmdToggleAutopilot");
+        assert_eq!((autopilot.keys.clone(), autopilot.custom), (None, true));
+    }
+
+    #[test]
+    fn a_default_another_binding_already_uses_is_dropped() {
+        // CmdActivateHighPowerSlot1 is stored as Q, CmdApproachItem's default:
+        // the client drops that default on load (CommandMap.AddCommand).
+        let k = project_keybinds(Some(&user_with_binds()), &defaults());
+        assert_eq!(entry(&k, "CmdApproachItem").keys, None);
+    }
+
+    #[test]
+    fn binding_a_command_the_file_lacks_adds_its_row() {
+        let mut user = user_with_binds();
+        set_keybind(&mut user, "CmdExitStation", Some(vec![18, 88]), &defaults()).unwrap();
+        let k = project_keybinds(Some(&user), &defaults());
+        let e = entry(&k, "CmdExitStation");
+        assert_eq!((e.keys.clone(), e.custom), (Some(vec![18, 88]), true));
+    }
+
+    #[test]
+    fn taking_a_default_holders_combo_writes_its_none() {
+        // Ctrl+R is CmdReloadAmmo's default and the file has no row for it: EVE
+        // clears the holder with a None row, so it stays unbound even if the
+        // new owner later moves.
+        let mut user = user_with_binds();
+        let stolen = set_keybind(&mut user, "CmdDronesEngage", Some(vec![17, 82]), &defaults()).unwrap();
+        assert_eq!(stolen, vec!["CmdReloadAmmo".to_string()]);
+        let k = project_keybinds(Some(&user), &defaults());
+        let reload = entry(&k, "CmdReloadAmmo");
+        assert_eq!((reload.keys.clone(), reload.custom), (None, true));
     }
 
     /// Real account files Ref/Shared their repeated root keys — the trap that
@@ -251,7 +346,7 @@ mod tests {
         ]);
         let cmd = Value::Dict(vec![(b("customCmds"), Value::Tuple(vec![ts(), table]))]);
         let user = Value::Dict(vec![(Value::Shared { slot: 9, value: Box::new(b("cmd")) }, cmd)]);
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert!(k.available, "a Ref-keyed section must still resolve");
         assert_eq!(entry(&k, "CmdApproachItem").keys, Some(vec![65]));
         assert_eq!(entry(&k, "CmdWarpToItem").keys, Some(vec![83]));
@@ -264,7 +359,7 @@ mod tests {
             (b("CmdEmptyTuple"), Value::Tuple(vec![])),
         ]);
         let cmd = Value::Dict(vec![(b("customCmds"), Value::Tuple(vec![ts(), table]))]);
-        let k = project_keybinds(Some(&Value::Dict(vec![(b("cmd"), cmd)])));
+        let k = project_keybinds(Some(&Value::Dict(vec![(b("cmd"), cmd)])), &Default::default());
         assert!(entry(&k, "CmdWeird").malformed);
         assert_eq!(entry(&k, "CmdWeird").keys, None);
         assert!(entry(&k, "CmdEmptyTuple").malformed);
@@ -273,17 +368,17 @@ mod tests {
     #[test]
     fn binds_an_unbound_command() {
         let mut user = user_with_binds();
-        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90])).unwrap();
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90]), &Default::default()).unwrap();
         assert!(stolen.is_empty());
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![17, 90]));
     }
 
     #[test]
     fn unbinding_writes_none() {
         let mut user = user_with_binds();
-        set_keybind(&mut user, "CmdActivateHighPowerSlot1", None).unwrap();
-        let k = project_keybinds(Some(&user));
+        set_keybind(&mut user, "CmdActivateHighPowerSlot1", None, &Default::default()).unwrap();
+        let k = project_keybinds(Some(&user), &Default::default());
         let e = entry(&k, "CmdActivateHighPowerSlot1");
         assert_eq!(e.keys, None);
         assert!(!e.malformed, "an unbound leaf is None, not junk");
@@ -295,9 +390,9 @@ mod tests {
     #[test]
     fn rebinding_a_taken_combo_steals_it() {
         let mut user = user_with_binds();
-        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81])).unwrap();
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81]), &Default::default()).unwrap();
         assert_eq!(stolen, vec!["CmdActivateHighPowerSlot1"]);
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![81]));
         assert_eq!(entry(&k, "CmdActivateHighPowerSlot1").keys, None, "previous owner cleared");
     }
@@ -305,9 +400,9 @@ mod tests {
     #[test]
     fn rebinding_a_command_to_its_own_combo_is_a_noop() {
         let mut user = user_with_binds();
-        let stolen = set_keybind(&mut user, "CmdActivateHighPowerSlot1", Some(vec![81])).unwrap();
+        let stolen = set_keybind(&mut user, "CmdActivateHighPowerSlot1", Some(vec![81]), &Default::default()).unwrap();
         assert!(stolen.is_empty(), "a command never steals from itself");
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(entry(&k, "CmdActivateHighPowerSlot1").keys, Some(vec![81]));
     }
 
@@ -315,8 +410,8 @@ mod tests {
     fn modifier_order_is_canonicalised_to_ctrl_alt_shift() {
         let mut user = user_with_binds();
         // Supplied Shift, Alt, Ctrl, key — must be stored 17, 18, 16, key.
-        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![16, 18, 17, 68])).unwrap();
-        let k = project_keybinds(Some(&user));
+        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![16, 18, 17, 68]), &Default::default()).unwrap();
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(entry(&k, "CmdToggleAutopilot").keys, Some(vec![17, 18, 16, 68]));
     }
 
@@ -325,22 +420,22 @@ mod tests {
         let mut user = user_with_binds();
         // CmdActivateMediumPowerSlot1 holds (17, 83). Supplying (83, 17) must
         // canonicalise to (17, 83) and therefore steal it.
-        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![83, 17])).unwrap();
+        let stolen = set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![83, 17]), &Default::default()).unwrap();
         assert_eq!(stolen, vec!["CmdActivateMediumPowerSlot1"]);
     }
 
     #[test]
     fn rejects_combos_that_break_the_corpus_invariant() {
         let mut user = user_with_binds();
-        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![])), Err(KeybindError::NoKey));
-        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17])), Err(KeybindError::NoKey));
-        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81, 83])), Err(KeybindError::MultipleKeys));
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![]), &Default::default()), Err(KeybindError::NoKey));
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17]), &Default::default()), Err(KeybindError::NoKey));
+        assert_eq!(set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![81, 83]), &Default::default()), Err(KeybindError::MultipleKeys));
         assert_eq!(
-            set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 17, 81])),
+            set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 17, 81]), &Default::default()),
             Err(KeybindError::DuplicateModifier)
         );
         // A rejected write changes nothing.
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(entry(&k, "CmdToggleAutopilot").keys, None);
     }
 
@@ -348,12 +443,12 @@ mod tests {
     fn rejects_an_unknown_command_and_a_missing_table() {
         let mut user = user_with_binds();
         assert_eq!(
-            set_keybind(&mut user, "CmdNotInThisClient", Some(vec![81])),
+            set_keybind(&mut user, "CmdNotInThisClient", Some(vec![81]), &Default::default()),
             Err(KeybindError::UnknownCommand)
         );
         // A rejected write changes nothing. The attempted bind to [81] would have stolen
         // CmdActivateHighPowerSlot1's binding if the existence check had run after stealing.
-        let k = project_keybinds(Some(&user));
+        let k = project_keybinds(Some(&user), &Default::default());
         assert_eq!(
             entry(&k, "CmdActivateHighPowerSlot1").keys,
             Some(vec![81]),
@@ -361,7 +456,7 @@ mod tests {
         );
 
         let mut bare = Value::Dict(vec![]);
-        assert_eq!(set_keybind(&mut bare, "CmdAnything", None), Err(KeybindError::NoTable));
+        assert_eq!(set_keybind(&mut bare, "CmdAnything", None, &Default::default()), Err(KeybindError::NoTable));
     }
 
     /// GLOBAL CONSTRAINT. Five shipped editors preserve an existing wrapper's
@@ -369,7 +464,7 @@ mod tests {
     #[test]
     fn a_write_preserves_the_table_timestamp_and_never_wraps_a_leaf() {
         let mut user = user_with_binds();
-        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90])).unwrap();
+        set_keybind(&mut user, "CmdToggleAutopilot", Some(vec![17, 90]), &Default::default()).unwrap();
 
         let Value::Dict(root) = &user else { panic!("root is a dict") };
         let (_, cmd) = root.iter().find(|(k, _)| is_bytes(k, b"cmd")).expect("cmd section");

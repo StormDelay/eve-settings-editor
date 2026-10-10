@@ -62,8 +62,7 @@
   // EVE's palette, from the model. A pack stores colours by NAME, and
   // `overview_pack::color_name` matches the floats EXACTLY, so a colour that is
   // not one of these is silently dropped from a pack export — which the row
-  // below says out loud. INCOMPLETE: two of EVE's eight names (green, purple)
-  // have no captured floats yet, so a colour of either reads as unnameable here.
+  // below says out loud. All twelve of the client's names (`PALETTE`).
   const palette = $derived(appearance?.palette ?? []);
   const paletteName = (c: Rgba): string | undefined =>
     palette.find(([, p]) => p.every((n, i) => n === c[i]))?.[0];
@@ -172,9 +171,8 @@
   <!-- The palette as suggestions in the native colour picker. It is a hint, not
        a constraint: free-form stays available, and a picked palette colour is
        snapped to EVE's exact floats by `setColor` so it survives a pack export.
-       Two of EVE's eight names have no captured floats, so this list is short
-       by two — which is why it is offered as suggestions rather than as the
-       only choices. -->
+       Suggestions rather than the only choices: EVE's own picker is free-form
+       too, and a pack is only one of the places a colour goes. -->
   <datalist id="eve-palette">
     {#each palette as [name, c] (name)}<option value={rgbaToHex(c)}></option>{/each}
   </datalist>
@@ -222,7 +220,7 @@
                  will be dropped". -->
             {#if c && palette.length > 0 && !paletteName(c)}
               <span class="off-palette"
-                    title="This exact colour is not one of the palette names a pack can carry, so exporting a pack will leave this state out. EVE's palette has eight names and this build has captured {palette.length} of them — a colour that is really green or purple reads as off-palette here too.">off-palette</span>
+                    title="This exact colour is not one of EVE's {palette.length} palette colours, the only ones a pack can name, so exporting a pack will leave this state out.">off-palette</span>
             {/if}
             {#if c}
               <Button size="sm" class="reset" onclick={() => resetColor(id)}

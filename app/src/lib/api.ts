@@ -512,6 +512,8 @@ export type KeybindEntry = {
   keys: number[] | null;
   /** The stored value was not a recognised binding; shown read-only. */
   malformed: boolean;
+  /** The file stores this command. False: `keys` is EVE's default. */
+  custom: boolean;
 };
 export type Keybinds = { entries: KeybindEntry[]; available: boolean };
 export type SetKeybindResult = { keybinds: Keybinds; stolen: string[] };

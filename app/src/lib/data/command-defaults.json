@@ -1,1 +1,757 @@
-{}
+{
+  "CmdAbortUndock": null,
+  "CmdAccelerate": [
+    107
+  ],
+  "CmdActivateHighPowerSlot1": [
+    112
+  ],
+  "CmdActivateHighPowerSlot2": [
+    113
+  ],
+  "CmdActivateHighPowerSlot3": [
+    114
+  ],
+  "CmdActivateHighPowerSlot4": [
+    115
+  ],
+  "CmdActivateHighPowerSlot5": [
+    116
+  ],
+  "CmdActivateHighPowerSlot6": [
+    117
+  ],
+  "CmdActivateHighPowerSlot7": [
+    118
+  ],
+  "CmdActivateHighPowerSlot8": [
+    119
+  ],
+  "CmdActivateLowPowerSlot1": [
+    17,
+    112
+  ],
+  "CmdActivateLowPowerSlot2": [
+    17,
+    113
+  ],
+  "CmdActivateLowPowerSlot3": [
+    17,
+    114
+  ],
+  "CmdActivateLowPowerSlot4": [
+    17,
+    115
+  ],
+  "CmdActivateLowPowerSlot5": [
+    17,
+    116
+  ],
+  "CmdActivateLowPowerSlot6": [
+    17,
+    117
+  ],
+  "CmdActivateLowPowerSlot7": [
+    17,
+    118
+  ],
+  "CmdActivateLowPowerSlot8": [
+    17,
+    119
+  ],
+  "CmdActivateMediumPowerSlot1": [
+    18,
+    112
+  ],
+  "CmdActivateMediumPowerSlot2": [
+    18,
+    113
+  ],
+  "CmdActivateMediumPowerSlot3": [
+    18,
+    114
+  ],
+  "CmdActivateMediumPowerSlot4": [
+    18,
+    115
+  ],
+  "CmdActivateMediumPowerSlot5": [
+    18,
+    116
+  ],
+  "CmdActivateMediumPowerSlot6": [
+    18,
+    117
+  ],
+  "CmdActivateMediumPowerSlot7": [
+    18,
+    118
+  ],
+  "CmdActivateMediumPowerSlot8": [
+    18,
+    119
+  ],
+  "CmdAlignToItem": [
+    65
+  ],
+  "CmdApproachItem": [
+    81
+  ],
+  "CmdBack": [
+    5
+  ],
+  "CmdClearFleetBroadcastIcons": null,
+  "CmdCloseActiveWindow": [
+    17,
+    87
+  ],
+  "CmdCloseAllWindows": [
+    17,
+    18,
+    87
+  ],
+  "CmdCompressAllOreInCurrentship": null,
+  "CmdCreateBookmark": [
+    17,
+    66
+  ],
+  "CmdCycleFleetBroadcastScope": null,
+  "CmdDecelerate": [
+    109
+  ],
+  "CmdDecreaseProbeScanRange": null,
+  "CmdDecreaseSpaceMouseAcceleration": null,
+  "CmdDecreaseSpaceMouseSpeed": null,
+  "CmdDeselectAllFighters": null,
+  "CmdDockOrJumpOrActivateGate": [
+    68
+  ],
+  "CmdDronesEngage": [
+    70
+  ],
+  "CmdDronesReturnAndOrbit": [
+    18,
+    16,
+    82
+  ],
+  "CmdDronesReturnToBay": [
+    16,
+    82
+  ],
+  "CmdEnterHangar": null,
+  "CmdEnterStructure": null,
+  "CmdExitStation": null,
+  "CmdFleetBroadcast_EnemySpotted": [
+    90
+  ],
+  "CmdFleetBroadcast_HealArmor": null,
+  "CmdFleetBroadcast_HealCapacitor": null,
+  "CmdFleetBroadcast_HealShield": null,
+  "CmdFleetBroadcast_HoldPosition": null,
+  "CmdFleetBroadcast_InPosition": null,
+  "CmdFleetBroadcast_JumpBeacon": null,
+  "CmdFleetBroadcast_Location": null,
+  "CmdFleetBroadcast_NeedBackup": null,
+  "CmdFleetGroup": null,
+  "CmdFlightControlsDown": [
+    40
+  ],
+  "CmdFlightControlsLeft": [
+    37
+  ],
+  "CmdFlightControlsRight": [
+    39
+  ],
+  "CmdFlightControlsUp": [
+    38
+  ],
+  "CmdForceFadeFromBlack": [
+    16,
+    8
+  ],
+  "CmdForward": [
+    6
+  ],
+  "CmdGetLocationMenuForNavigation": null,
+  "CmdGetUiPointer": null,
+  "CmdHideCursor": [
+    18,
+    120
+  ],
+  "CmdHideUI": [
+    17,
+    120
+  ],
+  "CmdIncreaseProbeScanRange": null,
+  "CmdIncreaseSpaceMouseAcceleration": null,
+  "CmdIncreaseSpaceMouseSpeed": null,
+  "CmdKeepItemAtRange": [
+    69
+  ],
+  "CmdLaunchAllFighters": null,
+  "CmdLaunchFavoriteDrones": [
+    16,
+    70
+  ],
+  "CmdLaunchSelectedFighters": null,
+  "CmdLockTargetItem": [
+    17
+  ],
+  "CmdLogOff": null,
+  "CmdMinimizeActiveWindow": null,
+  "CmdMiningScan": null,
+  "CmdNextStackedWindow": [
+    17,
+    16,
+    34
+  ],
+  "CmdNextTab": [
+    17,
+    34
+  ],
+  "CmdOpenBroadcastRadialMenu": null,
+  "CmdOpenNewMessage": null,
+  "CmdOpenRadialMenu": null,
+  "CmdOpenSelectedCargoContainer": null,
+  "CmdOrbitItem": [
+    87
+  ],
+  "CmdOverloadHighPowerRack": [
+    17,
+    51
+  ],
+  "CmdOverloadHighPowerSlot1": [
+    16,
+    112
+  ],
+  "CmdOverloadHighPowerSlot2": [
+    16,
+    113
+  ],
+  "CmdOverloadHighPowerSlot3": [
+    16,
+    114
+  ],
+  "CmdOverloadHighPowerSlot4": [
+    16,
+    115
+  ],
+  "CmdOverloadHighPowerSlot5": [
+    16,
+    116
+  ],
+  "CmdOverloadHighPowerSlot6": [
+    16,
+    117
+  ],
+  "CmdOverloadHighPowerSlot7": [
+    16,
+    118
+  ],
+  "CmdOverloadHighPowerSlot8": [
+    16,
+    119
+  ],
+  "CmdOverloadLowPowerRack": [
+    17,
+    49
+  ],
+  "CmdOverloadLowPowerSlot1": [
+    17,
+    16,
+    112
+  ],
+  "CmdOverloadLowPowerSlot2": [
+    17,
+    16,
+    113
+  ],
+  "CmdOverloadLowPowerSlot3": [
+    17,
+    16,
+    114
+  ],
+  "CmdOverloadLowPowerSlot4": [
+    17,
+    16,
+    115
+  ],
+  "CmdOverloadLowPowerSlot5": [
+    17,
+    16,
+    116
+  ],
+  "CmdOverloadLowPowerSlot6": [
+    17,
+    16,
+    117
+  ],
+  "CmdOverloadLowPowerSlot7": [
+    17,
+    16,
+    118
+  ],
+  "CmdOverloadLowPowerSlot8": [
+    17,
+    16,
+    119
+  ],
+  "CmdOverloadMediumPowerRack": [
+    17,
+    50
+  ],
+  "CmdOverloadMediumPowerSlot1": [
+    18,
+    16,
+    112
+  ],
+  "CmdOverloadMediumPowerSlot2": [
+    18,
+    16,
+    113
+  ],
+  "CmdOverloadMediumPowerSlot3": [
+    18,
+    16,
+    114
+  ],
+  "CmdOverloadMediumPowerSlot4": [
+    18,
+    16,
+    115
+  ],
+  "CmdOverloadMediumPowerSlot5": [
+    18,
+    16,
+    116
+  ],
+  "CmdOverloadMediumPowerSlot6": [
+    18,
+    16,
+    117
+  ],
+  "CmdOverloadMediumPowerSlot7": [
+    18,
+    16,
+    118
+  ],
+  "CmdOverloadMediumPowerSlot8": [
+    18,
+    16,
+    119
+  ],
+  "CmdPickPortrait0": [
+    112
+  ],
+  "CmdPickPortrait1": [
+    113
+  ],
+  "CmdPickPortrait2": [
+    114
+  ],
+  "CmdPickPortrait3": [
+    115
+  ],
+  "CmdPrevStackedWindow": [
+    17,
+    16,
+    33
+  ],
+  "CmdPrevTab": [
+    17,
+    33
+  ],
+  "CmdQuitGame": [
+    18,
+    16,
+    81
+  ],
+  "CmdRecallAllFightersToTubes": null,
+  "CmdRecallSelectedFightersToTubes": null,
+  "CmdReconnectToDrones": null,
+  "CmdRefreshDirectionalScan": [
+    86
+  ],
+  "CmdRefreshProbeScan": [
+    66
+  ],
+  "CmdReloadAmmo": [
+    17,
+    82
+  ],
+  "CmdResetMonitor": [
+    17,
+    18,
+    13
+  ],
+  "CmdSelectAllFighters": null,
+  "CmdSelectNextTarget": [
+    18,
+    39
+  ],
+  "CmdSelectPrevTarget": [
+    18,
+    37
+  ],
+  "CmdSelectTargetItem": [
+    16
+  ],
+  "CmdSendBroadcast_AlignToItemID": null,
+  "CmdSendBroadcast_HealTarget": null,
+  "CmdSendBroadcast_JumpToItemID": null,
+  "CmdSendBroadcast_Target": [
+    88
+  ],
+  "CmdSendBroadcast_WarpToItemID": null,
+  "CmdSetCameraOrbit": [
+    18,
+    50
+  ],
+  "CmdSetCameraPOV": [
+    18,
+    51
+  ],
+  "CmdSetCameraTactical": [
+    18,
+    49
+  ],
+  "CmdSetChatChannelFocus": [
+    32
+  ],
+  "CmdSetDefenceStance": [
+    16,
+    49
+  ],
+  "CmdSetOverviewFocus": [
+    18,
+    32
+  ],
+  "CmdSetSearchBarFocus": [
+    16,
+    83
+  ],
+  "CmdSetShipFullSpeed": [
+    17,
+    18,
+    32
+  ],
+  "CmdSetSniperStance": [
+    16,
+    50
+  ],
+  "CmdSetSpeedStance": [
+    16,
+    51
+  ],
+  "CmdShowItemInfo": [
+    84
+  ],
+  "CmdStopShip": [
+    17,
+    32
+  ],
+  "CmdTagItem_1": [
+    49
+  ],
+  "CmdTagItem_123": [
+    55
+  ],
+  "CmdTagItem_123456789": null,
+  "CmdTagItem_2": [
+    50
+  ],
+  "CmdTagItem_3": [
+    51
+  ],
+  "CmdTagItem_A": [
+    52
+  ],
+  "CmdTagItem_ABC": [
+    56
+  ],
+  "CmdTagItem_ABCDEFGHI": null,
+  "CmdTagItem_B": [
+    53
+  ],
+  "CmdTagItem_C": [
+    54
+  ],
+  "CmdTagItem_None": null,
+  "CmdTagItem_X": null,
+  "CmdTagItem_XYZ": [
+    57
+  ],
+  "CmdTagItem_Y": null,
+  "CmdTagItem_Z": null,
+  "CmdToggle3DView": [
+    17,
+    16,
+    120
+  ],
+  "CmdToggleAggressivePassive": null,
+  "CmdToggleAirCareerProgram": null,
+  "CmdToggleAudio": [
+    17,
+    18,
+    16,
+    123
+  ],
+  "CmdToggleAutoTracking": [
+    16,
+    67
+  ],
+  "CmdToggleAutopilot": [
+    17,
+    83
+  ],
+  "CmdToggleCameraTracking": [
+    67
+  ],
+  "CmdToggleCollapseAllWindows": null,
+  "CmdToggleDroneFocusFire": null,
+  "CmdToggleEffectTurrets": [
+    17,
+    18,
+    16,
+    84
+  ],
+  "CmdToggleEffects": [
+    17,
+    18,
+    16,
+    69
+  ],
+  "CmdToggleLookAtItem": [
+    18
+  ],
+  "CmdToggleMap": [
+    121
+  ],
+  "CmdToggleMinimizeMaximizeAllWindows": null,
+  "CmdToggleSensorOverlay": [
+    17,
+    79
+  ],
+  "CmdToggleShipSelection": null,
+  "CmdToggleShipTree": null,
+  "CmdToggleShowAllBrackets": [
+    18,
+    90
+  ],
+  "CmdToggleShowNoBrackets": [
+    18,
+    16,
+    90
+  ],
+  "CmdToggleShowSpecialBrackets": [
+    18,
+    16,
+    88
+  ],
+  "CmdToggleSolarSystemMap": [
+    120
+  ],
+  "CmdToggleSystemMenu": null,
+  "CmdToggleTacticalOverlay": [
+    17,
+    68
+  ],
+  "CmdToggleTargetItem": null,
+  "CmdToggleTubeSelection_0": null,
+  "CmdToggleTubeSelection_1": null,
+  "CmdToggleTubeSelection_2": null,
+  "CmdToggleTubeSelection_3": null,
+  "CmdToggleTubeSelection_4": null,
+  "CmdUnlockTargetItem": [
+    17,
+    16
+  ],
+  "CmdUnlockTargetItems": null,
+  "CmdWarpToItem": [
+    83
+  ],
+  "CmdZoomIn": [
+    17,
+    16,
+    65
+  ],
+  "CmdZoomOut": [
+    17,
+    16,
+    90
+  ],
+  "OpenAccessGroupsWindow": null,
+  "OpenAchievementsWindow": null,
+  "OpenAgencyNew": [
+    18,
+    77
+  ],
+  "OpenAmmoHoldOfActiveShip": null,
+  "OpenAssets": [
+    18,
+    84
+  ],
+  "OpenAuraGuidance": null,
+  "OpenBountyOffice": null,
+  "OpenCalculator": null,
+  "OpenCalendar": null,
+  "OpenCapitalNavigation": null,
+  "OpenCargoHoldOfActiveShip": null,
+  "OpenChannels": null,
+  "OpenCharacterCustomization": null,
+  "OpenCharactersheet": [
+    18,
+    65
+  ],
+  "OpenCombatAnomaliesInAgency": null,
+  "OpenCompare": null,
+  "OpenConfigMenu": null,
+  "OpenContextualOffersWindow": null,
+  "OpenContracts": null,
+  "OpenCorpDeliveries": null,
+  "OpenCorpHangar": null,
+  "OpenCorporationItemDeliveries": null,
+  "OpenCorporationPanel": null,
+  "OpenDirectionalScanner": [
+    18,
+    68
+  ],
+  "OpenDroneBayOfActiveShip": null,
+  "OpenEncounterSurveillanceSystemInAgency": null,
+  "OpenEveMenu": [
+    220
+  ],
+  "OpenFighterBayOfActiveShip": null,
+  "OpenFitting": [
+    18,
+    70
+  ],
+  "OpenFittingMgmt": null,
+  "OpenFleet": null,
+  "OpenFleetHangarOfActiveShip": null,
+  "OpenFleetWatchlist": null,
+  "OpenFpsMonitor": [
+    17,
+    70
+  ],
+  "OpenFrigateEscapeBay": null,
+  "OpenFuelBayOfActiveShip": null,
+  "OpenFwEnlistment": null,
+  "OpenGeneralMiningHoldOfActiveShip": null,
+  "OpenHangarFloor": [
+    18,
+    71
+  ],
+  "OpenHelp": [
+    123
+  ],
+  "OpenIndustry": [
+    18,
+    83
+  ],
+  "OpenInfrastructureBayOfActiveShip": null,
+  "OpenInsurance": null,
+  "OpenInsurgencyDashboard": null,
+  "OpenInventory": [
+    18,
+    67
+  ],
+  "OpenJobBoardWindow": [
+    18,
+    74
+  ],
+  "OpenLedger": null,
+  "OpenLocations": [
+    76
+  ],
+  "OpenLog": null,
+  "OpenLoginRewardWindow": null,
+  "OpenLpstore": null,
+  "OpenMail": [
+    18,
+    73
+  ],
+  "OpenManageRoute": null,
+  "OpenMapBrowser": [
+    122
+  ],
+  "OpenMarket": [
+    18,
+    82
+  ],
+  "OpenMarketOrders": [
+    18,
+    79
+  ],
+  "OpenMedical": null,
+  "OpenMilitia": null,
+  "OpenMineralHoldOfActiveShip": null,
+  "OpenMiningScanResultsWindow": null,
+  "OpenMonitor": [
+    17,
+    18,
+    16,
+    77
+  ],
+  "OpenMoonMining": null,
+  "OpenMoonScan": null,
+  "OpenMultibuy": null,
+  "OpenMyMercenaryDens": null,
+  "OpenNotepad": null,
+  "OpenOmegaUpsellWindow": null,
+  "OpenOverviewSettings": null,
+  "OpenPVPFilamentEventWindow": null,
+  "OpenPaintToolWindow": null,
+  "OpenPeopleAndPlaces": [
+    18,
+    69
+  ],
+  "OpenPlanetaryCommoditiesHoldOfActiveShip": null,
+  "OpenPlanets": null,
+  "OpenPlexVault": null,
+  "OpenPointerWnd": null,
+  "OpenRaffleWindow": null,
+  "OpenRelevantFWWindow": null,
+  "OpenRepairshop": null,
+  "OpenReprocessingPlant": null,
+  "OpenSeason": null,
+  "OpenSecurityOffice": null,
+  "OpenShipConfig": null,
+  "OpenShipHangar": [
+    18,
+    78
+  ],
+  "OpenShipMaintenanceOfBayActiveShip": null,
+  "OpenShipSKINRWindow": null,
+  "OpenSkillsWindow": [
+    18,
+    88
+  ],
+  "OpenStructureBrowser": null,
+  "OpenWallet": [
+    18,
+    87
+  ],
+  "PrintScreen": [
+    44
+  ],
+  "ToggleAurumStore": [
+    18,
+    52
+  ],
+  "ToggleCurrentSystemLocationWnd": null,
+  "ToggleProbeScanner": [
+    18,
+    80
+  ],
+  "ToggleProjectDiscovery": null,
+  "ToggleRedeemItems": [
+    18,
+    89
+  ],
+  "ToggleTheatersOfWarWindow": null,
+  "WinCmdToggleWindowed": [
+    18,
+    13
+  ]
+}

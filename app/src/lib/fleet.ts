@@ -26,3 +26,15 @@ export const SHOW_OWN = { field: "listen_show_own", label: "Always show my own b
 
 /** The projection's field name for a type's checkbox. */
 export const listenField = (type: string): string => `listen_${type}`;
+
+/** `setFleetFormation`'s values, from the client's own code
+ *  (`evefleet/const.py`: POINT = 0 … RELATIVE = 5) with the labels its
+ *  localization gives them (`UI/Fleet/FleetFormations/<Name>`). */
+export const FORMATIONS: { id: string; label: string }[] = [
+  { id: "0", label: "Point" },
+  { id: "1", label: "Sphere" },
+  { id: "2", label: "Plane" },
+  { id: "3", label: "Wall" },
+  { id: "4", label: "Arrow" },
+  { id: "5", label: "Relative" },
+];

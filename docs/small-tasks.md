@@ -13,7 +13,7 @@ Workflow:
 
 ## Open
 
-- [ ] **Fleet → Formation edits the formation as a bare numeric id.** The
+- [x] **Fleet → Formation edits the formation as a bare numeric id.** The
   owner flagged it on the 2026-09-19 look at the shipped Fleet tab: a number
   field labelled "Formation" says nothing about which fleet-warp formation `0`,
   `1` or `3` is. The in-game names were never captured — the corpus holds `0` in
@@ -25,7 +25,7 @@ Workflow:
   `app/src/lib/fleet.ts` beside `BROADCASTS`, and turn the field into a
   `Field kind="select"` over it with the raw id as the fallback label for an
   unknown value. Size and spacing stay numbers. _Added 2026-09-19 (fleet
-  editor live look)._
+  editor live look)._ _Done 2026-10-10, with no capture: the client's own code names them (`evefleet/const.py`: 0 Point, 1 Sphere, 2 Plane, 3 Wall, 4 Arrow, 5 Relative; labels from `UI/Fleet/FleetFormations`). `FORMATIONS` in `fleet.ts`, a select with the raw id as the fallback option, and the ids named in the assistant's `fleet_get` description._
 
 - [x] **A failed launcher-log read is reported as "your logs say nothing".**
   `AccountsView.svelte:233` swallows the launcher read with `.catch(() => {})`
@@ -282,7 +282,7 @@ Workflow:
   char id existed in another folder, and could read a character source's
   account from the wrong folder; both are fixed by the same keying._
 
-- [ ] **Confirm in-client that a probe formation with fewer than 8 probes loads.**
+- [x] **Confirm in-client that a probe formation with fewer than 8 probes loads.**
   The formation editor accepts 1–8 probes, but every one of the 123 corpus
   formations holds exactly 8 — so a short formation is a shape this project
   writes and has never seen the client read back. It was accepted deliberately,
@@ -290,7 +290,7 @@ Workflow:
   is the one thing on the feature that cannot be measured offline: save a
   4-probe formation, reopen the client, and check it appears in the scanner's
   formation menu intact. If it does not, restrict the editor to exactly 8 and
-  amend §2.4 of the design. _Added 2026-08-03 (probe formation editor)._
+  amend §2.4 of the design. _Added 2026-08-03 (probe formation editor)._ _Closed 2026-10-10 from the client's code, no in-game run: nothing there assumes 8. `probescanning/formations.py` takes a formation's probe count as `len()` of its stored list, and the in-game save (`scanSvc.PersistCurrentFormation` → `customFormations.PersistFormation`) stores whatever probes are deployed, so a short formation is a shape the client writes itself._
 
 - [x] **Confirm in-client that the scanner's formation menu follows a reorder.**
   The file records no order; the editor makes id order and dict order agree
@@ -424,7 +424,7 @@ Workflow:
   gap and the old-preset case are the open entry above, which is where
   `TARGET_MARGIN = 72` now lives.
 
-- [ ] **Fill `command-defaults.json` by transcribing the in-game keybinding
+- [x] **Fill `command-defaults.json` by transcribing the in-game keybinding
   screen.** Confirmed in-game 2026-07-27 that it cannot come from a settings
   file: "Reset to default" writes `customCmds: {}`, because `customCmds` only
   ever holds overrides — there is nothing to capture, and the design spec's
@@ -438,7 +438,7 @@ Workflow:
   `CmdPickPortrait0..3` are labelled "Pick Portrait 1..4" (ids 0-based, labels
   1-based) and `ToggleCurrentSystemLocationWnd` is labelled "Local Locations".
   Cross-check any ambiguous row by binding it in-game and reading which id moves
-  in `customCmds`. _Added 2026-07-27._
+  in `customCmds`. _Added 2026-07-27._ _Done 2026-10-10 without transcribing: the client builds its defaults in code (`SetDefaultShortcutMappingCORE` + `SetDefaultShortcutMappingGAME`), and `tools/gen-commands.py` runs that bytecode out of `code.ccp` — 292 rebindable commands, 160 bound. A command EVE ships unbound is `null`, one the table lacks is `undefined` (Default shows —, reset disabled), so reset can now unbind. Locked mappings (Enter, Esc, Tab, Ctrl+C…) are left out. `vk-labels.json` gained Mouse 4, Mouse 5 and Print Screen, which defaults use. Same day, same PR: the view lists **every** rebindable command (the file's rows plus each command at its default, by the client's load rule `CommandMap.AddCommand` — a default another stored binding uses is dropped), labelled and grouped as the in-game screen does (`FuncToDesc` labels, `CATEGORIES` tabs; 291 of 292 resolve, which retires `gen-command-names.py` and confirms both of its hand corrections), with an "Only changed" filter. Binding a command the file lacks adds its row, and taking a combo a default holds writes that command's `None`, as `ClearMappedCmd` does — the old "the editor never mints rows" rule is lifted for commands the client defines._
 
 - [x] **Nothing can create an `overview` container from nothing.** A document
   with no `overview` key — a pruned preset, or a genuinely fresh account — is a
@@ -532,7 +532,7 @@ Workflow:
   — is a bigger change and a separate call. _Added 2026-08-15 (colortag surface);
   required 2026-10-09, fixtures updated._
 
-- [ ] **The state colour swatch is a free colour picker, not EVE's palette.**
+- [x] **The state colour swatch is a free colour picker, not EVE's palette.**
   `OverviewAppearanceTab.svelte:154` is a bare `<input type="color">`, so any of
   16.7M colours can be chosen, but EVE's palette is eight named colours and
   `overview_pack.rs::color_name` matches floats **exactly** (correctly — a
@@ -573,7 +573,9 @@ Workflow:
   does not, the fallback is a real swatch row and a bigger diff.
 
   **What remains blocked is only the capture.** `green` and `purple` are still
-  absent and nothing was fabricated — see live verification item 26b.
+  absent and nothing was fabricated — see live verification item 26b. 
+
+  _Done 2026-10-10: `PALETTE` is the client's whole table, read from `GetStateColors()` in `parklife/state.py` — **twelve** names, not eight: adds green, purple, turquoise, darkTurquoise, yellow and indigo, and the seven already harvested match it float for float. The client's own pack export names colours by exact lookup in that table (`FindColorName`), so exact matching was right all along. The off-palette tooltip no longer apologises for a gap. The datalist stays: a suggestion list, not a grid, is still the right weight._
 
 - [x] **No way to reach a window that sits underneath another in the layout
   view.** Overlapping windows in `LayoutView` can only be selected topmost-first,

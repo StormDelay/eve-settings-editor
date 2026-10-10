@@ -4,6 +4,7 @@
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
   import EmptyState from "./ui/EmptyState.svelte";
+  import Field from "./ui/Field.svelte";
   import InlineMessage from "./ui/InlineMessage.svelte";
   import { accel } from "./keys";
   import { revealAndFocus } from "./keymap";
@@ -26,6 +27,8 @@
   let binds = $state<Keybinds | null>(null);
   let error = $state<string | null>(null);
   let query = $state("");
+  /** Only the rows the file binds differently from EVE's default. */
+  let changedOnly = $state(false);
   /** Command currently listening for a keypress, or null. */
   let listening = $state<string | null>(null);
   /** Transient "took X from Y" notice, keyed by the command that LOST it. */
@@ -53,9 +56,13 @@
   // the three.
   $effect(() => { void userOpen; void userId; void refreshToken; reload(); });
 
+  const changed = (e: KeybindEntry) =>
+    e.custom && JSON.stringify(e.keys) !== JSON.stringify(defaultFor(e.command) ?? null);
+  const changedCount = $derived((binds?.entries ?? []).filter(changed).length);
+
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const all = binds?.entries ?? [];
+    const all = (binds?.entries ?? []).filter((e) => !changedOnly || changed(e));
     if (!q) return all;
     return all.filter(
       (e) =>
@@ -65,7 +72,7 @@
     );
   });
 
-  /** Grouped for display; the projection reports file order, grouping is ours. */
+  /** Grouped by the in-game tab, and by label within one. */
   const grouped = $derived.by(() => {
     const by = new Map<string, KeybindEntry[]>();
     for (const e of filtered) {
@@ -74,6 +81,7 @@
       by.get(g)!.push(e);
     }
     const rank = (g: string) => { const i = GROUP_ORDER.indexOf(g); return i === -1 ? GROUP_ORDER.length : i; };
+    for (const rows of by.values()) rows.sort((a, b) => labelFor(a.command).localeCompare(labelFor(b.command)));
     return [...by.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
   });
 
@@ -137,6 +145,7 @@
     <!-- Filter, not Search: the table is on screen, so this narrows what you can
          already see. "Commands" now means palette commands. -->
     <SearchField nouns="keybindings" shortcut={accel("F")} bind:element={searchInput} bind:value={query} class="search" />
+    <Field kind="checkbox" label="Only changed ({changedCount})" bind:value={changedOnly} />
     <span class="meta">Click a binding, then press the combination you want.</span>
   </div>
   {#each grouped as [group, entries] (group)}
@@ -149,6 +158,7 @@
       </colgroup>
       <tbody>
         {#each entries as e (e.command)}
+          {@const def = defaultFor(e.command)}
           <tr class:malformed={e.malformed}>
             <td class="label" title={e.command}>{labelFor(e.command)}</td>
             <td class="combo">
@@ -174,17 +184,19 @@
                 <InlineMessage variant="error" detail={rowError.detail}>{rowError.text}</InlineMessage>
               {/if}
             </td>
-            <td class="default">{keysToLabel(defaultFor(e.command))}</td>
+            <!-- `undefined`: a command newer than tools/gen-commands.py's
+                 last run, so its default is not known — not "unbound". -->
+            <td class="default">{def === undefined ? "—" : keysToLabel(def)}</td>
             <td>
               <!-- Was `.mini`, and so invisible: it sits outside any `.row`. -->
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                disabled={defaultFor(e.command) === null}
-                disabledReason="EVE's default for this command hasn't been captured yet"
-                title="Reset to EVE's default ({keysToLabel(defaultFor(e.command))})"
-                onclick={() => commit(e.command, defaultFor(e.command))}>↺</Button>
+                disabled={def === undefined}
+                disabledReason="EVE's default for this command isn't known to this version of the editor"
+                title="Reset to EVE's default ({keysToLabel(def ?? null)})"
+                onclick={() => commit(e.command, def ?? null)}>↺</Button>
             </td>
           </tr>
         {/each}

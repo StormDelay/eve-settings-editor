@@ -257,43 +257,32 @@ fn write_scalar(n: &Node) -> String {
 /// EVE's overview colour palette: the names a pack uses for a state's row
 /// colour, and the RGBA the client writes for each.
 ///
-/// HARVESTED FROM THE CORPUS, not from a client data file: an account that
-/// imported a pack keeps the pack's `stateColorsNameList` under
-/// `overview`→`restoreData`→`data` and the RGBA EVE derived from it under
-/// `overview`→`stateColors`; joining them across the corpus yields this table
-/// (`src/bin/pack_palette.rs`). A name absent here is skipped on import and a
-/// colour absent here is omitted on export — never approximated, since a
-/// near-miss would silently change the user's colours. Every name below
-/// mapped to exactly one RGBA across all contributing corpus files — no
-/// conflicts to resolve.
-/// `black` was added on 2026-07-28 from a targeted live capture rather than
-/// from the corpus join above, because the join could never have produced it:
-/// no account here had ever imported a pack that names it, and the one
-/// published pack that does (Z-S) puts it on `flag_48` — and **EVE's own
-/// importer discards flag-surface colours outright**, so feeding Z-S through
-/// the client left no trace of it at all.
+/// READ FROM THE CLIENT'S OWN CODE (`code.ccp`, decoded offline):
+/// `GetStateColors()` in `eve/client/script/parklife/state.py` is the whole
+/// table, twelve names. The client's pack export names a colour with
+/// `FindColorName`, an exact dict lookup on that table's RGBA, and its import
+/// maps a name back through the same table — so exact matching in
+/// `color_name` is the client's own rule, not a precaution of ours. Before
+/// 2026-10-10 this held six entries joined from the corpus (`src/bin/
+/// pack_palette.rs`) plus `black` from a live capture; all seven match the
+/// client's table exactly, which is what vouches for the other five.
 ///
-/// The capture that worked: a probe pack (`tools/derive-packs.py`) moving the
-/// name onto a background state, imported through EVE's own Overview Settings,
-/// after which the client had written
-/// `stateColors[("background", 66)] = (0.0, 0.0, 0.0, 1.0)`. That is the client
-/// deriving the RGBA from the name, which is the same evidence the corpus join
-/// provides. It independently matches the pixel-sampled `#000000` recorded for
-/// state 66 in `overview-states.json`.
-///
-/// Still missing: `green` and `purple`. `overview-states.json`'s notes put the
-/// full palette at eight names and give both as sampled hex (`#199919`,
-/// `#9926e5`), but a sampled hex does not invert to an exact float — 25/255 is
-/// 0.098…, consistent with both 0.098 and 0.1 — and `color_name` matches
-/// exactly, by design. Harvest them the same way: probe pack, background state,
-/// EVE's importer.
-pub const PALETTE: [(&str, [f64; 4]); 6] = [
+/// Colourblind mode recolours the table at load (`colorblind.
+/// GetEvenlyDistributedColor`), so a colourblind player's stored colours
+/// still fall outside this table and are dropped from an export.
+pub const PALETTE: [(&str, [f64; 4]); 12] = [
     ("black", [0.0, 0.0, 0.0, 1.0]),
     ("blue", [0.2, 0.5, 1.0, 1.0]),
     ("darkBlue", [0.0, 0.15, 0.6, 1.0]),
+    ("darkTurquoise", [0.0, 0.34, 0.33, 1.0]),
+    ("green", [0.1, 0.6, 0.1, 1.0]),
+    ("indigo", [0.3, 0.0, 0.5, 1.0]),
     ("orange", [1.0, 0.35, 0.0, 1.0]),
+    ("purple", [0.6, 0.15, 0.9, 1.0]),
     ("red", [0.75, 0.0, 0.0, 1.0]),
+    ("turquoise", [0.0, 0.63, 0.57, 1.0]),
     ("white", [0.7, 0.7, 0.7, 1.0]),
+    ("yellow", [1.0, 0.7, 0.0, 1.0]),
 ];
 
 pub fn color_rgba(name: &str) -> Option<[f64; 4]> {
@@ -1114,6 +1103,8 @@ userSettings:
         assert_eq!(color_rgba("blue"), Some([0.2, 0.5, 1.0, 1.0]));
         assert_eq!(color_rgba("red"), Some([0.75, 0.0, 0.0, 1.0]));
         assert_eq!(color_name([0.0, 0.15, 0.6, 1.0]), Some("darkBlue"));
+        assert_eq!(color_name([0.1, 0.6, 0.1, 1.0]), Some("green"));
+        assert_eq!(color_rgba("purple"), Some([0.6, 0.15, 0.9, 1.0]));
         assert_eq!(color_rgba("chartreuse"), None);
         assert_eq!(color_name([0.123, 0.0, 0.0, 1.0]), None, "no near-miss matching");
     }
