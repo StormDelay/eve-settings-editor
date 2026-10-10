@@ -66,7 +66,7 @@ pub use probes::{
 };
 pub use overview::{copy_tab_columns, copy_tab_widths, project_overview, set_column_order, set_column_visible, set_column_width, Appearance, OverviewColumn, OverviewColumns, OverviewError, OverviewTab, OverviewWindow, StateSurface};
 pub use autofill::{clear_all_history, project_edit_history, set_list_entries, AutofillError, RememberedList};
-pub use keybinds::{project_keybinds, set_keybind, KeybindEntry, KeybindError, Keybinds, MOD_ALT, MOD_CTRL, MOD_SHIFT};
+pub use keybinds::{project_keybinds, set_keybind, Defaults as KeybindDefaults, KeybindEntry, KeybindError, Keybinds, MOD_ALT, MOD_CTRL, MOD_SHIFT};
 pub use batch::{apply_categories_to, apply_to_tree, extract_categories, full_copy_to, Category};
 pub use stacks::{add_to_stack, create_stack, delete_orphan_frames, reorder_stack, unstack, StackError};
 pub use overview_tabs::{

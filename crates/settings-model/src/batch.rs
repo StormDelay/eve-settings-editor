@@ -589,7 +589,7 @@ mod tests {
 
     /// Local helper: read CmdApproachItem's codes back out of a tree.
     fn settings_model_project(v: &Value) -> Option<Vec<i64>> {
-        let k = crate::keybinds::project_keybinds(Some(v));
+        let k = crate::keybinds::project_keybinds(Some(v), &Default::default());
         let e = k.entries.iter().find(|e| e.command == "CmdApproachItem")?;
         e.keys.clone()
     }

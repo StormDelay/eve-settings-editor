@@ -33,7 +33,7 @@ fn the_keybinding_table_reads_from_real_files() {
 
     for f in common::user_files().filter(|f| !f.synthetic) {
         let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
-        let k = project_keybinds(Some(&doc));
+        let k = project_keybinds(Some(&doc), &Default::default());
         if k.available {
             with_table += 1;
             bindings += k.entries.iter().filter(|e| e.keys.is_some()).count();
@@ -55,7 +55,7 @@ fn every_real_binding_satisfies_the_writer_invariants() {
 
     for f in common::user_files() {
         let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
-        let k = project_keybinds(Some(&doc));
+        let k = project_keybinds(Some(&doc), &Default::default());
         for e in &k.entries {
             assert!(!e.malformed, "{}: {} projected as malformed", f.name(), e.command);
             let Some(keys) = &e.keys else { continue };
@@ -81,7 +81,7 @@ fn every_real_binding_satisfies_the_writer_invariants() {
 fn no_real_file_contains_a_duplicate_combination() {
     for f in common::user_files() {
         let Ok(doc) = blue_marshal::decode(&f.bytes) else { continue };
-        let k = project_keybinds(Some(&doc));
+        let k = project_keybinds(Some(&doc), &Default::default());
         let mut seen: Vec<(&Vec<i64>, &str)> = Vec::new();
         for e in &k.entries {
             let Some(keys) = &e.keys else { continue };
@@ -99,14 +99,14 @@ fn no_real_file_contains_a_duplicate_combination() {
 fn a_write_against_a_real_file_changes_only_the_target_leaf() {
     let Some(f) = common::user_files().find(|f| {
         !f.synthetic
-            && blue_marshal::decode(&f.bytes).map(|d| project_keybinds(Some(&d)).available).unwrap_or(false)
+            && blue_marshal::decode(&f.bytes).map(|d| !project_keybinds(Some(&d), &Default::default()).entries.is_empty()).unwrap_or(false)
     }) else {
         return; // no real corpus checked out
     };
     eprintln!("round-trip target: {}", f.name());
 
     let doc = blue_marshal::decode(&f.bytes).expect("decodes");
-    let before = project_keybinds(Some(&doc));
+    let before = project_keybinds(Some(&doc), &Default::default());
     let before_timestamp = customcmds_timestamp(&doc);
     let target = before
         .entries
@@ -116,9 +116,9 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
         .expect("a real corpus file has unbound commands");
 
     let mut edited = doc.clone();
-    set_keybind(&mut edited, &target, Some(vec![MOD_CTRL, 145])).expect("write succeeds");
+    set_keybind(&mut edited, &target, Some(vec![MOD_CTRL, 145]), &Default::default()).expect("write succeeds");
 
-    let after = project_keybinds(Some(&edited));
+    let after = project_keybinds(Some(&edited), &Default::default());
     assert_eq!(after.entries.len(), before.entries.len(), "no rows added or removed");
     for (b, a) in before.entries.iter().zip(after.entries.iter()) {
         assert_eq!(b.command, a.command, "command order preserved");
@@ -137,7 +137,7 @@ fn a_write_against_a_real_file_changes_only_the_target_leaf() {
     // Re-encoding must round-trip.
     let bytes = blue_marshal::encode(&edited).expect("re-encodes");
     let redecoded = blue_marshal::decode(&bytes).expect("re-decodes");
-    let round = project_keybinds(Some(&redecoded));
+    let round = project_keybinds(Some(&redecoded), &Default::default());
     assert_eq!(round.entries, after.entries, "the write survives an encode/decode cycle");
 }
 

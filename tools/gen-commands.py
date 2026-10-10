@@ -1,46 +1,58 @@
 #!/usr/bin/env python3
-"""Regenerate app/src/lib/data/command-defaults.json: EVE's factory keybindings.
+"""Regenerate the keybinding editor's command data from the EVE client's code:
 
-They exist in no settings file (`customCmds` holds only overrides), but the
-client builds them in code: `CommandService.SetDefaultShortcutMappingCORE`
-(carbonui/services/command.py) and `EveCommandService.
-SetDefaultShortcutMappingGAME` (eve/client/script/ui/eveCommands.py), which the
-client concatenates. This tool reads both from the SharedCache's `code.ccp` and
-RUNS their bytecode on a tiny stack machine, so the table comes out exactly as
-the client computes it, loops and all.
+  app/src/lib/data/command-defaults.json  command -> factory keys, or null
+  app/src/lib/data/command-names.json     command -> {label, group}
+
+DEFAULTS. No settings file holds them (`customCmds` holds what the player
+changed), but the client builds them in code: `CommandService.
+SetDefaultShortcutMappingCORE` (carbonui/services/command.py) and
+`EveCommandService.SetDefaultShortcutMappingGAME` (eve/client/script/ui/
+eveCommands.py), which the client concatenates. This tool RUNS their bytecode
+on a tiny stack machine, so the table comes out exactly as the client computes
+it, loops and all. The functions branch on the environment; they are run as an
+ordinary player on Tranquility under Windows (no developer role, not the
+Chinese server, `sys.platform` not darwin, every feature flag on), and the
+branches taken are printed so a changed one shows up. Locked mappings (Enter,
+Esc, Tab, Ctrl+C, ... — `isLocked`, not rebindable) are left out; a command
+EVE ships unbound is null, so the app can tell it from one the table lacks.
+Modifiers are written in the order EVE stores them: Ctrl, Alt, Shift.
+
+NAMES. The in-game keybinding screen labels a command the way
+`CommandService.FuncToDesc` does: the module-level `labelsByFuncName` map
+first, then the callback's `nameLabelPath` (set in the command class body,
+often to a window class's `default_captionLabelPath`), else the raw name. Each
+path is looked up in the SharedCache's en-US localization. The group is the
+screen's tab: the mapping's `category`, named through eveCommands'
+`CATEGORIES`. A command whose label cannot be resolved is written without one,
+and the app de-camelcases its name.
 
 `code.ccp` is a zip of `.pyj` files, each a zlib stream of a Python 2.7 `.pyc`
 (8-byte header, then a marshal code object). Python 3 cannot unmarshal 2.7, so
 the reader below does it by hand.
 
-The functions branch on the environment. They are run as an ordinary player on
-Tranquility under Windows: no developer role, not the Chinese server,
-`sys.platform` not darwin, and every feature flag on (job board, Aura
-guidance, ...). The branches taken are printed so a changed one shows up.
-Locked mappings (Enter, Esc, Tab, Ctrl+C, ... — `isLocked`, not rebindable)
-are left out; a command EVE ships unbound is written as null, so the app can
-tell it from a command this table does not know. Modifiers are written
-in the order EVE stores them: Ctrl, Alt, Shift (`keybinds.rs`).
-
 Not shipped to app users — reads the local EVE install. Rerun after an EVE
 update.
 
 Usage:
-    python tools/gen-command-defaults.py                 # auto-discover
-    python tools/gen-command-defaults.py --ccp <path/to/tq/code.ccp>
+    python tools/gen-commands.py                 # auto-discover
+    python tools/gen-commands.py --ccp <path/to/tq/code.ccp>
 
 Requires Python 3 (stdlib only) and a local EVE install.
 """
 import argparse
 import json
 import os
+import pickle
 import string
 import struct
 import sys
 import zipfile
 import zlib
 
-OUT = os.path.join("app", "src", "lib", "data", "command-defaults.json")
+DATA = os.path.join("app", "src", "lib", "data")
+OUT_DEFAULTS = os.path.join(DATA, "command-defaults.json")
+OUT_NAMES = os.path.join(DATA, "command-names.json")
 CTRL, ALT, SHIFT = 17, 18, 16
 MOD_ORDER = [CTRL, ALT, SHIFT]
 
@@ -159,7 +171,9 @@ class Method:
 
 class Mapping:
     def __init__(self, callback, shortcut=None, **kw):
-        self.callback, self.shortcut, self.isLocked = callback, shortcut, kw.get("isLocked", False)
+        self.callback, self.shortcut = callback, shortcut
+        # CommandMapping.__init__: `self.category = category or "general"`.
+        self.isLocked, self.category = kw.get("isLocked", False), kw.get("category") or "general"
 
 
 class Obj:
@@ -275,6 +289,108 @@ def run(code, args, globs, taken):
             sys.exit(f"{code.name}: opcode {op} at {i} is not modelled; the client changed")
 
 
+# --- static reads: labels, categories, imports ------------------------------
+
+STATIC_NAME = {54: "STORE_MAP", 90: "STORE_NAME", 95: "STORE_ATTR", 100: "LOAD_CONST",
+               101: "LOAD_NAME", 105: "BUILD_MAP", 106: "LOAD_ATTR", 108: "IMPORT_NAME",
+               109: "IMPORT_FROM"}
+
+
+def instructions(code):
+    """(opname, argument) per instruction, with names and consts resolved."""
+    b, i, out = code.code.encode("latin-1"), 0, []
+    while i < len(b):
+        op, arg = b[i], None
+        if op >= 90:
+            arg, i = b[i + 1] | b[i + 2] << 8, i + 3
+            if op == 100:
+                arg = code.consts[arg]
+            elif op in (90, 95, 101, 106, 108, 109):
+                arg = code.names[arg]
+        else:
+            i += 1
+        out.append((STATIC_NAME.get(op, op), arg))
+    return out
+
+
+def literal_dict(code, name):
+    """`name = {const: const, ...}` at the top level of `code`."""
+    d, pending = None, []
+    for op, arg in instructions(code):
+        if op == "BUILD_MAP":
+            d, pending = {}, []
+        elif op == "LOAD_CONST" and d is not None:
+            pending.append(arg)
+        elif op == "STORE_MAP" and d is not None and len(pending) >= 2:
+            key, value = pending.pop(), pending.pop()
+            d[key] = value
+        elif op == "STORE_NAME" and arg == name and d is not None:
+            return d
+        else:
+            d, pending = None, []
+    return {}
+
+
+def imports(code):
+    """`from mod import Name [as Alias]` at module level: alias -> (mod, Name)."""
+    out, mod, name = {}, None, None
+    for op, arg in instructions(code):
+        if op == "IMPORT_NAME":
+            mod = arg
+        elif op == "IMPORT_FROM":
+            name = arg
+        elif op == "STORE_NAME" and name:
+            out[arg], name = (mod, name), None
+    return out
+
+
+def caption_path(ccp, mod, cls):
+    """A window class's own `default_captionLabelPath`, or None."""
+    try:
+        body = child(load(ccp, mod.replace(".", "/") + ".pyj"), cls)
+    except (KeyError, StopIteration):
+        return None
+    ins = instructions(body)
+    for (op, arg), (op2, arg2) in zip(ins, ins[1:]):
+        if op == "LOAD_CONST" and op2 == "STORE_NAME" and arg2 == "default_captionLabelPath":
+            return arg
+    return None
+
+
+def name_label_paths(ccp, body, module):
+    """`X.nameLabelPath = '<path>'` or `= Window.default_captionLabelPath` in a class body."""
+    out, ins, imported = {}, instructions(body), imports(module)
+    for k in range(3, len(ins)):
+        if ins[k] != ("STORE_ATTR", "nameLabelPath") or ins[k - 1][0] != "LOAD_NAME":
+            continue
+        target = ins[k - 1][1]
+        if ins[k - 2][0] == "LOAD_CONST":
+            out[target] = ins[k - 2][1]
+        elif ins[k - 2] == ("LOAD_ATTR", "default_captionLabelPath") and ins[k - 3][0] == "LOAD_NAME":
+            src = imported.get(ins[k - 3][1])
+            if src:
+                out[target] = caption_path(ccp, *src)
+    return out
+
+
+def localization(ccp_path):
+    """Label path ('UI/Commands/OpenMonitor') -> en-US text, from the SharedCache."""
+    tq = os.path.dirname(ccp_path)
+    want = {"res:/localizationfsd/localization_fsd_main.pickle": "main",
+            "res:/localizationfsd/localization_fsd_en-us.pickle": "en"}
+    files = {}
+    with open(os.path.join(tq, "resfileindex.txt"), encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            res, rel = line.split(",", 2)[:2]
+            if res in want:
+                files[want[res]] = os.path.join(os.path.dirname(tq), "ResFiles", rel)
+    with open(files["main"], "rb") as fh:
+        labels = pickle.load(fh, encoding="latin-1")["labels"]
+    with open(files["en"], "rb") as fh:
+        en = pickle.load(fh, encoding="latin-1")[1]
+    return {f"{v['FullPath']}/{v['label']}": en[mid][0] for mid, v in labels.items() if mid in en}
+
+
 # --- driver ------------------------------------------------------------------
 
 def find_ccp():
@@ -318,16 +434,38 @@ def main():
     maps = run(child(child(core_mod, "CommandService"), "SetDefaultShortcutMappingCORE"), [self_], globs, taken)
     maps += run(child(child(eve_mod, "EveCommandService"), "SetDefaultShortcutMappingGAME"), [self_], globs, taken)
 
-    # null = a command EVE ships unbound, distinct from one this table lacks.
-    out = {m.callback.name: canonical(m.shortcut) if m.shortcut is not None else None
-           for m in maps if not m.isLocked}
     for cond, truth in taken:
         print(f"  branch {cond} -> {truth}", file=sys.stderr)
-    with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(out, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-    bound = sum(v is not None for v in out.values())
-    print(f"{len(out)} rebindable commands, {bound} bound by default -> {OUT}", file=sys.stderr)
+    rebindable = [m for m in maps if not m.isLocked]
+    # null = a command EVE ships unbound, distinct from one this table lacks.
+    defaults = {m.callback.name: canonical(m.shortcut) if m.shortcut is not None else None
+                for m in rebindable}
+
+    # FuncToDesc's order: labelsByFuncName, then the callback's nameLabelPath.
+    text = localization(path)
+    by_func = {**literal_dict(core_mod, "labelsByFuncName"), **literal_dict(eve_mod, "labelsByFuncName")}
+    by_attr = {**name_label_paths(ccp, child(core_mod, "CommandService"), core_mod),
+               **name_label_paths(ccp, child(eve_mod, "EveCommandService"), eve_mod)}
+    tabs = {cat: text.get(p, cat) for cat, p in literal_dict(eve_mod, "CATEGORIES").items()}
+    names, unlabelled = {}, []
+    for m in rebindable:
+        cmd = m.callback.name
+        names[cmd] = {"group": tabs[m.category]}
+        label = text.get(by_func.get(cmd) or by_attr.get(cmd) or "")
+        if label:
+            names[cmd]["label"] = label
+        else:
+            unlabelled.append(cmd)
+
+    for out, data in ((OUT_DEFAULTS, defaults), (OUT_NAMES, names)):
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True, ensure_ascii=False)
+            fh.write("\n")
+    bound = sum(v is not None for v in defaults.values())
+    print(f"{len(defaults)} rebindable commands, {bound} bound by default -> {OUT_DEFAULTS}", file=sys.stderr)
+    print(f"{len(names) - len(unlabelled)} labelled -> {OUT_NAMES}", file=sys.stderr)
+    print(f"no label (the app de-camelcases): {', '.join(unlabelled)}", file=sys.stderr)
+    print(f"tabs: {', '.join(tabs.values())}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ const VICTIM = "CmdActivateHighPowerSlot5";
 const BINDS: Keybinds = {
   available: true,
   entries: [
-    { command: TAKER, keys: [113], malformed: false },
-    { command: VICTIM, keys: [114], malformed: false },
+    { command: TAKER, keys: [113], malformed: false, custom: true },
+    { command: VICTIM, keys: [114], malformed: false, custom: true },
   ],
 };
 
@@ -78,8 +78,8 @@ describe("EVE's default column", () => {
 
   test("shows the default and resets to it; an unbound default can reset too", async () => {
     calls.stub("keybinds", { available: true, entries: [
-      { command: "CmdReloadAmmo", keys: [81], malformed: false },
-      { command: "CmdExitStation", keys: [81], malformed: false },
+      { command: "CmdReloadAmmo", keys: [81], malformed: false, custom: true },
+      { command: "CmdExitStation", keys: [81], malformed: false, custom: true },
     ] });
     calls.stub("set_keybind", { keybinds: BINDS, stolen: [] });
     render(KeybindsView, { userOpen: true, userId: 1, onUserDirty: noop });
@@ -95,10 +95,24 @@ describe("EVE's default column", () => {
   });
 
   test("a command the table does not know shows no default and cannot reset", async () => {
-    calls.stub("keybinds", { available: true, entries: [{ command: "CmdSomeFutureThing", keys: [81], malformed: false }] });
+    calls.stub("keybinds", { available: true, entries: [{ command: "CmdSomeFutureThing", keys: [81], malformed: false, custom: true }] });
     render(KeybindsView, { userOpen: true, userId: 1, onUserDirty: noop });
     const row = await rowOf("CmdSomeFutureThing");
     expect(row.querySelector(".default")!.textContent).toBe("—");
     expect(reset(row).disabled).toBe(true);
   });
+});
+
+test("'Only changed' keeps just the rows the file binds differently from EVE's default", async () => {
+  calls.stub("keybinds", { available: true, entries: [
+    { command: "CmdReloadAmmo", keys: [17, 82], malformed: false, custom: true }, // stored, same as default
+    { command: "CmdExitStation", keys: [81], malformed: false, custom: true },    // changed
+    { command: "CmdApproachItem", keys: [81], malformed: false, custom: false },  // at its default
+  ] });
+  render(KeybindsView, { userOpen: true, userId: 1, onUserDirty: noop });
+  const toggle = await screen.findByLabelText("Only changed (1)");
+  await fireEvent.click(toggle);
+  await screen.findByTitle("CmdExitStation");
+  expect(screen.queryByTitle("CmdReloadAmmo")).toBeNull();
+  expect(screen.queryByTitle("CmdApproachItem")).toBeNull();
 });

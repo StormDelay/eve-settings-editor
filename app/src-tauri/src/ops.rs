@@ -1087,9 +1087,18 @@ pub fn clear_all_autofill(state: &AppState) -> Result<Vec<RememberedList>, ErrDt
     edit_user_autofill(state, clear_all_history)
 }
 
+/// EVE's factory bindings, generated from the client's code by
+/// tools/gen-commands.py — the same file the UI's Default column reads.
+fn keybind_defaults() -> &'static settings_model::KeybindDefaults {
+    static CACHE: std::sync::OnceLock<settings_model::KeybindDefaults> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        serde_json::from_str(include_str!("../../src/lib/data/command-defaults.json")).expect("command-defaults.json")
+    })
+}
+
 pub fn keybinds(state: &AppState) -> Result<Keybinds, ErrDto> {
     let user = state.user.lock().unwrap();
-    Ok(project_keybinds(user.as_ref().map(|d| &d.value)))
+    Ok(project_keybinds(user.as_ref().map(|d| &d.value), keybind_defaults()))
 }
 
 #[derive(serde::Serialize)]
@@ -1109,7 +1118,7 @@ pub fn set_keybind_cmd(
     let stolen = edit_slot(
         state,
         Slot::User,
-        |v| settings_model::set_keybind(v, command, keys),
+        |v| settings_model::set_keybind(v, command, keys, keybind_defaults()),
         |e| ErrDto::new("keybind", format!("{e:?}")),
     )?;
     Ok(SetKeybindResult { keybinds: keybinds(state)?, stolen })

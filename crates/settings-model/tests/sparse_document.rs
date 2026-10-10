@@ -116,11 +116,13 @@ fn autofill_projects_empty_without_an_edit_history() {
 
 #[test]
 fn keybinds_report_unavailable_without_a_cmd_section() {
-    for doc in [empty(), only_windows(), cmd_section_empty(), cmd_section_wrong_type()] {
-        let k = project_keybinds(Some(&doc));
+    for doc in [empty(), only_windows(), cmd_section_wrong_type()] {
+        let k = project_keybinds(Some(&doc), &Default::default());
         assert!(!k.available, "a document with no cmd section is not editable");
         assert!(k.entries.is_empty());
     }
+    // An empty table is a real account at its defaults, and editable.
+    assert!(project_keybinds(Some(&cmd_section_empty()), &Default::default()).available);
 }
 
 #[test]

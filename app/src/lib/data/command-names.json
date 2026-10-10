@@ -1,4 +1,12 @@
 {
+  "CmdAbortUndock": {
+    "group": "General",
+    "label": "Abort Undock"
+  },
+  "CmdAccelerate": {
+    "group": "Navigation",
+    "label": "Accelerate"
+  },
   "CmdActivateHighPowerSlot1": {
     "group": "Modules",
     "label": "Activate High Power Slot 1"
@@ -96,311 +104,1066 @@
     "label": "Activate Medium Power Slot 8"
   },
   "CmdAlignToItem": {
-    "group": "Navigation",
+    "group": "Combat",
     "label": "Align to"
   },
   "CmdApproachItem": {
-    "group": "Navigation",
+    "group": "Combat",
     "label": "Approach"
   },
-  "CmdDockOrJumpOrActivateGate": {
+  "CmdBack": {
+    "group": "General",
+    "label": "Back"
+  },
+  "CmdClearFleetBroadcastIcons": {
     "group": "Navigation",
+    "label": "Clear Broadcast Icons in Watch List"
+  },
+  "CmdCloseActiveWindow": {
+    "group": "Window",
+    "label": "Close Active Window"
+  },
+  "CmdCloseAllWindows": {
+    "group": "Window",
+    "label": "Close All Windows"
+  },
+  "CmdCompressAllOreInCurrentship": {
+    "group": "General",
+    "label": "Compress All Ore In Current Ship"
+  },
+  "CmdCreateBookmark": {
+    "group": "Navigation",
+    "label": "Save Location..."
+  },
+  "CmdCycleFleetBroadcastScope": {
+    "group": "Navigation",
+    "label": "Broadcast: Cycle Fleet Broadcast Recipients"
+  },
+  "CmdDecelerate": {
+    "group": "Navigation",
+    "label": "Decelerate"
+  },
+  "CmdDecreaseProbeScanRange": {
+    "group": "Combat",
+    "label": "Decrease Probe Scan Range"
+  },
+  "CmdDecreaseSpaceMouseAcceleration": {
+    "group": "Navigation",
+    "label": "SpaceMouse: Acceleration Decrease"
+  },
+  "CmdDecreaseSpaceMouseSpeed": {
+    "group": "Navigation",
+    "label": "SpaceMouse: Speed Decrease"
+  },
+  "CmdDeselectAllFighters": {
+    "group": "Fighters",
+    "label": "Deselect All Fighters"
+  },
+  "CmdDockOrJumpOrActivateGate": {
+    "group": "Combat",
     "label": "Dock/Jump/Activate gate"
   },
   "CmdDronesEngage": {
-    "group": "Drones & Fighters",
+    "group": "Drones",
     "label": "All Drones: Engage"
   },
   "CmdDronesReturnAndOrbit": {
-    "group": "Drones & Fighters",
+    "group": "Drones",
     "label": "All Drones: Return and Orbit"
   },
   "CmdDronesReturnToBay": {
-    "group": "Drones & Fighters",
+    "group": "Drones",
     "label": "All Drones: Return to Drone Bay"
   },
+  "CmdEnterHangar": {
+    "group": "General",
+    "label": "Enter Ship Hangar"
+  },
+  "CmdEnterStructure": {
+    "group": "General",
+    "label": "View Outside Structure"
+  },
+  "CmdExitStation": {
+    "group": "General",
+    "label": "Exit Station"
+  },
   "CmdFleetBroadcast_EnemySpotted": {
-    "group": "Fleet broadcasts",
+    "group": "Navigation",
     "label": "Broadcast: Spotted an Enemy"
   },
   "CmdFleetBroadcast_HealArmor": {
-    "group": "Fleet broadcasts",
+    "group": "Navigation",
     "label": "Broadcast: Need Armor"
   },
+  "CmdFleetBroadcast_HealCapacitor": {
+    "group": "Navigation",
+    "label": "Broadcast: Need Capacitor"
+  },
   "CmdFleetBroadcast_HealShield": {
-    "group": "Fleet broadcasts",
+    "group": "Navigation",
     "label": "Broadcast: Need Shield"
   },
+  "CmdFleetBroadcast_HoldPosition": {
+    "group": "Navigation",
+    "label": "Broadcast: Request That the Fleet Hold Position"
+  },
+  "CmdFleetBroadcast_InPosition": {
+    "group": "Navigation",
+    "label": "Broadcast: In Position at"
+  },
   "CmdFleetBroadcast_JumpBeacon": {
-    "group": "Fleet broadcasts",
+    "group": "Navigation",
     "label": "Broadcast: Jump to Beacon"
   },
-  "CmdKeepItemAtRange": {
+  "CmdFleetBroadcast_Location": {
     "group": "Navigation",
+    "label": "Broadcast: At Location"
+  },
+  "CmdFleetBroadcast_NeedBackup": {
+    "group": "Navigation",
+    "label": "Broadcast: Need Backup"
+  },
+  "CmdFleetGroup": {
+    "group": "Navigation",
+    "label": "Fleet Regroup"
+  },
+  "CmdFlightControlsDown": {
+    "group": "Navigation",
+    "label": "Pitch Down"
+  },
+  "CmdFlightControlsLeft": {
+    "group": "Navigation",
+    "label": "Turn Left"
+  },
+  "CmdFlightControlsRight": {
+    "group": "Navigation",
+    "label": "Turn Right"
+  },
+  "CmdFlightControlsUp": {
+    "group": "Navigation",
+    "label": "Pitch Up"
+  },
+  "CmdForceFadeFromBlack": {
+    "group": "Window",
+    "label": "Force fade from black"
+  },
+  "CmdForward": {
+    "group": "General",
+    "label": "Forward"
+  },
+  "CmdGetLocationMenuForNavigation": {
+    "group": "Combat",
+    "label": "Open Location Menu"
+  },
+  "CmdGetUiPointer": {
+    "group": "Window",
+    "label": "Show User Interface Pointer Overlay"
+  },
+  "CmdHideCursor": {
+    "group": "General",
+    "label": "Hide Mouse Cursor"
+  },
+  "CmdHideUI": {
+    "group": "General",
+    "label": "Toggle User Interface Visibility"
+  },
+  "CmdIncreaseProbeScanRange": {
+    "group": "Combat",
+    "label": "Increase Probe Scan Range"
+  },
+  "CmdIncreaseSpaceMouseAcceleration": {
+    "group": "Navigation",
+    "label": "SpaceMouse: Acceleration Increase"
+  },
+  "CmdIncreaseSpaceMouseSpeed": {
+    "group": "Navigation",
+    "label": "SpaceMouse: Speed Increase"
+  },
+  "CmdKeepItemAtRange": {
+    "group": "Combat",
     "label": "Keep at Range"
   },
+  "CmdLaunchAllFighters": {
+    "group": "Fighters",
+    "label": "Launch All Fighters"
+  },
   "CmdLaunchFavoriteDrones": {
-    "group": "Drones & Fighters",
-    "label": "Launch Favorite Drones"
+    "group": "Drones",
+    "label": "Launch Drones"
+  },
+  "CmdLaunchSelectedFighters": {
+    "group": "Fighters",
+    "label": "Launch Selected Fighters"
   },
   "CmdLockTargetItem": {
-    "group": "Targeting",
+    "group": "Combat",
     "label": "Lock target"
   },
+  "CmdLogOff": {
+    "group": "General",
+    "label": "Log off"
+  },
+  "CmdMinimizeActiveWindow": {
+    "group": "Window",
+    "label": "Minimize Active Window"
+  },
+  "CmdMiningScan": {
+    "group": "Modules",
+    "label": "Mining Surveyor"
+  },
+  "CmdNextStackedWindow": {
+    "group": "General",
+    "label": "Next stacked window"
+  },
+  "CmdNextTab": {
+    "group": "General",
+    "label": "Next Tab"
+  },
+  "CmdOpenBroadcastRadialMenu": {
+    "group": "General",
+    "label": "Broadcast Radial Menu"
+  },
+  "CmdOpenNewMessage": {
+    "group": "Window",
+    "label": "Open New Message"
+  },
+  "CmdOpenRadialMenu": {
+    "group": "General",
+    "label": "Radial Menu"
+  },
+  "CmdOpenSelectedCargoContainer": {
+    "group": "General",
+    "label": "Open Selected Cargo Container"
+  },
+  "CmdOrbitItem": {
+    "group": "Combat",
+    "label": "Orbit"
+  },
   "CmdOverloadHighPowerRack": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Rack"
   },
   "CmdOverloadHighPowerSlot1": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 1"
   },
   "CmdOverloadHighPowerSlot2": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 2"
   },
   "CmdOverloadHighPowerSlot3": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 3"
   },
   "CmdOverloadHighPowerSlot4": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 4"
   },
   "CmdOverloadHighPowerSlot5": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 5"
   },
   "CmdOverloadHighPowerSlot6": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 6"
   },
   "CmdOverloadHighPowerSlot7": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 7"
   },
   "CmdOverloadHighPowerSlot8": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on High Power Slot 8"
   },
   "CmdOverloadLowPowerRack": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Rack"
   },
   "CmdOverloadLowPowerSlot1": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 1"
   },
   "CmdOverloadLowPowerSlot2": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 2"
   },
   "CmdOverloadLowPowerSlot3": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 3"
   },
   "CmdOverloadLowPowerSlot4": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 4"
   },
   "CmdOverloadLowPowerSlot5": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 5"
   },
   "CmdOverloadLowPowerSlot6": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 6"
   },
   "CmdOverloadLowPowerSlot7": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 7"
   },
   "CmdOverloadLowPowerSlot8": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Low Power Slot 8"
   },
   "CmdOverloadMediumPowerRack": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Rack"
   },
   "CmdOverloadMediumPowerSlot1": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 1"
   },
   "CmdOverloadMediumPowerSlot2": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 2"
   },
   "CmdOverloadMediumPowerSlot3": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 3"
   },
   "CmdOverloadMediumPowerSlot4": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 4"
   },
   "CmdOverloadMediumPowerSlot5": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 5"
   },
   "CmdOverloadMediumPowerSlot6": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 6"
   },
   "CmdOverloadMediumPowerSlot7": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 7"
   },
   "CmdOverloadMediumPowerSlot8": {
-    "group": "Overload",
+    "group": "Modules",
     "label": "Toggle Overload on Medium Power Slot 8"
   },
   "CmdPickPortrait0": {
-    "group": "Misc",
+    "group": "Character Creation",
     "label": "Pick Portrait 1"
   },
   "CmdPickPortrait1": {
-    "group": "Misc",
+    "group": "Character Creation",
     "label": "Pick Portrait 2"
   },
   "CmdPickPortrait2": {
-    "group": "Misc",
+    "group": "Character Creation",
     "label": "Pick Portrait 3"
   },
   "CmdPickPortrait3": {
-    "group": "Misc",
+    "group": "Character Creation",
     "label": "Pick Portrait 4"
   },
+  "CmdPrevStackedWindow": {
+    "group": "General",
+    "label": "Previous stacked window"
+  },
+  "CmdPrevTab": {
+    "group": "General",
+    "label": "Previous Tab"
+  },
+  "CmdQuitGame": {
+    "group": "General",
+    "label": "Quit Game"
+  },
+  "CmdRecallAllFightersToTubes": {
+    "group": "Fighters",
+    "label": "Recall All Fighters"
+  },
+  "CmdRecallSelectedFightersToTubes": {
+    "group": "Fighters",
+    "label": "Recall Selected Fighters"
+  },
   "CmdReconnectToDrones": {
-    "group": "Drones & Fighters",
-    "label": "Reconnect To Drones"
+    "group": "Drones",
+    "label": "Reconnect To Lost Drones"
   },
   "CmdRefreshDirectionalScan": {
-    "group": "Misc",
+    "group": "Combat",
     "label": "Directional Scan"
   },
   "CmdRefreshProbeScan": {
-    "group": "Misc",
+    "group": "Combat",
     "label": "Refresh Probe Scan"
   },
+  "CmdReloadAmmo": {
+    "group": "Modules",
+    "label": "Reload Ammo"
+  },
+  "CmdResetMonitor": {
+    "group": "General",
+    "label": "Reset Monitor"
+  },
   "CmdSelectAllFighters": {
-    "group": "Drones & Fighters",
+    "group": "Fighters",
     "label": "Select All Fighters"
   },
   "CmdSelectNextTarget": {
-    "group": "Targeting",
+    "group": "Navigation",
     "label": "Select next target"
   },
   "CmdSelectPrevTarget": {
-    "group": "Targeting",
+    "group": "Navigation",
     "label": "Select previous target"
   },
+  "CmdSelectTargetItem": {
+    "group": "Combat",
+    "label": "Select"
+  },
+  "CmdSendBroadcast_AlignToItemID": {
+    "group": "Navigation",
+    "label": "Broadcast: Align to"
+  },
+  "CmdSendBroadcast_HealTarget": {
+    "group": "Navigation",
+    "label": "Broadcast: Repair Target (Selected)"
+  },
+  "CmdSendBroadcast_JumpToItemID": {
+    "group": "Navigation",
+    "label": "Broadcast: Jump to"
+  },
   "CmdSendBroadcast_Target": {
-    "group": "Fleet broadcasts",
+    "group": "Navigation",
     "label": "Broadcast: Target (Selected)"
   },
+  "CmdSendBroadcast_WarpToItemID": {
+    "group": "Navigation",
+    "label": "Broadcast: Warp to"
+  },
+  "CmdSetCameraOrbit": {
+    "group": "Navigation",
+    "label": "Activate Orbit Camera"
+  },
+  "CmdSetCameraPOV": {
+    "group": "Navigation",
+    "label": "Activate First Person Camera"
+  },
+  "CmdSetCameraTactical": {
+    "group": "Navigation",
+    "label": "Activate Tactical Camera"
+  },
+  "CmdSetChatChannelFocus": {
+    "group": "Window",
+    "label": "Set Chat Channel Focus"
+  },
+  "CmdSetDefenceStance": {
+    "group": "Combat",
+    "label": "Activate Defense Mode"
+  },
+  "CmdSetOverviewFocus": {
+    "group": "Window",
+    "label": "Set Overview Focus"
+  },
   "CmdSetSearchBarFocus": {
-    "group": "Misc",
+    "group": "General",
     "label": "Set Search Bar Focus"
   },
+  "CmdSetShipFullSpeed": {
+    "group": "Navigation",
+    "label": "Set Full Speed"
+  },
+  "CmdSetSniperStance": {
+    "group": "Combat",
+    "label": "Activate Sharpshooter Mode"
+  },
+  "CmdSetSpeedStance": {
+    "group": "Combat",
+    "label": "Activate Propulsion Mode"
+  },
   "CmdShowItemInfo": {
-    "group": "Misc",
+    "group": "Combat",
     "label": "Show info"
   },
-  "CmdToggleActivityTracker": {
-    "group": "Misc",
-    "label": "Toggle Activity Tracker"
+  "CmdStopShip": {
+    "group": "Navigation",
+    "label": "Stop Ship"
+  },
+  "CmdTagItem_1": {
+    "group": "Combat",
+    "label": "Tag item as: 1"
+  },
+  "CmdTagItem_123": {
+    "group": "Combat",
+    "label": "Tag item from sequence: 1, 2 or 3"
+  },
+  "CmdTagItem_123456789": {
+    "group": "Combat",
+    "label": "Tag item from sequence: 1 through 9"
+  },
+  "CmdTagItem_2": {
+    "group": "Combat",
+    "label": "Tag item as: 2"
+  },
+  "CmdTagItem_3": {
+    "group": "Combat",
+    "label": "Tag item as: 3"
+  },
+  "CmdTagItem_A": {
+    "group": "Combat",
+    "label": "Tag item as: A"
+  },
+  "CmdTagItem_ABC": {
+    "group": "Combat",
+    "label": "Tag item from sequence: A, B or C"
+  },
+  "CmdTagItem_ABCDEFGHI": {
+    "group": "Combat",
+    "label": "Tag item from sequence: A through I"
+  },
+  "CmdTagItem_B": {
+    "group": "Combat",
+    "label": "Tag item as: B"
+  },
+  "CmdTagItem_C": {
+    "group": "Combat",
+    "label": "Tag item as: C"
+  },
+  "CmdTagItem_None": {
+    "group": "Combat",
+    "label": "Untag item"
+  },
+  "CmdTagItem_X": {
+    "group": "Combat",
+    "label": "Tag item as: X"
+  },
+  "CmdTagItem_XYZ": {
+    "group": "Combat",
+    "label": "Tag item from sequence: X, Y or Z"
+  },
+  "CmdTagItem_Y": {
+    "group": "Combat",
+    "label": "Tag item as: Y"
+  },
+  "CmdTagItem_Z": {
+    "group": "Combat",
+    "label": "Tag item as: Z"
+  },
+  "CmdToggle3DView": {
+    "group": "General",
+    "label": "Toggle 3D view"
+  },
+  "CmdToggleAggressivePassive": {
+    "group": "Drones",
+    "label": "Drone Settings: Toggle Aggressive/Passive"
+  },
+  "CmdToggleAirCareerProgram": {
+    "group": "Window",
+    "label": "AIR Career Program"
+  },
+  "CmdToggleAudio": {
+    "group": "General",
+    "label": "Toggle Audio"
+  },
+  "CmdToggleAutoTracking": {
+    "group": "Combat",
+    "label": "Toggle Auto Tracking"
   },
   "CmdToggleAutopilot": {
     "group": "Navigation",
     "label": "Toggle Autopilot"
   },
+  "CmdToggleCameraTracking": {
+    "group": "Combat",
+    "label": "Track"
+  },
+  "CmdToggleCollapseAllWindows": {
+    "group": "Window",
+    "label": "Toggle collapse all windows"
+  },
+  "CmdToggleDroneFocusFire": {
+    "group": "Drones",
+    "label": "Drone Settings: Toggle Focus Fire"
+  },
+  "CmdToggleEffectTurrets": {
+    "group": "General",
+    "label": "Toggle turret effects"
+  },
+  "CmdToggleEffects": {
+    "group": "General",
+    "label": "Toggle effects"
+  },
   "CmdToggleLookAtItem": {
-    "group": "Targeting",
+    "group": "Combat",
     "label": "Look at"
   },
+  "CmdToggleMap": {
+    "group": "Window",
+    "label": "Map"
+  },
+  "CmdToggleMinimizeMaximizeAllWindows": {
+    "group": "Window",
+    "label": "Minimize/Maximize All Windows"
+  },
+  "CmdToggleSensorOverlay": {
+    "group": "Navigation",
+    "label": "Toggle sensor overlay"
+  },
   "CmdToggleShipSelection": {
-    "group": "Targeting",
+    "group": "Fighters",
     "label": "Toggle Ship Selection"
   },
+  "CmdToggleShipTree": {
+    "group": "Window",
+    "label": "Ship Tree"
+  },
+  "CmdToggleShowAllBrackets": {
+    "group": "Navigation",
+    "label": "Toggle show all brackets"
+  },
+  "CmdToggleShowNoBrackets": {
+    "group": "Navigation",
+    "label": "Toggle show no brackets"
+  },
+  "CmdToggleShowSpecialBrackets": {
+    "group": "Navigation",
+    "label": "Toggle Special Bracket Display"
+  },
+  "CmdToggleSolarSystemMap": {
+    "group": "Window",
+    "label": "Solar System Map"
+  },
+  "CmdToggleSystemMenu": {
+    "group": "General",
+    "label": "Settings"
+  },
   "CmdToggleTacticalOverlay": {
-    "group": "Misc",
+    "group": "Navigation",
     "label": "Toggle tactical overlay"
   },
+  "CmdToggleTargetItem": {
+    "group": "Combat",
+    "label": "Toggle lock target"
+  },
+  "CmdToggleTubeSelection_0": {
+    "group": "Fighters",
+    "label": "Toggle Selection of Tube 1"
+  },
+  "CmdToggleTubeSelection_1": {
+    "group": "Fighters",
+    "label": "Toggle Selection of Tube 2"
+  },
+  "CmdToggleTubeSelection_2": {
+    "group": "Fighters",
+    "label": "Toggle Selection of Tube 3"
+  },
+  "CmdToggleTubeSelection_3": {
+    "group": "Fighters",
+    "label": "Toggle Selection of Tube 4"
+  },
+  "CmdToggleTubeSelection_4": {
+    "group": "Fighters",
+    "label": "Toggle Selection of Tube 5"
+  },
   "CmdUnlockTargetItem": {
-    "group": "Targeting",
+    "group": "Combat",
     "label": "Unlock target"
   },
+  "CmdUnlockTargetItems": {
+    "group": "Combat",
+    "label": "Unlock all targets"
+  },
   "CmdWarpToItem": {
-    "group": "Navigation",
+    "group": "Combat",
     "label": "Warp to"
   },
+  "CmdZoomIn": {
+    "group": "General",
+    "label": "Zoom In"
+  },
+  "CmdZoomOut": {
+    "group": "General",
+    "label": "Zoom Out"
+  },
   "OpenAccessGroupsWindow": {
-    "group": "Windows",
-    "label": "Open Access Groups Window"
+    "group": "Window",
+    "label": "Access Lists"
+  },
+  "OpenAchievementsWindow": {
+    "group": "Window",
+    "label": "Achievements"
   },
   "OpenAgencyNew": {
-    "group": "Windows",
-    "label": "Open Agency New"
+    "group": "Window",
+    "label": "The Agency"
+  },
+  "OpenAmmoHoldOfActiveShip": {
+    "group": "Window",
+    "label": "Open Ammo Hold"
   },
   "OpenAssets": {
-    "group": "Windows",
-    "label": "Open Assets"
+    "group": "Window",
+    "label": "Personal Assets"
+  },
+  "OpenAuraGuidance": {
+    "group": "Window"
+  },
+  "OpenBountyOffice": {
+    "group": "Window",
+    "label": "Bounty Office"
+  },
+  "OpenCalculator": {
+    "group": "Window",
+    "label": "Calculator"
+  },
+  "OpenCalendar": {
+    "group": "Window",
+    "label": "Calendar"
+  },
+  "OpenCapitalNavigation": {
+    "group": "Window",
+    "label": "Jump Navigation"
+  },
+  "OpenCargoHoldOfActiveShip": {
+    "group": "Window",
+    "label": "Holds & Bays"
+  },
+  "OpenChannels": {
+    "group": "Window",
+    "label": "Chat Channels"
+  },
+  "OpenCharacterCustomization": {
+    "group": "Window",
+    "label": "Character Customization"
+  },
+  "OpenCharactersheet": {
+    "group": "Window",
+    "label": "Character Sheet"
+  },
+  "OpenCombatAnomaliesInAgency": {
+    "group": "Window",
+    "label": "The Agency"
+  },
+  "OpenCompare": {
+    "group": "Window",
+    "label": "Compare Tool"
+  },
+  "OpenConfigMenu": {
+    "group": "Window",
+    "label": "Open Config Menu"
+  },
+  "OpenContextualOffersWindow": {
+    "group": "Window",
+    "label": "New Offer"
   },
   "OpenContracts": {
-    "group": "Windows",
-    "label": "Open Contracts"
+    "group": "Window",
+    "label": "Contracts"
+  },
+  "OpenCorpDeliveries": {
+    "group": "Window",
+    "label": "Open Corporation Deliveries"
+  },
+  "OpenCorpHangar": {
+    "group": "Window",
+    "label": "Open Corporate Hangar"
+  },
+  "OpenCorporationItemDeliveries": {
+    "group": "Window",
+    "label": "Open Capsuleer Deliveries"
+  },
+  "OpenCorporationPanel": {
+    "group": "Window",
+    "label": "Corporation"
   },
   "OpenDirectionalScanner": {
-    "group": "Windows",
-    "label": "Open Directional Scanner"
+    "group": "Window",
+    "label": "Directional Scanner"
+  },
+  "OpenDroneBayOfActiveShip": {
+    "group": "Window",
+    "label": "Open Drone Bay Of Active Ship"
+  },
+  "OpenEncounterSurveillanceSystemInAgency": {
+    "group": "Window",
+    "label": "The Agency - Encounter Surveillance System"
+  },
+  "OpenEveMenu": {
+    "group": "Window",
+    "label": "Neocom Menu"
+  },
+  "OpenFighterBayOfActiveShip": {
+    "group": "Window",
+    "label": "Open Fighter Bay Of Active Ship"
   },
   "OpenFitting": {
-    "group": "Windows",
-    "label": "Open Fitting Service"
+    "group": "Window",
+    "label": "Fitting"
   },
   "OpenFittingMgmt": {
-    "group": "Windows",
-    "label": "Open Fitting Management"
+    "group": "Window",
+    "label": "Fitting Management"
+  },
+  "OpenFleet": {
+    "group": "Window",
+    "label": "Fleet"
+  },
+  "OpenFleetHangarOfActiveShip": {
+    "group": "Window",
+    "label": "Open Fleet Hangar"
+  },
+  "OpenFleetWatchlist": {
+    "group": "Window",
+    "label": "Watch List"
   },
   "OpenFpsMonitor": {
-    "group": "Windows",
+    "group": "Window",
     "label": "Open FPS Monitor"
   },
+  "OpenFrigateEscapeBay": {
+    "group": "Window",
+    "label": "Open Frigate Escape Bay"
+  },
+  "OpenFuelBayOfActiveShip": {
+    "group": "Window",
+    "label": "Open Fuel Bay Of Active Ship"
+  },
+  "OpenFwEnlistment": {
+    "group": "Window",
+    "label": "Factional Warfare Enlistment"
+  },
+  "OpenGeneralMiningHoldOfActiveShip": {
+    "group": "Window",
+    "label": "Open General Mining Hold Of Active Ship"
+  },
+  "OpenHangarFloor": {
+    "group": "Window",
+    "label": "Open Item Hangar"
+  },
+  "OpenHelp": {
+    "group": "Window",
+    "label": "EVE Help"
+  },
   "OpenIndustry": {
-    "group": "Windows",
-    "label": "Open Industry"
+    "group": "Window",
+    "label": "Industry"
+  },
+  "OpenInfrastructureBayOfActiveShip": {
+    "group": "Window",
+    "label": "Open Infrastructure Hold"
+  },
+  "OpenInsurance": {
+    "group": "Window",
+    "label": "Ship Insurance"
+  },
+  "OpenInsurgencyDashboard": {
+    "group": "Window",
+    "label": "Insurgencies"
+  },
+  "OpenInventory": {
+    "group": "Window",
+    "label": "Inventory"
+  },
+  "OpenJobBoardWindow": {
+    "group": "Window",
+    "label": "Opportunities"
+  },
+  "OpenLedger": {
+    "group": "Window",
+    "label": "Mining Ledger"
+  },
+  "OpenLocations": {
+    "group": "Window",
+    "label": "Locations"
+  },
+  "OpenLog": {
+    "group": "Window",
+    "label": "Log and Messages"
+  },
+  "OpenLoginRewardWindow": {
+    "group": "Window",
+    "label": "Daily Login Campaigns"
+  },
+  "OpenLpstore": {
+    "group": "Window",
+    "label": "Loyalty Point Store"
   },
   "OpenMail": {
-    "group": "Windows",
-    "label": "Open Mail"
+    "group": "Window",
+    "label": "Mail"
+  },
+  "OpenManageRoute": {
+    "group": "Window",
+    "label": "Manage autopilot route"
+  },
+  "OpenMapBrowser": {
+    "group": "Window",
+    "label": "Map Browser"
+  },
+  "OpenMarket": {
+    "group": "Window",
+    "label": "Regional Market"
   },
   "OpenMarketOrders": {
-    "group": "Windows",
-    "label": "Open Market Orders"
+    "group": "Window",
+    "label": "Market Orders"
+  },
+  "OpenMedical": {
+    "group": "Window",
+    "label": "Clone Bay"
+  },
+  "OpenMilitia": {
+    "group": "Window",
+    "label": "Factional Warfare"
+  },
+  "OpenMineralHoldOfActiveShip": {
+    "group": "Window",
+    "label": "Open Mineral Hold Of Active Ship"
+  },
+  "OpenMiningScanResultsWindow": {
+    "group": "Window",
+    "label": "Mining Survey Results"
+  },
+  "OpenMonitor": {
+    "group": "General",
+    "label": "Open Monitor"
+  },
+  "OpenMoonMining": {
+    "group": "Window",
+    "label": "Control Tower Manager"
+  },
+  "OpenMoonScan": {
+    "group": "Window",
+    "label": "Moon Probe and Analysis"
+  },
+  "OpenMultibuy": {
+    "group": "Window",
+    "label": "Multibuy"
+  },
+  "OpenMyMercenaryDens": {
+    "group": "Window",
+    "label": "My Mercenary Dens"
+  },
+  "OpenNotepad": {
+    "group": "Window",
+    "label": "Notepad"
+  },
+  "OpenOmegaUpsellWindow": {
+    "group": "Window",
+    "label": "Omega Subscription"
   },
   "OpenOverviewSettings": {
-    "group": "Windows",
-    "label": "Open Overview Settings"
+    "group": "Window",
+    "label": "Overview Settings"
+  },
+  "OpenPVPFilamentEventWindow": {
+    "group": "Window",
+    "label": "The Proving Grounds"
+  },
+  "OpenPaintToolWindow": {
+    "group": "Window",
+    "label": "Structure SKINR"
+  },
+  "OpenPeopleAndPlaces": {
+    "group": "Window",
+    "label": "Contacts"
+  },
+  "OpenPlanetaryCommoditiesHoldOfActiveShip": {
+    "group": "Window",
+    "label": "Open Planetary Commodities Hold Of Active Ship"
+  },
+  "OpenPlanets": {
+    "group": "Window",
+    "label": "Planetary Industry"
+  },
+  "OpenPlexVault": {
+    "group": "Window",
+    "label": "PLEX Vault"
+  },
+  "OpenPointerWnd": {
+    "group": "Window",
+    "label": "Pointer Window"
+  },
+  "OpenRaffleWindow": {
+    "group": "Window",
+    "label": "HyperNet Relay"
+  },
+  "OpenRelevantFWWindow": {
+    "group": "Window",
+    "label": "Factional Warfare"
+  },
+  "OpenRepairshop": {
+    "group": "Window",
+    "label": "Repairshop"
+  },
+  "OpenReprocessingPlant": {
+    "group": "Window",
+    "label": "Reprocessing Plant"
+  },
+  "OpenSeason": {
+    "group": "Window",
+    "label": "Events"
+  },
+  "OpenSecurityOffice": {
+    "group": "Window",
+    "label": "Security Office"
+  },
+  "OpenShipConfig": {
+    "group": "Window",
+    "label": "Ship Config"
   },
   "OpenShipHangar": {
-    "group": "Windows",
+    "group": "Window",
     "label": "Open Ship Hangar"
   },
-  "OpenSkillQueueWindow": {
-    "group": "Windows",
-    "label": "Open Training Queue"
+  "OpenShipMaintenanceOfBayActiveShip": {
+    "group": "Window",
+    "label": "Open Ship Maintenance Bay"
+  },
+  "OpenShipSKINRWindow": {
+    "group": "Window",
+    "label": "Ship SKINR"
   },
   "OpenSkillsWindow": {
-    "group": "Windows",
-    "label": "Open Skills Window"
+    "group": "Window",
+    "label": "Skills"
+  },
+  "OpenStructureBrowser": {
+    "group": "Window",
+    "label": "Structure Browser"
+  },
+  "OpenWallet": {
+    "group": "Window",
+    "label": "Wallet"
+  },
+  "PrintScreen": {
+    "group": "General",
+    "label": "Print screen"
+  },
+  "ToggleAurumStore": {
+    "group": "Window",
+    "label": "Open Noble Exchange"
   },
   "ToggleCurrentSystemLocationWnd": {
-    "group": "Windows",
+    "group": "Window",
     "label": "Local Locations"
   },
   "ToggleProbeScanner": {
-    "group": "Windows",
-    "label": "Toggle Probe Scanner"
+    "group": "Window",
+    "label": "Probe Scanner"
+  },
+  "ToggleProjectDiscovery": {
+    "group": "Window",
+    "label": "Project Discovery"
+  },
+  "ToggleRedeemItems": {
+    "group": "Window",
+    "label": "Redeem Items"
+  },
+  "ToggleTheatersOfWarWindow": {
+    "group": "Window",
+    "label": "Theaters of War"
+  },
+  "WinCmdToggleWindowed": {
+    "group": "General",
+    "label": "Toggle Windowed"
   }
 }

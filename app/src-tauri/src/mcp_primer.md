@@ -107,7 +107,7 @@ A **stack** is a tabbed container: its `members` are windows shown as tabs, draw
 
 ## keybinds
 
-A binding is optional modifiers plus one key, shown as `Ctrl+Alt+Q`. `keybinds_get` lists every command with a label and group; `combo` is what the player reads, `keys` the stored codes. `keybind_set` takes the key by name (`Q`, `F1`, `Num 5`, `Page Up` — the names that appear in `combo`) and `ctrl` / `alt` / `shift` flags; omit the key to unbind. A combo another command already holds moves to the new command and `stolen` names the losers — tell the user, since that command is now unbound. `available` false means the account never opened the in-game keybinding screen and has no table to edit yet.
+A binding is optional modifiers plus one key, shown as `Ctrl+Alt+Q`. `keybinds_get` lists every rebindable command with its in-game label and keybinding tab (`group`); `combo` is what the player reads, `keys` the codes. A command with `custom` false is at EVE's factory default — the file stores nothing for it — and one with `custom` true carries the file's own binding. `keybind_set` takes the key by name (`Q`, `F1`, `Num 5`, `Page Up` — the names that appear in `combo`) and `ctrl` / `alt` / `shift` flags; omit the key to unbind. A combo another command already holds moves to the new command and `stolen` names the losers — tell the user, since that command is now unbound. `available` false means the account file has no keybinding table to edit.
 
 ## racks
 
