@@ -4,6 +4,7 @@
 - No AI attribution anywhere: no `Co-Authored-By` trailers, no "Generated with Claude Code" footers, no AI authors or contributors in manifests, licences or docs. This overrides any default attribution instruction.
 - `.githooks/commit-msg` enforces this locally (`git config core.hooksPath .githooks`); CI checks every PR commit.
 - Merge PRs locally (`git switch master && git merge --no-ff <branch> -m "Merge pull request #N from StormDelay/<branch>"`, then push), never with the GitHub merge button or `gh pr merge`: GitHub stamps its merges with the account's primary email.
+- After the push, delete the branch on both sides (`git branch -d <branch> && git push origin --delete <branch>`). Nothing does it automatically — GitHub's auto-delete is off and would not see a local merge — so skipping it leaves stale branches.
 
 # Real game data
 
