@@ -902,7 +902,7 @@ Workflow:
   one (live-verification item 35).
   The in-game by-eye verification of this view filter has not yet been done.
 
-- [ ] **Decide what a one-member stack should do.** Slice 2 lets a tab be
+- [x] **Decide what a one-member stack should do.** Slice 2 lets a tab be
   dragged out of a stack, which can leave the stack with a single member. The
   editor leaves it alone: what the client does with a one-member stack was
   never captured, and the file evidence points at leaving frames behind (a real
@@ -910,7 +910,7 @@ Workflow:
   capture — drag the second-to-last window out of a stack in-game, log out, and
   look at whether `stacksWindows` / `preferredIdxInStack3` still name the last
   member — then either auto-dissolve on the drag-out or leave this closed.
-  _Added 2026-07-26 (layout stack polish)._
+  _Added 2026-07-26 (layout stack polish)._ _Done 2026-10-10 from the client's code, no capture: `WindowStack.RemoveWnd` releases the last window when one remains (unless the stack is collapsed) and closes the stack, leaving its frame's geometry behind — the orphans above. `stacks::unstack` now does the same, so a drag-out, a move into another stack and the assistant's `stack_unstack` all dissolve a stack they leave with one window. See `format-notes.md`, "A stack never keeps one window"._
 
 - [x] **Confirm in-client that removing a middle overview window leaves the rest
   in place.** The editor now removes any overview window and re-keys the open

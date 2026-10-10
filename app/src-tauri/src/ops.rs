@@ -2295,9 +2295,8 @@ mod tests {
         let state = AppState::new();
         open_file(&state, Slot::Char, path.to_str().unwrap()).unwrap();
         let wl = stack_unstack(&state, "m1").unwrap();
-        // The stack now has only m2 (m1 unstacked).
-        assert_eq!(wl.stacks.len(), 1);
-        assert_eq!(wl.stacks[0].members, vec!["m2".to_string()]);
+        // A two-window stack dissolves: m2 is released too, as EVE does it.
+        assert!(wl.stacks.is_empty());
         // Doc still encodes/decodes (reshare ran without corrupting the tree).
         let guard = state.char.lock().unwrap();
         let bytes = blue_marshal::encode(&guard.as_ref().unwrap().value).unwrap();

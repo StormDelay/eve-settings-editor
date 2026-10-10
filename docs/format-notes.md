@@ -767,6 +767,16 @@ a full login/logout, and neither came back — while six untouched controls in t
 same file sat still. So an orphan frame is safe to delete outright; the client
 neither restores it nor treats its absence as damage.
 
+**A stack never keeps one window.** Read from the client's code 2026-10-10
+(`WindowStack.RemoveWnd`, carbonui/window/stack.py): when a window leaves a
+stack and exactly one remains, the client removes that one too — placed where
+the stack stood, its `stacksWindows` entry and preferred index cleared — and
+closes the empty stack. The one exception is a collapsed stack, which keeps its
+last window. The closed frame's geometry is not deleted, which is how orphan
+frames accumulate. Loading does not repair a one-member stack (`Check` only
+closes a stack with no windows), so the editor dissolves on the drag-out itself
+(`stacks::unstack`).
+
 ### Our pack export vs EVE's own
 
 Compared 2026-07-28 (live plan items 28, 29, 31), by exporting an account's
