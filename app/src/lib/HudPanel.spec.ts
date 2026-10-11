@@ -45,6 +45,7 @@ function hud(...overrides: HudEntry[]): Hud {
     entry("target_x", "float", "0.5442122186495176", { scope: "account" }),
     entry("target_y", "float", "0.5222222222222223", { scope: "account" }),
     entry("target_horizontal", "bool", "false", { scope: "account" }),
+    entry("compass", "bool", "true", { scope: "account" }),
   ];
   const byName = new Map(base.map((e) => [e.name, e]));
   for (const o of overrides) byName.set(o.name, o);
@@ -115,6 +116,11 @@ describe("the target anchor, which is stored as a fraction", () => {
     mount(hud());
     expect(input("Target list", "x").value).toBe("0.5442122186495176");
   });
+});
+
+test("the compass toggle sits with the ship HUD and writes the account file", () => {
+  mount(hud(), { accountReadOnly: true });
+  expect(input("Ship HUD", "Compass").disabled).toBe(true);
 });
 
 describe("the fighter panel's default", () => {
@@ -295,6 +301,7 @@ describe("what the panel shows", () => {
         entry("target_x", "float", null, { scope: "account", set: UNAVAILABLE }),
         entry("target_y", "float", null, { scope: "account", set: UNAVAILABLE }),
         entry("target_horizontal", "bool", null, { scope: "account", set: UNAVAILABLE }),
+        entry("compass", "bool", null, { scope: "account", set: UNAVAILABLE }),
       ),
     );
     expect(document.querySelector(".account-legend")).toBeNull();

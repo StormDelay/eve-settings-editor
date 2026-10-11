@@ -71,6 +71,8 @@
     { title: "Ship HUD", kind: "shipui", rows: [
       { name: "ship_offset", label: "Offset from centre" },
       { name: "ship_top", label: "Align to top" },
+      // The sensor-overlay compass widens the HUD, so it lives with it.
+      { name: "compass", label: "Compass" },
     ] },
     { title: "Fighter panel", kind: "fighter", rows: [
       { name: "fighter_x", label: "x" },

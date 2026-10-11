@@ -440,7 +440,7 @@ check("open filter keeps the right window", open[0].id === "a");
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
   targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
-  neocomWidth, NEOCOM_DEFAULT_WIDTH, fighterPoint, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
+  neocomWidth, NEOCOM_DEFAULT_WIDTH, fighterPoint, shipAnchorLeft, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
@@ -448,7 +448,7 @@ import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 // name-prefix guess, so a future field can't be silently mislabelled.
 const ACCOUNT_FIELDS = new Set([
   "ship_top", "fighter_detached", "fighter_shown",
-  "target_x", "target_y", "target_horizontal",
+  "target_x", "target_y", "target_horizontal", "compass",
 ]);
 
 // The value Pilot Echo's account file held after the 2026-07-31 capture:
@@ -490,6 +490,8 @@ const fullHud = (over: Partial<Record<string, HudEntry>> = {}): Hud => {
     hudEntry("target_x", String(TARGET_X), "float", "0"),
     hudEntry("target_y", String(TARGET_Y), "float", "0"),
     hudEntry("target_horizontal", "false", "bool", "false"),
+    // ON: the setup every measured ship-HUD figure was taken with.
+    hudEntry("compass", "true", "bool", "false"),
   ];
   return { entries: base.map((e) => over[e.name] ?? e) };
 };
@@ -771,7 +773,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const ship = rects.find((r) => r.kind === "shipui")!;
   check(
     "shipOffsetFromX inverts hudRects' ship HUD placement",
-    shipOffsetFromX(ship.x, layout2560.reference_w) === hudNum(hud, "ship_offset"),
+    shipOffsetFromX(ship.x, layout2560.reference_w, true) === hudNum(hud, "ship_offset"),
   );
 
   const fighter = rects.find((r) => r.kind === "fighter")!;
@@ -869,17 +871,33 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   for (const referenceW of [2560, 1920, 3440, 2559, 1921]) {
     const layout = { ...layout2560, reference_w: referenceW };
     for (const offset of [-642, -189, 0, 300]) {
-      const hud = fullHud({
-        ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
-        ship_top: hudEntry("ship_top", "true", "bool", "false"),
-      });
-      const ship = hudRects(hud, layout).find((f) => f.kind === "shipui")!;
-      check(
-        `dragging to its own drawn x round-trips the offset (w=${referenceW}, ${offset})`,
-        shipOffsetFromX(ship.x, referenceW) === offset,
-      );
+      for (const compass of [true, false]) {
+        const hud = fullHud({
+          ship_offset: hudEntry("ship_offset", String(offset), "float", "0"),
+          ship_top: hudEntry("ship_top", "true", "bool", "false"),
+          compass: hudEntry("compass", String(compass), "bool", "false"),
+        });
+        const ship = hudRects(hud, layout).find((f) => f.kind === "shipui")!;
+        check(
+          `dragging to its own drawn x round-trips the offset (w=${referenceW}, ${offset}, compass ${compass})`,
+          shipOffsetFromX(ship.x, referenceW, compass) === offset,
+        );
+      }
     }
   }
+}
+
+{
+  // Without the compass (the client's default) the racks start 16px nearer the
+  // capacitor and the button cluster sits 10px nearer it
+  // (shipUI.slotsContLeft / hudButtonsLeft), so the box is 26px narrower and
+  // its anchor 10px nearer its left edge.
+  const off = fullHud({ compass: hudEntry("compass", null, "bool", "false", "insert") });
+  const ship = hudRects(off, layout2560).find((r) => r.kind === "shipui")!;
+  check("without the compass the capacitor is 138 in", ship.x + 138 === 1280 - 100);
+  check("and the box is 622 wide", ship.w === 622);
+  check("with it, the measured 148 and 648",
+    hudRects(fullHud(), layout2560).find((r) => r.kind === "shipui")!.w === 648);
 }
 
 // The 2026-07-28 fighter shot: anchor (329, 289), 4 squadrons with 3 launched.
@@ -1271,7 +1289,8 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   {
     // The rect x that hudRects places offset 0 at, recovered through the same
     // inverse the function uses, so "unmoved" is exact rather than assumed.
-    const x0 = layout.reference_w / 2 - SHIP_ANCHOR_LEFT;
+    // `noHud` stores no compass, so the HUD has the client's default shape.
+    const x0 = layout.reference_w / 2 - shipAnchorLeft(false);
     check("an unmoved ship HUD writes nothing",
       eq(furnitureWrites("shipui", { x: x0, y: 900 }, { x: x0, y: 900 }, null, noHud, layout), []));
     check("a sub-pixel ship drag that rounds back writes nothing",

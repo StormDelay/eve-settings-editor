@@ -970,7 +970,9 @@ Account file (`core_user_<id>.dat`) — these are account-wide, so one edit
 changes every character on the account:
 
 - root → `b"ui"` → `b"shipuialigntop"` (Bool, 131/175),
-  `b"detachFighterUI"` (Bool, 130/175), `b"displayFighterUI"` (Bool, 131/175).
+  `b"detachFighterUI"` (Bool, 130/175), `b"displayFighterUI"` (Bool, 131/175),
+  `b"showSensorOverlay"` (Bool, the compass — reshapes the ship HUD; see
+  "Ship HUD internals").
 - root → `b"windows"` → `b"neocomWidth"` (Int, e.g. `37`, 130/175) — **legacy,
   never read.** Corrected 2026-10-11 from the client's code: the width is a
   character setting (`neocomSettings.neocom_width_setting`, a
@@ -1037,6 +1039,18 @@ element's structure from one ship's fitting.
 | Capacitor | centred (148, 72); outer rim r 80, gauge band r 50..80 **top half only**, inner ring r 42, lit core r 27 |
 | Module racks | round buttons ⌀44, column pitch 51 from x 247, rows on a uniform 44 pitch from y 4 |
 | Rack stagger | the **middle row is offset +25**, half a pitch, and carries one fewer button |
+
+**All of it was measured with the sensor-overlay compass ON**, which the client's
+code shows changes the shape (2026-10-11). The account `ui → showSensorOverlay`
+(Bool, off unless stored — `shipUI.is_compass_enabled`) moves the module racks
+16px further right (`slotsContLeft`: `SLOTS_CONTAINER_LEFT + 16 − 8`) and the
+left button cluster 10px further left (`hudButtonsLeft` 690 vs 680). The
+measured figures match the compass-on code to the pixel: racks at
+capacitor + 99, cluster from capacitor − 150. Without the compass the box is
+**622** wide with the capacitor **138** in. Stance and mining-scanner buttons
+(ship-dependent, in no file) push the racks a further 32px right. The code also
+confirms the grid itself: column pitch `int(32 × 1.6)` = 51, row pitch
+`int(32 × 1.4)` = 44, the middle row offset by half a column, 8 slots a row.
 
 Three things this corrected, all of which had made the drawn HUD wrong:
 
