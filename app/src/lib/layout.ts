@@ -1,7 +1,7 @@
 // Pure geometry helpers for the layout canvas. No DOM, no Svelte — unit-tested
 // in layout.test.ts.
 import type { WindowLayout, Stack, WindowRect, Hud, AccountOutcome } from "./api";
-import { isClutter, inEnv, nameOf, type ClutterOverrides, type Env } from "./windowLabels.ts";
+import { clientReadsOpenFlag, isClutter, inEnv, nameOf, type ClutterOverrides, type Env } from "./windowLabels.ts";
 
 /** Re-exported so callers that already import from layout.ts get it here.
  * It is DECLARED in windowLabels.ts, beside the mapping it belongs to —
@@ -23,9 +23,24 @@ export function toData(canvasPx: number, scale: number): number {
   return scale > 0 ? Math.round(canvasPx / scale) : 0;
 }
 
-/** Windows the canvas draws: open and with valid geometry. */
+/**
+ * Whether the window comes back when the character logs in: its `openWindows`
+ * flag is set AND the client acts on that flag for it (clientReadsOpenFlag).
+ * Stack frames and minted numeric ids pass on their flag — the frame shows
+ * when its members do, and dead frames are the clutter filter's business.
+ */
+export function reopens(w: WindowRect): boolean {
+  return w.open && openFlagMatters(w);
+}
+
+/** Whether the window's `openWindows` flag does anything in game. */
+export function openFlagMatters(w: WindowRect): boolean {
+  return w.stack?.role === "container" || /^\d+$/.test(w.id) || clientReadsOpenFlag(w.id);
+}
+
+/** Windows the canvas draws: ones the client reopens, with valid geometry. */
 export function openWindows(windows: WindowRect[]): WindowRect[] {
-  return windows.filter((w) => w.open && w.renderable);
+  return windows.filter((w) => reopens(w) && w.renderable);
 }
 
 export type Corner = "tl" | "tr" | "bl" | "br";
@@ -770,7 +785,7 @@ export function isOrphanFrame(w: WindowRect): boolean {
 }
 
 export function windowMatches(w: WindowRect, f: WindowFilter, o?: ClutterOverrides): boolean {
-  if (f.openOnly && !w.open) return false;
+  if (f.openOnly && !reopens(w)) return false;
   if (f.hideClutter && isClutter(w.id, o, w.name)) return false;
   if (f.hideClutter && isOrphanFrame(w)) return false;
   if (!inEnv(w.id, f.env)) return false;

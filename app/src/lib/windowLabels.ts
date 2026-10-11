@@ -237,6 +237,21 @@ export function inEnv(id: string, env: Env): boolean {
   return env === "docked" ? !has(SPACE_ONLY) : !has(DOCKED_ONLY);
 }
 
+const RESTORED: ReadonlySet<string> = new Set([...filters.restored, ...filters.service_opened]);
+
+/**
+ * Whether the client acts on this window's `openWindows` flag at all. It reads
+ * the flag for a fixed list (sessionChangeWindowOpener — judged on a
+ * parameterised window's base id), and services open the overview windows,
+ * Selected Item, drones, the docked lobby and joined chat channels; every other
+ * window stays closed at login whatever the flag says. See
+ * `data/window-filters.json` and format-notes.md.
+ */
+export function clientReadsOpenFlag(id: string): boolean {
+  const base = TUPLE_ID.exec(id)?.[1] ?? id;
+  return RESTORED.has(base) || /^overview_\d+$/.test(base) || base.startsWith("chatchannel_");
+}
+
 /** Suffix segments that carry no meaning for a reader: ids, hashes, GUIDs. */
 const OPAQUE = /^(-?\d+L?|[0-9a-f]{16,})$/i;
 

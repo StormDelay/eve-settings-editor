@@ -528,7 +528,7 @@ fn layout_view(wl: &WindowLayout, f: &WindowFilter, o: &Overrides) -> Value {
             None => true,
         })
         .map(|w| json!({
-            "id": w.id, "label": w.label, "name": w.name, "open": w.open, "renderable": w.renderable,
+            "id": w.id, "label": w.label, "name": w.name, "open": crate::mcp_filter::reopens(w), "renderable": w.renderable,
             "resolution_matches": w.resolution_matches,
             "geom": w.geom.as_ref().map(|g| json!({ "x": g.x, "y": g.y, "w": g.w, "h": g.h, "screen_w": g.screen_w, "screen_h": g.screen_h })),
             "flags": w.flags.iter().filter(|f| f.value).map(|f| &f.name).collect::<Vec<_>>(),
@@ -941,7 +941,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_get",
-            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. In the app window's workspace, filters you omit follow the user's Layout view, and window_view gives that filter and the window the user selected. Needs the character file open. To SEE it, call layout_render.",
+            description: "The character's window layout: reference_w/h (the screen size the file was saved at), windows [{id, label, name, open, renderable, resolution_matches, geom: {x, y, w, h, screen_w, screen_h}, flags, stack}] in pixels, and stacks [{container_id, container_label, anchor_id, members}] — tabbed groups drawn at their anchor window. open means EVE reopens the window at login: its openWindows flag is set and EVE reads that flag for it (a fixed set — market, mail, scanners, inventories… — plus the overview, Selected Item, drones, lobby and chat channels it opens itself); any other window stays closed whatever its flag says. flags lists the flag names that are ON for that window; the top-level settable_flags lists every flag name this file can set at all. Closed windows are omitted unless include_closed. Clutter — per-chat, per-item and dialog windows, most of a real file — is omitted unless hide_clutter is false; environment and match narrow further; hidden counts what was left out. A window you were asked about that is not listed is probably filtered, not missing: relax the filter before concluding. In the app window's workspace, filters you omit follow the user's Layout view, and window_view gives that filter and the window the user selected. Needs the character file open. To SEE it, call layout_render.",
             schema: || obj(json!({
                 "include_closed": { "type": "boolean", "description": "Include closed windows. Default false." },
                 "hide_clutter": { "type": "boolean", "description": "Default true: omit windows EVE spawns per chat, item or dialog, and dead stack frames." },
@@ -3762,7 +3762,7 @@ mod tests {
 
     /// A character file with three windows — `overview` open at a matching
     /// resolution, `market` open at a different one (so a move re-stamps the
-    /// screen size), `fitting` closed — and a stack of m1+m2 in container C
+    /// screen size), `fitting` closed — and a stack of journal+notepad in container C
     /// (`ops::tests::stacked_char_bytes`'s shape). Flags: `pinnedWindows` has
     /// an entry for overview only, so market's pinned flag is an Insert.
     fn layout_char_bytes() -> Vec<u8> {
@@ -3775,15 +3775,15 @@ mod tests {
                 (b("overview"), geom(100, 200, 400, 600, 2560, 1440)),
                 (b("market"), geom(10, 10, 300, 300, 1920, 1080)),
                 (b("fitting"), geom(0, 0, 500, 500, 2560, 1440)),
-                (b("m1"), geom(0, 0, 100, 80, 2560, 1440)), (b("m2"), geom(0, 0, 100, 80, 2560, 1440)), (b("C"), geom(0, 0, 100, 80, 2560, 1440)),
+                (b("journal"), geom(0, 0, 100, 80, 2560, 1440)), (b("notepad"), geom(0, 0, 100, 80, 2560, 1440)), (b("C"), geom(0, 0, 100, 80, 2560, 1440)),
             ])])),
             (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![
                 (b("overview"), BmValue::Bool(true)), (b("market"), BmValue::Bool(true)), (b("fitting"), BmValue::Bool(false)),
-                (b("m1"), BmValue::Bool(true)), (b("m2"), BmValue::Bool(true)), (b("C"), BmValue::Bool(true)),
+                (b("journal"), BmValue::Bool(true)), (b("notepad"), BmValue::Bool(true)), (b("C"), BmValue::Bool(true)),
             ])])),
             (b("pinnedWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), BmValue::Bool(true))])])),
-            (b("stacksWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("m1"), b("C")), (b("m2"), b("C"))])])),
-            (b("preferredIdxInStack3"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("C"), BmValue::Dict(vec![(b("m1"), BmValue::Int(0)), (b("m2"), BmValue::Int(1))]))])])),
+            (b("stacksWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("journal"), b("C")), (b("notepad"), b("C"))])])),
+            (b("preferredIdxInStack3"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("C"), BmValue::Dict(vec![(b("journal"), BmValue::Int(0)), (b("notepad"), BmValue::Int(1))]))])])),
         ]))])).unwrap()
     }
 
@@ -3810,7 +3810,7 @@ mod tests {
         assert!(!settable.contains(&json!("lockedWindows")), "no lockedWindows dict in the file → not settable: {settable:?}");
         assert_eq!(window(&v, "market")["resolution_matches"], false);
         assert!(v["windows"].as_array().unwrap().iter().all(|w| w["id"] != "fitting"), "closed window omitted by default: {v}");
-        assert_eq!(v["stacks"][0]["members"], json!(["m1", "m2"]));
+        assert_eq!(v["stacks"][0]["members"], json!(["journal", "notepad"]));
 
         let v = s.call("layout_get", &args(json!({ "include_closed": true }))).unwrap();
         assert_eq!(window(&v, "fitting")["open"], false, "present once include_closed is true");
@@ -3921,13 +3921,13 @@ mod tests {
     fn layout_edit_stack_ops_round_trip() {
         let (s, _) = open_char(&layout_char_bytes());
         let v = s.call("layout_edit", &args(json!({ "ops": [
-            { "op": "stack_unstack", "window": "m1" },
+            { "op": "stack_unstack", "window": "journal" },
             // Leaving one window dissolved the stack, so both go back in.
-            { "op": "stack_add", "window": "m1", "container": "C" },
-            { "op": "stack_add", "window": "m2", "container": "C" },
-            { "op": "stack_reorder", "container": "C", "members": ["m2", "m1"] }
+            { "op": "stack_add", "window": "journal", "container": "C" },
+            { "op": "stack_add", "window": "notepad", "container": "C" },
+            { "op": "stack_reorder", "container": "C", "members": ["notepad", "journal"] }
         ]}))).unwrap();
-        assert_eq!(v["stacks"][0]["members"], json!(["m2", "m1"]));
+        assert_eq!(v["stacks"][0]["members"], json!(["notepad", "journal"]));
         assert_eq!(undo::undo_state(&s.state()).depth, 1, "stack ops open their own group; the batch is still one step");
     }
 
@@ -3938,9 +3938,9 @@ mod tests {
     fn set_geometry_on_a_stacked_window_moves_the_whole_stack() {
         let (s, _) = open_char(&layout_char_bytes());
         let v = s.call("layout_edit", &args(json!({ "ops": [
-            { "op": "set_geometry", "window": "m1", "x": 500 }
+            { "op": "set_geometry", "window": "journal", "x": 500 }
         ]}))).unwrap();
-        for id in ["m1", "m2", "C"] {
+        for id in ["journal", "notepad", "C"] {
             assert_eq!(window(&v, id)["geom"]["x"], 500, "{id} should have moved with the stack: {v}");
         }
     }
@@ -3952,7 +3952,7 @@ mod tests {
         let v = s.call("layout_render", &args(json!({ "width": 400 }))).unwrap();
         assert_eq!(v["width"], 400);
         // Drawn only, by default: overview, market, and C (the stack's anchor)
-        // — fitting (closed) and the non-anchor stack members m1/m2 are omitted.
+        // — fitting (closed) and the non-anchor stack members journal/notepad are omitted.
         assert_eq!(v["windows"].as_array().unwrap().len(), 3, "{v}");
         // No account file and no `notifications` section: of the furniture,
         // only the ship HUD (character-scoped, with a default) is placeable.
@@ -4028,14 +4028,14 @@ mod tests {
         assert!(drawn.contains(&"chatchannel_player_-70000001") && !drawn.contains(&"overview"));
     }
 
-    /// The stack bug: `C` (the anchor of m1+m2) does not itself contain "m1"
-    /// in its id/label, so under `match: "m1"` the anchor alone would be
+    /// The stack bug: `C` (the anchor of journal+notepad) does not itself contain "journal"
+    /// in its id/label, so under `match: "journal"` the anchor alone would be
     /// filtered out — the fix must still draw and list the stack because a
-    /// member (m1) matched.
+    /// member (journal) matched.
     #[test]
     fn layout_render_draws_a_stack_whose_anchor_did_not_match_but_a_member_did() {
         let (s, _) = open_char(&layout_char_bytes());
-        let v = s.call("layout_render", &args(json!({ "match": "m1" }))).unwrap();
+        let v = s.call("layout_render", &args(json!({ "match": "journal" }))).unwrap();
         assert_eq!(window(&v, "C")["drawn"], true, "{v}");
     }
 

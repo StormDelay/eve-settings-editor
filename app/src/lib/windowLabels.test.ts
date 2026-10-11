@@ -1,5 +1,5 @@
 // Pure-module tests: plain data in, plain data out, no DOM. See test/README.md.
-import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, neocomLabel, stackLabel, inEnv } from "./windowLabels.ts";
+import { describe, groupByFamily, isClutter, displayName, displayNameOf, nameOf, neocomLabel, stackLabel, inEnv, clientReadsOpenFlag } from "./windowLabels.ts";
 
 import { check } from "./test/check.ts";
 
@@ -295,6 +295,27 @@ import { check } from "./test/check.ts";
   check("InventoryStation is docked", inEnv("InventoryStation", "docked") && !inEnv("InventoryStation", "space"));
   check("InventoryStructure is docked", inEnv("InventoryStructure", "docked") && !inEnv("InventoryStructure", "space"));
   check("InventorySpace is in space", inEnv("InventorySpace", "space") && !inEnv("InventorySpace", "docked"));
+}
+
+// --- which windows the client reopens from `openWindows` ------------------
+// sessionChangeWindowOpener reads the flag for a fixed list only; the
+// overview, Selected Item, drones, the docked lobby and chat are opened by
+// their own services. Everything else stays closed at login whatever the
+// flag says.
+{
+  for (const id of ["market", "mail", "directionalScannerWindow", "probeScannerWindow",
+    "InventorySpace", "StationCorpHangar_3", "StructureCorpHangar_7", "solar_system_map_panel"]) {
+    check(`the client reopens ${id} from the flag`, clientReadsOpenFlag(id));
+  }
+  check("a parameterised window is judged on its base id",
+    clientReadsOpenFlag("('StationItems', 60000001)"));
+  for (const id of ["overview", "overview_3", "selecteditemview", "droneview", "lobbyWnd", "chatchannel_local"]) {
+    check(`a service opens ${id}`, clientReadsOpenFlag(id));
+  }
+  for (const id of ["contracts", "job_board", "corporation", "fleetwindow", "watchlistpanel",
+    "ship_name_dialog", "('corpassets', 1000000000003L)"]) {
+    check(`the client never reopens ${id}`, !clientReadsOpenFlag(id));
+  }
 }
 
 console.log("windowLabels.test.ts ok");
