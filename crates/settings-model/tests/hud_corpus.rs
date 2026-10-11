@@ -23,19 +23,29 @@ use settings_model::{extract_categories, project_hud, Category};
 const ENOUGH_REAL: usize = 20;
 const ENOUGH_SYNTHETIC: usize = 1;
 
-const CHAR_FIELDS: [&str; 3] = ["ship_offset", "fighter_x", "badge_x"];
+const CHAR_FIELDS: [&str; 4] = ["ship_offset", "fighter_x", "badge_x", "neocom_width"];
+
+/// `neocomWidth` is written on demand — only once a player resizes the bar —
+/// so like `targetOrigin` it cannot clear `ENOUGH_REAL`. It is also the field
+/// whose section was wrong for longest (the account file's legacy `windows`
+/// copy), which is why it is gated at all.
+const ENOUGH_REAL_NEOCOM: usize = 1;
 
 /// The account half of the same guard. `target_x` is the reason it exists: its
 /// keys read back from a plain `bmdump dump` as if they sat under `windows`,
-/// beside `neocomWidth`, and only an inlined dump shows them under `ui`. A
-/// `Field` naming the wrong one passes every hand-built fixture in `hud.rs`
-/// while reading nothing from a real account file.
-const ACCOUNT_FIELDS: [&str; 3] = ["neocom_width", "ship_top", "target_x"];
+/// beside the legacy `neocomWidth`, and only an inlined dump shows them under
+/// `ui`. A `Field` naming the wrong one passes every hand-built fixture in
+/// `hud.rs` while reading nothing from a real account file.
+const ACCOUNT_FIELDS: [&str; 2] = ["ship_top", "target_x"];
 
 /// `targetOrigin` is written on demand — 87 % of corpus account files have
 /// never had the target list dragged — so it cannot clear `ENOUGH_REAL`.
 /// Ten distinct real files is still far past "one odd file".
 const ENOUGH_REAL_TARGET: usize = 10;
+
+fn enough_real_char(name: &str) -> usize {
+    if name == "neocom_width" { ENOUGH_REAL_NEOCOM } else { ENOUGH_REAL }
+}
 
 #[test]
 fn every_character_hud_anchor_reads_from_a_real_file() {
@@ -46,7 +56,8 @@ fn every_character_hud_anchor_reads_from_a_real_file() {
     for f in common::char_files() {
         // Stop once every field is well attested in whichever roots are
         // present — the real corpus holds hundreds of distinct files.
-        let done_real = !common::real_corpus_present() || real.iter().all(|n| *n >= ENOUGH_REAL);
+        let done_real = !common::real_corpus_present()
+            || CHAR_FIELDS.iter().zip(&real).all(|(name, n)| *n >= enough_real_char(name));
         if synthetic.iter().all(|n| *n >= ENOUGH_SYNTHETIC) && done_real {
             break;
         }
@@ -68,7 +79,7 @@ fn every_character_hud_anchor_reads_from_a_real_file() {
         );
         if common::real_corpus_present() {
             assert!(
-                real[i] >= ENOUGH_REAL,
+                real[i] >= enough_real_char(name),
                 "{name} projected a value in only {}/{scanned} scanned real character files                  — its `section`/`key` almost certainly does not match real data",
                 real[i]
             );

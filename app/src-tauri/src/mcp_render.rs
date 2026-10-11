@@ -60,9 +60,9 @@ const FIGHTER: (i64, i64) = (467, 264);
 const BADGE: (i64, i64) = (32, 32);
 /// One target slot; a list is N of these in a row or a column.
 const TARGET: (i64, i64) = (110, 181);
-/// The neocom width a MINTED target x is a fraction of — the corpus-typical
-/// one, used only when the stored value doesn't carry its own denominator.
-const TARGET_MARGIN: i64 = 72;
+/// EVE's neocom width when the character file stores none
+/// (`neocomConst.NEOCOM_DEFAULT_WIDTH`).
+const NEOCOM_DEFAULT_WIDTH: i64 = 48;
 
 /// A field's number: its value, else its default; None when not writable.
 fn hud_num(hud: &Hud, name: &str) -> Option<f64> {
@@ -79,26 +79,6 @@ fn hud_flag(hud: &Hud, name: &str) -> bool {
 /// Whether the file actually holds the field, rather than falling back.
 fn stored(hud: &Hud, name: &str) -> bool {
     hud.entries.iter().any(|e| e.name == name && !matches!(e.set, SetTarget::Unavailable) && e.value.is_some())
-}
-
-/// The width the target list's stored x is a fraction OF: the screen right of
-/// the neocom. EVE writes an exact `pixels / denominator`, so the denominator
-/// is read back out of the value when it is UNIQUE in the plausible range; a
-/// round fraction divides evenly into dozens and says nothing.
-fn target_denominator(f: f64, reference_w: i64) -> i64 {
-    let fallback = (reference_w - TARGET_MARGIN).max(1);
-    if !f.is_finite() || f <= 0.0 || reference_w <= TARGET_MARGIN { return fallback; }
-    let mut found = 0;
-    let mut d = reference_w - 1;
-    while d >= reference_w - 200 && d > 0 {
-        let p = f * d as f64;
-        if (p - p.round()).abs() < 1e-6 {
-            if found != 0 { return fallback; }
-            found = d;
-        }
-        d -= 1;
-    }
-    if found != 0 { found } else { fallback }
 }
 
 /// The screen furniture in data px, in the canvas's fixed order. An element
@@ -132,13 +112,16 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
     // list has never been.
     if let (Some(fx), Some(fy)) = (hud_num(hud, "target_x"), hud_num(hud, "target_y")) {
         if stored(hud, "target_x") && stored(hud, "target_y") {
-            let d = target_denominator(fx, rw);
-            let (ax, ay) = (((rw - d) as f64 + fx * d as f64).round() as i64, (fy * rh as f64).round() as i64);
+            // A fraction of the target layer, which the client pads by the
+            // neocom: x spans the screen right of it (layout.ts targetAnchor).
+            let neocom = hud_num(hud, "neocom_width").map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64);
+            let (ax, ay) = ((neocom as f64 + fx * (rw - neocom) as f64).round() as i64, (fy * rh as f64).round() as i64);
             let n = targets.max(1) as i64;
             let (w, h) = if hud_flag(hud, "target_horizontal") { (TARGET.0 * n, TARGET.1) } else { (TARGET.0, TARGET.1 * n) };
             // The anchor is the list's OUTER corner; the slots run toward the
-            // middle of the screen, on each axis independently.
-            let x = if ax > rw / 2 { ax - w } else { ax };
+            // middle, on each axis independently — turning where the stored
+            // fraction passes a half, which on x is mid-way right of the neocom.
+            let x = if 2 * ax > rw + neocom { ax - w } else { ax };
             let y = if ay > rh / 2 { ay - h } else { ay };
             out.push(Furniture { kind: "target", label: "Target list", x, y, w, h });
         }
@@ -527,7 +510,7 @@ mod tests {
             entry("ship_top", Some("false"), HudKind::Bool, "false", set()),
             entry("fighter_detached", Some("true"), HudKind::Bool, "false", set()),
             entry("fighter_shown", Some("true"), HudKind::Bool, "false", set()),
-            entry("neocom_width", Some("37"), HudKind::Int, "37", set()),
+            entry("neocom_width", Some("72"), HudKind::Int, "48", set()),
             entry("target_x", Some(TARGET_X), HudKind::Float, "0", set()),
             entry("target_y", Some(TARGET_Y), HudKind::Float, "0", set()),
             entry("target_horizontal", Some("false"), HudKind::Bool, "false", set()),
@@ -551,7 +534,7 @@ mod tests {
         let kinds: Vec<&str> = rects.iter().map(|r| r.kind).collect();
         assert_eq!(kinds, ["neocom", "shipui", "fighter", "badge", "target"], "all five, in the canvas's order");
         let n = find(&rects, "neocom");
-        assert_eq!((n.x, n.y, n.w, n.h), (0, 0, 37, 1440), "a full-height left bar");
+        assert_eq!((n.x, n.y, n.w, n.h), (0, 0, 72, 1440), "a full-height left bar");
         let s = find(&rects, "shipui");
         assert_eq!(s.x + 148, 1280 - 100, "the offset places the capacitor, 148px in from the left edge");
         assert_eq!(s.y, 1440 - 12 - 176, "bottom-aligned by default");
@@ -578,14 +561,22 @@ mod tests {
         // slot hangs to the RIGHT of the anchor.
         let left = furniture(&with(full_hud(), entry("target_x", Some("0.21342443729903537"), HudKind::Float, "0", set())), &wl, 1);
         assert_eq!(find(&left, "target").x, 603);
+        // The list turns on the stored fraction passing a half — the middle of
+        // the width right of the neocom (1316 here), not of the screen.
+        let near = furniture(&with(full_hud(), entry("target_x", Some(&(1228.0 / 2488.0).to_string()), HudKind::Float, "0", set())), &wl, 1);
+        assert_eq!(find(&near, "target").x, 1300, "an anchor at 1300 still runs right");
+        // No character file: the neocom is not drawn, but the target list is
+        // still placed against EVE's default 48px neocom.
+        let unpaired = furniture(&with(full_hud(), entry("neocom_width", None, HudKind::Int, "48", SetTarget::Unavailable)), &wl, 1);
+        assert_eq!(find(&unpaired, "target").x + 110, (48.0 + 0.5442122186495176 * 2512.0f64).round() as i64);
     }
 
     #[test]
     fn furniture_omits_what_the_file_does_not_place() {
         let wl = layout();
         let has = |hud: Hud, kind: &str| furniture(&hud, &wl, 4).iter().any(|r| r.kind == kind);
-        assert!(!has(with(full_hud(), entry("neocom_width", Some("0"), HudKind::Int, "37", set())), "neocom"), "a zero-width neocom");
-        assert!(!has(with(full_hud(), entry("neocom_width", None, HudKind::Int, "37", SetTarget::Unavailable)), "neocom"), "no account file");
+        assert!(!has(with(full_hud(), entry("neocom_width", Some("0"), HudKind::Int, "48", set())), "neocom"), "a zero-width neocom");
+        assert!(!has(with(full_hud(), entry("neocom_width", None, HudKind::Int, "48", SetTarget::Unavailable)), "neocom"), "no character file");
         assert!(!has(with(full_hud(), entry("fighter_shown", Some("false"), HudKind::Bool, "false", set())), "fighter"), "a hidden fighter UI");
         assert!(!has(with(full_hud(), entry("fighter_detached", Some("false"), HudKind::Bool, "false", set())), "fighter"), "an attached fighter UI");
         assert!(!has(with(full_hud(), entry("target_x", None, HudKind::Float, "0", set())), "target"), "an unstored target anchor — its default is a placeholder");

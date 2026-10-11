@@ -966,7 +966,17 @@ changes every character on the account:
 
 - root → `b"ui"` → `b"shipuialigntop"` (Bool, 131/175),
   `b"detachFighterUI"` (Bool, 130/175), `b"displayFighterUI"` (Bool, 131/175).
-- root → `b"windows"` → `b"neocomWidth"` (Int, e.g. `37`, 130/175).
+- root → `b"windows"` → `b"neocomWidth"` (Int, e.g. `37`, 130/175) — **legacy,
+  never read.** Corrected 2026-10-11 from the client's code: the width is a
+  character setting (`neocomSettings.neocom_width_setting`, a
+  `CharSettingNumeric` → `settings.char.ui`, default **48**, clamped 32..72).
+  The account file's whole `windows` section is the pre-migration store:
+  `carbonui.window.settings.migrate_window_settings_from_user_to_char` copies it
+  into the character file once (flag `__usercopy__`) and never reads it again.
+  On the owner's machine the account key read 37, written in 2022, while the
+  character's `ui → neocomWidth` read 72. The client writes the character key
+  only after the bar is resized, so most character files have none and draw
+  the default 48 — which is what every capture's 48px bar showed.
 
 **The account file's `ui` section key is `Ref`-keyed** — a `Ref` whose
 byte-string definition appears *later* in the stream, which the trailing
@@ -1380,14 +1390,18 @@ anchor_x = M + f_x × (screenW − M)          M = the neocom's DRAWN width
 ```
 
 Every known value is an exact `pixels / denominator` rational, machine-exact:
-2038/2512, 1354/2488, 531/2488, 2053/2523. So **the denominator is recoverable
-from the value itself** — `M = screenW − denominator` — which matters because M
-is *not* `neocomWidth`: the captured account holds `neocomWidth = 37`, untouched
-since 2022, while its own writes moved from M=48 to M=72. 72 is measured, not
-fitted (the neocom occludes the background through x=71).
-`layout.ts::targetDenominator` does the recovery, and trusts only a denominator
-that is UNIQUE in the plausible range — a round fraction divides evenly into
-dozens of candidates and encodes no margin at all.
+2038/2512, 1354/2488, 531/2488, 2053/2523. **M is the character's
+`neocomWidth`** — settled 2026-10-11 from the client's code. The target layer is
+padded by the side panels (`sidePanelsLayer.UpdateWindowPositions` sets
+`padLeft`/`padRight` on `uicore.layer.target` to the neocom's width on the side
+it is docked), and `targetMgr` stores the origin's centre as a fraction of that
+layer: `f = (x − N) / (W − N)` on a drag (`OnOriginMU`), `x = N + int(f × (W −
+N))` on load (`GetOriginPosition`), with N the neocom width **at read time**.
+So resizing the neocom moves the list. The old puzzle — "M is not
+`neocomWidth`, the account holds 37 while its writes moved 48 → 72" — was the
+account file's legacy key: the character's real width went from the default 48
+to 72. `layout.ts` used to recover a denominator from the value; it now reads
+the character's width, as the client does.
 
 **The anchor is the list's outer edge; slots run from it toward the screen
 centre**, on each axis independently. Solving three photographed positions for
@@ -1415,10 +1429,13 @@ the editor drew where the canvas said they would, in both orientations. Only a
 minted value is still untested — that session edited a value the file already
 carried, so the denominator was recovered rather than assumed.
 
-**EVE's own default position is still unknown** — 87 % of account files have no
-`targetOrigin`, and no capture has produced one from a virgin account. The canvas
-draws nothing for those rather than guess, and a *minted* value has no
-denominator to recover, so it has to assume M (`layout.ts`'s `TARGET_MARGIN`, 72).
+**The list turns on the fraction, not the pixel**: slots run left when
+`f > 0.5` and up when `fy > 0.5` (`GetOriginPosition(getDirection=1)`), so the
+horizontal turn is at `(W + N) / 2`, not the screen's middle.
+
+**EVE's own default position** — 87 % of account files have no
+`targetOrigin`. The canvas draws nothing for those. The client derives one from
+the Selected Item window; see `docs/small-tasks.md`.
 
 ### Overview tab names (client code + in-game check, 2026-10-09)
 

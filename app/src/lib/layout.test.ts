@@ -439,15 +439,15 @@ check("open filter keeps the right window", open[0].id === "a");
 // --- hudRects: HUD/screen furniture derived from Hud + WindowLayout --------
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
-  targetDenominator, targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
-  TARGET_MARGIN, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
+  targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
+  neocomWidth, NEOCOM_DEFAULT_WIDTH, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
-// The four account-scoped fields, by name — a literal list rather than a
+// The account-scoped fields, by name — a literal list rather than a
 // name-prefix guess, so a future field can't be silently mislabelled.
 const ACCOUNT_FIELDS = new Set([
-  "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+  "ship_top", "fighter_detached", "fighter_shown",
   "target_x", "target_y", "target_horizontal",
 ]);
 
@@ -486,7 +486,7 @@ const fullHud = (over: Partial<Record<string, HudEntry>> = {}): Hud => {
     hudEntry("ship_top", "false", "bool", "false"),
     hudEntry("fighter_detached", "true", "bool", "false"),
     hudEntry("fighter_shown", "true", "bool", "false"),
-    hudEntry("neocom_width", "37", "int", "37"),
+    hudEntry("neocom_width", "72", "int", "48"),
     hudEntry("target_x", String(TARGET_X), "float", "0"),
     hudEntry("target_y", String(TARGET_Y), "float", "0"),
     hudEntry("target_horizontal", "false", "bool", "false"),
@@ -504,7 +504,7 @@ check(
 );
 check(
   "hudNum is null when the field is unavailable",
-  hudNum(fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "37", "unavailable") }), "neocom_width") === null,
+  hudNum(fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "48", "unavailable") }), "neocom_width") === null,
 );
 check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
@@ -514,7 +514,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   check("all five elements are drawn in a stable order", kinds === "neocom,shipui,fighter,badge,target");
 
   const neocom = rects[0];
-  check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 37 && neocom.h === 1440);
+  check("the neocom is a full-height left bar", neocom.x === 0 && neocom.y === 0 && neocom.w === 72 && neocom.h === 1440);
   check("the neocom is not draggable", neocom.drag === "none");
 
   // The offset places the CAPACITOR's centre; the left edge is 148px left of
@@ -543,7 +543,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // A width of exactly 0 is a present value, not an absent one, so it takes the
   // `> 0` branch rather than the null check — and a zero-width rect would be an
   // invisible thing the canvas still hit-tests.
-  const rects = hudRects(fullHud({ neocom_width: hudEntry("neocom_width", "0", "int", "37") }), layout2560);
+  const rects = hudRects(fullHud({ neocom_width: hudEntry("neocom_width", "0", "int", "48") }), layout2560);
   check("a zero-width neocom is not drawn", !rects.some((r) => r.kind === "neocom"));
 }
 
@@ -565,10 +565,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 
 {
   const rects = hudRects(
-    fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "37", "unavailable") }),
+    fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "48", "unavailable") }),
     layout2560,
   );
-  check("no account file means no neocom bar", !rects.some((r) => r.kind === "neocom"));
+  check("no character file means no neocom bar", !rects.some((r) => r.kind === "neocom"));
 }
 
 // --- the target list -------------------------------------------------------
@@ -576,28 +576,24 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 // three photographed positions on one 2560x1440 client, with the stored value
 // the client wrote for each.
 {
-  check(
-    "the stored value's own denominator is recovered",
-    targetDenominator(TARGET_X, 2560) === 2488,
-  );
-  check(
-    "a value that divides evenly into many candidates is not trusted",
-    targetDenominator(0.5, 2560) === 2560 - TARGET_MARGIN,
-  );
-  check(
-    "the placeholder default recovers nothing and falls back",
-    targetDenominator(0, 2560) === 2560 - TARGET_MARGIN,
-  );
-  // Written at a 48px neocom (2038/2512), which is the case the fallback would
-  // get wrong by 24px if the denominator were assumed rather than read.
-  check(
-    "an older value written at a different neocom width recovers ITS denominator",
-    targetDenominator(0.8113057324840764, 2560) === 2512,
-  );
-
-  const a = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440);
-  check("the anchor is the neocom margin plus the fraction of what is left", a.x === 72 + 1354);
+  const a = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440, 72);
+  check("the anchor is the neocom width plus the fraction of what is left", a.x === 72 + 1354);
   check("the anchor's y is a plain fraction of the screen height", a.y === 752);
+
+  // The client reads the fraction against the neocom it has NOW, not the one
+  // that wrote it (targetMgr.GetOriginPosition): resizing the neocom moves the
+  // list. 2038/2512 was written at the default 48.
+  const old = 0.8113057324840764;
+  check("a value is read against the current neocom width",
+    targetAnchor(old, 0, 2560, 1440, 48).x === 48 + 2038
+      && targetAnchor(old, 0, 2560, 1440, 72).x === Math.round(72 + old * 2488));
+
+  check("EVE's neocom defaults to 48 wide", NEOCOM_DEFAULT_WIDTH === 48);
+  check("an absent neocom width reads as the default",
+    neocomWidth(fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "48", "insert") })) === 48);
+  check("no character file reads as the default too",
+    neocomWidth(fullHud({ neocom_width: hudEntry("neocom_width", null, "int", "48", "unavailable") })) === 48);
+  check("a stored width is used as stored", neocomWidth(fullHud()) === 72);
 }
 
 {
@@ -664,7 +660,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // convert back to fractions, and read the anchor out again. The ANCHOR is the
   // invariant — it must land exactly where the drag put it, whatever the drawn
   // rect then does with it.
-  const before = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440);
+  const before = targetAnchor(TARGET_X, TARGET_Y, 2560, 1440, 72);
   const slotBefore = hudRects(fullHud(), layout2560).find((r) => r.kind === "target")!;
   const placed = (next: { x: number; y: number }) =>
     hudRects(
@@ -676,21 +672,21 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     ).find((r) => r.kind === "target")!;
 
   for (const [dx, dy] of [[-1000, 400], [17, 3], [-100, -20], [0, 0]]) {
-    const next = targetFractionFromPoint(TARGET_X, before.x + dx, before.y + dy, 2560, 1440);
-    const after = targetAnchor(next.x, next.y, 2560, 1440);
+    const next = targetFractionFromPoint(before.x + dx, before.y + dy, 2560, 1440, 72);
+    const after = targetAnchor(next.x, next.y, 2560, 1440, 72);
     check(
       `a ${dx},${dy} drag moves the anchor by exactly that`,
       after.x === before.x + dx && after.y === before.y + dy,
     );
     check(
-      `and the written value keeps the client's own denominator (${dx},${dy})`,
-      targetDenominator(next.x, 2560) === 2488,
+      `and the written value is what the client itself would write (${dx},${dy})`,
+      next.x === (before.x + dx - 72) / 2488,
     );
   }
 
   // While the anchor stays in the same half of the screen, the drawn slot
   // tracks the drag one-for-one.
-  const near = targetFractionFromPoint(TARGET_X, before.x - 100, before.y - 20, 2560, 1440);
+  const near = targetFractionFromPoint(before.x - 100, before.y - 20, 2560, 1440, 72);
   const moved = placed(near);
   check("a drag that stays in the same half moves the slot with it",
     moved.x === slotBefore.x - 100 && moved.y === slotBefore.y - 20);
@@ -699,7 +695,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // ambiguous: the anchor moves the full 300px, but the slot is now drawn on
   // the other side of it, so the rect moves 110 less. This is EVE's behaviour
   // — the list always grows toward the centre — not a rounding slip.
-  const crossed = placed(targetFractionFromPoint(TARGET_X, before.x - 300, before.y, 2560, 1440));
+  const crossed = placed(targetFractionFromPoint(before.x - 300, before.y, 2560, 1440, 72));
   check("crossing the middle flips which side the slot hangs on",
     crossed.x === before.x - 300 && crossed.x === slotBefore.x - 300 + 110);
 }
@@ -712,11 +708,19 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   for (const [ax, ay, want] of [
     [1426, 752, "br"], [603, 752, "bl"], [1426, 100, "tr"], [603, 100, "tl"],
   ] as [number, number, string][]) {
-    check(`an anchor at ${ax},${ay} is marked ${want}`, targetCorner(ax, ay, 2560, 1440) === want);
-    const r = targetRect(ax, ay, w, h, 2560, 1440);
+    check(`an anchor at ${ax},${ay} is marked ${want}`, targetCorner(ax, ay, 2560, 1440, 72) === want);
+    const r = targetRect(ax, ay, w, h, 2560, 1440, 72);
     check(`and the box really hangs from that corner (${want})`,
       (want[1] === "r" ? r.x + w : r.x) === ax && (want[0] === "b" ? r.y + h : r.y) === ay);
   }
+
+  // The client turns the list on the stored FRACTION passing 0.5, and x is a
+  // fraction of the width right of the neocom — so the turn is at
+  // (2560 + 72) / 2 = 1316, not at the screen's 1280.
+  check("an anchor just right of the screen's middle still runs right",
+    targetCorner(1300, 100, 2560, 1440, 72) === "tl");
+  check("and turns once the fraction passes a half",
+    targetCorner(1317, 100, 2560, 1440, 72) === "tr");
 }
 
 {
@@ -724,12 +728,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // invariant as the drag, stated absolutely: the anchor lands exactly where
   // it was put, and the value keeps the denominator it came with.
   for (const [x, y] of [[1426, 752], [300, 100], [2559, 1439], [72, 0]]) {
-    const next = targetFractionFromPoint(TARGET_X, x, y, 2560, 1440);
-    const back = targetAnchor(next.x, next.y, 2560, 1440);
+    const next = targetFractionFromPoint(x, y, 2560, 1440, 72);
+    const back = targetAnchor(next.x, next.y, 2560, 1440, 72);
     check(`a pixel typed at ${x},${y} round-trips through the fraction`,
       back.x === x && back.y === y);
-    check(`and keeps the client's own denominator (${x},${y})`,
-      targetDenominator(next.x, 2560) === 2488);
   }
 }
 
@@ -737,7 +739,7 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   // A drag that ends where it started must not dirty the document: the commit
   // compares the converted value with the stored one, so they have to be
   // identical, not merely close.
-  const same = targetFractionFromPoint(TARGET_X, 1426, 752, 2560, 1440);
+  const same = targetFractionFromPoint(1426, 752, 2560, 1440, 72);
   check("re-writing the anchor it already has reproduces the fractions exactly",
     same.x === TARGET_X && same.y === TARGET_Y);
 }
@@ -1289,9 +1291,10 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   {
     // The anchor these stored fractions describe, via the forward placement
     // (targetAnchor) that furnitureWrites' targetFractionFromPoint inverts —
-    // so "unmoved" is the exact round-trip, not an approximation of one.
+    // so "unmoved" is the exact round-trip, not an approximation of one. This
+    // hud stores no neocom width, so both sides read EVE's default.
     const fx = 0.5, fy = 0.25;
-    const { x: ax, y: ay } = targetAnchor(fx, fy, layout.reference_w, layout.reference_h);
+    const { x: ax, y: ay } = targetAnchor(fx, fy, layout.reference_w, layout.reference_h, NEOCOM_DEFAULT_WIDTH);
     const hud = hudOf(entry("target_x", String(fx), "0"), entry("target_y", String(fy), "0"));
 
     check("an unmoved target list writes nothing",

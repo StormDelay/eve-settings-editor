@@ -392,6 +392,9 @@ fn char_modern() -> Value {
                 ),
                 (b("windowTransparency"), w(f(0.0))),
                 (b("neocomSizeLocked"), w(Value::Bool(true))),
+                // Where the client keeps the bar's width: a character setting,
+                // written once the player resizes it.
+                (b("neocomWidth"), w(i(72))),
                 (b("spaceCameraID"), w(b("shiporbit"))),
                 (b("pfRouteType"), w(b("safe"))),
                 (b("autopilot_waypoints"), w(list(vec![i(30000142)]))),
@@ -818,6 +821,8 @@ fn user_modern() -> Value {
         (b("audio"), audio),
         (b("suppress"), suppress),
         (b("tabgroups"), tabgroups),
+        // The pre-migration copy real account files still carry; the client
+        // reads the character file's `ui → neocomWidth` instead.
         (b("windows"), dict(vec![(b("neocomWidth"), w(i(37)))])),
         (
             b("defaultoverview"),

@@ -39,7 +39,7 @@ function hud(...overrides: HudEntry[]): Hud {
     entry("fighter_y", "int", "54"),
     entry("fighter_detached", "bool", "false", { scope: "account" }),
     entry("fighter_shown", "bool", "true", { scope: "account" }),
-    entry("neocom_width", "int", "37", { scope: "account", default: "37" }),
+    entry("neocom_width", "int", "72", { default: "48" }),
     entry("badge_x", "int", "2519"),
     entry("badge_y", "int", "131"),
     entry("target_x", "float", "0.5442122186495176", { scope: "account" }),
@@ -99,7 +99,7 @@ describe("the target anchor, which is stored as a fraction", () => {
   test("typing a pixel writes the fraction it lands on", () => {
     const { onSet } = mount(hud(), REF);
     fireEvent.change(input("Target list", "x"), { target: { value: "1316" } });
-    // 110px left of 1426, in the same denominator the value already carried:
+    // 110px left of 1426, over the width right of the 72px neocom:
     // (1316 - 72) / 2488.
     expect(onSet).toHaveBeenCalledWith("target_x", String(1244 / 2488));
   });
@@ -231,8 +231,9 @@ describe("what the panel refuses to edit", () => {
     // the account file instead, and were left clickable when that file was the
     // read-only one — the refusal then arrived as a backend dialog.
     mount(hud(), { accountReadOnly: true });
-    expect(input("Neocom", "Width").disabled).toBe(true);
     expect(input("Fighter panel", "Detached").disabled).toBe(true);
+    // The neocom width is a character setting (`settings.char.ui`).
+    expect(input("Neocom", "Width").disabled).toBe(false);
     expect(input("Fighter panel", "x").disabled).toBe(false);
     expect(input("Ship HUD", "Offset from centre").disabled).toBe(false);
   });
@@ -246,8 +247,8 @@ describe("what the panel refuses to edit", () => {
 
 describe("what the panel shows", () => {
   test("an absent value falls back to EVE's default and is badged", () => {
-    mount(hud(entry("neocom_width", "int", null, { scope: "account", default: "37" })));
-    expect(input("Neocom", "Width").value).toBe("37");
+    mount(hud(entry("neocom_width", "int", null, { default: "48" })));
+    expect(input("Neocom", "Width").value).toBe("48");
     expect(row("Neocom", "Width").textContent).toContain("default");
   });
 
@@ -270,7 +271,6 @@ describe("what the panel shows", () => {
         entry("ship_top", "bool", null, { scope: "account", set: UNAVAILABLE }),
         entry("fighter_detached", "bool", null, { scope: "account", set: UNAVAILABLE }),
         entry("fighter_shown", "bool", null, { scope: "account", set: UNAVAILABLE }),
-        entry("neocom_width", "int", null, { scope: "account", set: UNAVAILABLE }),
         entry("target_x", "float", null, { scope: "account", set: UNAVAILABLE }),
         entry("target_y", "float", null, { scope: "account", set: UNAVAILABLE }),
         entry("target_horizontal", "bool", null, { scope: "account", set: UNAVAILABLE }),

@@ -77,18 +77,18 @@ impl Category {
             Category::OverviewWidths => &[b"ui", b"SortHeadersSizes"],
             Category::Keybinds => &[b"cmd", b"customCmds"],
             Category::ProbeFormations => &[b"ui", b"probescanning.customFormations"],
-            // Character-side: the neocom BAR is per account (neocomWidth), its
-            // BUTTONS are per character. Original is deliberately not a category
-            // — it is the target's own client baseline.
+            // Character-side, like the bar's width (HudNeocomWidth). Original is
+            // deliberately not a category — it is the target's own client
+            // baseline.
             Category::NeocomButtons => &[b"ui", b"neocomButtonRawData"],
             Category::HudFighterPos => &[b"ui", b"fightersDetachedPosition"],
             Category::HudBadge => &[b"notifications", b"notification_badge_offset"],
             Category::HudShipTop => &[b"ui", b"shipuialigntop"],
             Category::HudFighterDetached => &[b"ui", b"detachFighterUI"],
             Category::HudFighterShown => &[b"ui", b"displayFighterUI"],
-            // Account-side `windows`, which holds only this key — a different
-            // document from the char-side `windows` Category::Layout splices.
-            Category::HudNeocomWidth => &[b"windows", b"neocomWidth"],
+            // Char-side `ui`. The account file's `windows → neocomWidth` is
+            // the pre-migration copy the client no longer reads.
+            Category::HudNeocomWidth => &[b"ui", b"neocomWidth"],
             // Account-side `ui`, like the three toggles above it. NOT
             // `windows`: a plain `bmdump dump` walks these two back there, and
             // only an inlined dump shows the real tree. See hud.rs.
@@ -650,7 +650,9 @@ mod tests {
             (Category::HudShipTop, &[b"ui", b"shipuialigntop"]),
             (Category::HudFighterDetached, &[b"ui", b"detachFighterUI"]),
             (Category::HudFighterShown, &[b"ui", b"displayFighterUI"]),
-            (Category::HudNeocomWidth, &[b"windows", b"neocomWidth"]),
+            // The CHARACTER file's `ui` — not the account file's legacy
+            // `windows` copy, which the client no longer reads.
+            (Category::HudNeocomWidth, &[b"ui", b"neocomWidth"]),
             // `ui`, not `windows` — the trap hud.rs documents at length.
             (Category::HudTargetOrigin, &[b"ui", b"targetOrigin"]),
             (Category::HudTargetAlign, &[b"ui", b"alignHorizontally"]),
@@ -678,12 +680,23 @@ mod tests {
         }
     }
 
-    /// A user doc holding the account-side HUD keys the copy cares about.
+    /// A doc holding two leaf HUD keys the copy cares about.
     fn user_with_hud() -> Value {
-        Value::Dict(vec![
-            (b("ui"), Value::Dict(vec![(b("shipuialigntop"), Value::Bool(true))])),
-            (b("windows"), Value::Dict(vec![(b("neocomWidth"), Value::Int(72))])),
-        ])
+        Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![
+                (b("shipuialigntop"), Value::Bool(true)),
+                (b("neocomWidth"), Value::Int(72)),
+            ]),
+        )])
+    }
+
+    /// The `ui` section's entries, for the leaf tests below.
+    fn ui_of(doc: &Value) -> &Entries {
+        let Value::Dict(root) = doc else { panic!("root is a dict") };
+        let (_, ui) = root.iter().find(|(k, _)| is_bytes(k, b"ui")).expect("ui survives");
+        let Value::Dict(u) = ui else { panic!("ui is a dict") };
+        u
     }
 
     #[test]
@@ -698,11 +711,8 @@ mod tests {
         let mut target = user_with_hud();
         apply_to_tree(&mut target, &extracted);
 
-        let Value::Dict(root) = &target else { panic!("root is a dict") };
-        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows survives");
-        let Value::Dict(w) = windows else { panic!("windows is a dict") };
         assert!(
-            !w.iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
+            !ui_of(&target).iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
             "the target's own neocomWidth is gone"
         );
     }
@@ -747,11 +757,8 @@ mod tests {
 
         let mut target = user_with_hud();
         apply_to_tree(&mut target, &extracted);
-        let Value::Dict(root) = &target else { panic!("root is a dict") };
-        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows survives");
-        let Value::Dict(w) = windows else { panic!("windows is a dict") };
         assert!(
-            w.iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
+            ui_of(&target).iter().any(|(k, _)| is_bytes(k, b"neocomWidth")),
             "an old preset leaves the target's neocom width alone"
         );
     }
@@ -834,14 +841,11 @@ mod tests {
     fn a_present_leaf_hud_key_is_copied_over_the_targets_own() {
         let extracted = extract_categories(&user_with_hud(), &[Category::HudNeocomWidth]);
         let mut target = Value::Dict(vec![(
-            b("windows"),
+            b("ui"),
             Value::Dict(vec![(b("neocomWidth"), Value::Int(37))]),
         )]);
         apply_to_tree(&mut target, &extracted);
-        let Value::Dict(root) = &target else { panic!("root is a dict") };
-        let (_, windows) = root.iter().find(|(k, _)| is_bytes(k, b"windows")).expect("windows exists");
-        let Value::Dict(w) = windows else { panic!("windows is a dict") };
-        let (_, v) = w.iter().find(|(k, _)| is_bytes(k, b"neocomWidth")).expect("the key was copied");
+        let (_, v) = ui_of(&target).iter().find(|(k, _)| is_bytes(k, b"neocomWidth")).expect("the key was copied");
         assert_eq!(*v, Value::Int(72), "the source's width won");
     }
 

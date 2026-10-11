@@ -394,20 +394,26 @@ Workflow:
   the gate makes "a press on the box moves nothing" fail, and removing the marker's
   `onpointerdown` makes "a press on the anchor drags" fail.
 
-- [ ] **A minted target anchor has to guess the neocom margin, and an old
-  Layout preset deletes the target's list.** Two loose ends from making the
-  target list a Layout category (2026-07-31). First: the stored value is a
-  fraction whose denominator encodes the writing client's neocom width, and a
-  value the editor MINTS has none to recover, so it assumes
-  `TARGET_MARGIN = 72` — the one number in this feature no capture has
-  exercised. Second: a Layout preset saved between 0.23.0 and 0.26.0 has a
-  non-empty `user.dat` but no `targetOrigin`, so applying it reads the absence
-  as "the source is at EVE's default" and removes the target's position. The
-  char side has a shape signal for exactly this class (`prune` building a root
+- [ ] **An old Layout preset deletes the target's list (and now its neocom
+  width).** A Layout preset saved between 0.23.0 and 0.26.0 has a non-empty
+  `user.dat` but no `targetOrigin`, so applying it reads the absence as "the
+  source is at EVE's default" and removes the target's position. The char side
+  has a shape signal for exactly this class (`prune` building a root
   `notifications` key); these two keys live under `ui`, which such a preset
   already has, so there is nothing to test against. Re-saving the preset fixes
-  it. Both are argued in full in `batch.rs::absent_means_default`.
-  _Added 2026-07-31._
+  it. Argued in full in `batch.rs::absent_means_default`. The same holds for
+  `neocomWidth` since it moved to the character file (2026-10-11): any Layout
+  preset saved before that has a char `ui` without it, so applying one resets
+  the target's neocom to EVE's 48. _Added 2026-07-31._ _The other half — a
+  minted anchor guessing `TARGET_MARGIN = 72` — is gone: the margin is the
+  character's `neocomWidth`, read the way the client reads it (2026-10-11)._
+
+- [ ] **A right-docked neocom is not modelled.** The client docks the neocom
+  left or right by the character setting `neocomAlign` (`uiconst.TOLEFT` 4,
+  `TORIGHT` 6; default left), and pads the target layer on that side. The editor
+  always draws it on the left and offsets the target list from the left. No
+  corpus or real file stores the key, so nobody here has it set; build it when
+  one appears. _Added 2026-10-11 (client code pass)._
 
 - [x] **Decide whether a Layout copy should carry the target list, and smoke the
   editor's writes in-game.** _Closed 2026-07-31 — shipped in 0.26.0._ The answer
