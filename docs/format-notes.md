@@ -880,11 +880,11 @@ back. One reading cannot separate an origin from a sign; two can.
   panel's anchor. The anchor is where the ability grid starts whether or not it
   is drawn, which is what makes it stable. Measure against a known reference on
   screen, never against a corner.
-- **`notification_badge_offset` was not captured** — it was never dragged, so it
-  is still the client's own `(2519, 131)`. On a 2560-wide screen that is 41px
-  from the right edge, which is consistent with a plain top-left-origin absolute
-  screen coordinate, but that is an inference from one untouched value, not a
-  capture. Still open.
+- **`notification_badge_offset`** is the top-left of a 32x32 widget in
+  absolute screen pixels, clamped onto the screen; absent, the client puts it at
+  **(16, 16)**. Settled 2026-10-11 from the client's code
+  (`notificationCenter.LoadPositionValues` / `capWidgetPosition`,
+  `notificationSettingHandler.GetNotificationBadgeOffset`).
 
 **`shipuialignleftoffset` anchors the capacitor wheel, not the element's box.**
 Measured 2026-07-28 from three native 2560×1440 screenshots (Pilot Golf,
@@ -917,6 +917,11 @@ the first time. The module rack block is 127px tall in both alignments and sits
 bottom-aligned the element runs **1268..1428** and the gap below it is **12px**,
 not the 28 above. The element is NOT vertically symmetric, and mirroring the top
 margin (which the editor did until this was captured) drew the box 16px high.
+
+**Absent, `fightersDetachedPosition` is `(W/2, H/2 − 60)`** for the screen the
+client runs at (`shipUI.GetFightersDetachedPos`), and the client clamps a stored
+point to `x ≤ W − 32`, `y ≤ H − panel height` (`shipUI.UpdatePosition`). Read
+from the client's code 2026-10-11.
 
 **`fightersDetachedPosition` is the panel's left edge and the ability grid's top**
 — confirmed again 2026-07-28: stored `(329, 289)` against a measured left edge of
@@ -1007,8 +1012,9 @@ UI 467×253) — see the footprint measurements above. Two live sessions had fai
 to: the ship HUD has no hard edge to align against, and the fighter panel's
 extent changes with whether its ability grid is drawn; the screenshots settled
 both. The old invented values (686×250 and 400×120) were undersized *and*, for
-the ship HUD, mis-anchored. **The badge's 32×32 is still invented** — it was
-never dragged and never measured.
+the ship HUD, mis-anchored. **The badge's 32×32** is the client's own widget
+size (`notificationCenter.widgetWidth`/`widgetHeight`), confirmed from its code
+2026-10-11.
 
 Correcting any of these is a one-place edit in `layout.ts`'s `HUD_NOMINAL` plus
 the matched placement/inverse pairs (`hudRects` ↔ `shipOffsetFromX` and
@@ -1113,7 +1119,7 @@ stays 176.
 | Effect icon | ⌀36 round, on a **48** column pitch |
 | Row placement | **centred on the capacitor** — box x 148, the element's own anchor |
 | Gap, top-aligned | row's first lit row at box y **192**, i.e. **16** below the element |
-| Gap, bottom-aligned | row **flips above** the element, **10** above its top edge |
+| Gap, bottom-aligned | row **flips above** the element, **16** above its top edge (client code; the crops said 10) |
 
 **The row is centred on the anchor, not on the middle of the box.** The two
 native shots place the HUD identically, so they cross-check: box x is 943 in
@@ -1143,6 +1149,15 @@ Two things they settle:
   behind an overlapping window on the left of every crop are exactly what makes
   the arithmetic close. Without that check the leftmost *visible* icon looks
   like the row's end, and the row looks off-centre by ~50 native px.
+
+**Superseded 2026-10-11 by the client's code** — read this section's crop
+arithmetic with that in mind. The bar is a 44-tall strip placed
+`SHIP_UI_HEIGHT` = 200 px from whichever screen edge the HUD is aligned to
+(`shipUI`: `buffBarContainer.top = SHIP_UI_HEIGHT`, aligned CENTERTOP or
+CENTERBOTTOM like the HUD container), so the gap is **16 both ways**. Every slot
+is `SLOT_WIDTH` = 48 wide with a 40px icon box (`shipHud/buffButtons`), and
+nothing narrows them as the bar fills: **the pitch is always 48**. Both the "10
+above" and the "43 pitch" came from assuming the crops were exact 2x upscales.
 
 One thing they do **not** settle: **the pitch tightens as the row grows.** At
 2 icons it is 48; those crops give 86 upscaled = 43. Everything else about them
@@ -1319,6 +1334,15 @@ The shot also puts the two keys in the right units: the splitter at 190 leaves
 values the corpus table above carries for these keys. That is consistency, not
 proof — the char file behind this screenshot was not pulled, so nothing here
 pins a stored number to a measured one.
+
+**Defaults and limits, from the client's code** (`chat/client/window.py`,
+2026-10-11): absent, the member list is **128** wide and the input **64** tall.
+The member list is clamped to **50..200** every time the window loads it; the
+input's divider drags between **30 and 96**, but a stored height is used as
+stored. The member list is shown unless `<window>_usermode` or the account-wide
+`chat_show_member_list_default` says otherwise (default shown; no corpus file
+sets either). The canvas draws these defaults for a chat window the file has no
+split for.
 
 **Both keys are now written**, by `chat.rs::set_chat_splits`. An existing key is
 overwritten in place; an absent one is minted as `(Long(0), Int(v))` under `ui`,

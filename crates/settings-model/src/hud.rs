@@ -77,6 +77,9 @@ pub(crate) struct Field {
 const FIELDS: [Field; 12] = [
     Field { name: "ship_offset", section: b"windows", key: b"shipuialignleftoffset",
             elem: None, kind: HudKind::Float, default: "0", scope: HudScope::Char },
+    // Absent, the client puts the panel at (W/2, H/2 - 60) for the current
+    // resolution (`shipUI.GetFightersDetachedPos`) — no static default can say
+    // that, so `layout.ts::fighterPoint` supplies it where the size is known.
     Field { name: "fighter_x", section: b"ui", key: b"fightersDetachedPosition",
             elem: Some(0), kind: HudKind::Int, default: "0", scope: HudScope::Char },
     Field { name: "fighter_y", section: b"ui", key: b"fightersDetachedPosition",
@@ -87,10 +90,14 @@ const FIELDS: [Field; 12] = [
     // projects as its "0" default and a drag mints a dead `ui` key EVE ignores.
     // Only `tests/hud_corpus.rs` catches that — every fixture here agrees with
     // whatever section this table names.
+    //
+    // Absent, the client puts the badge at (16, 16)
+    // (`notificationSettingHandler.GetNotificationBadgeOffset`), as a 32x32
+    // widget clamped onto the screen (`notificationCenter.capWidgetPosition`).
     Field { name: "badge_x", section: b"notifications", key: b"notification_badge_offset",
-            elem: Some(0), kind: HudKind::Int, default: "0", scope: HudScope::Char },
+            elem: Some(0), kind: HudKind::Int, default: "16", scope: HudScope::Char },
     Field { name: "badge_y", section: b"notifications", key: b"notification_badge_offset",
-            elem: Some(1), kind: HudKind::Int, default: "0", scope: HudScope::Char },
+            elem: Some(1), kind: HudKind::Int, default: "16", scope: HudScope::Char },
     // Corpus-verified (not assumed): in a real account file, `shipuialigntop`,
     // `detachFighterUI` and `displayFighterUI` sit under the root `ui` section.
     // The account file's `ui` section key is itself `Ref`-keyed (a `Ref` to a byte-string
@@ -125,10 +132,9 @@ const FIELDS: [Field; 12] = [
     //   `layout.ts` owns that conversion; this table only carries the number.
     //
     // The default is a placeholder: 87 % of corpus account files have no
-    // `targetOrigin` at all, and EVE's own starting position was never
-    // captured. Rather than draw an element at a guessed spot, `hudRects` omits
-    // the rectangle whenever the value is absent — the badge's `0` default is
-    // as unmeasured, but a corner is a defensible guess where 0.0 here is not.
+    // `targetOrigin` at all, and the client then derives a position from the
+    // Selected Item window rather than from a constant. `hudRects` omits the
+    // rectangle whenever the value is absent rather than draw it at 0.0.
     Field { name: "target_x", section: b"ui", key: b"targetOrigin",
             elem: Some(0), kind: HudKind::Float, default: "0", scope: HudScope::Account },
     Field { name: "target_y", section: b"ui", key: b"targetOrigin",
@@ -136,8 +142,10 @@ const FIELDS: [Field; 12] = [
     // Which way the list runs from that anchor: false stacks it vertically,
     // true lays it out in a row. It does not move the anchor — one stored value
     // photographed in both orientations put the anchor slot on the same pixel.
+    // Absent, the client lays it out in a row (`targetMgr`'s
+    // `settings.user.ui.Get('alignHorizontally', 1)`).
     Field { name: "target_horizontal", section: b"ui", key: b"alignHorizontally",
-            elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
+            elem: None, kind: HudKind::Bool, default: "true", scope: HudScope::Account },
 ];
 
 /// Project a field table against whichever documents are open. A `None` root
@@ -668,6 +676,17 @@ mod tests {
         let e = entry(&hud, "neocom_width");
         assert_eq!(e.value, None);
         assert_eq!(e.default, "48");
+    }
+
+    /// Defaults are the client's own, read from its code: the target list
+    /// runs horizontally (`targetMgr`: `alignHorizontally` default 1) and the
+    /// notification badge sits at (16, 16) (`GetNotificationBadgeOffset`).
+    #[test]
+    fn absent_keys_default_to_what_the_client_draws() {
+        let hud = project_hud(&Value::Dict(vec![]), Some(&Value::Dict(vec![])));
+        assert_eq!(entry(&hud, "target_horizontal").default, "true");
+        assert_eq!(entry(&hud, "badge_x").default, "16");
+        assert_eq!(entry(&hud, "badge_y").default, "16");
     }
 
     #[test]

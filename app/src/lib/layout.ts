@@ -252,8 +252,8 @@ export const SHIP_TOP_MARGIN = 12;
 const SHIP_BOTTOM_MARGIN = 12;
 
 /**
- * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
- * `badge`, which is still nominal.
+ * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28; the
+ * badge's 32x32 is the client's own widget size (notificationCenter).
  *
  * These are not cosmetic: `LayoutView` feeds each furniture rect's `w`/`h` into
  * the snap-line set, so a box smaller than the real element makes windows snap
@@ -402,6 +402,20 @@ export function targetFractionFromPoint(
 }
 
 const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
+
+/**
+ * The detached fighter panel's stored top-left, or where the client puts it
+ * when the file stores none: `(W/2, H/2 - 60)` for the screen it runs at
+ * (`shipUI.GetFightersDetachedPos`, Python 2 integer division). Null when the
+ * field is not writable at all.
+ */
+export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {
+  const x = hudNum(hud, "fighter_x");
+  const y = hudNum(hud, "fighter_y");
+  if (x === null || y === null) return null;
+  if (stored(hud, "fighter_x") && stored(hud, "fighter_y")) return { x, y };
+  return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+}
 
 /** A field's number: its value, else its default; null when not writable at all. */
 export function hudNum(hud: Hud, name: string): number | null {
@@ -590,10 +604,9 @@ export function hudRects(
   // see hudPointFromRect) — this needed no correction. Its `h` does: the panel
   // is far taller than HUD_NOMINAL.fighter says once the fighter-ability grid
   // is drawn, and the anchor is that grid's top even when it is not.
-  const fx = hudNum(hud, "fighter_x");
-  const fy = hudNum(hud, "fighter_y");
-  if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
-    out.push({ kind: "fighter", label: "Fighter panel", x: fx, y: fy, ...HUD_NOMINAL.fighter, drag: "xy" });
+  const fp = fighterPoint(hud, layout.reference_w, layout.reference_h);
+  if (fp && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
+    out.push({ kind: "fighter", label: "Fighter panel", x: fp.x, y: fp.y, ...HUD_NOMINAL.fighter, drag: "xy" });
   }
 
   const bx = hudNum(hud, "badge_x");

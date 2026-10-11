@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
-  import { EFFECT_COUNT_MAX, neocomWidth, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
+  import { EFFECT_COUNT_MAX, fighterPoint, neocomWidth, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
@@ -117,8 +117,18 @@
     return Number.isFinite(n) ? n : 0;
   };
   const anchorPx = () => targetAnchor(frac("target_x"), frac("target_y"), referenceW, referenceH, neocomWidth(hud));
-  const shown = (name: string) =>
-    AXIS[name] && asPixels ? String(Math.round(anchorPx()[AXIS[name]])) : raw(name);
+  // The fighter panel's default depends on the screen size, so the static
+  // default the backend sends ("0") is replaced by the client's own placement.
+  const FIGHTER_AXIS: Record<string, "x" | "y"> = { fighter_x: "x", fighter_y: "y" };
+  const shown = (name: string) => {
+    if (AXIS[name] && asPixels) return String(Math.round(anchorPx()[AXIS[name]]));
+    const fa = FIGHTER_AXIS[name];
+    if (fa && asPixels && find(name)?.value == null) {
+      const p = fighterPoint(hud, referenceW, referenceH);
+      if (p) return String(p[fa]);
+    }
+    return raw(name);
+  };
   // `readOnly` is the CHARACTER document's flag. An account-scoped row writes
   // the account file, so a read-only account left those four rows clickable and
   // the backend's refusal arrived as a dialog — stricter to say so up front.
