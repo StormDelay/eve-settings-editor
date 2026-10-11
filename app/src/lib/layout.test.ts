@@ -955,13 +955,27 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const f = hudRects(hud, layout2560).find((x) => x.kind === "fighter")!;
 
   check("the fighter panel starts at the stored anchor", f.x === 329 && f.y === 289);
-  check("it is wide enough for five squadrons", f.w === 467);
+  // The client's own container (squadronsUI): squadrons 80 wide on an 86
+  // pitch from x 40, so 34 + 86 x 5 at the carrier maximum, and 266 tall.
+  check("it is the client's panel, five squadrons wide", f.w === 464);
   // The regression this guards: the old 120 covered the squadron row alone, so
   // windows snapped straight through the ability grid above it.
   check(
     "it is tall enough for the ability grid, not just the squadron row",
-    f.h === 264,
+    f.h === 266,
   );
+}
+
+{
+  // The client clamps a stored point onto the screen before drawing it, and
+  // writes the clamped value back (shipUI.UpdatePosition): x <= W - 32,
+  // y <= H - the panel's height.
+  const off = fullHud({
+    fighter_x: hudEntry("fighter_x", "2600", "int", "0"),
+    fighter_y: hudEntry("fighter_y", "1400", "int", "0"),
+  });
+  check("an off-screen fighter point is drawn where the client clamps it",
+    eq(fighterPoint(off, 2560, 1440), { x: 2560 - 32, y: 1440 - 266 }));
 }
 
 // --- snapping: candidate lines ---------------------------------------------

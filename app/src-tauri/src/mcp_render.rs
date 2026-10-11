@@ -61,7 +61,8 @@ const SHIPUI: (i64, i64) = (648, 176);
 /// SHIP_ANCHOR_LEFT are the measured, compass-on figures.
 const COMPASS_RACKS: i64 = 16;
 const COMPASS_CLUSTER: i64 = 10;
-const FIGHTER: (i64, i64) = (467, 264);
+/// The client's panel container at 5 squadrons (layout.ts HUD_NOMINAL).
+const FIGHTER: (i64, i64) = (464, 266);
 const BADGE: (i64, i64) = (32, 32);
 /// One target slot; a list is N of these in a row or a column.
 const TARGET: (i64, i64) = (110, 181);
@@ -128,7 +129,12 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
     }
     if let (Some(x), Some(y)) = (hud_num(hud, "fighter_x"), hud_num(hud, "fighter_y")) {
         // Never dragged: the client centres it (layout.ts fighterPoint).
-        let (x, y) = if stored(hud, "fighter_x") && stored(hud, "fighter_y") { (x, y) } else { ((rw / 2) as f64, (rh / 2 - 60) as f64) };
+        // Clamped as the client clamps it (layout.ts fighterPoint).
+        let (x, y) = if stored(hud, "fighter_x") && stored(hud, "fighter_y") {
+            (x.min((rw - 32) as f64), y.min((rh - FIGHTER.1) as f64))
+        } else {
+            ((rw / 2) as f64, (rh / 2 - 60) as f64)
+        };
         if hud_flag(hud, "fighter_detached") && hud_flag(hud, "fighter_shown") {
             out.push(Furniture { kind: "fighter", label: "Fighter panel", x: x as i64, y: y as i64, w: FIGHTER.0, h: FIGHTER.1 });
         }
@@ -569,7 +575,7 @@ mod tests {
         assert_eq!(s.y, 1440 - 12 - 176, "bottom-aligned by default");
         assert_eq!((s.w, s.h), (648, 176));
         let f = find(&rects, "fighter");
-        assert_eq!((f.x, f.y, f.w, f.h), (326, 54, 467, 264));
+        assert_eq!((f.x, f.y, f.w, f.h), (326, 54, 464, 266));
         let b = find(&rects, "badge");
         assert_eq!((b.x, b.y, b.w, b.h), (1000, 20, 32, 32));
         // Anchor (72 + 1354, 752): right of centre and below it, so the slot

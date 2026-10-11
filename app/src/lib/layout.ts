@@ -310,9 +310,12 @@ const SHIP_BOTTOM_MARGIN = 12;
  * a button width and lands 5px short, so windows snapped just inside the real
  * HUD. See docs/format-notes.md, "Ship HUD internals".
  *
- * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
- * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
- * to the measured 381. Height does not change with squadron count.
+ * `fighter` is the client's own panel container at 5 squadrons, the most a
+ * carrier can field (squadronsUI, 2026-10-11): an autosized box over its
+ * squadrons, 80 wide on an 86 pitch from x 40, so `34 + 86 x 5 = 464` wide and
+ * 266 tall whatever the count. The measurements (467 x 264) were the art: the
+ * last dial's 86-wide container overhangs the panel by 3px, and the control
+ * column's buttons end 2px above its bottom.
  *
  * Both HEIGHTS were re-measured 2026-07-30 and both grew:
  *
@@ -321,13 +324,14 @@ const SHIP_BOTTOM_MARGIN = 12;
  *   old 160 was inferred from the rack block rather than measured, and pairs
  *   with the old 28px top margin — both were wrong together, which is why the
  *   rack still landed in the right place and nothing looked broken.
- * - `fighter` 253 -> 264. The fighter CONTROL COLUMN, four buttons left of the
- *   squadron dials, is the panel's lowest element and ends at 264. It was never
- *   drawn before, so nothing had noticed it hanging out of the box.
+ * - `fighter` 253 -> 264 -> 266. The fighter CONTROL COLUMN, four buttons left
+ *   of the squadron dials, is the panel's lowest element; it was never drawn
+ *   before, so nothing had noticed it hanging out of the box. 266 is the
+ *   client's container height.
  */
 export const HUD_NOMINAL = {
   shipui: { w: 648, h: 176 },
-  fighter: { w: 467, h: 264 },
+  fighter: { w: 464, h: 266 },
   badge: { w: 32, h: 32 },
   // ONE target slot, measured 2026-07-31: the list's slot pitch is 110 across
   // and 181 down (four label rows apart, in three shots). A list is N of these
@@ -493,8 +497,13 @@ export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): 
   const x = hudNum(hud, "fighter_x");
   const y = hudNum(hud, "fighter_y");
   if (x === null || y === null) return null;
-  if (stored(hud, "fighter_x") && stored(hud, "fighter_y")) return { x, y };
-  return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+  if (!stored(hud, "fighter_x") || !stored(hud, "fighter_y")) {
+    return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+  }
+  // The client clamps a stored point before drawing it, and writes the clamped
+  // value back (shipUI.UpdatePosition): one 32px button stays on screen across,
+  // the whole panel down.
+  return { x: Math.min(x, referenceW - 32), y: Math.min(y, referenceH - HUD_NOMINAL.fighter.h) };
 }
 
 /** A field's number: its value, else its default; null when not writable at all. */
@@ -562,7 +571,7 @@ export function shipOffsetFromX(x: number, referenceW: number, compass: boolean)
  * Sizes MEASURED 2026-07-28 from the same shot the anchor was confirmed on:
  * with 4 squadrons (3 launched) the panel spans 381x253 from the anchor, on a
  * column pitch of 86 shared by the ability grid and the squadron row. Five
- * squadrons is the carrier maximum, hence the 467 width in HUD_NOMINAL. Height
+ * squadrons is the carrier maximum, hence the 464 width in HUD_NOMINAL. Height
  * is independent of squadron count.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {

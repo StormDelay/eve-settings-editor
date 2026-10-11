@@ -245,30 +245,28 @@ import { check } from "./test/check.ts";
   check("the control column is at the measured x", c.every((p) => p.x === 4));
   check("control buttons are on the measured 32 pitch", c[1].y - c[0].y === 32 && c[0].y === 144);
 
-  // It is the SQUADRON row that sets the panel width — at 5 squadrons
-  // `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
-  // stops short at 458. Measuring them separately is what corrected an earlier
-  // guess that derived the ability cell width by assuming the grid set the edge.
+  // The client's panel is 34 + 86n wide (squadronsUI: 80-wide squadrons on an
+  // 86 pitch from x 40), but each dial sits in an 86-wide SquadronCont, so the
+  // last dial's art overhangs the panel by 3px — in the client too. The
+  // measured ⌀81 at x 42 is that container's art, centred.
   check(
-    "the squadron row reaches the panel's right edge exactly",
-    Math.max(...squad.map((p) => p.x + p.w)) === HUD_NOMINAL.fighter.w,
+    "the last squadron dial overhangs the panel by the client's 3px",
+    Math.max(...squad.map((p) => p.x + p.w)) === HUD_NOMINAL.fighter.w + 3,
   );
+  // AbilitiesCont: 64 wide at x 20 within each squadron, so ⌀44 icons centre on
+  // x 92 — the measured 70..114 — and the grid stops at 458.
   check(
     "the ability grid stops short of it",
     Math.max(...grid.map((p) => p.x + p.w)) === 458,
   );
 
   check(
-    "every fighter part fits the panel's measured width",
-    parts.every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.fighter.w),
+    "every other fighter part fits the panel",
+    parts.filter((p) => !squad.includes(p)).every((p) => p.x >= 0 && p.x + p.w <= HUD_NOMINAL.fighter.w),
   );
-  // The control column runs 15px BELOW the recorded panel height: measured, it
-  // ends at 268 against HUD_NOMINAL.fighter.h's 253. The height has not been
-  // re-measured (the 253 is 2026-07-28's), so this pins the discrepancy rather
-  // than hiding it — if the height is ever corrected, this check says so.
   const bottom = Math.max(...parts.map((p) => p.y + p.h));
   check("the control column is the panel's lowest element", bottom === 264);
-  check("and it defines the measured panel height", bottom === HUD_NOMINAL.fighter.h);
+  check("and it ends inside the client's 266-tall panel", bottom <= HUD_NOMINAL.fighter.h);
 }
 
 // --- neocom ----------------------------------------------------------------

@@ -219,16 +219,17 @@ const FIGHTER = {
   /** Ability grid: ⌀44 buttons — the same size as the ship HUD's module slots —
    * on the measured 86 column pitch from x 70, rows on a 50 pitch from y 2. */
   abilityX: 70, abilityY: 0, abilityD: 44, abilityRowPitch: 50, rows: 3,
-  /** Squadron gauges: large ⌀81 dials on the same 86 pitch, from x 42. These are
-   * what set the panel's width — at the 5-squadron carrier maximum,
-   * `42 + 86 x 4 + 81 = 467`, exactly HUD_NOMINAL.fighter.w. The ability grid
-   * stops short of that at 458, which is why the two are measured separately
-   * rather than one being derived from the other. */
+  /** Squadron gauges: large ⌀81 dials on the same 86 pitch, from x 42 — the
+   * art of each squadron's 86-wide SquadronCont at x 40 + 86i (squadronsUI).
+   * That container is wider than the 80px slot the panel sizes itself by, so
+   * the fifth dial overhangs HUD_NOMINAL.fighter.w by 3px, as in the client.
+   * The ability grid (AbilitiesCont, 64 wide at x 20 per squadron) stops at
+   * 458. */
   squadX: 42, squadY: 152, squadD: 81,
   /** Fighter control column, left of the squadron dials: 4 small ⌀24 buttons on
-   * a 32 pitch from y 144. Missing entirely until 2026-07-30 — and it is the
-   * panel's LOWEST element, ending at 264, which is what re-measured
-   * HUD_NOMINAL.fighter.h up from 253. */
+   * a 32 pitch from y 144 — the art of the client's 36x120 button container at
+   * the panel's bottom. Missing entirely until 2026-07-30; it is the panel's
+   * LOWEST element, ending at 264, just inside the 266 container. */
   ctrlX: 4, ctrlY: 144, ctrlD: 24, ctrlPitch: 32, ctrlRows: 4,
   /** Column pitch, shared by the ability grid and the squadron row. */
   pitch: 86,
