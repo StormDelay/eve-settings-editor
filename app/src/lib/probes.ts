@@ -142,17 +142,19 @@ export function toCartesian({ r, az, el }: Spherical): [number, number, number] 
   return [horizontal * Math.cos(a), r * Math.sin(e), horizontal * Math.sin(a)];
 }
 
-/** The starting arrangement for a new-from-scratch formation: eight probes on
- * the corners of a cube of half-side `range / 2`.
- *
- * ponytail: arbitrary starting cube. EVE ships default formations at several
- * range increments, but none of them are stored in the settings file (spec
- * §2.5), so there is nothing here to derive them from. Replace this if a source
- * for the client's own defaults is ever found. */
-export function cubeFormation(range: number): [number, number, number][] {
+/** The starting arrangement for a new-from-scratch formation: EVE's own
+ * Pinpoint (probescanning/formations.py `_GetPinPointFormation`) — one probe at
+ * the centre, one half a range above and below it, and five on a pentagon of
+ * radius half a range in the horizontal plane, starting on +X. The client
+ * builds it at 4 AU and scales positions with the range, so it is the same
+ * shape at any range. */
+export function pinpointFormation(range: number): [number, number, number][] {
   const h = range / 2;
-  const out: [number, number, number][] = [];
-  for (const x of [-h, h]) for (const y of [-h, h]) for (const z of [-h, h]) out.push([x, y, z]);
+  const out: [number, number, number][] = [[0, 0, 0], [0, h, 0], [0, -h, 0]];
+  for (let i = 0; i < 5; i++) {
+    const a = (i * 2 * Math.PI) / 5;
+    out.push([h * Math.cos(a), 0, h * Math.sin(a)]);
+  }
   return out;
 }
 

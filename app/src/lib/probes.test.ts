@@ -10,7 +10,7 @@ import {
   horizonRing,
   NORTH_AZ_DEG,
   EAST_SIGN,
-  cubeFormation,
+  pinpointFormation,
   formatUnit,
   cameraBasis,
   projectPoint,
@@ -110,15 +110,15 @@ check("a probe at the centre reports finite angles", (() => {
   return s.r === 0 && Number.isFinite(s.az) && Number.isFinite(s.el);
 })());
 
-check("a cube formation has eight distinct corners", (() => {
-  const c = cubeFormation(74798935350);
-  const distinct = new Set(c.map((p) => p.join(",")));
-  return c.length === 8 && distinct.size === 8;
-})());
-check("every cube corner is the same distance from the centre", (() => {
-  const c = cubeFormation(74798935350);
-  const rs = c.map((p) => toSpherical(p).r);
-  return rs.every((r) => near(r, rs[0], 1e-3)) && rs[0] > 0;
+// EVE's own Pinpoint (probescanning/formations.py _GetPinPointFormation): one
+// probe at the centre, one half a range above and below it, and five on a
+// pentagon of radius half a range in the horizontal plane, starting on +X.
+check("a new formation is EVE's Pinpoint", (() => {
+  const r = 74798935350;
+  const c = pinpointFormation(r);
+  const at = (i: number) => [0.5 * r * Math.cos((i * 2 * Math.PI) / 5), 0, 0.5 * r * Math.sin((i * 2 * Math.PI) / 5)];
+  const want = [[0, 0, 0], [0, r / 2, 0], [0, -r / 2, 0], at(0), at(1), at(2), at(3), at(4)];
+  return c.length === 8 && c.every((p, i) => p.every((v, k) => near(v, want[i][k], 1e-3)));
 })());
 
 // Display text must not round a coordinate to something that reads as zero:
