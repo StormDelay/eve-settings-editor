@@ -123,6 +123,29 @@ test("the compass toggle sits with the ship HUD and writes the account file", ()
   expect(input("Ship HUD", "Compass").disabled).toBe(true);
 });
 
+describe("a target list the account never placed", () => {
+  // The client derives it from the Selected Item window; LayoutView hands the
+  // result down as `targetDefault`. Here: anchor (1885, 100) beside a 72px neocom.
+  const DEF = { x: (1885 - 72) / 2488, y: 100 / 1440 };
+  const unplaced = () => hud(
+    entry("target_x", "float", null, { scope: "account" }),
+    entry("target_y", "float", null, { scope: "account" }),
+  );
+
+  test("shows where the client puts it", () => {
+    mount(unplaced(), { referenceW: 2560, referenceH: 1440, targetDefault: DEF });
+    expect(input("Target list", "x").value).toBe("1885");
+    expect(input("Target list", "y").value).toBe("100");
+  });
+
+  test("typing one axis writes both, since the key is minted whole", () => {
+    const { onSet } = mount(unplaced(), { referenceW: 2560, referenceH: 1440, targetDefault: DEF });
+    fireEvent.change(input("Target list", "x"), { target: { value: "1800" } });
+    expect(onSet).toHaveBeenCalledWith("target_x", String((1800 - 72) / 2488));
+    expect(onSet).toHaveBeenCalledWith("target_y", String(100 / 1440));
+  });
+});
+
 describe("the fighter panel's default", () => {
   test("an unstored point shows where the client puts it, not 0", () => {
     mount(

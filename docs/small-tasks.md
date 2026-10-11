@@ -408,6 +408,18 @@ Workflow:
   minted anchor guessing `TARGET_MARGIN = 72` — is gone: the margin is the
   character's `neocomWidth`, read the way the client reads it (2026-10-11)._
 
+- [ ] **Make "Open only" mean what the client reopens.** The filter shows every
+  window whose `openWindows` flag is set, but the client consults that flag for
+  a fixed list of windows only (`sessionChangeWindowOpener`, listed in
+  `format-notes.md` under "`openWindows` does not predict what the client shows
+  on launch"); the rest are opened by their own services (overview, Selected
+  Item, drones, chat…) or never. Open decision: whether the filter should use
+  that list plus the service-opened windows instead of the raw flag, and how to
+  present the windows whose flag is set but which will never come back — the
+  curated `CLUTTER_IDS` covers many of them today. The service-opened set still
+  needs listing from the code before it can be built. _Added 2026-10-11 (client
+  code pass)._
+
 - [ ] **A right-docked neocom is not modelled.** The client docks the neocom
   left or right by the character setting `neocomAlign` (`uiconst.TOLEFT` 4,
   `TORIGHT` 6; default left), and pads the target layer on that side. The editor

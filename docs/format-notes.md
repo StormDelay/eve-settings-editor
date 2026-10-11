@@ -701,11 +701,29 @@ Evidence, all from the live file:
   "normal" for these windows, and the editor already projects every relevant
   one. There is no better signal to switch to.
 
-**What is NOT yet known.** Which windows belong to the never-restored class.
-The four reported ones and the modals above are in it; the many windows that do
-come back on launch are not. Nothing in the file distinguishes them — it would
-have to be a curated list, like `CLUTTER_IDS`, built by observing the client.
-Worth knowing before anyone tries to derive it from the data.
+**Which windows the flag can bring back — read from the client's code
+2026-10-11.** Exactly one module reads `openWindows`:
+`eve/client/script/ui/services/sessionChangeWindowOpener.py`, on every session
+change, for a fixed list of classes (`_TryOpenWnd` → `GetRegisteredState(id,
+'open')`):
+
+- always: `mail`, `walletWindow`, `assets`, `XmppChatChannels`, `journal`,
+  `logger`, `charactersheet`, `addressbook`, `locations`, `market`, `notepad`,
+  `standaloneBookmarkWnd`;
+- docked in a station: the station inventories (`InventoryPrimary` and the item,
+  ship, deliveries and corp-hangar windows);
+- docked in a structure: the structure inventories, deliveries and corp hangars;
+- in space: `InventoryPrimary`, `MoonScanner`, `directionalScannerWindow`,
+  `probeScannerWindow`, and the solar-system map panel (each only when not
+  embedded in the scanner or suppressed in the system).
+
+Every other window's flag is never consulted. Windows like the overview,
+Selected Item, drones and chat are opened by their own services regardless of
+it; `corporation`, `job_board`, `contracts`, `StructureBrowser` and the modals
+above are simply never reopened — which is exactly the 2026-07-31 observation.
+So the never-restored class is "everything not on this list and not opened by a
+service", and the list is derivable rather than curated (see
+`docs/small-tasks.md`).
 
 **Consequence for the editor.** `WindowRect.open` is EVE's flag and can only
 ever be that. The canvas draws open windows, so one of these paints a rectangle
@@ -1472,8 +1490,17 @@ carried, so the denominator was recovered rather than assumed.
 horizontal turn is at `(W + N) / 2`, not the screen's middle.
 
 **EVE's own default position** — 87 % of account files have no
-`targetOrigin`. The canvas draws nothing for those. The client derives one from
-the Selected Item window; see `docs/small-tasks.md`.
+`targetOrigin`, and the client derives one from the Selected Item window
+(`targetMgr.GetOriginPosition`, read 2026-10-11): it takes that window's rect
+(`selecteditemview` — or its default, 566 wide, 16 in from the top right, 174
+tall on a screen 900+ high and 138 below, per `actionPanelDefaults`), subtracts
+15 from its left, and puts the anchor at the window's left edge when it sits
+right of the screen's middle, at its right edge when left of it, at the window's
+top either way. A window straddling the middle sends it to `(W − 300, 16)`. The
+client uses the bounding box of the window plus anything snapped on top of it
+(`FindConnectingWindows('top')`); the editor uses the window alone. Resetting
+the window settings in game deletes `targetOrigin`, which puts the list back on
+this rule. The canvas draws the list there, and a first drag mints both axes.
 
 ### Overview tab names (client code + in-game check, 2026-10-09)
 
