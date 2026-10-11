@@ -180,7 +180,10 @@ import { check } from "./test/check.ts";
   // flips above it and the y goes negative. The flip is the whole reason
   // `topAligned` is a parameter rather than a constant.
   check("a top-aligned row sits 16 below the element", effectsOf(3, true).every((p) => p.y === 192));
-  check("a bottom-aligned row sits 10 above it", effectsOf(3, false).every((p) => p.y === -46));
+  // The client puts the bar 200 px from the screen edge in both alignments
+  // (shipUI: buffBarContainer.top = SHIP_UI_HEIGHT), so the gap is the same 16
+  // both ways; the 10 measured off 2x-upscaled crops did not survive the code.
+  check("a bottom-aligned row sits 16 above it", effectsOf(3, false).every((p) => p.y === -52));
   check("the bottom-aligned row is entirely outside the box",
     effectsOf(3, false).every((p) => p.y + p.h <= 0));
 
@@ -361,16 +364,24 @@ import { check } from "./test/check.ts";
   // until then.
   check("the input spans the full window width", input.x === 0 && input.w === 256);
 
-  // Absent means "never resized". Inventing a default would draw a split that
-  // is not there.
+  // Absent means "never resized", and the client then draws its own defaults:
+  // a 128px member list and a 64px input (chat/client/window.py).
   const widthOnly: ChatPanel = { window_id: "c", userlist_width: 135, input_height: null };
-  check("no input band without a stored height", chatParts(widthOnly, rect).length === 1);
-  const inputOnly: ChatPanel = { window_id: "c", userlist_width: null, input_height: 64 };
+  const wo = chatParts(widthOnly, rect);
+  check("an absent height draws the default 64 input", wo.length === 2 && wo[1].h === 64);
+  const inputOnly: ChatPanel = { window_id: "c", userlist_width: null, input_height: 70 };
   const io = chatParts(inputOnly, rect);
-  check("no member band without a stored width", io.length === 1);
-  check("the input spans the full width with no member list", io[0].w === 256);
+  check("an absent width draws the default 128 member list", io[0].w === 128 && io[1].h === 70);
   const neither: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
-  check("nothing drawn when neither is stored", chatParts(neither, rect).length === 0);
+  const ne = chatParts(neither, rect);
+  check("neither stored draws both defaults", ne.length === 2 && ne[0].w === 128 && ne[1].h === 64);
+  check("no panel at all draws both defaults too", chatParts(undefined, rect).length === 2);
+
+  // The client clamps the member list to 50..200 when it loads it.
+  check("a stored width past 200 draws at 200",
+    chatParts({ window_id: "c", userlist_width: 300, input_height: 64 }, rect)[0].w === 200);
+  check("a stored width under 50 draws at 50",
+    chatParts({ window_id: "c", userlist_width: 20, input_height: 64 }, rect)[0].w === 50);
 
   // A stored input_height can exceed the window's own height (real stored data,
   // not invented) — the member band's height must clamp at 0 rather than go
@@ -417,8 +428,8 @@ import { check } from "./test/check.ts";
     windowDetail(free("overview"), null, null, chats, rect).length === 0);
   check("a chat window gets its splits",
     windowDetail(free("chatchannel_local"), null, cols, chats, rect).length === 2);
-  check("a chat window with no stored panel draws nothing",
-    windowDetail(free("chatchannel_corp"), null, cols, chats, rect).length === 0);
+  check("a chat window with no stored panel draws the client's defaults",
+    windowDetail(free("chatchannel_corp"), null, cols, chats, rect).length === 2);
   check("an unrelated window draws nothing",
     windowDetail(free("market"), null, cols, chats, rect).length === 0);
 
@@ -433,12 +444,11 @@ import { check } from "./test/check.ts";
   };
   check("a stack resolves from its selected tab",
     windowDetail(stack, "chatchannel_local", cols, chats, rect).length === 2);
-  // With no selection, this stack's fallback (tabs[0] = chatchannel_corp) and
-  // an incorrect fallback to the anchor (ChatWindowStack) both miss `chats`,
-  // so this alone cannot tell the two paths apart — it still pins "a resolved
-  // id with no matching panel draws nothing".
-  check("a selected tab that has no panel draws nothing",
-    windowDetail(stack, null, cols, chats, rect).length === 0);
+  // With no selection the stack falls back to tabs[0] = chatchannel_corp,
+  // which has no stored panel and so draws the client's defaults. A wrong
+  // fallback to the anchor (ChatWindowStack, not a chat window) draws nothing.
+  check("with no selection the first tab is drawn, at the defaults",
+    windowDetail(stack, null, cols, chats, rect).length === 2);
 
   // Discriminating case: first tab IS in `chats`. Falling back to tabs[0]
   // yields the two chat bands; falling back to the anchor (ChatWindowStack2,
@@ -505,18 +515,19 @@ import { check } from "./test/check.ts";
   const a = historyArea(geom, both);
   check("history is what the two splits leave", a.w === 152 && a.h === 361);
 
-  // An absent split takes nothing away — the player has never resized it.
+  // An absent split takes the client's defaults away: 128 wide, 64 tall.
   const none: ChatPanel = { window_id: "c", userlist_width: null, input_height: null };
   const b = historyArea(geom, none);
-  check("an absent split subtracts nothing", b.w === 256 && b.h === 424);
-  check("no panel at all subtracts nothing", historyArea(geom, undefined).w === 256);
+  check("an absent split subtracts the defaults", b.w === 256 - 128 && b.h === 424 - 64);
+  check("no panel at all subtracts the defaults", historyArea(geom, undefined).w === 256 - 128);
 
   // The case the panel exists to surface: a split wider than the window leaves
   // the history area NEGATIVE. Not clamped — see the spec's §6. This is what
   // tells the player the account-wide value does not fit this character.
+  // The member list is clamped to 200 on load, so only the input can overrun.
   const over: ChatPanel = { window_id: "c", userlist_width: 300, input_height: 500 };
   const c = historyArea(geom, over);
-  check("an oversized split reports a negative history area", c.w === -44 && c.h === -76);
+  check("an oversized split reports a negative history area", c.w === 256 - 200 && c.h === -76);
 }
 
 console.log("detail.test.ts ok");

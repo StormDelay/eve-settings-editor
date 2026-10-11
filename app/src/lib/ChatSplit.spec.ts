@@ -55,8 +55,24 @@ describe("ChatSplit", () => {
 
   test("flags an oversized split instead of hiding it", () => {
     setup({ panel: panel(300, 500) });
-    // Negative, not clamped: the account-wide value does not fit this window.
-    expect(screen.getByText(/History area -44 × -76/)).toBeTruthy();
+    // The client clamps the member list to 200 on load; the input it does not,
+    // so the height goes negative — the account-wide value does not fit here.
+    expect(screen.getByText(/History area 56 × -76/)).toBeTruthy();
+  });
+
+  test("an unstored split shows the client's default", () => {
+    setup({ panel: undefined });
+    expect((screen.getByLabelText("Member list") as HTMLInputElement).placeholder).toBe("128");
+    expect((screen.getByLabelText("Input box") as HTMLInputElement).placeholder).toBe("64");
+    expect(screen.getByText(/History area 128 × 360/)).toBeTruthy();
+  });
+
+  test("a typed value is clamped to the range the client allows", async () => {
+    const { onSet } = setup();
+    await fireEvent.change(screen.getByLabelText("Member list"), { target: { value: "300" } });
+    expect(onSet).toHaveBeenLastCalledWith(["chatchannel_local"], 200, null);
+    await fireEvent.change(screen.getByLabelText("Input box"), { target: { value: "5" } });
+    expect(onSet).toHaveBeenLastCalledWith(["chatchannel_local"], null, 30);
   });
 
   test("a blank input writes nothing", async () => {

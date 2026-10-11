@@ -116,27 +116,17 @@ const CLUSTER = {
  * `gapBelow` is from the same pair: the element ends at 176 and the row's first
  * lit pixel row is 192.
  *
- * `gapAbove` is SMALLER, and the asymmetry is measured rather than sloppy. It
- * comes from three bottom-aligned shots supplied 2026-07-31, which are 2x
- * upscales of a native capture — icon diameter, UI font cap height and the
- * capacitor gauge all land on exactly 2.0, which is what licenses dividing by
- * it. All three put the row's bottom 53 upscaled px above the capacitor's first
- * lit row, and that lit row is 16 native px below the element's top edge, so
- * the gap is `53 / 2 - 16 = 10`.
+ * `gapAbove` is the same 16, from the client's code (2026-10-11): the bar is a
+ * 44-tall strip placed `SHIP_UI_HEIGHT` = 200 px from the screen edge the HUD
+ * is aligned to, in both alignments (shipUI.OnOpenView / UpdatePosition), and
+ * the HUD is symmetric about its capacitor. Three bottom-aligned crops had put
+ * it at 10 by assuming they were exact 2x upscales.
  *
- * Those same shots are why the centring is trusted at high counts rather than
- * extrapolated: holding the capacitor axis fixed, their rows of 11, 10 and 11
- * icons each solve to a WHOLE number of slots, and the two icons hidden behind
- * an overlapping window on the left are exactly what makes that arithmetic
- * close. Nothing else about the row had to be assumed to get integers.
- *
- * ponytail: `pitch` is the two-icon figure. The crowded shots put it nearer 43
- * once halved — EVE tightens the row as it grows, and nothing here models that.
- * 48 therefore draws a busy row a few percent WIDE, which is the safe direction
- * for a canvas whose job is to show what a window would collide with. Upgrade
- * path: one native-resolution shot at a known count settles the rule.
+ * The pitch is fixed too: every slot is `SLOT_WIDTH` = 48 with a 40px icon box
+ * (shipHud/buffButtons), and nothing in the bar narrows them as it fills. The
+ * same crops had suggested a tighter pitch for a busy row, for the same reason.
  */
-const SHIP_EFFECTS = { d: 36, pitch: 48, gapBelow: 16, gapAbove: 10 };
+const SHIP_EFFECTS = { d: 36, pitch: 48, gapBelow: 16, gapAbove: 16 };
 
 /**
  * The ship HUD's internals. The capacitor, racks and control cluster are
@@ -469,25 +459,43 @@ export function overviewParts(
 // --- chat -------------------------------------------------------------------
 
 /**
- * A chat window's member-list and input splits, from the stored widths.
- *
- * Either field being null means the player has never resized that split, so the
- * part is OMITTED rather than drawn at a guessed default — a split that is not
- * in the file is a split the canvas has nothing to say about.
+ * The chat window's own split sizes, from the client's code
+ * (chat/client/window.py): the member list is 128 wide unless stored, and is
+ * clamped to 50..200 whenever the window loads it; the input box is 64 tall
+ * unless stored, and its divider drags between 30 and 96.
+ */
+export const CHAT_SPLIT = {
+  members: { default: 128, min: 50, max: 200 },
+  input: { default: 64, min: 30, max: 96 },
+} as const;
+
+/** The member list's width as the client draws it: stored, else the default,
+ * clamped the way the client clamps it on load. */
+export function memberListWidth(panel: ChatPanel | undefined): number {
+  const m = CHAT_SPLIT.members;
+  return Math.min(m.max, Math.max(m.min, panel?.userlist_width ?? m.default));
+}
+
+/** The input box's height as the client draws it: stored, else the default.
+ * Not clamped — the client clamps only the drag, not the stored value. */
+export function inputHeight(panel: ChatPanel | undefined): number {
+  return panel?.input_height ?? CHAT_SPLIT.input.default;
+}
+
+/**
+ * A chat window's member-list and input splits. A split the file does not
+ * store is drawn at the client's default — that is what the player sees.
  *
  * The input band spans the FULL window width and the member list stops on top
- * of it. MEASURED 2026-08-01 off hud_battleship.png: the member splitter ends
- * on the input separator, and that separator runs the window's whole width
- * (format-notes.md, "Chat window splits"). The editor drew the input under the
- * message pane only until then — the shape this file had flagged as its one
- * unconfirmed guess, and it was the wrong one.
+ * of it. MEASURED 2026-08-01 off hud_battleship.png, and it is how the client
+ * builds it: the input is a TOBOTTOM band on the content, the member list a
+ * TORIGHT column added after it (format-notes.md, "Chat window splits").
  */
-export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): DetailPart[] {
-  const out: DetailPart[] = [];
-  const input = panel.input_height ?? 0;
-  const members = panel.userlist_width;
-  if (members !== null) {
-    out.push({
+export function chatParts(panel: ChatPanel | undefined, rect: { w: number; h: number }): DetailPart[] {
+  const input = inputHeight(panel);
+  const members = memberListWidth(panel);
+  return [
+    {
       kind: "band",
       x: rect.w - members,
       y: 0,
@@ -498,12 +506,9 @@ export function chatParts(panel: ChatPanel, rect: { w: number; h: number }): Det
       // signal — clamp to 0 instead so it stays visible as "no room".
       h: Math.max(0, rect.h - input),
       label: "Members",
-    });
-  }
-  if (panel.input_height !== null) {
-    out.push({ kind: "band", x: 0, y: rect.h - input, w: rect.w, h: input, label: "Input" });
-  }
-  return out;
+    },
+    { kind: "band", x: 0, y: rect.h - input, w: rect.w, h: input, label: "Input" },
+  ];
 }
 
 // --- dispatch ---------------------------------------------------------------
@@ -548,8 +553,8 @@ export function windowDetail(
   const ov = overviewIndex(id);
   if (ov !== null) return cols ? overviewParts(cols, ov, rect) : [];
 
-  const panel = chats.find((c) => c.window_id === id);
-  return panel ? chatParts(panel, rect) : [];
+  if (!id.startsWith("chatchannel_")) return [];
+  return chatParts(chats.find((c) => c.window_id === id), rect);
 }
 
 /**
@@ -572,15 +577,15 @@ export function chatStackTargets(stack: Stack): string[] {
  * character can overflow another's window — and reporting that honestly is the
  * point. Clamping would hide exactly the case worth seeing.
  *
- * An absent split subtracts nothing: the player has never resized it, so EVE's
- * own default applies and the file has no number to show.
+ * An absent split subtracts the client's default, and a stored member width is
+ * clamped as the client clamps it — so only the input can overrun.
  */
 export function historyArea(
   geom: { w: number; h: number },
   panel: ChatPanel | undefined,
 ): { w: number; h: number } {
   return {
-    w: geom.w - (panel?.userlist_width ?? 0),
-    h: geom.h - (panel?.input_height ?? 0),
+    w: geom.w - memberListWidth(panel),
+    h: geom.h - inputHeight(panel),
   };
 }

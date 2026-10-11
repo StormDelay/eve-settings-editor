@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { chatStackTargets, historyArea } from "$lib/detail";
+  import { CHAT_SPLIT, chatStackTargets, historyArea } from "$lib/detail";
   import type { ChatPanel, Stack } from "$lib/api";
   import Button from "./ui/Button.svelte";
   import Field from "./ui/Field.svelte";
@@ -29,8 +29,12 @@
       const v = Number(el.value);
       if (el.value.trim() !== "" && Number.isFinite(v)) {
         // Rounded because <input type="number"> does not enforce integrality
-        // and the backend stores an Int.
-        onSet([windowId], field === "userlist" ? Math.round(v) : null, field === "input" ? Math.round(v) : null);
+        // and the backend stores an Int; clamped to the range the client's
+        // own dividers allow, since it would clamp anything else itself.
+        const r = field === "userlist" ? CHAT_SPLIT.members : CHAT_SPLIT.input;
+        const n = Math.min(r.max, Math.max(r.min, Math.round(v)));
+        el.value = String(n);
+        onSet([windowId], field === "userlist" ? n : null, field === "input" ? n : null);
       } else {
         el.value = String((field === "userlist" ? panel?.userlist_width : panel?.input_height) ?? "");
       }
@@ -55,7 +59,9 @@
       label="Member list"
       layout="column"
       width="5rem"
-      min={0}
+      min={CHAT_SPLIT.members.min}
+      max={CHAT_SPLIT.members.max}
+      placeholder={String(CHAT_SPLIT.members.default)}
       value={panel?.userlist_width ?? ""}
       disabled={readOnly}
       disabledReason="Not present in this file"
@@ -65,7 +71,9 @@
       label="Input box"
       layout="column"
       width="5rem"
-      min={0}
+      min={CHAT_SPLIT.input.min}
+      max={CHAT_SPLIT.input.max}
+      placeholder={String(CHAT_SPLIT.input.default)}
       value={panel?.input_height ?? ""}
       disabled={readOnly}
       disabledReason="Not present in this file"

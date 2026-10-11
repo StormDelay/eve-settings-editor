@@ -100,6 +100,8 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
         out.push(Furniture { kind: "shipui", label: "Ship HUD", x: (rw as f64 / 2.0 + offset).round() as i64 - SHIP_ANCHOR_LEFT, y, w, h });
     }
     if let (Some(x), Some(y)) = (hud_num(hud, "fighter_x"), hud_num(hud, "fighter_y")) {
+        // Never dragged: the client centres it (layout.ts fighterPoint).
+        let (x, y) = if stored(hud, "fighter_x") && stored(hud, "fighter_y") { (x, y) } else { ((rw / 2) as f64, (rh / 2 - 60) as f64) };
         if hud_flag(hud, "fighter_detached") && hud_flag(hud, "fighter_shown") {
             out.push(Furniture { kind: "fighter", label: "Fighter panel", x: x as i64, y: y as i64, w: FIGHTER.0, h: FIGHTER.1 });
         }
@@ -565,6 +567,14 @@ mod tests {
         // the width right of the neocom (1316 here), not of the screen.
         let near = furniture(&with(full_hud(), entry("target_x", Some(&(1228.0 / 2488.0).to_string()), HudKind::Float, "0", set())), &wl, 1);
         assert_eq!(find(&near, "target").x, 1300, "an anchor at 1300 still runs right");
+        // A never-dragged fighter panel sits where the client puts it.
+        let unset = with(
+            with(full_hud(), entry("fighter_x", None, HudKind::Int, "0", set())),
+            entry("fighter_y", None, HudKind::Int, "0", set()),
+        );
+        let fs = furniture(&unset, &wl, 1);
+        let f = find(&fs, "fighter");
+        assert_eq!((f.x, f.y), (1280, 660), "(W/2, H/2 - 60), as shipUI.GetFightersDetachedPos");
         // No character file: the neocom is not drawn, but the target list is
         // still placed against EVE's default 48px neocom.
         let unpaired = furniture(&with(full_hud(), entry("neocom_width", None, HudKind::Int, "48", SetTarget::Unavailable)), &wl, 1);

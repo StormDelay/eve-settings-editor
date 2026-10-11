@@ -117,6 +117,27 @@ describe("the target anchor, which is stored as a fraction", () => {
   });
 });
 
+describe("the fighter panel's default", () => {
+  test("an unstored point shows where the client puts it, not 0", () => {
+    mount(
+      hud(entry("fighter_x", "int", null), entry("fighter_y", "int", null)),
+      { referenceW: 2560, referenceH: 1440 },
+    );
+    expect(input("Fighter panel", "x").value).toBe("1280");
+    expect(input("Fighter panel", "y").value).toBe("660");
+  });
+
+  test("typing one axis of an unplaced panel writes both", () => {
+    const { onSet } = mount(
+      hud(entry("fighter_x", "int", null), entry("fighter_y", "int", null)),
+      { referenceW: 2560, referenceH: 1440 },
+    );
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "1300" } });
+    expect(onSet).toHaveBeenCalledWith("fighter_x", "1300");
+    expect(onSet).toHaveBeenCalledWith("fighter_y", "660");
+  });
+});
+
 describe("writing a value", () => {
   test("an int field rounds a fractional entry before writing", () => {
     const { onSet } = mount(hud());

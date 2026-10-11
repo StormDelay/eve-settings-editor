@@ -252,8 +252,8 @@ export const SHIP_TOP_MARGIN = 12;
 const SHIP_BOTTOM_MARGIN = 12;
 
 /**
- * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28 except
- * `badge`, which is still nominal.
+ * Drawn sizes for the screen furniture, in data px. MEASURED 2026-07-28; the
+ * badge's 32x32 is the client's own widget size (notificationCenter).
  *
  * These are not cosmetic: `LayoutView` feeds each furniture rect's `w`/`h` into
  * the snap-line set, so a box smaller than the real element makes windows snap
@@ -403,6 +403,32 @@ export function targetFractionFromPoint(
 
 const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
 
+/**
+ * The detached fighter panel's stored top-left, or where the client puts it
+ * when the file stores none: `(W/2, H/2 - 60)` for the screen it runs at
+ * (`shipUI.GetFightersDetachedPos`, Python 2 integer division). Null when the
+ * field is not writable at all.
+ */
+/**
+ * Whether a point the file CAN hold is not stored yet. Writing one axis of such
+ * a point mints the whole tuple with the other axis at its static default
+ * (hud.rs `mint`), which for the fighter panel is not where it is drawn — so a
+ * caller writes both axes instead.
+ */
+export function pointUnplaced(hud: Hud, x: string, y: string): boolean {
+  const ex = byName(hud, x);
+  const ey = byName(hud, y);
+  return !!ex && !!ey && ex.set.how !== "unavailable" && ex.value == null && ey.value == null;
+}
+
+export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {
+  const x = hudNum(hud, "fighter_x");
+  const y = hudNum(hud, "fighter_y");
+  if (x === null || y === null) return null;
+  if (stored(hud, "fighter_x") && stored(hud, "fighter_y")) return { x, y };
+  return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+}
+
 /** A field's number: its value, else its default; null when not writable at all. */
 export function hudNum(hud: Hud, name: string): number | null {
   const e = byName(hud, name);
@@ -524,9 +550,12 @@ export function furnitureWrites(
     const prefix = kind === "fighter" ? "fighter" : "badge";
     const stored = hudPointFromRect(kind, dropped.x, dropped.y);
     const out: Array<[string, string]> = [];
-    if (stored.x !== start.x) out.push([`${prefix}_x`, String(stored.x)]);
-    if (stored.y !== start.y) out.push([`${prefix}_y`, String(stored.y)]);
-    return out;
+    // An unplaced fighter panel is drawn at a computed default, but minting
+    // one axis would give the other its static "0" — so write both.
+    const both = kind === "fighter" && pointUnplaced(hud, "fighter_x", "fighter_y");
+    if (both || stored.x !== start.x) out.push([`${prefix}_x`, String(stored.x)]);
+    if (both || stored.y !== start.y) out.push([`${prefix}_y`, String(stored.y)]);
+    return both && stored.x === start.x && stored.y === start.y ? [] : out;
   }
 
   // The neocom: its width is a field, not a rect, so it is selectable but not
@@ -590,10 +619,9 @@ export function hudRects(
   // see hudPointFromRect) — this needed no correction. Its `h` does: the panel
   // is far taller than HUD_NOMINAL.fighter says once the fighter-ability grid
   // is drawn, and the anchor is that grid's top even when it is not.
-  const fx = hudNum(hud, "fighter_x");
-  const fy = hudNum(hud, "fighter_y");
-  if (fx !== null && fy !== null && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
-    out.push({ kind: "fighter", label: "Fighter panel", x: fx, y: fy, ...HUD_NOMINAL.fighter, drag: "xy" });
+  const fp = fighterPoint(hud, layout.reference_w, layout.reference_h);
+  if (fp && hudFlag(hud, "fighter_detached") && hudFlag(hud, "fighter_shown")) {
+    out.push({ kind: "fighter", label: "Fighter panel", x: fp.x, y: fp.y, ...HUD_NOMINAL.fighter, drag: "xy" });
   }
 
   const bx = hudNum(hud, "badge_x");

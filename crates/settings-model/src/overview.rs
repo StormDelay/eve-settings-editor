@@ -385,9 +385,30 @@ fn is_width_key(k: &Value, tab_index: i64, sh: &SharedTable) -> bool {
         && as_int(effective(&items[1], sh)) == Some(tab_index)
 }
 
+/// The header text the client draws for each column: `overviewConst.NAME_BY_COLUMN`'s
+/// label paths, resolved through the client's en-US localization (2026-10-11).
+const COLUMN_LABELS: [(&str, &str); 14] = [
+    ("ICON", "Icon"),
+    ("DISTANCE", "Distance"),
+    ("NAME", "Name"),
+    ("TYPE", "Type"),
+    ("TAG", "Tag"),
+    ("CORPORATION", "Corporation"),
+    ("ALLIANCE", "Alliance"),
+    ("FACTION", "Faction"),
+    ("MILITIA", "Militia"),
+    ("SIZE", "Size"),
+    ("VELOCITY", "Velocity"),
+    ("RADIALVELOCITY", "Radial Velocity"),
+    ("TRANSVERSALVELOCITY", "Transversal Velocity"),
+    ("ANGULARVELOCITY", "Angular Velocity"),
+];
+
 fn prettify(token: &str) -> String {
-    // ponytail: naive Title-case. Compound tokens (TRANSVERSALVELOCITY) are not
-    // word-split — that needs a curated map (deferred). Raw token shown on hover.
+    if let Some((_, label)) = COLUMN_LABELS.iter().find(|(t, _)| *t == token) {
+        return (*label).to_string();
+    }
+    // A token the client does not know: Title-case it. Raw token shown on hover.
     let mut c = token.chars();
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase(),
@@ -797,6 +818,18 @@ fn sort_headers_sizes_path(char_tree: &Value) -> Option<NodePath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The header text the client draws (`overviewConst.NAME_BY_COLUMN`,
+    /// resolved through its en-US localization), not a title-cased token.
+    #[test]
+    fn column_labels_are_the_clients_own() {
+        assert_eq!(prettify("TRANSVERSALVELOCITY"), "Transversal Velocity");
+        assert_eq!(prettify("RADIALVELOCITY"), "Radial Velocity");
+        assert_eq!(prettify("ANGULARVELOCITY"), "Angular Velocity");
+        assert_eq!(prettify("NAME"), "Name");
+        // A token the client does not know keeps the old fallback.
+        assert_eq!(prettify("SOMETHINGNEW"), "Somethingnew");
+    }
     use crate::testkit::{b, ts};
     use blue_marshal::Value;
 

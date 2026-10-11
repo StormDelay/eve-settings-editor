@@ -440,7 +440,7 @@ check("open filter keeps the right window", open[0].id === "a");
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
   targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
-  neocomWidth, NEOCOM_DEFAULT_WIDTH, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
+  neocomWidth, NEOCOM_DEFAULT_WIDTH, fighterPoint, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
@@ -551,6 +551,19 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
   const rects = hudRects(fullHud({ ship_top: hudEntry("ship_top", "true", "bool", "false") }), layout2560);
   // Top-aligned it clears the screen edge by the measured 12px, not by 0.
   check("ship_top anchors the HUD to the top", rects[1].y === 12);
+}
+
+{
+  // Never dragged: the client centres it, (W/2, H/2 - 60)
+  // (shipUI.GetFightersDetachedPos), not the corner a "0" default would say.
+  const hud = fullHud({
+    fighter_x: hudEntry("fighter_x", null, "int", "0", "insert"),
+    fighter_y: hudEntry("fighter_y", null, "int", "0", "insert"),
+  });
+  const f = hudRects(hud, layout2560).find((r) => r.kind === "fighter")!;
+  check("an unstored fighter panel sits where the client puts it", f.x === 1280 && f.y === 660);
+  check("fighterPoint says the same", eq(fighterPoint(hud, 2560, 1440), { x: 1280, y: 660 }));
+  check("a stored point is used as stored", eq(fighterPoint(fullHud(), 2560, 1440), { x: 326, y: 54 }));
 }
 
 {
@@ -1285,6 +1298,13 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     check("the badge writes under its own prefix",
       eq(furnitureWrites("badge", { x: 10, y: 20 }, { x: 11, y: 20 }, null, noHud, layout),
          [["badge_x", "11"]]));
+    // A panel the file does not place yet: writing one axis would mint the
+    // point with the other at its static "0" and throw the panel to the top,
+    // so both are written.
+    const unplaced = hudOf(entry("fighter_x", null, "0"), entry("fighter_y", null, "0"));
+    check("a one-axis drag of an unplaced fighter panel writes both axes",
+      eq(furnitureWrites("fighter", { x: 1280, y: 660 }, { x: 1320, y: 660 }, null, unplaced, layout),
+         [["fighter_x", "1320"], ["fighter_y", "660"]]));
   }
 
   // --- target list: written from its ANCHOR, as fractions ---
