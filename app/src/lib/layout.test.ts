@@ -440,7 +440,8 @@ check("open filter keeps the right window", open[0].id === "a");
 import {
   hudRects, hudNum, hudFlag, shipOffsetFromX, hudPointFromRect, SHIP_ANCHOR_LEFT,
   targetAnchor, targetFractionFromPoint, targetSize, targetCorner, targetRect,
-  neocomWidth, NEOCOM_DEFAULT_WIDTH, fighterPoint, shipAnchorLeft, TARGET_COUNT_DEFAULT, HUD_NOMINAL,
+  neocomWidth, NEOCOM_DEFAULT_WIDTH, fighterPoint, shipAnchorLeft, targetFractions,
+  TARGET_COUNT_DEFAULT, HUD_NOMINAL,
 } from "./layout.ts";
 import type { Hud, HudEntry, WindowLayout } from "./api.ts";
 
@@ -663,11 +664,41 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
 }
 
 {
-  const rects = hudRects(
-    fullHud({ target_x: hudEntry("target_x", null, "float", "0", "insert") }),
-    layout2560,
-  );
-  check("an unstored target anchor is not drawn at all", !rects.some((r) => r.kind === "target"));
+  // No `targetOrigin`: the client derives the anchor from the Selected Item
+  // window (targetMgr.GetOriginPosition) — its left edge less 15 when it sits
+  // right of the middle, its right edge less 15 when left of it, at its top.
+  const unset = fullHud({
+    target_x: hudEntry("target_x", null, "float", "0", "insert"),
+    target_y: hudEntry("target_y", null, "float", "0", "insert"),
+  });
+  const withSelected = (x: number, y: number, w: number, h: number): WindowLayout => {
+    const s = win("selecteditemview", true, true);
+    return { ...layout2560, windows: [{ ...s, geom: { ...s.geom!, x, y, w, h } }] };
+  };
+  const anchorFor = (l: WindowLayout) => {
+    const f = targetFractions(unset, l)!;
+    return targetAnchor(f.x, f.y, 2560, 1440, 72);
+  };
+  const right = anchorFor(withSelected(1900, 100, 566, 174));
+  check("a right-hand Selected Item puts the anchor 15 left of it, at its top",
+    right.x === 1885 && right.y === 100);
+  const left = anchorFor(withSelected(100, 300, 400, 174));
+  check("a left-hand one puts it at its right edge less 15",
+    left.x === 485 && left.y === 300);
+  const middle = anchorFor(withSelected(1100, 300, 400, 174));
+  check("one straddling the middle sends it to the top right",
+    middle.x === Math.round(72 + (2260 / 2560) * 2488) && middle.y === 16);
+  // No stored rect: the window's own default, 566 wide, 16 from the top right
+  // (actionPanelDefaults).
+  const none = anchorFor(layout2560);
+  check("with no Selected Item rect the window's default places it",
+    none.x === 2560 - 566 - 16 - 15 && none.y === 16);
+
+  const drawn = hudRects(unset, withSelected(1900, 100, 566, 174)).find((r) => r.kind === "target");
+  check("an unstored target list is drawn where the client puts it",
+    !!drawn && drawn.x + drawn.w === 1885 && drawn.y === 100);
+  check("a stored one is used as stored",
+    eq(targetFractions(fullHud(), layout2560), { x: TARGET_X, y: TARGET_Y }));
 }
 
 {

@@ -9,7 +9,7 @@
 
   let {
     hud, readOnly, accountReadOnly = false, onSet, sharedNames = [], selectedKind = null, onSelectKind,
-    targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0,
+    targets, onTargets, effects, onEffects, referenceW = 0, referenceH = 0, targetDefault = null,
     neocom = null, neocomBusy = false, onNeocomReorder, onNeocomRemove, onNeocomAdd, onNeocomReset,
     hudError = null, neocomError = null,
   }: {
@@ -49,6 +49,10 @@
      * fraction rather than a pixel computed from nothing. */
     referenceW?: number;
     referenceH?: number;
+    /** The target list's fractions as the canvas places it — the stored ones,
+     * or the client's derived default when the account stores none
+     * (layout.ts targetFractions, which needs the window layout). */
+    targetDefault?: { x: number; y: number } | null;
     /** The neocom bar, when a character file is open. Rendered inside the
      * Neocom group so the bar the user clicks on the canvas and the buttons
      * they edit are the same object. */
@@ -115,6 +119,7 @@
   const AXIS: Record<string, "x" | "y"> = { target_x: "x", target_y: "y" };
   const asPixels = $derived(referenceW > 0 && referenceH > 0);
   const frac = (name: string) => {
+    if (find(name)?.value == null && targetDefault && AXIS[name]) return targetDefault[AXIS[name]];
     const n = parseFloat(raw(name));
     return Number.isFinite(n) ? n : 0;
   };
@@ -196,7 +201,13 @@
         referenceH,
         neocomWidth(hud),
       );
-      onSet(name, String(next[axis]));
+      if (pointUnplaced(hud, "target_x", "target_y")) {
+        // One tuple key: minting one axis would give the other its static 0.
+        onSet("target_x", String(next.x));
+        onSet("target_y", String(next.y));
+      } else {
+        onSet(name, String(next[axis]));
+      }
     } else if (FIGHTER_AXIS[name] && asPixels && pointUnplaced(hud, "fighter_x", "fighter_y")) {
       // Minting one axis would give the other its static "0", not the default
       // the panel shows — write the pair.

@@ -442,6 +442,38 @@ export function pointUnplaced(hud: Hud, x: string, y: string): boolean {
   return !!ex && !!ey && ex.set.how !== "unavailable" && ex.value == null && ey.value == null;
 }
 
+/**
+ * The target list's stored fractions, or where the client puts the list when
+ * the account stores none (`targetMgr.GetOriginPosition`): it reads the
+ * Selected Item window's rect, takes 15 off its left, and anchors the list at
+ * that window's left edge when the window sits right of the screen's middle,
+ * at its right edge when left of it, at the window's top either way; a window
+ * straddling the middle sends the list to `(W - 300, 16)`. Null when the field
+ * is not writable at all.
+ *
+ * ponytail: the client uses the bounding box of the Selected Item window AND
+ * any windows snapped on top of it (`FindConnectingWindows('top')`); this uses
+ * the window's own rect. They differ only when something is docked above it.
+ */
+export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y: number } | null {
+  const tx = hudNum(hud, "target_x");
+  const ty = hudNum(hud, "target_y");
+  if (tx === null || ty === null) return null;
+  if (stored(hud, "target_x") && stored(hud, "target_y")) return { x: tx, y: ty };
+  const W = layout.reference_w;
+  const H = layout.reference_h;
+  const n = neocomWidth(hud);
+  const g = layout.windows.find((w) => w.id === "selecteditemview")?.geom;
+  // actionPanelDefaults: 566 wide, 16 in from the top right, 174 tall on a
+  // screen 900 high or more and 138 below that.
+  const r = g ?? { x: W - 566 - 16, y: 16, w: 566, h: H >= 900 ? 174 : 138 };
+  const left = r.x - 15;
+  const mid = Math.floor(W / 2);
+  if (left + r.w < mid) return { x: (left + r.w - n) / (W - n), y: r.y / H };
+  if (left >= mid) return { x: (left - n) / (W - n), y: r.y / H };
+  return { x: (W - 300) / W, y: 16 / H };
+}
+
 export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {
   const x = hudNum(hud, "fighter_x");
   const y = hudNum(hud, "fighter_y");
@@ -556,15 +588,18 @@ export function furnitureWrites(
   }
 
   if (kind === "target") {
-    const fx = hudNum(hud, "target_x");
-    const fy = hudNum(hud, "target_y");
-    if (!anchor || fx === null || fy === null) return [];
+    const cur = targetFractions(hud, layout);
+    if (!anchor || !cur) return [];
     const next = targetFractionFromPoint(
       anchor.x, anchor.y, layout.reference_w, layout.reference_h, neocomWidth(hud),
     );
+    if (next.x === cur.x && next.y === cur.y) return [];
+    // `targetOrigin` is one tuple: an unplaced list mints it whole, so a
+    // one-axis write would give the other axis its static 0.
+    const both = pointUnplaced(hud, "target_x", "target_y");
     const out: Array<[string, string]> = [];
-    if (next.x !== fx) out.push(["target_x", String(next.x)]);
-    if (next.y !== fy) out.push(["target_y", String(next.y)]);
+    if (both || next.x !== cur.x) out.push(["target_x", String(next.x)]);
+    if (both || next.y !== cur.y) out.push(["target_y", String(next.y)]);
     return out;
   }
 
@@ -653,16 +688,13 @@ export function hudRects(
     out.push({ kind: "badge", label: "Badge", x: bx, y: by, ...HUD_NOMINAL.badge, drag: "xy" });
   }
 
-  // The target list. Drawn only when the fractions are actually STORED, not
-  // when they fall back to a default like every other element here: EVE's own
-  // starting position for the list was never captured, 87% of account files
-  // have never had it dragged, and 0 would put the slot in the top-left corner
-  // — a place the list has never been. Nothing is more honest than nothing.
-  const tx = hudNum(hud, "target_x");
-  const ty = hudNum(hud, "target_y");
-  if (tx !== null && ty !== null && stored(hud, "target_x") && stored(hud, "target_y")) {
+  // The target list: at its stored fractions, or — for the 87% of accounts
+  // that never dragged it — where the client derives it from the Selected
+  // Item window (targetFractions).
+  const tf = targetFractions(hud, layout);
+  if (tf) {
     const n = neocomWidth(hud);
-    const a = targetAnchor(tx, ty, layout.reference_w, layout.reference_h, n);
+    const a = targetAnchor(tf.x, tf.y, layout.reference_w, layout.reference_h, n);
     const { w, h } = targetSize(targetCount, hudFlag(hud, "target_horizontal"));
     out.push({
       kind: "target",

@@ -1472,8 +1472,17 @@ carried, so the denominator was recovered rather than assumed.
 horizontal turn is at `(W + N) / 2`, not the screen's middle.
 
 **EVE's own default position** — 87 % of account files have no
-`targetOrigin`. The canvas draws nothing for those. The client derives one from
-the Selected Item window; see `docs/small-tasks.md`.
+`targetOrigin`, and the client derives one from the Selected Item window
+(`targetMgr.GetOriginPosition`, read 2026-10-11): it takes that window's rect
+(`selecteditemview` — or its default, 566 wide, 16 in from the top right, 174
+tall on a screen 900+ high and 138 below, per `actionPanelDefaults`), subtracts
+15 from its left, and puts the anchor at the window's left edge when it sits
+right of the screen's middle, at its right edge when left of it, at the window's
+top either way. A window straddling the middle sends it to `(W − 300, 16)`. The
+client uses the bounding box of the window plus anything snapped on top of it
+(`FindConnectingWindows('top')`); the editor uses the window alone. Resetting
+the window settings in game deletes `targetOrigin`, which puts the list back on
+this rule. The canvas draws the list there, and a first drag mints both axes.
 
 ### Overview tab names (client code + in-game check, 2026-10-09)
 

@@ -86,6 +86,26 @@ fn stored(hud: &Hud, name: &str) -> bool {
     hud.entries.iter().any(|e| e.name == name && !matches!(e.set, SetTarget::Unavailable) && e.value.is_some())
 }
 
+/// Where the client puts a target list the account never placed
+/// (layout.ts targetFractions): beside the Selected Item window, from its
+/// rect or that window's own default.
+fn default_target(hud: &Hud, wl: &WindowLayout) -> (f64, f64) {
+    let (w, h) = (wl.reference_w, wl.reference_h);
+    let n = hud_num(hud, "neocom_width").map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64);
+    let r = wl.windows.iter().find(|x| x.id == "selecteditemview").and_then(|x| x.geom.as_ref())
+        .map(|g| (g.x, g.y, g.w))
+        .unwrap_or((w - 566 - 16, 16, 566));
+    let left = r.0 - 15;
+    let (pw, mid) = ((w - n) as f64, w / 2);
+    if left + r.2 < mid {
+        ((left + r.2 - n) as f64 / pw, r.1 as f64 / h as f64)
+    } else if left >= mid {
+        ((left - n) as f64 / pw, r.1 as f64 / h as f64)
+    } else {
+        ((w - 300) as f64 / w as f64, 16.0 / h as f64)
+    }
+}
+
 /// The screen furniture in data px, in the canvas's fixed order. An element
 /// whose values aren't writable is omitted rather than drawn at a guess.
 /// `targets` is how many locked targets to draw the list at — a view
@@ -116,24 +136,22 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
     if let (Some(x), Some(y)) = (hud_num(hud, "badge_x"), hud_num(hud, "badge_y")) {
         out.push(Furniture { kind: "badge", label: "Badge", x: x as i64, y: y as i64, w: BADGE.0, h: BADGE.1 });
     }
-    // Drawn only when the fractions are actually STORED: EVE's own starting
-    // position was never captured, and 0 would put the slot in a corner the
-    // list has never been.
+    // At its stored fractions, or where the client derives it when the account
+    // never placed it (default_target).
     if let (Some(fx), Some(fy)) = (hud_num(hud, "target_x"), hud_num(hud, "target_y")) {
-        if stored(hud, "target_x") && stored(hud, "target_y") {
-            // A fraction of the target layer, which the client pads by the
-            // neocom: x spans the screen right of it (layout.ts targetAnchor).
-            let neocom = hud_num(hud, "neocom_width").map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64);
-            let (ax, ay) = ((neocom as f64 + fx * (rw - neocom) as f64).round() as i64, (fy * rh as f64).round() as i64);
-            let n = targets.max(1) as i64;
-            let (w, h) = if hud_flag(hud, "target_horizontal") { (TARGET.0 * n, TARGET.1) } else { (TARGET.0, TARGET.1 * n) };
-            // The anchor is the list's OUTER corner; the slots run toward the
-            // middle, on each axis independently — turning where the stored
-            // fraction passes a half, which on x is mid-way right of the neocom.
-            let x = if 2 * ax > rw + neocom { ax - w } else { ax };
-            let y = if ay > rh / 2 { ay - h } else { ay };
-            out.push(Furniture { kind: "target", label: "Target list", x, y, w, h });
-        }
+        let (fx, fy) = if stored(hud, "target_x") && stored(hud, "target_y") { (fx, fy) } else { default_target(hud, wl) };
+        // A fraction of the target layer, which the client pads by the
+        // neocom: x spans the screen right of it (layout.ts targetAnchor).
+        let neocom = hud_num(hud, "neocom_width").map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64);
+        let (ax, ay) = ((neocom as f64 + fx * (rw - neocom) as f64).round() as i64, (fy * rh as f64).round() as i64);
+        let n = targets.max(1) as i64;
+        let (w, h) = if hud_flag(hud, "target_horizontal") { (TARGET.0 * n, TARGET.1) } else { (TARGET.0, TARGET.1 * n) };
+        // The anchor is the list's OUTER corner; the slots run toward the
+        // middle, on each axis independently — turning where the stored
+        // fraction passes a half, which on x is mid-way right of the neocom.
+        let x = if 2 * ax > rw + neocom { ax - w } else { ax };
+        let y = if ay > rh / 2 { ay - h } else { ay };
+        out.push(Furniture { kind: "target", label: "Target list", x, y, w, h });
     }
     out
 }
@@ -581,6 +599,23 @@ mod tests {
         let plain = furniture(&with(full_hud(), entry("compass", None, HudKind::Bool, "false", set())), &wl, 1);
         let p = find(&plain, "shipui");
         assert_eq!((p.x + 138, p.w), (1280 - 100, 622));
+        // A never-placed target list sits where the client derives it from the
+        // Selected Item window (layout.ts targetFractions): with no rect stored,
+        // that window's default (566 wide, 16 from the top right), so the
+        // anchor is its left edge less 15, at y 16.
+        let unplaced = with(
+            with(full_hud(), entry("target_x", None, HudKind::Float, "0", set())),
+            entry("target_y", None, HudKind::Float, "0", set()),
+        );
+        let ts = furniture(&unplaced, &wl, 1);
+        let t = find(&ts, "target");
+        assert_eq!((t.x + t.w, t.y), (2560 - 566 - 16 - 15, 16));
+        // A Selected Item window left of the middle: its right edge less 15.
+        let mut beside = layout();
+        beside.windows[0].id = "selecteditemview".into(); // the overview's (100, 200) 400 wide
+        let ts = furniture(&unplaced, &beside, 1);
+        let t = find(&ts, "target");
+        assert_eq!((t.x, t.y), (100 - 15 + 400, 200));
         // A never-dragged fighter panel sits where the client puts it.
         let unset = with(
             with(full_hud(), entry("fighter_x", None, HudKind::Int, "0", set())),
@@ -603,7 +638,6 @@ mod tests {
         assert!(!has(with(full_hud(), entry("neocom_width", None, HudKind::Int, "48", SetTarget::Unavailable)), "neocom"), "no character file");
         assert!(!has(with(full_hud(), entry("fighter_shown", Some("false"), HudKind::Bool, "false", set())), "fighter"), "a hidden fighter UI");
         assert!(!has(with(full_hud(), entry("fighter_detached", Some("false"), HudKind::Bool, "false", set())), "fighter"), "an attached fighter UI");
-        assert!(!has(with(full_hud(), entry("target_x", None, HudKind::Float, "0", set())), "target"), "an unstored target anchor — its default is a placeholder");
         assert!(has(with(full_hud(), entry("badge_x", None, HudKind::Int, "0", set())), "badge"), "the badge falls back to its default like the rest");
     }
 

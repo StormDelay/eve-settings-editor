@@ -4,7 +4,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
-    hudNum, hudFlag, neocomWidth, NEOCOM_DEFAULT_WIDTH, targetAnchor, targetRect, targetCorner, furnitureWrites,
+    hudNum, hudFlag, neocomWidth, NEOCOM_DEFAULT_WIDTH, targetAnchor, targetFractions, targetRect, targetCorner, furnitureWrites,
     DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys, leaveToast,
@@ -502,10 +502,8 @@
    * the file has no anchor to move (the canvas draws nothing then either). */
   function committedTargetAnchor(): { x: number; y: number } | null {
     if (!hud || !layout) return null;
-    const fx = hudNum(hud, "target_x");
-    const fy = hudNum(hud, "target_y");
-    if (fx === null || fy === null) return null;
-    return targetAnchor(fx, fy, layout.reference_w, layout.reference_h, neocomWidth(hud));
+    const f = targetFractions(hud, layout);
+    return f ? targetAnchor(f.x, f.y, layout.reference_w, layout.reference_h, neocomWidth(hud)) : null;
   }
 
   /** Pointer position in data px, relative to the canvas origin. */
@@ -1136,6 +1134,7 @@
           onEffects={setEffectCount}
           referenceW={layout.reference_w}
           referenceH={layout.reference_h}
+          targetDefault={hud ? targetFractions(hud, layout) : null}
           {neocom}
           {neocomBusy}
           onNeocomReorder={(order) => runNeocom(api.neocomReorder(order))}

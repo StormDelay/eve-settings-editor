@@ -133,8 +133,8 @@ const FIELDS: [Field; 13] = [
     //
     // The default is a placeholder: 87 % of corpus account files have no
     // `targetOrigin` at all, and the client then derives a position from the
-    // Selected Item window rather than from a constant. `hudRects` omits the
-    // rectangle whenever the value is absent rather than draw it at 0.0.
+    // Selected Item window rather than from a constant — which needs the
+    // window layout, so `layout.ts::targetFractions` computes it.
     Field { name: "target_x", section: b"ui", key: b"targetOrigin",
             elem: Some(0), kind: HudKind::Float, default: "0", scope: HudScope::Account },
     Field { name: "target_y", section: b"ui", key: b"targetOrigin",
