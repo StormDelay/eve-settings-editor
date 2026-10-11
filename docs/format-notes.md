@@ -701,11 +701,29 @@ Evidence, all from the live file:
   "normal" for these windows, and the editor already projects every relevant
   one. There is no better signal to switch to.
 
-**What is NOT yet known.** Which windows belong to the never-restored class.
-The four reported ones and the modals above are in it; the many windows that do
-come back on launch are not. Nothing in the file distinguishes them — it would
-have to be a curated list, like `CLUTTER_IDS`, built by observing the client.
-Worth knowing before anyone tries to derive it from the data.
+**Which windows the flag can bring back — read from the client's code
+2026-10-11.** Exactly one module reads `openWindows`:
+`eve/client/script/ui/services/sessionChangeWindowOpener.py`, on every session
+change, for a fixed list of classes (`_TryOpenWnd` → `GetRegisteredState(id,
+'open')`):
+
+- always: `mail`, `walletWindow`, `assets`, `XmppChatChannels`, `journal`,
+  `logger`, `charactersheet`, `addressbook`, `locations`, `market`, `notepad`,
+  `standaloneBookmarkWnd`;
+- docked in a station: the station inventories (`InventoryPrimary` and the item,
+  ship, deliveries and corp-hangar windows);
+- docked in a structure: the structure inventories, deliveries and corp hangars;
+- in space: `InventoryPrimary`, `MoonScanner`, `directionalScannerWindow`,
+  `probeScannerWindow`, and the solar-system map panel (each only when not
+  embedded in the scanner or suppressed in the system).
+
+Every other window's flag is never consulted. Windows like the overview,
+Selected Item, drones and chat are opened by their own services regardless of
+it; `corporation`, `job_board`, `contracts`, `StructureBrowser` and the modals
+above are simply never reopened — which is exactly the 2026-07-31 observation.
+So the never-restored class is "everything not on this list and not opened by a
+service", and the list is derivable rather than curated (see
+`docs/small-tasks.md`).
 
 **Consequence for the editor.** `WindowRect.open` is EVE's flag and can only
 ever be that. The canvas draws open windows, so one of these paints a rectangle
