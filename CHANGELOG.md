@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.43.0] - 2026-10-11
+
+Style overview tab names the way EVE draws them, and see your screen laid out exactly as the game places it.
+
+### Added
+- **Tab name editor.** Give an overview tab colours, bold, italic, underline, size and letter spacing; the tab list shows each name in its real style.
+- Overview column widths can be edited from the Layout view.
+- Any overview window can be removed, not just the last; its tabs join the first window.
+- Move up / Move down in the overview tab menu, and a drop zone at the end of each window when dragging a tab.
+- Importing an overview pack works on a file that has no overview yet.
+- Default keybindings for every command, fleet formation names, and all twelve overview colours.
+- A Compass toggle in the Ship HUD panel.
+- New probe formations start as EVE's Pinpoint.
+
+### Changed
+- Reordering, moving or deleting overview tabs keeps each tab's column widths and sort.
+- **Saving the account file after a tab reorder also updates every other character in the same folder** (each backed up first).
+- The neocom width is read from and written to the character, where EVE keeps it.
+- **A Layout copy now carries the neocom width and the compass; applying a Layout preset saved before this release resets the neocom width to EVE's default.**
+- The Layout view places the screen furniture as EVE does: the ship HUD with or without the compass, the fighter panel, notification badge and chat splits at their real defaults, and the target list in the right direction — beside the Selected Item window when it was never moved.
+- "Open only" and the canvas show only the windows EVE reopens at login.
+- Overview columns are named as in game.
+- A window stack left with one window dissolves, as in game.
+- A batch writes each target's account file in the target's own profile folder.
+
+### Fixed
+- "Discard and open" discards the other open file's unsaved edits too.
+
 ## [0.42.0] - 2026-10-02
 
 Arrange each ship's HUD slots, and share the arrangements across all your accounts.
