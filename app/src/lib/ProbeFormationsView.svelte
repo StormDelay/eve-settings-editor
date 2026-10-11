@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errMessage, errText, type Formation, type Formations, type FormationSpec, type Scene } from "./api";
-  import { fromUnit, toSpherical, toCartesian, cubeFormation, formatUnit,
+  import { fromUnit, toSpherical, toCartesian, pinpointFormation, formatUnit,
            DEFAULT_RANGE_M, MAX_PROBES, RANGE_STEPS_AU, RANGE_STEPS_M,
            type Unit, type Vec3 } from "./probes";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -279,7 +279,7 @@
 
   async function createNew() {
     draftName = "New formation";
-    draftProbes = cubeFormation(DEFAULT_RANGE_M);
+    draftProbes = pinpointFormation(DEFAULT_RANGE_M);
     draftRanges = draftProbes.map(() => DEFAULT_RANGE_M);
     lastAngles = draftProbes.map((p) => { const s = toSpherical(p); return { az: s.az, el: s.el }; });
     await commit(null);
