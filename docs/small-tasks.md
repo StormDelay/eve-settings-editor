@@ -408,7 +408,7 @@ Workflow:
   minted anchor guessing `TARGET_MARGIN = 72` — is gone: the margin is the
   character's `neocomWidth`, read the way the client reads it (2026-10-11)._
 
-- [ ] **Make "Open only" mean what the client reopens.** The filter shows every
+- [x] **Make "Open only" mean what the client reopens.** The filter shows every
   window whose `openWindows` flag is set, but the client consults that flag for
   a fixed list of windows only (`sessionChangeWindowOpener`, listed in
   `format-notes.md` under "`openWindows` does not predict what the client shows
@@ -418,7 +418,14 @@ Workflow:
   present the windows whose flag is set but which will never come back — the
   curated `CLUTTER_IDS` covers many of them today. The service-opened set still
   needs listing from the code before it can be built. _Added 2026-10-11 (client
-  code pass)._
+  code pass)._ _Done 2026-10-11: a window counts as open only when its flag is set AND
+  the client reads that flag for it — the restore list plus the service-opened
+  ones (overview windows, Selected Item, drones, the lobby, chat channels), in
+  `window-filters.json` for both the canvas and the assistant. Everything else
+  is left off the canvas and out of "Open only", and its Open box is disabled
+  with the reason. The service-opened set was read from `tactical`, `dockedUI`
+  and `fleetSvc` (the fleet and watch-list windows open on fleet actions, not at
+  login)._
 
 - [ ] **A right-docked neocom is not modelled.** The client docks the neocom
   left or right by the character setting `neocomAlign` (`uiconst.TOLEFT` 4,

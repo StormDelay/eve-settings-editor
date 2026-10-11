@@ -327,7 +327,7 @@ pub(crate) fn layout_png(wl: &WindowLayout, hud: Option<&Hud>, width: u32, f: &W
             rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: 0, y: 0, w: 0, h: 0, drawn: false, stack: stack.as_ref().map(|(cid, _, _)| cid.clone()) });
             continue;
         };
-        let open = w.open && w.renderable;
+        let open = crate::mcp_filter::reopens(w) && w.renderable;
         let drawn = draws_rect && (open || f.include_closed);
         rows.push(LegendRow { id: w.id.clone(), label: w.label.clone(), x: g.x, y: g.y, w: g.w, h: g.h, drawn, stack: stack.as_ref().map(|(cid, _, _)| cid.clone()) });
         if !drawn { continue; }

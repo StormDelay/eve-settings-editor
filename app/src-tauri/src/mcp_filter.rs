@@ -23,6 +23,8 @@ struct Tables {
     clutter_ids: Vec<String>,
     docked_only: Vec<String>,
     space_only: Vec<String>,
+    restored: Vec<String>,
+    service_opened: Vec<String>,
 }
 
 fn tables() -> &'static Tables {
@@ -119,6 +121,27 @@ pub(crate) fn is_clutter(id: &str, name: Option<&str>, o: &Overrides) -> bool {
     t.clutter_families.contains(&f.family) && !f.detail.is_empty()
 }
 
+/// `clientReadsOpenFlag`: whether the client acts on this window's
+/// `openWindows` flag at all — the fixed list `sessionChangeWindowOpener`
+/// reopens (judged on a tuple's base id), the windows services open
+/// themselves, and chat channels. Every other window stays closed at login.
+pub(crate) fn client_reads_open_flag(id: &str) -> bool {
+    let base = id.strip_prefix("('").and_then(|r| r.find('\'').map(|e| &r[..e])).unwrap_or(id);
+    let t = tables();
+    t.restored.iter().chain(&t.service_opened).any(|r| r == base)
+        || base.strip_prefix("overview_").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        || base.starts_with("chatchannel_")
+}
+
+/// `reopens`: the flag is set and the client acts on it. Stack frames and
+/// minted numeric ids pass on their flag, as on the canvas.
+pub(crate) fn reopens(w: &WindowRect) -> bool {
+    w.open
+        && (matches!(w.stack, Some(settings_model::StackRef { role: settings_model::StackRole::Container, .. }))
+            || (!w.id.is_empty() && w.id.bytes().all(|b| b.is_ascii_digit()))
+            || client_reads_open_flag(&w.id))
+}
+
 /// A minted numeric container that belongs to no stack — a dead frame.
 pub(crate) fn is_orphan_frame(w: &WindowRect) -> bool {
     w.stack.is_none() && !w.id.is_empty() && w.id.bytes().all(|b| b.is_ascii_digit())
@@ -163,7 +186,7 @@ pub(crate) enum Hidden { Closed, Clutter, Environment, Match }
 /// Why a window is left out of the view, or `None` if it is shown. The order
 /// is the canvas's `windowMatches`: open, clutter, environment, text.
 pub(crate) fn hidden_by(w: &WindowRect, f: &WindowFilter, o: &Overrides) -> Option<Hidden> {
-    if !f.include_closed && !w.open { return Some(Hidden::Closed); }
+    if !f.include_closed && !reopens(w) { return Some(Hidden::Closed); }
     if f.hide_clutter && (is_clutter(&w.id, w.name.as_deref(), o) || is_orphan_frame(w)) { return Some(Hidden::Clutter); }
     if !in_env(&w.id, f.env) { return Some(Hidden::Environment); }
     if let Some(q) = f.matches.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
@@ -196,6 +219,20 @@ impl HiddenCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `clientReadsOpenFlag`'s cases: the client reopens a fixed list from the
+    /// flag (judged on a tuple's base id), services open a few more, and every
+    /// other window stays closed at login.
+    #[test]
+    fn the_open_flag_matters_only_where_the_client_reads_it() {
+        for id in ["market", "directionalScannerWindow", "('StationItems', 60000001)", "StationCorpHangar_3",
+                   "overview", "overview_3", "selecteditemview", "droneview", "lobbyWnd", "chatchannel_local"] {
+            assert!(client_reads_open_flag(id), "{id}");
+        }
+        for id in ["contracts", "job_board", "fleetwindow", "ship_name_dialog", "('corpassets', 1000000000003L)"] {
+            assert!(!client_reads_open_flag(id), "{id}");
+        }
+    }
 
     #[test]
     fn describe_splits_families_details_tuples_and_stacks() {

@@ -3,7 +3,7 @@
   import { overviewIndex } from "$lib/detail";
   import { plainTabName } from "$lib/tabName";
   import { describe, groupByFamily, displayName, displayNameOf, nameOf, stackLabel, isClutter, type ClutterOverrides } from "$lib/windowLabels";
-  import { windowMatches, isOrphanFrame, isLeavableChat, NO_FILTER, type WindowFilter } from "$lib/layout";
+  import { windowMatches, isOrphanFrame, openFlagMatters, isLeavableChat, NO_FILTER, type WindowFilter } from "$lib/layout";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ChatSplit from "$lib/ChatSplit.svelte";
   import Button from "./ui/Button.svelte";
@@ -244,11 +244,12 @@
 {#snippet rowHead(w: WindowRect, extra?: string | null)}
   {@const n = nameOf(w)}
   {@const openFlag = w.flags.find((f) => f.name === "openWindows")}
+  {@const matters = openFlagMatters(w)}
   <Field
     kind="checkbox"
-    value={w.open}
-    disabled={readOnly || openFlag?.set.how === "unavailable"}
-    disabledReason="Not present in this file"
+    value={matters && w.open}
+    disabled={readOnly || !matters || openFlag?.set.how === "unavailable"}
+    disabledReason={matters ? "Not present in this file" : "EVE never reopens this window at login"}
     title="Open (shown on the canvas)"
     aria-label="Open (shown on the canvas)"
     onchange={() => onToggleOpen(w)} />

@@ -945,7 +945,7 @@
           class="toggle"
           label="Open only"
           bind:value={filter.openOnly}
-          title="Shows only windows EVE's own openWindows flag calls open. That flag is set when a window is opened and is NOT cleared when it is closed, so a window can read as open here while not being on screen in game. Right-click a window and choose “Treat as clutter” to keep one out of the list and the canvas." />
+          title="Shows only the windows EVE reopens when the character logs in. EVE reads its openWindows flag for a fixed set of windows (market, mail, wallet, scanners, inventories…) and opens the overview, Selected Item, drones, the station lobby and your chat channels itself; any other window stays closed whatever the flag says, so it is left out here and off the canvas." />
         <Field
           kind="checkbox"
           class="toggle"

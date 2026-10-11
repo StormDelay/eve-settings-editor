@@ -722,8 +722,12 @@ Selected Item, drones and chat are opened by their own services regardless of
 it; `corporation`, `job_board`, `contracts`, `StructureBrowser` and the modals
 above are simply never reopened — which is exactly the 2026-07-31 observation.
 So the never-restored class is "everything not on this list and not opened by a
-service", and the list is derivable rather than curated (see
-`docs/small-tasks.md`).
+service", and the list is derivable rather than curated. The service-opened set:
+in space `tactical` opens every overview window, `selecteditemview` and
+`droneview`; docked, `dockedUI` opens `lobbyWnd`; the chat service opens joined
+channels. `fleetwindow` and `watchlistpanel` open on fleet actions only. Both
+lists are `restored` and `service_opened` in `app/src/lib/data/window-filters.json`,
+and the editor treats every other window as closed (2026-10-11).
 
 **Consequence for the editor.** `WindowRect.open` is EVE's flag and can only
 ever be that. The canvas draws open windows, so one of these paints a rectangle

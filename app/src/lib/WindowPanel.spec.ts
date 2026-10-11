@@ -273,3 +273,17 @@ describe("a stack's frame row", () => {
     expect(head.querySelector(":scope > .detail")).toBeNull();
   });
 });
+
+describe("windows the client never reopens", () => {
+  // sessionChangeWindowOpener reads the flag for a fixed list; for anything
+  // else ticking it changes nothing in game, so the box says so instead.
+  test("show as closed, with the box disabled and the reason given", () => {
+    mount([win("contracts"), win("market")]);
+    const never = within(row("contracts")).getByRole("checkbox") as HTMLInputElement;
+    expect(never.checked).toBe(false);
+    expect(never.disabled).toBe(true);
+    const restored = within(row("market")).getByRole("checkbox") as HTMLInputElement;
+    expect(restored.checked).toBe(true);
+    expect(restored.disabled).toBe(false);
+  });
+});

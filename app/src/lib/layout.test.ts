@@ -46,10 +46,21 @@ const win = (id: string, open: boolean, renderable: boolean, stack: WindowRect["
   stack,
 });
 
-const wins = [win("a", true, true), win("b", false, true), win("c", true, false)];
+const wins = [win("market", true, true), win("mail", false, true), win("assets", true, false)];
 const open = openWindows(wins);
 check("open filter keeps only open AND renderable windows", open.length === 1);
-check("open filter keeps the right window", open[0].id === "a");
+check("open filter keeps the right window", open[0].id === "market");
+
+{
+  // A window EVE never reopens at login is not drawn, whatever its flag says;
+  // stack frames still are (their members decide what shows).
+  const never = win("contracts", true, true);
+  const frame = win("76", true, true, { container_id: "76", role: "container" });
+  check("a flagged window the client never reopens is not drawn",
+    openWindows([never, frame]).map((w) => w.id).join() === "76");
+  check("and Open only leaves it out too",
+    !windowMatches(never, { ...NO_FILTER, openOnly: true }));
+}
 
 // --- resizeRect: drag one corner, opposite corner stays anchored ------------
 {
@@ -92,28 +103,28 @@ check("open filter keeps the right window", open[0].id === "a");
 {
   const layout = {
     reference_w: 2560, reference_h: 1440,
-    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["journal", "notepad"] }],
     windows: [
       win("C", true, true, { container_id: "C", role: "container" }),
-      win("m1", true, true, { container_id: "C", role: "member" }),
-      win("m2", false, true, { container_id: "C", role: "member" }), // closed member: excluded from tabs
-      win("free", true, true, null),
+      win("journal", true, true, { container_id: "C", role: "member" }),
+      win("notepad", false, true, { container_id: "C", role: "member" }), // closed member: excluded from tabs
+      win("assets", true, true, null),
     ],
   };
   const units = stackUnits(layout as any);
   check("stackUnits produces one stack + one free unit", units.length === 2);
   const stackUnit = units.find((u) => u.stack)!;
   check("stack unit anchors on the container", stackUnit.anchor.id === "C");
-  check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "m1");
+  check("stack tabs are open members only, in tab order", stackUnit.tabs.map((t) => t.id).join(",") === "journal");
   const freeUnit = units.find((u) => !u.stack)!;
-  check("free window is its own unit", freeUnit.key === "free" && freeUnit.tabs.length === 1);
+  check("free window is its own unit", freeUnit.key === "assets" && freeUnit.tabs.length === 1);
 
   // fanTargets: a coherent move must repeat onto every renderable member,
   // open or closed — a closed member left out of the fan would drift out of
   // the stack (the live "jumping" bug). tabs stay display-only (open members).
   const fanIds = stackUnit.fanTargets.map((w) => w.id);
-  check("fanTargets include the closed member m2 (no drift)", fanIds.includes("m2"));
-  check("fanTargets include the open member m1", fanIds.includes("m1"));
+  check("fanTargets include the closed member notepad (no drift)", fanIds.includes("notepad"));
+  check("fanTargets include the open member journal", fanIds.includes("journal"));
   check("fanTargets include the anchor/container C", fanIds.includes("C"));
 }
 
@@ -121,34 +132,34 @@ check("open filter keeps the right window", open[0].id === "a");
 {
   const layout = {
     reference_w: 2560, reference_h: 1440,
-    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["journal", "notepad"] }],
     windows: [
       win("C", false, true, { container_id: "C", role: "container" }), // anchor closed
-      win("m1", true, true, { container_id: "C", role: "member" }), // independently open+renderable
-      win("m2", false, true, { container_id: "C", role: "member" }),
+      win("journal", true, true, { container_id: "C", role: "member" }), // independently open+renderable
+      win("notepad", false, true, { container_id: "C", role: "member" }),
     ],
   };
   const units = stackUnits(layout as any);
   check("a closed-anchor stack does not appear as a stack unit", !units.some((u) => u.stack));
-  check("its open+renderable member appears as its own free unit", units.length === 1 && units[0].key === "m1");
+  check("its open+renderable member appears as its own free unit", units.length === 1 && units[0].key === "journal");
 }
 
 // --- stackUnits: a stack with no open members is not drawn -----------------
 {
   const layout = {
     reference_w: 2560, reference_h: 1440,
-    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["journal", "notepad"] }],
     windows: [
       win("C", true, true, { container_id: "C", role: "container" }), // container OPEN...
-      win("m1", false, true, { container_id: "C", role: "member" }), // ...but all members closed
-      win("m2", false, true, { container_id: "C", role: "member" }),
-      win("free", true, true, null),
+      win("journal", false, true, { container_id: "C", role: "member" }), // ...but all members closed
+      win("notepad", false, true, { container_id: "C", role: "member" }),
+      win("assets", true, true, null),
     ],
   };
   const units = stackUnits(layout as any);
   check("a stack with no open members is not drawn", !units.some((u) => u.stack));
   check("its open container does not fall through as a plain window", !units.some((u) => u.key === "C"));
-  check("unrelated free windows still draw", units.some((u) => u.key === "free"));
+  check("unrelated free windows still draw", units.some((u) => u.key === "assets"));
 }
 
 // --- the Inventory fold -----------------------------------------------------
@@ -368,12 +379,12 @@ check("open filter keeps the right window", open[0].id === "a");
 {
   const layout = {
     reference_w: 2560, reference_h: 1440,
-    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2"] }],
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["journal", "notepad"] }],
     windows: [
       win("C", true, true, { container_id: "C", role: "container" }),
-      win("m1", true, true, { container_id: "C", role: "member" }),
-      win("m2", true, true, { container_id: "C", role: "member" }),
-      win("free", true, true, null),
+      win("journal", true, true, { container_id: "C", role: "member" }),
+      win("notepad", true, true, { container_id: "C", role: "member" }),
+      win("assets", true, true, null),
     ],
   } as any;
 
@@ -383,21 +394,21 @@ check("open filter keeps the right window", open[0].id === "a");
   check("a null visible set is the unfiltered result", JSON.stringify(before.map((u) => u.key)) === JSON.stringify(same.map((u) => u.key)));
 
   // One matching member keeps the stack alive with only that tab.
-  const oneTab = stackUnits(layout, new Set(["m1"]));
+  const oneTab = stackUnits(layout, new Set(["journal"]));
   const su = oneTab.find((u) => u.stack)!;
   check("a stack with one visible member survives", su !== undefined);
-  check("only the visible member is a tab", su.tabs.map((t) => t.id).join(",") === "m1");
+  check("only the visible member is a tab", su.tabs.map((t) => t.id).join(",") === "journal");
   check("the free window is filtered out", oneTab.length === 1);
 
   // The anchor and the fan are NOT filtered — the anchor is the geometry
   // source and the fan is what a drag writes to.
   check("the anchor ignores the filter", su.anchor.id === "C");
   const fan = su.fanTargets.map((w) => w.id).sort().join(",");
-  check("fanTargets ignore the filter", fan === "C,m1,m2");
+  check("fanTargets ignore the filter", fan === "C,journal,notepad");
 
   // A stack with no visible member disappears entirely.
-  const none = stackUnits(layout, new Set(["free"]));
-  check("a stack with no visible member is dropped", none.length === 1 && none[0].key === "free");
+  const none = stackUnits(layout, new Set(["assets"]));
+  check("a stack with no visible member is dropped", none.length === 1 && none[0].key === "assets");
   check("an empty visible set draws nothing", stackUnits(layout, new Set()).length === 0);
 }
 
@@ -408,7 +419,7 @@ check("open filter keeps the right window", open[0].id === "a");
   const freeOnly = {
     reference_w: 2560, reference_h: 1440,
     stacks: [],
-    windows: [win("a", true, true), win("b", true, true)],
+    windows: [win("market", true, true), win("locations", true, true)],
   } as any;
   check("free-only: count equals the number of open windows", drawnWindowCount(stackUnits(freeOnly)) === 2);
 
@@ -416,13 +427,13 @@ check("open filter keeps the right window", open[0].id === "a");
   // fix: a 3-tab stack is one rectangle but three windows.
   const stacked = {
     reference_w: 2560, reference_h: 1440,
-    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["m1", "m2", "m3"] }],
+    stacks: [{ container_id: "C", container_label: "C", anchor_id: "C", members: ["journal", "notepad", "mail"] }],
     windows: [
       win("C", true, true, { container_id: "C", role: "container" }),
-      win("m1", true, true, { container_id: "C", role: "member" }),
-      win("m2", true, true, { container_id: "C", role: "member" }),
-      win("m3", false, true, { container_id: "C", role: "member" }), // closed: not a tab
-      win("free", true, true, null),
+      win("journal", true, true, { container_id: "C", role: "member" }),
+      win("notepad", true, true, { container_id: "C", role: "member" }),
+      win("mail", false, true, { container_id: "C", role: "member" }), // closed: not a tab
+      win("assets", true, true, null),
     ],
   } as any;
   const units = stackUnits(stacked);
