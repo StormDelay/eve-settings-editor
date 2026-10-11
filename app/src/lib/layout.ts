@@ -219,6 +219,27 @@ export interface FurnitureRect {
 export const SHIP_ANCHOR_LEFT = 148;
 
 /**
+ * What the sensor-overlay compass (account `showSensorOverlay`, off unless
+ * stored) does to the ship HUD, from the client's code: the module racks start
+ * 16px further right (`shipUI.slotsContLeft`) and the left button cluster sits
+ * 10px further left (`hudButtonsLeft` 690 vs 680). Every measured figure here —
+ * SHIP_ANCHOR_LEFT, HUD_NOMINAL.shipui, detail.ts's racks — was taken WITH it,
+ * which the code confirms to the pixel.
+ */
+export const COMPASS = { racks: 16, cluster: 10 } as const;
+
+/** How far the ship HUD extends left of its anchor, with or without the compass. */
+export function shipAnchorLeft(compass: boolean): number {
+  return compass ? SHIP_ANCHOR_LEFT : SHIP_ANCHOR_LEFT - COMPASS.cluster;
+}
+
+/** The ship HUD's drawn size, with or without the compass. */
+export function shipSize(compass: boolean): { w: number; h: number } {
+  const { w, h } = HUD_NOMINAL.shipui;
+  return { w: compass ? w : w - COMPASS.cluster - COMPASS.racks, h };
+}
+
+/**
  * Gap between the top of the screen and the HUD when it is top-aligned.
  *
  * MEASURED 2026-07-30. Was 28, which was never measured directly: it came from
@@ -464,8 +485,8 @@ export function hudFlag(hud: Hud, name: string): boolean {
  * used `w/2` here and claimed the width cancelled out; that was true only while
  * the drawn box was (wrongly) centred on the anchor.
  */
-export function shipOffsetFromX(x: number, referenceW: number): number {
-  return Math.round(x + SHIP_ANCHOR_LEFT - referenceW / 2);
+export function shipOffsetFromX(x: number, referenceW: number, compass: boolean): number {
+  return Math.round(x + shipAnchorLeft(compass) - referenceW / 2);
 }
 
 /**
@@ -527,8 +548,9 @@ export function furnitureWrites(
   layout: WindowLayout,
 ): Array<[string, string]> {
   if (kind === "shipui") {
-    const next = shipOffsetFromX(dropped.x, layout.reference_w);
-    return next === shipOffsetFromX(start.x, layout.reference_w)
+    const compass = hudFlag(hud, "compass");
+    const next = shipOffsetFromX(dropped.x, layout.reference_w, compass);
+    return next === shipOffsetFromX(start.x, layout.reference_w, compass)
       ? []
       : [["ship_offset", String(next)]];
   }
@@ -592,7 +614,8 @@ export function hudRects(
   // to the right — it is NOT centred on it. Its inverse is shipOffsetFromX.
   const offset = hudNum(hud, "ship_offset");
   if (offset !== null) {
-    const { w, h } = HUD_NOMINAL.shipui;
+    const compass = hudFlag(hud, "compass");
+    const { w, h } = shipSize(compass);
     out.push({
       kind: "shipui",
       label: "Ship HUD",
@@ -602,7 +625,7 @@ export function hudRects(
       // dropped. Leaving x fractional makes shipOffsetFromX an exact inverse at
       // every width, and nothing downstream needs an integer — snapLines takes
       // plain numbers and toCanvas only multiplies.
-      x: layout.reference_w / 2 + offset - SHIP_ANCHOR_LEFT,
+      x: layout.reference_w / 2 + offset - shipAnchorLeft(compass),
       // Both margins measured, and they differ: 28 above, 12 below. Mirroring
       // the top margin — what this did before a bottom-aligned shot existed —
       // drew the box 16px high, so windows snapped to an edge the racks

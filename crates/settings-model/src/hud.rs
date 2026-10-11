@@ -74,7 +74,7 @@ pub(crate) struct Field {
     pub(crate) scope: HudScope,
 }
 
-const FIELDS: [Field; 12] = [
+const FIELDS: [Field; 13] = [
     Field { name: "ship_offset", section: b"windows", key: b"shipuialignleftoffset",
             elem: None, kind: HudKind::Float, default: "0", scope: HudScope::Char },
     // Absent, the client puts the panel at (W/2, H/2 - 60) for the current
@@ -146,6 +146,13 @@ const FIELDS: [Field; 12] = [
     // `settings.user.ui.Get('alignHorizontally', 1)`).
     Field { name: "target_horizontal", section: b"ui", key: b"alignHorizontally",
             elem: None, kind: HudKind::Bool, default: "true", scope: HudScope::Account },
+    // The sensor-overlay compass ("Show compass" on the ship HUD). It reshapes
+    // the HUD: the module racks start 16 px further right and the left button
+    // cluster sits 10 px further left (shipUI.slotsContLeft / hudButtonsLeft).
+    // Off unless stored (shipUI.is_compass_enabled). Every measured HUD figure
+    // in layout.ts / detail.ts was taken with it ON.
+    Field { name: "compass", section: b"ui", key: b"showSensorOverlay",
+            elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
 ];
 
 /// Project a field table against whichever documents are open. A `None` root
@@ -689,12 +696,25 @@ mod tests {
         assert_eq!(entry(&hud, "badge_y").default, "16");
     }
 
+    /// The sensor-overlay compass changes the ship HUD's shape
+    /// (shipUI.slotsContLeft / hudButtonsLeft), so the HUD reads it: an
+    /// account `ui` bool, off unless stored.
+    #[test]
+    fn the_compass_is_read_from_the_account_file() {
+        let udoc = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("showSensorOverlay"), wrapped(Value::Bool(true)))]))]);
+        let hud = project_hud(&char_doc(), Some(&udoc));
+        let e = entry(&hud, "compass");
+        assert_eq!(e.value.as_deref(), Some("true"));
+        assert_eq!(e.scope, HudScope::Account);
+        assert_eq!(e.default, "false");
+    }
+
     #[test]
     fn without_an_account_file_the_account_fields_are_unavailable() {
         let hud = project_hud(&char_doc(), None);
         for name in [
             "ship_top", "fighter_detached", "fighter_shown",
-            "target_x", "target_y", "target_horizontal",
+            "target_x", "target_y", "target_horizontal", "compass",
         ] {
             let e = entry(&hud, name);
             assert!(e.value.is_none(), "{name} has no value");
@@ -834,7 +854,7 @@ mod tests {
             vec![
                 "ship_offset", "fighter_x", "fighter_y", "badge_x", "badge_y",
                 "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
-                "target_x", "target_y", "target_horizontal",
+                "target_x", "target_y", "target_horizontal", "compass",
             ]
         );
     }

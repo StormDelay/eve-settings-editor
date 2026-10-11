@@ -5,7 +5,7 @@
 // that separation is why this is its own module and not more of layout.ts.
 
 import type { ChatPanel, NeocomBar, OverviewColumns, Stack } from "./api";
-import { HUD_NOMINAL, type DrawUnit } from "./layout.ts";
+import { COMPASS, HUD_NOMINAL, type DrawUnit } from "./layout.ts";
 import { effectiveWidth } from "./overviewRender.ts";
 import { plainTabName } from "./tabName.ts";
 
@@ -142,9 +142,14 @@ const SHIP_EFFECTS = { d: 36, pitch: 48, gapBelow: 16, gapAbove: 16 };
  * Order matters only for painting: the capacitor's pieces are emitted outermost
  * first so the core lands on top of the dial.
  */
-export function shipHudParts(effects = 0, topAligned = true): DetailPart[] {
+export function shipHudParts(effects = 0, topAligned = true, compass = true): DetailPart[] {
+  // Everything above was measured WITH the compass. Without it the cluster
+  // (still the box's left edge) sits 10px nearer the capacitor and the racks
+  // 16px nearer — so in the box's frame the capacitor moves 10 and the racks 26.
+  const capX = CAP.cx - (compass ? 0 : COMPASS.cluster);
+  const rackX = SLOTS.firstX - (compass ? 0 : COMPASS.cluster + COMPASS.racks);
   const disc = (r: number, kind: DetailPart["kind"]): DetailPart =>
-    ({ kind, x: CAP.cx - r, y: CAP.cy - r, w: r * 2, h: r * 2 });
+    ({ kind, x: capX - r, y: CAP.cy - r, w: r * 2, h: r * 2 });
 
   const out: DetailPart[] = [
     // The outer rim, then the tick band as a half annulus (the renderer's border
@@ -162,7 +167,7 @@ export function shipHudParts(effects = 0, topAligned = true): DetailPart[] {
     for (let c = 0; c < cols; c++) {
       out.push({
         kind: "slot",
-        x: SLOTS.firstX + (staggered ? SLOTS.rowOffset : 0) + SLOTS.pitchX * c,
+        x: rackX + (staggered ? SLOTS.rowOffset : 0) + SLOTS.pitchX * c,
         y: SLOTS.rowTop + SLOTS.rowPitch * row,
         w: SLOTS.diameter,
         h: SLOTS.diameter,
@@ -191,7 +196,7 @@ export function shipHudParts(effects = 0, topAligned = true): DetailPart[] {
     const { d, pitch, gapBelow, gapAbove } = SHIP_EFFECTS;
     // Centred on the capacitor, so the row grows symmetrically about the
     // anchor as effects come and go — which is what the shots show it doing.
-    const x0 = CAP.cx - (pitch * (n - 1) + d) / 2;
+    const x0 = capX - (pitch * (n - 1) + d) / 2;
     const y = topAligned ? HUD_NOMINAL.shipui.h + gapBelow : -(gapAbove + d);
     for (let i = 0; i < n; i++) {
       out.push({ kind: "slot", x: x0 + pitch * i, y, w: d, h: d });

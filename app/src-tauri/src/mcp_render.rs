@@ -56,6 +56,11 @@ const SHIP_ANCHOR_LEFT: i64 = 148;
 const SHIP_TOP_MARGIN: i64 = 12;
 const SHIP_BOTTOM_MARGIN: i64 = 12;
 const SHIPUI: (i64, i64) = (648, 176);
+/// What the sensor-overlay compass adds (layout.ts COMPASS): the racks 16px
+/// further right, the button cluster 10px further left. SHIPUI and
+/// SHIP_ANCHOR_LEFT are the measured, compass-on figures.
+const COMPASS_RACKS: i64 = 16;
+const COMPASS_CLUSTER: i64 = 10;
 const FIGHTER: (i64, i64) = (467, 264);
 const BADGE: (i64, i64) = (32, 32);
 /// One target slot; a list is N of these in a row or a column.
@@ -95,9 +100,11 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
     // The offset places the capacitor wheel's centre at `rw/2 + offset`; the
     // element extends SHIP_ANCHOR_LEFT left of that and the rest to the right.
     if let Some(offset) = hud_num(hud, "ship_offset") {
-        let (w, h) = SHIPUI;
+        let compass = hud_flag(hud, "compass");
+        let (cluster, racks) = if compass { (0, 0) } else { (COMPASS_CLUSTER, COMPASS_RACKS) };
+        let (w, h) = (SHIPUI.0 - cluster - racks, SHIPUI.1);
         let y = if hud_flag(hud, "ship_top") { SHIP_TOP_MARGIN } else { rh - SHIP_BOTTOM_MARGIN - h };
-        out.push(Furniture { kind: "shipui", label: "Ship HUD", x: (rw as f64 / 2.0 + offset).round() as i64 - SHIP_ANCHOR_LEFT, y, w, h });
+        out.push(Furniture { kind: "shipui", label: "Ship HUD", x: (rw as f64 / 2.0 + offset).round() as i64 - (SHIP_ANCHOR_LEFT - cluster), y, w, h });
     }
     if let (Some(x), Some(y)) = (hud_num(hud, "fighter_x"), hud_num(hud, "fighter_y")) {
         // Never dragged: the client centres it (layout.ts fighterPoint).
@@ -516,6 +523,8 @@ mod tests {
             entry("target_x", Some(TARGET_X), HudKind::Float, "0", set()),
             entry("target_y", Some(TARGET_Y), HudKind::Float, "0", set()),
             entry("target_horizontal", Some("false"), HudKind::Bool, "false", set()),
+            // ON: the setup every measured ship-HUD figure was taken with.
+            entry("compass", Some("true"), HudKind::Bool, "false", set()),
         ] }
     }
 
@@ -567,6 +576,11 @@ mod tests {
         // the width right of the neocom (1316 here), not of the screen.
         let near = furniture(&with(full_hud(), entry("target_x", Some(&(1228.0 / 2488.0).to_string()), HudKind::Float, "0", set())), &wl, 1);
         assert_eq!(find(&near, "target").x, 1300, "an anchor at 1300 still runs right");
+        // Without the compass (the client's default) the HUD is 26px narrower
+        // and its capacitor 138px in (layout.ts shipAnchorLeft / shipSize).
+        let plain = furniture(&with(full_hud(), entry("compass", None, HudKind::Bool, "false", set())), &wl, 1);
+        let p = find(&plain, "shipui");
+        assert_eq!((p.x + 138, p.w), (1280 - 100, 622));
         // A never-dragged fighter panel sits where the client puts it.
         let unset = with(
             with(full_hud(), entry("fighter_x", None, HudKind::Int, "0", set())),

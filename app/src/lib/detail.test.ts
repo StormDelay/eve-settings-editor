@@ -136,6 +136,23 @@ import { check } from "./test/check.ts";
   check("a zero count still draws one slot", targetParts(0, false).length === 6);
 }
 
+// --- ship HUD without the compass -----------------------------------------
+// The client's default. Racks 16px nearer the capacitor, cluster 10px nearer
+// (shipUI.slotsContLeft / hudButtonsLeft); in the box's own frame the cluster
+// stays at x 0, so the capacitor moves 10 left and the racks 26.
+{
+  const parts = shipHudParts(0, true, false);
+  const rim = parts.find((p) => p.kind === "ring")!;
+  check("without the compass the capacitor is 138 into the box", rim.x + rim.w / 2 === 138);
+  const firstSlot = parts.filter((p) => p.kind === "slot" && p.y === 20).sort((a, b) => a.x - b.x)[0];
+  check("and the first module slot is at 221", firstSlot.x === 221);
+  check("the cluster still starts the box",
+    parts.some((p) => p.kind === "slot" && p.x === 0 && p.w === 30));
+  const eff = shipHudParts(2, true, false).slice(parts.length);
+  check("the effects row stays centred on the capacitor",
+    eff[0].x + (eff[1].x + eff[1].w - eff[0].x) / 2 === 138);
+}
+
 // --- ship effects row ------------------------------------------------------
 // MEASURED 2026-07-31: ⌀36 icons on a 48 pitch, centred on the capacitor, 16
 // below a top-aligned element and 10 above a bottom-aligned one. See

@@ -483,7 +483,7 @@
    * drawn from its real button list. The badge has neither and stays a plain
    * box. */
   const furnitureDetail = (f: FurnitureRect) =>
-    f.kind === "shipui" && hud ? shipHudParts(effectCount(), hudFlag(hud, "ship_top"))
+    f.kind === "shipui" && hud ? shipHudParts(effectCount(), hudFlag(hud, "ship_top"), hudFlag(hud, "compass"))
     : f.kind === "fighter" ? fighterParts()
     : f.kind === "neocom" && neocom ? neocomParts(neocom, f.w, f.h)
     : f.kind === "target" && hud ? targetParts(targetCount(), hudFlag(hud, "target_horizontal"))

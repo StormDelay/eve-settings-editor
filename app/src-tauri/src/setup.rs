@@ -93,6 +93,8 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
                 // the two characters match; see Category::absent_means_default.
                 account_categories.push(Category::HudTargetOrigin);
                 account_categories.push(Category::HudTargetAlign);
+                // The compass, which reshapes the ship HUD the copy is moving.
+                account_categories.push(Category::HudCompass);
             }
             Aspect::Overview => {
                 char_categories.push(Category::OverviewWidths);
@@ -890,7 +892,8 @@ mod tests {
                 Category::HudFighterDetached,
                 Category::HudFighterShown,
                 Category::HudTargetOrigin,
-                Category::HudTargetAlign
+                Category::HudTargetAlign,
+                Category::HudCompass
             ]
         );
         assert!(w.writes_account(), "layout writes the account file now");
@@ -978,6 +981,7 @@ mod tests {
                         wrapped(Value::Tuple(vec![Value::Float(0.75), Value::Float(0.25)])),
                     ),
                     (b("alignHorizontally"), wrapped(Value::Bool(true))),
+                    (b("showSensorOverlay"), wrapped(Value::Bool(true))),
                 ]),
             ),
         ])
@@ -997,6 +1001,7 @@ mod tests {
                         wrapped(Value::Tuple(vec![Value::Float(0.25), Value::Float(0.75)])),
                     ),
                     (b("alignHorizontally"), wrapped(Value::Bool(false))),
+                    (b("showSensorOverlay"), wrapped(Value::Bool(false))),
                 ]),
             ),
         ])
@@ -1027,7 +1032,7 @@ mod tests {
         // 0.26.0. `target_x` is a FRACTION of the width right of the neocom,
         // and the neocom width travels with it, so the copied list lands on the
         // same pixel as the source's.
-        assert_eq!(source.len(), 12, "every HUD field is carried");
+        assert_eq!(source.len(), 13, "every HUD field is carried");
         for (name, v) in &source {
             assert!(v.is_some(), "{name} must have a value on the SOURCE, or the copy proves nothing");
         }
@@ -1043,7 +1048,7 @@ mod tests {
         settings_model::apply_to_tree(&mut tgt_user, &extract_categories(&src_user, &w.account_categories));
 
         let after = hud_values(&tgt_char, &tgt_user);
-        assert_eq!(source, after, "every one of the twelve fields came across");
+        assert_eq!(source, after, "every one of the thirteen fields came across");
     }
 
     #[test]
@@ -1126,7 +1131,7 @@ mod tests {
         let w = aspect_writes(&[Aspect::Layout]);
         let source_without_hud = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
         let extracted = extract_categories(&source_without_hud, &w.account_categories);
-        assert_eq!(extracted.len(), 5, "one removal per account-side HUD key");
+        assert_eq!(extracted.len(), 6, "one removal per account-side HUD key");
 
         let path = temp_file("hud-removals-only", &encode(&source_without_hud).unwrap());
         assert!(

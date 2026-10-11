@@ -57,6 +57,8 @@ pub enum Category {
     // someone would leave them unable to drag their own list back in-game.
     HudTargetOrigin,
     HudTargetAlign,
+    /// The sensor-overlay compass, which reshapes the ship HUD (hud.rs).
+    HudCompass,
     /// One fleet key. The leaf table is `fleet::FLEET_LEAVES` — the editor's own
     /// key list — so a key added there is a category here with no second list
     /// to keep in step. Every leaf is one level under `ui`, on the side its
@@ -94,6 +96,7 @@ impl Category {
             // only an inlined dump shows the real tree. See hud.rs.
             Category::HudTargetOrigin => &[b"ui", b"targetOrigin"],
             Category::HudTargetAlign => &[b"ui", b"alignHorizontally"],
+            Category::HudCompass => &[b"ui", b"showSensorOverlay"],
             Category::Fleet(leaf) => &leaf.path,
         }
     }
@@ -137,6 +140,7 @@ impl Category {
                 | Category::HudNeocomWidth
                 | Category::HudTargetOrigin
                 | Category::HudTargetAlign
+                | Category::HudCompass
                 | Category::Fleet(_)
         )
     }
@@ -644,7 +648,7 @@ mod tests {
         // the projection would read the new one, so the field comes back None
         // and that test fails. Keep it non-vacuous (every field non-None on
         // both sides) or this pair stops cross-checking anything.
-        let expected: [(Category, &[&[u8]]); 8] = [
+        let expected: [(Category, &[&[u8]]); 9] = [
             (Category::HudFighterPos, &[b"ui", b"fightersDetachedPosition"]),
             (Category::HudBadge, &[b"notifications", b"notification_badge_offset"]),
             (Category::HudShipTop, &[b"ui", b"shipuialigntop"]),
@@ -656,6 +660,7 @@ mod tests {
             // `ui`, not `windows` — the trap hud.rs documents at length.
             (Category::HudTargetOrigin, &[b"ui", b"targetOrigin"]),
             (Category::HudTargetAlign, &[b"ui", b"alignHorizontally"]),
+            (Category::HudCompass, &[b"ui", b"showSensorOverlay"]),
         ];
         for (cat, path) in expected {
             assert_eq!(cat.key_path(), path, "{cat:?} addresses the wrong key");
