@@ -470,9 +470,9 @@ export function pointUnplaced(hud: Hud, x: string, y: string): boolean {
  * straddling the middle sends the list to `(W - 300, 16)`. Null when the field
  * is not writable at all.
  *
- * ponytail: the client uses the bounding box of the Selected Item window AND
- * any windows snapped on top of it (`FindConnectingWindows('top')`); this uses
- * the window's own rect. They differ only when something is docked above it.
+ * "The Selected Item window's rect" is the bounding box of it and every window
+ * snapped on top of it (selectedItemGroup) — unless it is minimized, when the
+ * client reads its stored rect alone.
  */
 export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y: number } | null {
   const tx = hudNum(hud, "target_x");
@@ -482,15 +482,51 @@ export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y:
   const W = layout.reference_w;
   const H = layout.reference_h;
   const n = neocomWidth(hud);
-  const g = layout.windows.find((w) => w.id === "selecteditemview")?.geom;
   // actionPanelDefaults: 566 wide, 16 in from the top right, 174 tall on a
   // screen 900 high or more and 138 below that.
-  const r = g ?? { x: W - 566 - 16, y: 16, w: 566, h: H >= 900 ? 174 : 138 };
+  const r = selectedItemGroup(layout) ?? { x: W - 566 - 16, y: 16, w: 566, h: H >= 900 ? 174 : 138 };
   const left = r.x - 15;
   const mid = Math.floor(W / 2);
   if (left + r.w < mid) return { x: (left + r.w - n) / (W - n), y: r.y / H };
   if (left >= mid) return { x: (left - n) / (W - n), y: r.y / H };
   return { x: (W - 300) / W, y: 16 / H };
+}
+
+/**
+ * The Selected Item window (or its stack) together with every window snapped
+ * on top of it, as the client gathers them for the target list's default
+ * (`FindConnectingWindows('top')` + `GetGroupAbsolute`): a window joins when
+ * its bottom-left corner sits exactly on a member's top-left, or its
+ * bottom-right on a member's top-right, followed upward. Only windows on screen
+ * count — ones the client reopens, not tabs inside a stack. A minimized Selected
+ * Item is read alone. Null when the file stores no rect for it.
+ */
+function selectedItemGroup(layout: WindowLayout): Rect | null {
+  const sel = layout.windows.find((w) => w.id === "selecteditemview");
+  if (!sel?.geom) return null;
+  const host = sel.stack?.role === "member"
+    ? (layout.windows.find((w) => w.id === sel.stack!.container_id) ?? sel)
+    : sel;
+  const rectOf = (w: WindowRect): Rect => ({ x: w.geom!.x, y: w.geom!.y, w: w.geom!.w, h: w.geom!.h });
+  const start = host.geom ? rectOf(host) : rectOf(sel);
+  if (sel.flags.some((f) => f.name === "minimizedWindows" && f.value)) return start;
+  const shown = layout.windows.filter((w) =>
+    w !== host && w.geom && w.renderable && reopens(w) && w.stack?.role !== "member");
+  const group = [start];
+  for (let i = 0; i < group.length; i++) {
+    const a = group[i];
+    for (const w of shown) {
+      const b = rectOf(w);
+      if (group.some((g) => g.x === b.x && g.y === b.y && g.w === b.w && g.h === b.h)) continue;
+      const bottom = b.y + b.h;
+      if (bottom === a.y && (b.x === a.x || b.x + b.w === a.x + a.w)) group.push(b);
+    }
+  }
+  const x = Math.min(...group.map((g) => g.x));
+  const y = Math.min(...group.map((g) => g.y));
+  const r = Math.max(...group.map((g) => g.x + g.w));
+  const btm = Math.max(...group.map((g) => g.y + g.h));
+  return { x, y, w: r - x, h: btm - y };
 }
 
 export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {

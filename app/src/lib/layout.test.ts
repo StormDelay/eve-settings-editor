@@ -710,6 +710,29 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     !!drawn && drawn.x + drawn.w === 1885 && drawn.y === 100);
   check("a stored one is used as stored",
     eq(targetFractions(fullHud(), layout2560), { x: TARGET_X, y: TARGET_Y }));
+
+  // The client uses the Selected Item window together with every window
+  // snapped on top of it (FindConnectingWindows('top')): one whose bottom-left
+  // or bottom-right corner sits exactly on a top corner, followed upward.
+  const at = (id: string, x: number, y: number, w: number, h: number, open = true): WindowRect => {
+    const r = win(id, open, true);
+    return { ...r, geom: { ...r.geom!, x, y, w, h } };
+  };
+  const group = (...ws: WindowRect[]) => {
+    const f = targetFractions(unset, { ...layout2560, windows: ws })!;
+    return targetAnchor(f.x, f.y, 2560, 1440, 72);
+  };
+  const sel = at("selecteditemview", 1900, 300, 566, 174);
+  const above = at("market", 1900, 200, 400, 100); // bottom-left on sel's top-left
+  const higher = at("mail", 1900, 50, 300, 150); // bottom-left on above's top-left
+  check("a window snapped on top lifts the anchor to its top", group(sel, above).y === 200);
+  check("and the chain is followed upward", group(sel, above, higher).y === 50);
+  check("a window above but not on a corner is not part of it",
+    group(sel, at("market", 1950, 200, 400, 100)).y === 300);
+  check("nor is a closed one", group(sel, at("market", 1900, 200, 400, 100, false)).y === 300);
+  check("nor one the client never reopens", group(sel, at("contracts", 1900, 200, 400, 100)).y === 300);
+  const minimized = { ...sel, flags: [{ name: "minimizedWindows", value: true, set: { how: "set", path: [] } }] } as WindowRect;
+  check("a minimized Selected Item uses its own rect alone", group(minimized, above).y === 300);
 }
 
 {
