@@ -1298,6 +1298,13 @@ check("hudFlag reads a bool", hudFlag(fullHud(), "fighter_detached") === true);
     check("the badge writes under its own prefix",
       eq(furnitureWrites("badge", { x: 10, y: 20 }, { x: 11, y: 20 }, null, noHud, layout),
          [["badge_x", "11"]]));
+    // A panel the file does not place yet: writing one axis would mint the
+    // point with the other at its static "0" and throw the panel to the top,
+    // so both are written.
+    const unplaced = hudOf(entry("fighter_x", null, "0"), entry("fighter_y", null, "0"));
+    check("a one-axis drag of an unplaced fighter panel writes both axes",
+      eq(furnitureWrites("fighter", { x: 1280, y: 660 }, { x: 1320, y: 660 }, null, unplaced, layout),
+         [["fighter_x", "1320"], ["fighter_y", "660"]]));
   }
 
   // --- target list: written from its ANCHOR, as fractions ---

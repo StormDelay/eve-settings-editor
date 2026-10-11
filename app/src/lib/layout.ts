@@ -409,6 +409,18 @@ const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === na
  * (`shipUI.GetFightersDetachedPos`, Python 2 integer division). Null when the
  * field is not writable at all.
  */
+/**
+ * Whether a point the file CAN hold is not stored yet. Writing one axis of such
+ * a point mints the whole tuple with the other axis at its static default
+ * (hud.rs `mint`), which for the fighter panel is not where it is drawn — so a
+ * caller writes both axes instead.
+ */
+export function pointUnplaced(hud: Hud, x: string, y: string): boolean {
+  const ex = byName(hud, x);
+  const ey = byName(hud, y);
+  return !!ex && !!ey && ex.set.how !== "unavailable" && ex.value == null && ey.value == null;
+}
+
 export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {
   const x = hudNum(hud, "fighter_x");
   const y = hudNum(hud, "fighter_y");
@@ -538,9 +550,12 @@ export function furnitureWrites(
     const prefix = kind === "fighter" ? "fighter" : "badge";
     const stored = hudPointFromRect(kind, dropped.x, dropped.y);
     const out: Array<[string, string]> = [];
-    if (stored.x !== start.x) out.push([`${prefix}_x`, String(stored.x)]);
-    if (stored.y !== start.y) out.push([`${prefix}_y`, String(stored.y)]);
-    return out;
+    // An unplaced fighter panel is drawn at a computed default, but minting
+    // one axis would give the other its static "0" — so write both.
+    const both = kind === "fighter" && pointUnplaced(hud, "fighter_x", "fighter_y");
+    if (both || stored.x !== start.x) out.push([`${prefix}_x`, String(stored.x)]);
+    if (both || stored.y !== start.y) out.push([`${prefix}_y`, String(stored.y)]);
+    return both && stored.x === start.x && stored.y === start.y ? [] : out;
   }
 
   // The neocom: its width is a field, not a rect, so it is selectable but not

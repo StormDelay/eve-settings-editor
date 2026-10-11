@@ -126,6 +126,16 @@ describe("the fighter panel's default", () => {
     expect(input("Fighter panel", "x").value).toBe("1280");
     expect(input("Fighter panel", "y").value).toBe("660");
   });
+
+  test("typing one axis of an unplaced panel writes both", () => {
+    const { onSet } = mount(
+      hud(entry("fighter_x", "int", null), entry("fighter_y", "int", null)),
+      { referenceW: 2560, referenceH: 1440 },
+    );
+    fireEvent.change(input("Fighter panel", "x"), { target: { value: "1300" } });
+    expect(onSet).toHaveBeenCalledWith("fighter_x", "1300");
+    expect(onSet).toHaveBeenCalledWith("fighter_y", "660");
+  });
 });
 
 describe("writing a value", () => {

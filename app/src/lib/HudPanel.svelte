@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
-  import { EFFECT_COUNT_MAX, fighterPoint, neocomWidth, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
+  import { EFFECT_COUNT_MAX, fighterPoint, pointUnplaced, neocomWidth, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
@@ -195,6 +195,13 @@
         neocomWidth(hud),
       );
       onSet(name, String(next[axis]));
+    } else if (FIGHTER_AXIS[name] && asPixels && pointUnplaced(hud, "fighter_x", "fighter_y")) {
+      // Minting one axis would give the other its static "0", not the default
+      // the panel shows — write the pair.
+      const p = fighterPoint(hud, referenceW, referenceH)!;
+      const v = Math.round(Number(text));
+      onSet("fighter_x", String(FIGHTER_AXIS[name] === "x" ? v : p.x));
+      onSet("fighter_y", String(FIGHTER_AXIS[name] === "y" ? v : p.y));
     } else {
       onSet(name, kind === "float" ? text : String(Math.round(Number(text))));
     }
