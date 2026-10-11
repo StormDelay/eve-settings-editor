@@ -78,14 +78,14 @@ pub fn aspect_writes(aspects: &[Aspect]) -> AspectWrites {
                 // already splices whole.
                 char_categories.push(Category::HudFighterPos);
                 char_categories.push(Category::HudBadge);
-                // The account-side four. These are what make a layout copy
+                char_categories.push(Category::HudNeocomWidth);
+                // The account-side three. These are what make a layout copy
                 // write the account file — and therefore change every other
                 // character on it. EVE stores them per account; there is no
                 // per-character form to carry instead.
                 account_categories.push(Category::HudShipTop);
                 account_categories.push(Category::HudFighterDetached);
                 account_categories.push(Category::HudFighterShown);
-                account_categories.push(Category::HudNeocomWidth);
                 // The target list. Most sources have never dragged theirs, and
                 // absence means "at EVE's default" here as it does for the
                 // four above — so most copies move the target's list back to
@@ -879,7 +879,8 @@ mod tests {
                 Category::Layout,
                 Category::NeocomButtons,
                 Category::HudFighterPos,
-                Category::HudBadge
+                Category::HudBadge,
+                Category::HudNeocomWidth
             ]
         );
         assert_eq!(
@@ -888,7 +889,6 @@ mod tests {
                 Category::HudShipTop,
                 Category::HudFighterDetached,
                 Category::HudFighterShown,
-                Category::HudNeocomWidth,
                 Category::HudTargetOrigin,
                 Category::HudTargetAlign
             ]
@@ -935,7 +935,13 @@ mod tests {
     fn hud_char_doc() -> Value {
         Value::Dict(vec![
             (b("windows"), Value::Dict(vec![(b("shipuialignleftoffset"), wrapped(Value::Float(-1052.0)))])),
-            (b("ui"), Value::Dict(vec![(b("fightersDetachedPosition"), point(326, 54))])),
+            (
+                b("ui"),
+                Value::Dict(vec![
+                    (b("fightersDetachedPosition"), point(326, 54)),
+                    (b("neocomWidth"), wrapped(Value::Int(72))),
+                ]),
+            ),
             (b("notifications"), Value::Dict(vec![(b("notification_badge_offset"), point(2519, 131))])),
         ])
     }
@@ -947,7 +953,13 @@ mod tests {
     fn hud_target_char_doc() -> Value {
         Value::Dict(vec![
             (b("windows"), Value::Dict(vec![(b("shipuialignleftoffset"), wrapped(Value::Float(-1.0)))])),
-            (b("ui"), Value::Dict(vec![(b("fightersDetachedPosition"), point(10, 20))])),
+            (
+                b("ui"),
+                Value::Dict(vec![
+                    (b("fightersDetachedPosition"), point(10, 20)),
+                    (b("neocomWidth"), wrapped(Value::Int(40))),
+                ]),
+            ),
             (b("notifications"), Value::Dict(vec![(b("notification_badge_offset"), point(1, 2))])),
         ])
     }
@@ -968,7 +980,6 @@ mod tests {
                     (b("alignHorizontally"), wrapped(Value::Bool(true))),
                 ]),
             ),
-            (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(72)))])),
         ])
     }
 
@@ -988,7 +999,6 @@ mod tests {
                     (b("alignHorizontally"), wrapped(Value::Bool(false))),
                 ]),
             ),
-            (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(37)))])),
         ])
     }
 
@@ -1014,11 +1024,9 @@ mod tests {
         let source = hud_values(&src_char, &src_user);
         let target_before = hud_values(&tgt_char, &tgt_user);
         // Every projected HUD field is carried, the target list included since
-        // 0.26.0. `target_x` is the one worth naming: it is a FRACTION whose
-        // denominator encodes the SOURCE client's neocom width, so a copy
-        // between accounts with different neocoms lands the list a few tens of
-        // pixels off. That is a known, accepted cost of matching the source —
-        // see Category::absent_means_default.
+        // 0.26.0. `target_x` is a FRACTION of the width right of the neocom,
+        // and the neocom width travels with it, so the copied list lands on the
+        // same pixel as the source's.
         assert_eq!(source.len(), 12, "every HUD field is carried");
         for (name, v) in &source {
             assert!(v.is_some(), "{name} must have a value on the SOURCE, or the copy proves nothing");
@@ -1118,7 +1126,7 @@ mod tests {
         let w = aspect_writes(&[Aspect::Layout]);
         let source_without_hud = Value::Dict(vec![(b("ui"), Value::Dict(vec![]))]);
         let extracted = extract_categories(&source_without_hud, &w.account_categories);
-        assert_eq!(extracted.len(), 6, "one removal per account-side HUD key");
+        assert_eq!(extracted.len(), 5, "one removal per account-side HUD key");
 
         let path = temp_file("hud-removals-only", &encode(&source_without_hud).unwrap());
         assert!(

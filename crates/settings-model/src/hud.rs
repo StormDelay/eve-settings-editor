@@ -92,10 +92,8 @@ const FIELDS: [Field; 12] = [
     Field { name: "badge_y", section: b"notifications", key: b"notification_badge_offset",
             elem: Some(1), kind: HudKind::Int, default: "0", scope: HudScope::Char },
     // Corpus-verified (not assumed): in a real account file, `shipuialigntop`,
-    // `detachFighterUI` and `displayFighterUI` sit under the root `ui` section,
-    // and `neocomWidth` (below) sits under the root `windows` section — a
-    // section that, on the sampled file, holds only that one key. The account
-    // file's `ui` section key is itself `Ref`-keyed (a `Ref` to a byte-string
+    // `detachFighterUI` and `displayFighterUI` sit under the root `ui` section.
+    // The account file's `ui` section key is itself `Ref`-keyed (a `Ref` to a byte-string
     // defined later in the stream, via the trailing shared-object table), which
     // is why `section()`'s `Ref`/`Shared` resolution matters here specifically.
     Field { name: "ship_top", section: b"ui", key: b"shipuialigntop",
@@ -104,21 +102,27 @@ const FIELDS: [Field; 12] = [
             elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
     Field { name: "fighter_shown", section: b"ui", key: b"displayFighterUI",
             elem: None, kind: HudKind::Bool, default: "false", scope: HudScope::Account },
-    Field { name: "neocom_width", section: b"windows", key: b"neocomWidth",
-            elem: None, kind: HudKind::Int, default: "37", scope: HudScope::Account },
+    // A CHARACTER setting in the client (`neocomSettings.neocom_width_setting`,
+    // a CharSettingNumeric: `settings.char.ui`, default 48, clamped 32..72).
+    // Real account files still carry a `windows → neocomWidth`, but that is the
+    // pre-migration copy (`carbonui.window.settings` moves the account
+    // `windows` section into the character file once, behind `__usercopy__`);
+    // the client never reads it again.
+    Field { name: "neocom_width", section: b"ui", key: b"neocomWidth",
+            elem: None, kind: HudKind::Int, default: "48", scope: HudScope::Char },
     // The locked-target list. CAPTURED in-game 2026-07-31 (Pilot Echo, three
     // positions and an orientation toggle) — see
     // docs/live-verification-target-origin.md. Two things to know before
     // touching these:
     //
     // - The section is `ui`, NOT `windows`. A plain `bmdump dump` walks these
-    //   keys back to `windows`, where `neocomWidth` genuinely lives; only
+    //   keys back to `windows`, where the legacy `neocomWidth` lives; only
     //   `dump-inline` shows the real tree. The account gate in
     //   `tests/hud_corpus.rs` is what holds this honest, exactly as the
     //   `badge_*` gate does on the character side.
     // - `targetOrigin` is a FRACTION, not a pixel: y over the screen height, x
-    //   over the width right of the neocom. `layout.ts` owns that conversion;
-    //   this table only carries the number.
+    //   over the width right of the neocom (the CHARACTER's `neocomWidth`).
+    //   `layout.ts` owns that conversion; this table only carries the number.
     //
     // The default is a placeholder: 87 % of corpus account files have no
     // `targetOrigin` at all, and EVE's own starting position was never
@@ -593,8 +597,9 @@ mod tests {
         assert_eq!(entry(&hud, "ship_offset").value.as_deref(), Some("-12"));
     }
 
-    /// An account document: neocomWidth under `windows`, the toggles under `ui`
-    /// — and, as in real files, `ui` keyed by a Ref.
+    /// An account document: the toggles under `ui` — and, as in real files,
+    /// `ui` keyed by a Ref. Its `windows → neocomWidth` is the legacy copy real
+    /// account files still carry, which the client no longer reads.
     fn user_doc() -> Value {
         Value::Dict(vec![
             (b("windows"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(37)))])),
@@ -625,21 +630,15 @@ mod tests {
         let cdoc = char_doc();
         let udoc = user_doc();
         let hud = project_hud(&cdoc, Some(&udoc));
-        assert_eq!(entry(&hud, "neocom_width").value.as_deref(), Some("37"));
         assert_eq!(entry(&hud, "ship_top").value.as_deref(), Some("true"));
         assert_eq!(entry(&hud, "fighter_detached").value.as_deref(), Some("true"));
         assert_eq!(entry(&hud, "fighter_shown").value.as_deref(), Some("false"));
-        assert_eq!(entry(&hud, "neocom_width").scope, HudScope::Account);
         // The target list: a float pair in the same Ref-keyed `ui` section, and
         // each axis resolving to its own tuple element.
         assert_eq!(entry(&hud, "target_x").value.as_deref(), Some("0.5442122186495176"));
         assert_eq!(entry(&hud, "target_y").value.as_deref(), Some("0.5222222222222223"));
         assert_eq!(entry(&hud, "target_horizontal").value.as_deref(), Some("true"));
         // Paths address the ACCOUNT document, not the character one.
-        match &entry(&hud, "neocom_width").set {
-            SetTarget::Set { path } => assert_eq!(resolve(&udoc, path), Some(&Value::Int(37))),
-            other => panic!("expected Set, got {other:?}"),
-        }
         match &entry(&hud, "target_y").set {
             SetTarget::Set { path } => {
                 assert_eq!(resolve(&udoc, path), Some(&Value::Float(0.5222222222222223)))
@@ -648,11 +647,34 @@ mod tests {
         }
     }
 
+    /// The client keeps the neocom width in the CHARACTER file's `ui`
+    /// (`neocomSettings.neocom_width_setting`, a CharSettingNumeric) and
+    /// defaults it to 48. The account file's `windows → neocomWidth` is a
+    /// legacy copy it never reads, so it must not be what the editor shows.
+    #[test]
+    fn the_neocom_width_is_read_from_the_character_file() {
+        let cdoc = Value::Dict(vec![(b("ui"), Value::Dict(vec![(b("neocomWidth"), wrapped(Value::Int(72)))]))]);
+        let hud = project_hud(&cdoc, Some(&user_doc()));
+        let e = entry(&hud, "neocom_width");
+        assert_eq!(e.value.as_deref(), Some("72"));
+        assert_eq!(e.scope, HudScope::Char);
+        match &e.set {
+            SetTarget::Set { path } => assert_eq!(resolve(&cdoc, path), Some(&Value::Int(72))),
+            other => panic!("expected Set, got {other:?}"),
+        }
+
+        // No character-side width: EVE's default, never the legacy 37.
+        let hud = project_hud(&char_doc(), Some(&user_doc()));
+        let e = entry(&hud, "neocom_width");
+        assert_eq!(e.value, None);
+        assert_eq!(e.default, "48");
+    }
+
     #[test]
     fn without_an_account_file_the_account_fields_are_unavailable() {
         let hud = project_hud(&char_doc(), None);
         for name in [
-            "ship_top", "fighter_detached", "fighter_shown", "neocom_width",
+            "ship_top", "fighter_detached", "fighter_shown",
             "target_x", "target_y", "target_horizontal",
         ] {
             let e = entry(&hud, name);

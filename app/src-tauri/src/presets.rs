@@ -629,9 +629,9 @@ mod tests {
         decode(&std::fs::read(p).expect("preset file exists")).expect("preset file decodes")
     }
 
-    /// A user document carrying all four account-side HUD keys the Layout
-    /// aspect writes: `ui/shipuialigntop`, `ui/detachFighterUI`,
-    /// `ui/displayFighterUI`, and `windows/neocomWidth`. Built beside
+    /// A user document carrying the three account-side HUD toggles the Layout
+    /// aspect writes: `ui/shipuialigntop`, `ui/detachFighterUI` and
+    /// `ui/displayFighterUI`. Built beside
     /// `user_doc()` rather than folding into it, since `user_doc()` — which
     /// deliberately carries none of these — is what other tests depend on.
     fn user_doc_with_account_hud() -> Value {
@@ -640,8 +640,7 @@ mod tests {
             (b("detachFighterUI"), Value::Bool(false)),
             (b("displayFighterUI"), Value::Bool(true)),
         ]);
-        let windows = Value::Dict(vec![(b("neocomWidth"), Value::Int(240))]);
-        Value::Dict(vec![(b("ui"), ui), (b("windows"), windows)])
+        Value::Dict(vec![(b("ui"), ui)])
     }
 
     #[test]
@@ -1124,19 +1123,16 @@ mod tests {
     fn prune_builds_a_parent_for_a_requested_but_absent_hud_key() {
         // This is the mechanism behind a Layout preset never having an empty-root
         // user.dat: `present` maps over the (cat, None) entries too, so
-        // parent_entries builds `ui` and `windows` for them. Filtering this to
-        // Some would silently reintroduce the old-preset ambiguity.
+        // parent_entries builds `ui` for them. Filtering this to Some would
+        // silently reintroduce the old-preset ambiguity.
         let source = Value::Dict(vec![(b("unrelated"), Value::Int(1))]);
-        let out = prune(&source, &[Category::HudShipTop, Category::HudNeocomWidth]);
+        let out = prune(&source, &[Category::HudShipTop, Category::HudTargetOrigin]);
         assert!(!is_empty_root(&out), "a pruned Layout account side is never an empty root");
         let Value::Dict(root) = &out else { panic!("root is a dict") };
-        for key in [b"ui".as_slice(), b"windows".as_slice()] {
-            assert!(
-                root.iter().any(|(k, _)| matches!(k, Value::Bytes(v) if v.as_slice() == key)),
-                "the parent for {} was built",
-                String::from_utf8_lossy(key)
-            );
-        }
+        assert!(
+            root.iter().any(|(k, _)| matches!(k, Value::Bytes(v) if v.as_slice() == b"ui")),
+            "the parent for ui was built"
+        );
     }
 
     #[test]
@@ -1148,7 +1144,7 @@ mod tests {
         // source lacks). This exercises that discrimination end to end,
         // through `presets::create`, rather than on hand-built documents.
         let data = temp_data("layout-hud-e2e");
-        // user_doc() stores none of the four account-side HUD keys.
+        // user_doc() stores none of the three account-side HUD toggles.
         let dir = create(
             &data,
             "New layout",
@@ -1168,7 +1164,6 @@ mod tests {
             Category::HudShipTop,
             Category::HudFighterDetached,
             Category::HudFighterShown,
-            Category::HudNeocomWidth,
         ];
 
         // New-preset path: the preset's account side reports each key as an

@@ -322,46 +322,19 @@ export function targetSize(count: number, horizontal: boolean): { w: number; h: 
 }
 
 /**
- * How much of the screen's left edge the target list's x fraction does NOT
- * cover — the neocom's drawn width, 72px on the captured client.
- *
- * Used only as a fallback. The stored value normally carries its own
- * denominator (see targetDenominator), which is exact and survives a player
- * whose neocom is a different width; this number is what a MINTED value has to
- * assume, and it is the corpus-typical one, not a universal constant. Three
- * different margins show up across the corpus (37, 48, 72).
+ * EVE's neocom width when the character file stores none
+ * (`neocomConst.NEOCOM_DEFAULT_WIDTH`; the bar resizes between 32 and 72).
  */
-export const TARGET_MARGIN = 72;
+export const NEOCOM_DEFAULT_WIDTH = 48;
 
 /**
- * The width the target list's stored x is a fraction OF.
- *
- * `targetOrigin.x` is not a fraction of the screen: it spans the width to the
- * right of the neocom, so the anchor is `(referenceW - denominator) + f *
- * denominator`. EVE writes an exact `pixels / denominator`, which means the
- * denominator can be read back out of the value itself — and that is worth
- * doing, because the margin is a property of the client that wrote it, not of
- * ours.
- *
- * Only a denominator that is UNIQUE in the plausible range is trusted. A round
- * fraction (0.5, or the 0 default) divides evenly into dozens of candidates and
- * says nothing about the margin; taking the first hit there would invent a
- * margin out of a value that never encoded one.
+ * The neocom's width, which is also how far in from the left the target list's
+ * x fraction starts. EVE's default when the character file stores none — or
+ * when no character file is open, since the target list is still drawn from
+ * the account file then.
  */
-export function targetDenominator(f: number, referenceW: number): number {
-  const fallback = Math.max(1, referenceW - TARGET_MARGIN);
-  if (!Number.isFinite(f) || f <= 0 || referenceW <= TARGET_MARGIN) return fallback;
-  let found = 0;
-  // 200px is well past every margin seen (37, 48, 72) without reaching the
-  // half-width aliases a small denominator would also satisfy.
-  for (let d = referenceW - 1; d >= referenceW - 200 && d > 0; d--) {
-    const p = f * d;
-    if (Math.abs(p - Math.round(p)) < 1e-6) {
-      if (found) return fallback; // ambiguous — the value encodes no margin
-      found = d;
-    }
-  }
-  return found || fallback;
+export function neocomWidth(hud: Hud): number {
+  return hudNum(hud, "neocom_width") ?? NEOCOM_DEFAULT_WIDTH;
 }
 
 /**
@@ -375,9 +348,9 @@ export function targetDenominator(f: number, referenceW: number): number {
  * letting it jump on drop.
  */
 export function targetRect(
-  ax: number, ay: number, w: number, h: number, referenceW: number, referenceH: number,
+  ax: number, ay: number, w: number, h: number, referenceW: number, referenceH: number, neocom: number,
 ): { x: number; y: number } {
-  const c = targetCorner(ax, ay, referenceW, referenceH);
+  const c = targetCorner(ax, ay, referenceW, referenceH, neocom);
   return { x: c[1] === "r" ? ax - w : ax, y: c[0] === "b" ? ay - h : ay };
 }
 
@@ -385,43 +358,47 @@ export function targetRect(
  * Which corner of the drawn box the anchor is — the one facing away from the
  * middle of the screen, since the list grows toward it.
  *
+ * The client turns the list when the stored fraction passes 0.5
+ * (`targetMgr.GetOriginPosition`), and x is a fraction of the width right of the
+ * neocom — so the horizontal turn is at the middle of THAT, not of the screen.
+ *
  * Shares its predicate with targetRect above, deliberately: the canvas marks
  * this corner so the anchor is visible, and a marker on the wrong corner would
  * be worse than none. One rule, two readings of it.
  */
-export function targetCorner(ax: number, ay: number, referenceW: number, referenceH: number): Corner {
-  return `${ay > referenceH / 2 ? "b" : "t"}${ax > referenceW / 2 ? "r" : "l"}` as Corner;
+export function targetCorner(
+  ax: number, ay: number, referenceW: number, referenceH: number, neocom: number,
+): Corner {
+  return `${ay > referenceH / 2 ? "b" : "t"}${ax > (referenceW + neocom) / 2 ? "r" : "l"}` as Corner;
 }
 
 /**
  * The target list's anchor in data px, from its stored fractions.
  *
+ * `targetOrigin` is a fraction of the target layer, which the client pads by
+ * the neocom's width (`sidePanelsLayer.UpdateWindowPositions`): x spans the
+ * screen right of the neocom, y the whole height. The client reads it against
+ * the neocom it has NOW, so resizing the neocom moves the list.
+ *
  * Rounded, unlike the ship HUD's placement: the client's own value is a whole
- * number of pixels over the denominator, so `f * d` lands a fraction of a
- * float's-worth away from the integer it means (1354.0000000000002). The ship
- * HUD leaves its half-pixel in place because its inverse subtracts the same
+ * number of pixels over the width, so `f * d` lands a fraction of a float's
+ * worth away from the integer it means (1354.0000000000002). The ship HUD
+ * leaves its half-pixel in place because its inverse subtracts the same
  * expression back off; this one's inverse re-derives the anchor through here,
  * so rounding on both sides cancels rather than accumulates.
  */
-export function targetAnchor(fx: number, fy: number, referenceW: number, referenceH: number) {
-  const d = targetDenominator(fx, referenceW);
-  return { x: Math.round(referenceW - d + fx * d), y: Math.round(fy * referenceH) };
+export function targetAnchor(fx: number, fy: number, referenceW: number, referenceH: number, neocom: number) {
+  return { x: Math.round(neocom + fx * (referenceW - neocom)), y: Math.round(fy * referenceH) };
 }
 
 /**
  * Stored fractions for an anchor AT data px `x, y` — the exact inverse of
- * targetAnchor, and what the panel's pixel fields write.
- *
- * `fx` is the value being replaced, and is read only for its denominator: that
- * is the client's own margin, recovered from the number it wrote, and an edit
- * must not quietly re-base the value onto ours. A minted value has none to
- * recover and falls back to TARGET_MARGIN.
+ * targetAnchor, and what the client itself writes on a drag (`OnOriginMU`).
  */
 export function targetFractionFromPoint(
-  fx: number, x: number, y: number, referenceW: number, referenceH: number,
+  x: number, y: number, referenceW: number, referenceH: number, neocom: number,
 ): { x: number; y: number } {
-  const d = targetDenominator(fx, referenceW);
-  return { x: (Math.round(x) - (referenceW - d)) / d, y: Math.round(y) / referenceH };
+  return { x: (Math.round(x) - neocom) / (referenceW - neocom), y: Math.round(y) / referenceH };
 }
 
 const byName = (hud: Hud, name: string) => hud.entries.find((e) => e.name === name);
@@ -535,7 +512,7 @@ export function furnitureWrites(
     const fy = hudNum(hud, "target_y");
     if (!anchor || fx === null || fy === null) return [];
     const next = targetFractionFromPoint(
-      fx, anchor.x, anchor.y, layout.reference_w, layout.reference_h,
+      anchor.x, anchor.y, layout.reference_w, layout.reference_h, neocomWidth(hud),
     );
     const out: Array<[string, string]> = [];
     if (next.x !== fx) out.push(["target_x", String(next.x)]);
@@ -633,7 +610,8 @@ export function hudRects(
   const tx = hudNum(hud, "target_x");
   const ty = hudNum(hud, "target_y");
   if (tx !== null && ty !== null && stored(hud, "target_x") && stored(hud, "target_y")) {
-    const a = targetAnchor(tx, ty, layout.reference_w, layout.reference_h);
+    const n = neocomWidth(hud);
+    const a = targetAnchor(tx, ty, layout.reference_w, layout.reference_h, n);
     const { w, h } = targetSize(targetCount, hudFlag(hud, "target_horizontal"));
     out.push({
       kind: "target",
@@ -641,7 +619,7 @@ export function hudRects(
       // Placed through targetRect, not inline: the canvas re-places the box
       // from the same rule mid-drag, and the marker asks targetCorner which
       // corner it hangs from. Three readings of one predicate, in one place.
-      ...targetRect(a.x, a.y, w, h, layout.reference_w, layout.reference_h),
+      ...targetRect(a.x, a.y, w, h, layout.reference_w, layout.reference_h, n),
       w,
       h,
       drag: "xy",

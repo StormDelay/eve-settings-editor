@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Hud, HudEntry, HudKind, NeocomBar } from "$lib/api";
-  import { EFFECT_COUNT_MAX, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
+  import { EFFECT_COUNT_MAX, neocomWidth, targetAnchor, targetFractionFromPoint, type FurnitureRect } from "$lib/layout";
   import NeocomButtons from "$lib/NeocomButtons.svelte";
   import Button from "./ui/Button.svelte";
   import Chip from "./ui/Chip.svelte";
@@ -108,16 +108,15 @@
   // fraction of the whole width, since x spans only what is right of the
   // neocom. Nobody wants to type 0.5442122186495176 to nudge it. These two rows
   // show the pixel that fraction lands on at the file's own reference size, and
-  // convert back on write through the same pair the canvas drag uses, so the
-  // client's own denominator survives the edit. Everything else here is already
-  // a pixel and passes straight through.
+  // convert back on write through the same pair the canvas drag uses.
+  // Everything else here is already a pixel and passes straight through.
   const AXIS: Record<string, "x" | "y"> = { target_x: "x", target_y: "y" };
   const asPixels = $derived(referenceW > 0 && referenceH > 0);
   const frac = (name: string) => {
     const n = parseFloat(raw(name));
     return Number.isFinite(n) ? n : 0;
   };
-  const anchorPx = () => targetAnchor(frac("target_x"), frac("target_y"), referenceW, referenceH);
+  const anchorPx = () => targetAnchor(frac("target_x"), frac("target_y"), referenceW, referenceH, neocomWidth(hud));
   const shown = (name: string) =>
     AXIS[name] && asPixels ? String(Math.round(anchorPx()[AXIS[name]])) : raw(name);
   // `readOnly` is the CHARACTER document's flag. An account-scoped row writes
@@ -179,11 +178,11 @@
       // Feed the OTHER axis its current pixel so this edit moves one axis only.
       const a = anchorPx();
       const next = targetFractionFromPoint(
-        frac("target_x"),
         axis === "x" ? Number(text) : a.x,
         axis === "y" ? Number(text) : a.y,
         referenceW,
         referenceH,
+        neocomWidth(hud),
       );
       onSet(name, String(next[axis]));
     } else {

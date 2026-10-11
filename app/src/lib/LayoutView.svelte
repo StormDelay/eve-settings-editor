@@ -4,7 +4,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
-    hudNum, hudFlag, targetAnchor, targetRect, targetCorner, furnitureWrites,
+    hudNum, hudFlag, neocomWidth, NEOCOM_DEFAULT_WIDTH, targetAnchor, targetRect, targetCorner, furnitureWrites,
     DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys, leaveToast,
@@ -495,7 +495,7 @@
   const targetMarkerCorner = $derived.by(() => {
     if (!layout) return null;
     const a = targetDragAnchor ?? committedTargetAnchor();
-    return a ? targetCorner(a.x, a.y, layout.reference_w, layout.reference_h) : null;
+    return a ? targetCorner(a.x, a.y, layout.reference_w, layout.reference_h, hud ? neocomWidth(hud) : NEOCOM_DEFAULT_WIDTH) : null;
   });
 
   /** The target list's committed anchor, from the stored fractions. Null when
@@ -505,7 +505,7 @@
     const fx = hudNum(hud, "target_x");
     const fy = hudNum(hud, "target_y");
     if (fx === null || fy === null) return null;
-    return targetAnchor(fx, fy, layout.reference_w, layout.reference_h);
+    return targetAnchor(fx, fy, layout.reference_w, layout.reference_h, neocomWidth(hud));
   }
 
   /** Pointer position in data px, relative to the canvas origin. */
@@ -642,7 +642,7 @@
           ...fPreview,
           [f.kind]: targetRect(
             targetDragAnchor.x, targetDragAnchor.y, f.w, f.h,
-            layout.reference_w, layout.reference_h,
+            layout.reference_w, layout.reference_h, hud ? neocomWidth(hud) : NEOCOM_DEFAULT_WIDTH,
           ),
         };
         return;

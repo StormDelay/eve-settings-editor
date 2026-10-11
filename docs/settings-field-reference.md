@@ -292,7 +292,10 @@ kinds derive identically. The third element is the channel's display name, which
 **Neocom.** `neocomButtonRawData` (370) `List[Instance]`,
 `neocomButtonRawDataOriginal` (367) `Tuple[Instance]` — the neocom button set.
 Format recorded in `format-notes.md` §"Neocom buttons"; already modelled
-(reorder/remove/add/reset).
+(reorder/remove/add/reset). The bar's width is `neocomWidth` `Int` in this same
+section (default 48, 32..72), written only once the player resizes the bar;
+its side is `neocomAlign` (4 left, 6 right; default left — no corpus file sets
+it).
 
 **Per-item / session state — do not model.** `listgroups` (348, 561 keys),
 `viewedWrecks` (367), `neoblinkByID` (290), `ScrollColumnHeader_State` (234),
@@ -325,7 +328,7 @@ Root is a dict of **10 sections**, all present in every file.
 | `suppress` | 18 | Dismissed "don't ask me again" dialogs |
 | `defaultoverview` | 3 | Which bundled overview pack is installed |
 | `cmd` | 1 (`customCmds`) | **Keybindings** |
-| `windows` | 1 (`neocomWidth`) | Neocom width |
+| `windows` | 1 (`neocomWidth`) | **Legacy** neocom width — the pre-migration copy; the client reads the character file's `ui → neocomWidth` |
 | `localization` | 0 | **always empty** |
 | `notifications` | 0 | **always empty** |
 
@@ -833,7 +836,8 @@ Relationships that matter for editing:
    the stacks without their tab selection.
 
 4. **The HUD is split across scopes**, as already documented: offsets in the
-   character file, the on/off toggles and neocom width in the account file.
+   character file (the neocom width too), the on/off toggles in the account
+   file.
 
 5. **Column vocabulary is shared**: `overviewColumns`/`overviewColumnOrder`
    (account defaults), `tabsettings_new[i].tabColumns`/`tabColumnOrder` (per-tab
