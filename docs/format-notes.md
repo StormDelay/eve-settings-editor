@@ -1239,6 +1239,15 @@ the anchor — which is the panel's left edge and the ability grid's top.
 Same two lessons as the ship HUD: **everything is round**, and there is a
 **control column on the left that was never drawn**.
 
+**The panel box is the client's container, 464 x 266** (read 2026-10-11 from
+`squadronsUI`): an autosized box over squadrons 80 wide on an 86 pitch from
+x 40, so `34 + 86n` wide and 266 tall. The figures below are its art, and agree
+with the code: each dial is the art of an 86-wide `SquadronCont` at
+x 40 + 86i (so ⌀81 centred at 42.5), the ability icons sit in a 64-wide
+`AbilitiesCont` at x 20 (centred on 92, the measured 70..114). The last dial's
+container overhangs the panel by 3px, which is why the art measured 467 wide.
+The client also clamps a stored point to `x ≤ W − 32`, `y ≤ H − 266`.
+
 **It is the squadron row, not the ability grid, that sets the panel width.** At
 the 5-squadron carrier maximum `42 + 86 × 4 + 81 = 467`, exactly
 `HUD_NOMINAL.fighter.w`; the ability grid stops short at
@@ -1501,8 +1510,12 @@ tall on a screen 900+ high and 138 below, per `actionPanelDefaults`), subtracts
 15 from its left, and puts the anchor at the window's left edge when it sits
 right of the screen's middle, at its right edge when left of it, at the window's
 top either way. A window straddling the middle sends it to `(W − 300, 16)`. The
-client uses the bounding box of the window plus anything snapped on top of it
-(`FindConnectingWindows('top')`); the editor uses the window alone. Resetting
+rect is the bounding box of the window plus every window snapped on top of it
+(`FindConnectingWindows('top')` + `GetGroupAbsolute`): a window joins when its
+bottom-left sits exactly on a member's top-left or its bottom-right on a
+member's top-right, followed upward, among windows on screen and not stacked
+inside another; a minimized Selected Item is read alone. The editor does the
+same over the windows it counts as reopened. Resetting
 the window settings in game deletes `targetOrigin`, which puts the list back on
 this rule. The canvas draws the list there, and a first drag mints both axes.
 

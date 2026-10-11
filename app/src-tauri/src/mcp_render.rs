@@ -61,7 +61,8 @@ const SHIPUI: (i64, i64) = (648, 176);
 /// SHIP_ANCHOR_LEFT are the measured, compass-on figures.
 const COMPASS_RACKS: i64 = 16;
 const COMPASS_CLUSTER: i64 = 10;
-const FIGHTER: (i64, i64) = (467, 264);
+/// The client's panel container at 5 squadrons (layout.ts HUD_NOMINAL).
+const FIGHTER: (i64, i64) = (464, 266);
 const BADGE: (i64, i64) = (32, 32);
 /// One target slot; a list is N of these in a row or a column.
 const TARGET: (i64, i64) = (110, 181);
@@ -86,15 +87,50 @@ fn stored(hud: &Hud, name: &str) -> bool {
     hud.entries.iter().any(|e| e.name == name && !matches!(e.set, SetTarget::Unavailable) && e.value.is_some())
 }
 
+/// The Selected Item window (or its stack) with every window snapped on top of
+/// it, as `(x, y, w)` of the bounding box (layout.ts selectedItemGroup): a
+/// window joins when its bottom-left sits on a member's top-left or its
+/// bottom-right on a member's top-right, followed upward; only windows the
+/// client reopens, not tabs inside a stack. A minimized one is read alone.
+fn selected_item_group(wl: &WindowLayout) -> Option<(i64, i64, i64)> {
+    use settings_model::{StackRef, StackRole};
+    let sel = wl.windows.iter().find(|x| x.id == "selecteditemview")?;
+    let host = match &sel.stack {
+        Some(StackRef { role: StackRole::Member, container_id }) => wl.windows.iter().find(|x| &x.id == container_id).unwrap_or(sel),
+        _ => sel,
+    };
+    let g = host.geom.as_ref().or(sel.geom.as_ref())?;
+    let mut group = vec![(g.x, g.y, g.w, g.h)];
+    if !sel.flags.iter().any(|f| f.name == "minimizedWindows" && f.value) {
+        let shown: Vec<(i64, i64, i64, i64)> = wl.windows.iter()
+            .filter(|x| !std::ptr::eq(*x, host) && x.renderable && crate::mcp_filter::reopens(x)
+                && !matches!(x.stack, Some(StackRef { role: StackRole::Member, .. })))
+            .filter_map(|x| x.geom.as_ref().map(|g| (g.x, g.y, g.w, g.h)))
+            .collect();
+        let mut i = 0;
+        while i < group.len() {
+            let a = group[i];
+            for &b in &shown {
+                if !group.contains(&b) && b.1 + b.3 == a.1 && (b.0 == a.0 || b.0 + b.2 == a.0 + a.2) {
+                    group.push(b);
+                }
+            }
+            i += 1;
+        }
+    }
+    let x = group.iter().map(|g| g.0).min()?;
+    let y = group.iter().map(|g| g.1).min()?;
+    let r = group.iter().map(|g| g.0 + g.2).max()?;
+    Some((x, y, r - x))
+}
+
 /// Where the client puts a target list the account never placed
 /// (layout.ts targetFractions): beside the Selected Item window, from its
 /// rect or that window's own default.
 fn default_target(hud: &Hud, wl: &WindowLayout) -> (f64, f64) {
     let (w, h) = (wl.reference_w, wl.reference_h);
     let n = hud_num(hud, "neocom_width").map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64);
-    let r = wl.windows.iter().find(|x| x.id == "selecteditemview").and_then(|x| x.geom.as_ref())
-        .map(|g| (g.x, g.y, g.w))
-        .unwrap_or((w - 566 - 16, 16, 566));
+    let r = selected_item_group(wl).unwrap_or((w - 566 - 16, 16, 566));
     let left = r.0 - 15;
     let (pw, mid) = ((w - n) as f64, w / 2);
     if left + r.2 < mid {
@@ -128,7 +164,12 @@ pub(crate) fn furniture(hud: &Hud, wl: &WindowLayout, targets: u8) -> Vec<Furnit
     }
     if let (Some(x), Some(y)) = (hud_num(hud, "fighter_x"), hud_num(hud, "fighter_y")) {
         // Never dragged: the client centres it (layout.ts fighterPoint).
-        let (x, y) = if stored(hud, "fighter_x") && stored(hud, "fighter_y") { (x, y) } else { ((rw / 2) as f64, (rh / 2 - 60) as f64) };
+        // Clamped as the client clamps it (layout.ts fighterPoint).
+        let (x, y) = if stored(hud, "fighter_x") && stored(hud, "fighter_y") {
+            (x.min((rw - 32) as f64), y.min((rh - FIGHTER.1) as f64))
+        } else {
+            ((rw / 2) as f64, (rh / 2 - 60) as f64)
+        };
         if hud_flag(hud, "fighter_detached") && hud_flag(hud, "fighter_shown") {
             out.push(Furniture { kind: "fighter", label: "Fighter panel", x: x as i64, y: y as i64, w: FIGHTER.0, h: FIGHTER.1 });
         }
@@ -569,7 +610,7 @@ mod tests {
         assert_eq!(s.y, 1440 - 12 - 176, "bottom-aligned by default");
         assert_eq!((s.w, s.h), (648, 176));
         let f = find(&rects, "fighter");
-        assert_eq!((f.x, f.y, f.w, f.h), (326, 54, 467, 264));
+        assert_eq!((f.x, f.y, f.w, f.h), (326, 54, 464, 266));
         let b = find(&rects, "badge");
         assert_eq!((b.x, b.y, b.w, b.h), (1000, 20, 32, 32));
         // Anchor (72 + 1354, 752): right of centre and below it, so the slot
@@ -616,6 +657,16 @@ mod tests {
         let ts = furniture(&unplaced, &beside, 1);
         let t = find(&ts, "target");
         assert_eq!((t.x, t.y), (100 - 15 + 400, 200));
+        // A reopened window snapped on top of it (bottom-left on its top-left)
+        // joins the group, so the anchor rises to that window's top.
+        let mut snapped = layout();
+        snapped.windows[0].id = "selecteditemview".into();
+        let above = snapped.windows.iter_mut().find(|w| w.id == "fitting").expect("fixture window");
+        above.id = "market".into();
+        above.open = true;
+        if let Some(g) = above.geom.as_mut() { (g.x, g.y, g.w, g.h) = (100, 100, 400, 100); }
+        let ts = furniture(&unplaced, &snapped, 1);
+        assert_eq!(find(&ts, "target").y, 100, "the snapped window's top");
         // A never-dragged fighter panel sits where the client puts it.
         let unset = with(
             with(full_hud(), entry("fighter_x", None, HudKind::Int, "0", set())),

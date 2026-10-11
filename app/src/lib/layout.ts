@@ -310,9 +310,12 @@ const SHIP_BOTTOM_MARGIN = 12;
  * a button width and lands 5px short, so windows snapped just inside the real
  * HUD. See docs/format-notes.md, "Ship HUD internals".
  *
- * `fighter` covers 5 squadrons, the most a carrier can field. The shot had 4
- * (3 launched, so 3 ability columns); column pitch is 86, so the fifth adds 86
- * to the measured 381. Height does not change with squadron count.
+ * `fighter` is the client's own panel container at 5 squadrons, the most a
+ * carrier can field (squadronsUI, 2026-10-11): an autosized box over its
+ * squadrons, 80 wide on an 86 pitch from x 40, so `34 + 86 x 5 = 464` wide and
+ * 266 tall whatever the count. The measurements (467 x 264) were the art: the
+ * last dial's 86-wide container overhangs the panel by 3px, and the control
+ * column's buttons end 2px above its bottom.
  *
  * Both HEIGHTS were re-measured 2026-07-30 and both grew:
  *
@@ -321,13 +324,14 @@ const SHIP_BOTTOM_MARGIN = 12;
  *   old 160 was inferred from the rack block rather than measured, and pairs
  *   with the old 28px top margin — both were wrong together, which is why the
  *   rack still landed in the right place and nothing looked broken.
- * - `fighter` 253 -> 264. The fighter CONTROL COLUMN, four buttons left of the
- *   squadron dials, is the panel's lowest element and ends at 264. It was never
- *   drawn before, so nothing had noticed it hanging out of the box.
+ * - `fighter` 253 -> 264 -> 266. The fighter CONTROL COLUMN, four buttons left
+ *   of the squadron dials, is the panel's lowest element; it was never drawn
+ *   before, so nothing had noticed it hanging out of the box. 266 is the
+ *   client's container height.
  */
 export const HUD_NOMINAL = {
   shipui: { w: 648, h: 176 },
-  fighter: { w: 467, h: 264 },
+  fighter: { w: 464, h: 266 },
   badge: { w: 32, h: 32 },
   // ONE target slot, measured 2026-07-31: the list's slot pitch is 110 across
   // and 181 down (four label rows apart, in three shots). A list is N of these
@@ -466,9 +470,9 @@ export function pointUnplaced(hud: Hud, x: string, y: string): boolean {
  * straddling the middle sends the list to `(W - 300, 16)`. Null when the field
  * is not writable at all.
  *
- * ponytail: the client uses the bounding box of the Selected Item window AND
- * any windows snapped on top of it (`FindConnectingWindows('top')`); this uses
- * the window's own rect. They differ only when something is docked above it.
+ * "The Selected Item window's rect" is the bounding box of it and every window
+ * snapped on top of it (selectedItemGroup) — unless it is minimized, when the
+ * client reads its stored rect alone.
  */
 export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y: number } | null {
   const tx = hudNum(hud, "target_x");
@@ -478,10 +482,9 @@ export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y:
   const W = layout.reference_w;
   const H = layout.reference_h;
   const n = neocomWidth(hud);
-  const g = layout.windows.find((w) => w.id === "selecteditemview")?.geom;
   // actionPanelDefaults: 566 wide, 16 in from the top right, 174 tall on a
   // screen 900 high or more and 138 below that.
-  const r = g ?? { x: W - 566 - 16, y: 16, w: 566, h: H >= 900 ? 174 : 138 };
+  const r = selectedItemGroup(layout) ?? { x: W - 566 - 16, y: 16, w: 566, h: H >= 900 ? 174 : 138 };
   const left = r.x - 15;
   const mid = Math.floor(W / 2);
   if (left + r.w < mid) return { x: (left + r.w - n) / (W - n), y: r.y / H };
@@ -489,12 +492,54 @@ export function targetFractions(hud: Hud, layout: WindowLayout): { x: number; y:
   return { x: (W - 300) / W, y: 16 / H };
 }
 
+/**
+ * The Selected Item window (or its stack) together with every window snapped
+ * on top of it, as the client gathers them for the target list's default
+ * (`FindConnectingWindows('top')` + `GetGroupAbsolute`): a window joins when
+ * its bottom-left corner sits exactly on a member's top-left, or its
+ * bottom-right on a member's top-right, followed upward. Only windows on screen
+ * count — ones the client reopens, not tabs inside a stack. A minimized Selected
+ * Item is read alone. Null when the file stores no rect for it.
+ */
+function selectedItemGroup(layout: WindowLayout): Rect | null {
+  const sel = layout.windows.find((w) => w.id === "selecteditemview");
+  if (!sel?.geom) return null;
+  const host = sel.stack?.role === "member"
+    ? (layout.windows.find((w) => w.id === sel.stack!.container_id) ?? sel)
+    : sel;
+  const rectOf = (w: WindowRect): Rect => ({ x: w.geom!.x, y: w.geom!.y, w: w.geom!.w, h: w.geom!.h });
+  const start = host.geom ? rectOf(host) : rectOf(sel);
+  if (sel.flags.some((f) => f.name === "minimizedWindows" && f.value)) return start;
+  const shown = layout.windows.filter((w) =>
+    w !== host && w.geom && w.renderable && reopens(w) && w.stack?.role !== "member");
+  const group = [start];
+  for (let i = 0; i < group.length; i++) {
+    const a = group[i];
+    for (const w of shown) {
+      const b = rectOf(w);
+      if (group.some((g) => g.x === b.x && g.y === b.y && g.w === b.w && g.h === b.h)) continue;
+      const bottom = b.y + b.h;
+      if (bottom === a.y && (b.x === a.x || b.x + b.w === a.x + a.w)) group.push(b);
+    }
+  }
+  const x = Math.min(...group.map((g) => g.x));
+  const y = Math.min(...group.map((g) => g.y));
+  const r = Math.max(...group.map((g) => g.x + g.w));
+  const btm = Math.max(...group.map((g) => g.y + g.h));
+  return { x, y, w: r - x, h: btm - y };
+}
+
 export function fighterPoint(hud: Hud, referenceW: number, referenceH: number): { x: number; y: number } | null {
   const x = hudNum(hud, "fighter_x");
   const y = hudNum(hud, "fighter_y");
   if (x === null || y === null) return null;
-  if (stored(hud, "fighter_x") && stored(hud, "fighter_y")) return { x, y };
-  return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+  if (!stored(hud, "fighter_x") || !stored(hud, "fighter_y")) {
+    return { x: Math.floor(referenceW / 2), y: Math.floor(referenceH / 2) - 60 };
+  }
+  // The client clamps a stored point before drawing it, and writes the clamped
+  // value back (shipUI.UpdatePosition): one 32px button stays on screen across,
+  // the whole panel down.
+  return { x: Math.min(x, referenceW - 32), y: Math.min(y, referenceH - HUD_NOMINAL.fighter.h) };
 }
 
 /** A field's number: its value, else its default; null when not writable at all. */
@@ -562,7 +607,7 @@ export function shipOffsetFromX(x: number, referenceW: number, compass: boolean)
  * Sizes MEASURED 2026-07-28 from the same shot the anchor was confirmed on:
  * with 4 squadrons (3 launched) the panel spans 381x253 from the anchor, on a
  * column pitch of 86 shared by the ability grid and the squadron row. Five
- * squadrons is the carrier maximum, hence the 467 width in HUD_NOMINAL. Height
+ * squadrons is the carrier maximum, hence the 464 width in HUD_NOMINAL. Height
  * is independent of squadron count.
  */
 export function hudPointFromRect(kind: FurnitureRect["kind"], x: number, y: number): { x: number; y: number } {
