@@ -1454,3 +1454,30 @@ for (const id of ["chatchannel_local", "chatchannel_corp", "chatchannel_fleet", 
     leaveToast("Alpha-Intel", { outcome: "kept_no_account_file" }, nameOf) ===
       "Left Alpha-Intel. Open the account file to clear its account settings too.");
 }
+
+// --- neocom docking (#152) -------------------------------------------------
+import { screenX, storedX, onScreen, SNAP_DISTANCE } from "./layout.ts";
+{
+  // Window.UpdatePosition: a window docked at the left edge (stored 0, or the
+  // snap gap) is drawn past the neocom; every other x is plain screen pixels.
+  check("a window docked at 0 is drawn right of the neocom", screenX(0, 48) === 48);
+  check("so is one docked at the snap gap", screenX(SNAP_DISTANCE, 48) === 64);
+  check("any other x is screen pixels as stored", screenX(484, 48) === 484 && screenX(10, 48) === 10);
+  // _AccountForSideAutoSnapDistance: the client stores a window against the
+  // neocom as docked.
+  check("dropping against the neocom stores it docked", storedX(48, 48) === 0 && storedX(64, 48) === 16);
+  check("any other drop is stored as is", storedX(484, 48) === 484 && storedX(10, 48) === 10);
+  check("no neocom, no shift", screenX(0, 0) === 0 && storedX(16, 0) === 16);
+
+  // The reporter's file: a probe stack at 0, 436 wide, touches a chat stack at 484.
+  const geom = (x: number, w: number) => ({ x, y: 0, w, h: 100 }) as any;
+  const layout = {
+    reference_w: 2560, reference_h: 1440, stacks: [],
+    windows: [{ id: "probe", geom: geom(0, 436) }, { id: "chat", geom: geom(484, 506) }, { id: "none", geom: null }],
+  } as unknown as WindowLayout;
+  const shown = onScreen(layout, 48);
+  check("docked windows move on screen, the rest stay",
+    shown.windows[0].geom!.x === 48 && shown.windows[1].geom!.x === 484 && shown.windows[2].geom === null);
+  check("so the two stacks touch, as in game", shown.windows[0].geom!.x + shown.windows[0].geom!.w === shown.windows[1].geom!.x);
+  check("the stored layout is not changed", layout.windows[0].geom!.x === 0);
+}

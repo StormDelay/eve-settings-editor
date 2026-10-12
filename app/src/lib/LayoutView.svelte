@@ -4,7 +4,7 @@
   import type { WindowLayout, WindowRect, BoolFlag, Mutation, NewValue, NodePath, Slot, Hud, NeocomBar, OverviewColumns, ChatPanel } from "$lib/api";
   import {
     canvasScale, toCanvas, toData, resizeRect, stackUnits, hudRects,
-    hudNum, hudFlag, neocomWidth, NEOCOM_DEFAULT_WIDTH, targetAnchor, targetFractions, targetRect, targetCorner, furnitureWrites,
+    hudNum, hudFlag, neocomWidth, NEOCOM_DEFAULT_WIDTH, onScreen, storedX, targetAnchor, targetFractions, targetRect, targetCorner, furnitureWrites,
     DEFAULT_FILTER, filterIsActive, isOrphanFrame, visibleIds, drawnWindowCount,
     snapLines, movingEdges, snapDelta, unitAt, rectsAt, dropAction, linkInventory,
     tabTargetAt, isNudgeKey, nudgeStep, swallowsArrowKeys, leaveToast,
@@ -73,8 +73,12 @@
     focusSearch?: () => void;
   } = $props();
 
-  let layout = $state<WindowLayout | null>(null);
+  // The document's geometry as stored; `layout` is where the client draws it,
+  // which is what everything below reads (#152). Writes go back through
+  // `storedX` in geomMutations.
+  let stored = $state<WindowLayout | null>(null);
   let hud = $state<Hud | null>(null);
+  const layout = $derived(stored && onScreen(stored, hud ? neocomWidth(hud) : NEOCOM_DEFAULT_WIDTH));
   let neocom = $state<NeocomBar | null>(null);
   let columns = $state<OverviewColumns | null>(null);
   let chats = $state<ChatPanel[]>([]);
@@ -157,8 +161,8 @@
   async function load() {
     loadError = null;
     try {
-      layout = await api.windowLayout(slot);
-      if (selectedId && !layout.windows.some((w) => w.id === selectedId)) {
+      stored = await api.windowLayout(slot);
+      if (selectedId && !stored.windows.some((w) => w.id === selectedId)) {
         selectedId = null;
       }
     } catch (e) {
@@ -232,7 +236,7 @@
     const ms: Mutation[] = [];
     const setInt = (path: typeof g.x_path, v: number) =>
       ms.push({ op: "set_scalar", path, text: String(v) });
-    if (next.x !== undefined && next.x !== g.x) setInt(g.x_path, next.x);
+    if (next.x !== undefined && next.x !== g.x) setInt(g.x_path, storedX(next.x, hud ? neocomWidth(hud) : NEOCOM_DEFAULT_WIDTH));
     if (next.y !== undefined && next.y !== g.y) setInt(g.y_path, next.y);
     if (next.w !== undefined && next.w !== g.w) setInt(g.w_path, next.w);
     if (next.h !== undefined && next.h !== g.h) setInt(g.h_path, next.h);
@@ -325,9 +329,9 @@
   async function runStack(p: Promise<WindowLayout>): Promise<boolean> {
     stackError = null;
     try {
-      layout = await p;
+      stored = await p;
       onDirty("char"); // stack ops edit the character document in the backend
-      if (selectedId && !layout.windows.some((w) => w.id === selectedId)) selectedId = null;
+      if (selectedId && !stored.windows.some((w) => w.id === selectedId)) selectedId = null;
       return true;
     } catch (e) {
       stackError = { text: `The stack wasn't changed — ${errText(e)}`, detail: errMessage(e) };
@@ -362,7 +366,7 @@
     stackError = null;
     try {
       const r = await api.chatLeave(w.id);
-      layout = r.layout;
+      stored = r.layout;
       onDirty("char");
       if (r.account.outcome === "cleaned") onDirty("user");
       if (selectedId === w.id) selectedId = null;

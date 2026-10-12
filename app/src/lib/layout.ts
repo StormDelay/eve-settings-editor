@@ -377,6 +377,35 @@ export function neocomWidth(hud: Hud): number {
   return hudNum(hud, "neocom_width") ?? NEOCOM_DEFAULT_WIDTH;
 }
 
+/** The client's window snap gap (`carbonui.window.snap.SNAP_DISTANCE`). */
+export const SNAP_DISTANCE = 16;
+
+/**
+ * Where the client draws a window stored at `x`. Stored positions are plain
+ * screen pixels, except a window docked at the left edge — stored 0, or the
+ * snap gap — which the client pushes right of the neocom
+ * (`Window.UpdatePosition`, `sidePanelsLayer.UpdateWindowPositions`).
+ * ponytail: left-aligned neocom only — the default, and no corpus file sets
+ * `neocomAlign`; a right-aligned one pushes right-docked windows left instead.
+ */
+export function screenX(x: number, neocom: number): number {
+  return x === 0 || x === SNAP_DISTANCE ? x + neocom : x;
+}
+
+/** The inverse: the client stores a window against the neocom as docked
+ * (`Window._AccountForSideAutoSnapDistance`). */
+export function storedX(x: number, neocom: number): number {
+  return x === neocom || x === neocom + SNAP_DISTANCE ? x - neocom : x;
+}
+
+/** The layout with each window where the client draws it. */
+export function onScreen(layout: WindowLayout, neocom: number): WindowLayout {
+  return {
+    ...layout,
+    windows: layout.windows.map((w) => (w.geom ? { ...w, geom: { ...w.geom, x: screenX(w.geom.x, neocom) } } : w)),
+  };
+}
+
 /**
  * Where a target list of `w` x `h` is DRAWN for an anchor at `ax, ay`.
  *

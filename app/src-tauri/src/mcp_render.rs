@@ -287,7 +287,23 @@ pub(crate) fn glyph(c: char) -> [u8; 7] {
 /// a client without image support reads, so it must agree with the picture.
 /// `hud` adds the screen furniture, beneath the windows and outside the
 /// filter, as the canvas draws it.
-pub(crate) fn layout_png(wl: &WindowLayout, hud: Option<&Hud>, width: u32, f: &WindowFilter, o: &Overrides) -> (Vec<u8>, Legend) {
+/// The client's window snap gap (`carbonui.window.snap.SNAP_DISTANCE`).
+const SNAP_DISTANCE: i64 = 16;
+
+/// The layout with each window where the client draws it: a window docked at
+/// the left edge (stored 0, or the snap gap) is pushed right of the neocom
+/// (`Window.UpdatePosition`); every other x is plain screen pixels. Mirrors
+/// `layout.ts` `onScreen` (#152).
+/// ponytail: left-aligned neocom only, as in `layout.ts`.
+fn on_screen(wl: &mut WindowLayout, neocom: i64) {
+    for g in wl.windows.iter_mut().filter_map(|w| w.geom.as_mut()) {
+        if g.x == 0 || g.x == SNAP_DISTANCE { g.x += neocom; }
+    }
+}
+
+pub(crate) fn layout_png(mut wl: WindowLayout, hud: Option<&Hud>, width: u32, f: &WindowFilter, o: &Overrides) -> (Vec<u8>, Legend) {
+    on_screen(&mut wl, hud.and_then(|h| hud_num(h, "neocom_width")).map_or(NEOCOM_DEFAULT_WIDTH, |n| n as i64));
+    let wl = &wl;
     let width = width.clamp(MIN_W, MAX_W);
     let (rw, rh) = if wl.reference_w > 0 && wl.reference_h > 0 { (wl.reference_w, wl.reference_h) } else { (1920, 1080) };
     let scale = width as f64 / rw as f64;
@@ -474,7 +490,7 @@ mod tests {
 
     #[test]
     fn renders_at_the_requested_width_and_reference_aspect() {
-        let (png, legend) = layout_png(&layout(), None, 640, &filt(false), &Overrides::default());
+        let (png, legend) = layout_png(layout(), None, 640, &filt(false), &Overrides::default());
         let img = decode(&png);
         assert_eq!((img.0, img.1), (640, 360));
         assert_eq!((legend.width, legend.height), (640, 360));
@@ -484,7 +500,7 @@ mod tests {
     #[test]
     fn an_open_window_is_filled_a_closed_one_is_absent_unless_asked_and_a_stack_draws_once() {
         let wl = layout();
-        let (png, legend) = layout_png(&wl, None, 640, &filt(false), &Overrides::default());
+        let (png, legend) = layout_png(wl, None, 640, &filt(false), &Overrides::default());
         let img = decode(&png);
         // overview's centre at scale 0.25: (100+200, 200+300) -> (75, 125).
         let inside = px(&img, 75, 125);
@@ -498,9 +514,11 @@ mod tests {
         assert!(rows.iter().find(|r| r.id == "m1").is_none(), "a non-anchor stack member is never drawn, so it's omitted too");
         assert!(rows.iter().find(|r| r.id == "C").unwrap().drawn, "C is open with geometry, so it is the anchor");
 
-        let (png, legend) = layout_png(&wl, None, 640, &filt(true), &Overrides::default());
+        let (png, legend) = layout_png(layout(), None, 640, &filt(true), &Overrides::default());
         let img = decode(&png);
-        assert_ne!(px(&img, 0, 62), GROUND, "closed window drawn as an outline when asked");
+        // fitting is docked at x 0, so its left edge is drawn past the 48px
+        // neocom: 48 * 0.25 = 12.
+        assert_ne!(px(&img, 12, 62), GROUND, "closed window drawn as an outline when asked");
         let rows = &legend.windows;
         assert!(rows.iter().find(|r| r.id == "fitting").unwrap().drawn, "include_closed draws it as an outline");
         let in_stack: Vec<&LegendRow> = rows.iter().filter(|r| r.stack.as_deref() == Some("C")).collect();
@@ -522,7 +540,7 @@ mod tests {
     fn a_filtered_anchor_does_not_hide_a_stack_whose_matched_member_still_shows() {
         let wl = layout();
         let matching = WindowFilter { include_closed: true, hide_clutter: false, env: crate::mcp_filter::Env::All, matches: Some("m1".into()) };
-        let (png, legend) = layout_png(&wl, None, 640, &matching, &Overrides::default());
+        let (png, legend) = layout_png(wl, None, 640, &matching, &Overrides::default());
         let img = decode(&png);
         // C's box at scale 0.25: (1000,100,300,200) -> (250,25,75,50); a point inside it.
         let inside = px(&img, 260, 40);
@@ -530,7 +548,7 @@ mod tests {
         assert!(legend.windows.iter().any(|r| r.id == "m1"), "the legend lists m1, even though C (the anchor) did not itself match");
 
         let none_match = WindowFilter { matches: Some("nothing".into()), ..matching };
-        let (png, legend) = layout_png(&wl, None, 640, &none_match, &Overrides::default());
+        let (png, legend) = layout_png(layout(), None, 640, &none_match, &Overrides::default());
         let img = decode(&png);
         assert_eq!(px(&img, 260, 40), GROUND, "nothing in the stack matched, so it does not draw at all");
         assert_eq!(legend.hidden.matched, 5, "every one of the 5 windows in the fixture is counted once as unmatched");
@@ -547,9 +565,9 @@ mod tests {
 
     #[test]
     fn width_is_clamped() {
-        let (png, _) = layout_png(&layout(), None, 10, &filt(false), &Overrides::default());
+        let (png, _) = layout_png(layout(), None, 10, &filt(false), &Overrides::default());
         assert_eq!(decode(&png).0, 320);
-        let (png, _) = layout_png(&layout(), None, 9999, &filt(false), &Overrides::default());
+        let (png, _) = layout_png(layout(), None, 9999, &filt(false), &Overrides::default());
         assert_eq!(decode(&png).0, 2048);
     }
 
@@ -692,11 +710,25 @@ mod tests {
         assert!(has(with(full_hud(), entry("badge_x", None, HudKind::Int, "0", set())), "badge"), "the badge falls back to its default like the rest");
     }
 
+    /// A window docked at the left edge is drawn right of the neocom, where
+    /// the client puts it; any other x is plain screen pixels (#152).
+    #[test]
+    fn a_docked_window_is_drawn_right_of_the_neocom() {
+        let mut wl = layout();
+        for w in wl.windows.iter_mut() {
+            if let Some(g) = w.geom.as_mut() { if w.id == "overview" { g.x = 0 } else if w.id == "C" { g.x = 16 } }
+        }
+        on_screen(&mut wl, 72);
+        let x = |id: &str| wl.windows.iter().find(|w| w.id == id).unwrap().geom.as_ref().unwrap().x;
+        assert_eq!((x("overview"), x("C")), (72, 88));
+        assert_eq!(x("m1"), 1000, "an undocked window stays put");
+    }
+
     #[test]
     fn the_picture_paints_furniture_beneath_the_windows_and_the_legend_lists_it() {
         let wl = layout();
         let hud = full_hud();
-        let (png, legend) = layout_png(&wl, Some(&hud), 640, &filt(false), &Overrides { targets: 4, ..Overrides::default() });
+        let (png, legend) = layout_png(wl, Some(&hud), 640, &filt(false), &Overrides { targets: 4, ..Overrides::default() });
         let img = decode(&png);
         // The neocom at scale 0.25 is x 0..9, full height; (4, 300) is under nothing else.
         assert_eq!(px(&img, 4, 300), FURNITURE, "the neocom bar is painted in the furniture fill");
@@ -707,7 +739,7 @@ mod tests {
         assert_eq!(legend.furniture.len(), 5);
         let t = legend.furniture.iter().find(|r| r.kind == "target").unwrap();
         assert_eq!((t.w, t.h), (110, 181 * 4), "the legend's target list is at the preference's count");
-        let (_, legend) = layout_png(&wl, None, 640, &filt(false), &Overrides::default());
+        let (_, legend) = layout_png(layout(), None, 640, &filt(false), &Overrides::default());
         assert!(legend.furniture.is_empty(), "no HUD projection, no furniture");
     }
 }
