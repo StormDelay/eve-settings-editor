@@ -15,7 +15,7 @@ use blue_marshal::Value;
 
 use crate::overview_tabs::{overview_mut, OverviewTabError};
 use crate::treewalk::{
-    collect_shared, dict_inner_mut, effective, inline_all, is_bytes as is_b, root_child_dict,
+    collect_shared, dict_inner_mut, effective, inline_all, is_bytes as is_b, key_is, root_child_dict,
     SharedTable,
 };
 
@@ -112,12 +112,13 @@ fn as_f64<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<f64> {
 
 /// Read a `(surface, id)` colour key, returning the id only for `want`. On a
 /// real file the surface string is stored once and the other keys carry a `Ref`
-/// to it, so both parts go through `effective`.
-fn color_id<'a>(k: &'a Value, sh: &SharedTable<'a>, want: &[u8]) -> Option<i64> {
+/// to it, so both parts go through `effective`. The client writes `flag` as a
+/// string-table token, so the surface is matched in every key shape (#151).
+fn color_id<'a>(k: &'a Value, sh: &SharedTable<'a>, want: &str) -> Option<i64> {
     let Value::Tuple(parts) = effective(k, sh) else { return None };
     let [surface, id] = parts.as_slice() else { return None };
     match (effective(surface, sh), effective(id, sh)) {
-        (Value::Bytes(s), Value::Int(n)) if s.as_slice() == want => Some(*n),
+        (s, Value::Int(n)) if key_is(s, want) => Some(*n),
         _ => None,
     }
 }
@@ -147,7 +148,7 @@ pub fn state_colors(v: &Value, surface: &str) -> Vec<(i64, [f64; 4])> {
     };
     let Some(d) = inner else { return Vec::new() };
     d.iter()
-        .filter_map(|(k, val)| Some((color_id(k, &sh, surface.as_bytes())?, as_rgba(val, &sh)?)))
+        .filter_map(|(k, val)| Some((color_id(k, &sh, surface)?, as_rgba(val, &sh)?)))
         .collect()
 }
 
@@ -185,17 +186,23 @@ pub fn set_state_color(
     // `inline_all` above dropped every Shared/Ref, so the write path resolves
     // against an empty slot table.
     let flat = SharedTable::new();
-    let want = surface.as_bytes();
+    let is_it = |k: &Value| color_id(k, &flat, surface) == Some(id);
     match rgba {
-        None => entries.retain(|(k, _)| color_id(k, &flat, want) != Some(id)),
+        None => entries.retain(|(k, _)| !is_it(k)),
         Some([r, g, b_, a]) => {
             let val = Value::Tuple(vec![
                 Value::Float(r), Value::Float(g), Value::Float(b_), Value::Float(a),
             ]);
-            match entries.iter_mut().find(|(k, _)| color_id(k, &flat, want) == Some(id)) {
-                Some((_, slot)) => *slot = val,
+            match entries.iter().position(|(k, _)| is_it(k)) {
+                Some(i) => {
+                    entries[i].1 = val;
+                    // Earlier versions appended a bytes key beside the client's
+                    // token one; keep the first, drop the rest.
+                    let mut seen = 0;
+                    entries.retain(|(k, _)| !is_it(k) || { seen += 1; seen == 1 });
+                }
                 None => entries.push((
-                    Value::Tuple(vec![Value::Bytes(want.to_vec()), Value::Int(id)]),
+                    Value::Tuple(vec![Value::Bytes(surface.as_bytes().to_vec()), Value::Int(id)]),
                     val,
                 )),
             }
@@ -445,6 +452,42 @@ mod tests {
                 ]),
             ])),
         ]))])
+    }
+
+    /// The client writes the `flag` surface as string-table token 29, not as
+    /// bytes (#151). Reading must see it, setting must update it in place, and
+    /// clearing must remove it.
+    #[test]
+    fn the_flag_surface_as_a_string_table_token() {
+        let key = Value::Tuple(vec![Value::StrTable(29), Value::Int(48)]);
+        assert_eq!(blue_marshal::string_table::STRING_TABLE[29], "flag");
+        let mut v = Value::Dict(vec![(b("overview"), Value::Dict(vec![(
+            b("stateColors"),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(vec![(key, rgba(0.0, 0.0, 0.0, 1.0))])]),
+        )]))]);
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.0, 0.0, 0.0, 1.0])]);
+
+        set_state_color(&mut v, "flag", 48, Some([0.5, 0.5, 0.5, 1.0])).unwrap();
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.5, 0.5, 0.5, 1.0])], "updated in place, no duplicate key");
+
+        set_state_color(&mut v, "flag", 48, None).unwrap();
+        assert_eq!(state_colors(&v, "flag"), vec![]);
+    }
+
+    /// Files saved by earlier versions hold the client's token key AND a bytes
+    /// key for the same state; the next set keeps one.
+    #[test]
+    fn setting_a_colour_collapses_duplicate_keys() {
+        let token = Value::Tuple(vec![Value::StrTable(29), Value::Int(48)]);
+        let mut v = Value::Dict(vec![(b("overview"), Value::Dict(vec![(
+            b("stateColors"),
+            Value::Tuple(vec![Value::Long(vec![0u8; 8]), Value::Dict(vec![
+                (token, rgba(0.0, 0.0, 0.0, 1.0)),
+                (color_key("flag", 48), rgba(0.5, 0.5, 0.5, 1.0)),
+            ])]),
+        )]))]);
+        set_state_color(&mut v, "flag", 48, Some([0.2, 0.2, 0.2, 1.0])).unwrap();
+        assert_eq!(state_colors(&v, "flag"), vec![(48, [0.2, 0.2, 0.2, 1.0])]);
     }
 
     /// REPLACES `projects_only_the_background_surface`, which encoded the old
