@@ -1,12 +1,8 @@
 ## workflow
 
-EVE Online keeps each player's client settings in two files this server edits. `core_user_<id>.dat` is the **account** file: overview presets and appearance, and probe scan formations live there. `core_char_<id>.dat` is the **character** file: overview column widths and window layout. One account owns up to three characters, so several characters share one account file.
+EVE Online keeps each player's client settings in two files. `core_user_<id>.dat` is the **account** file: overview presets and appearance, probe formations, keybinds, autofill, chat and ship racks. One account owns up to three characters, which share it. `core_char_<id>.dat` is the **character** file: overview column widths, window layout, Neocom and HUD.
 
-Sequence: `list_characters` (which files exist and who they belong to) → `open` (the account file is required; add the character file for column widths) → `overview_get` or `probes_get` → the edit tools → `save`.
-
-`open` selects: each account keeps its own workspace for the whole conversation, so opening another character keeps the first one's unsaved edits, and reading five characters is five `open` calls with no reloads. An account's settings are edited through whichever of its characters is open; opening another character of the *same* account needs the current one saved (or undone) first — `unsaved_edits` says so. `status` lists every workspace and what is unsaved in it; `save` writes the current workspace, `save {all: true}` all of them. `open` with `discard: true` throws the unsaved edits away and reloads both files from disk, the window's own Discard — only when the user asks for it.
-
-When the app window is open, this server runs inside it: `status` says `mode: live` and shows what the window has open. Opening the window's character works in the user's own session — every edit appears there at once and the user can Ctrl+Z it; `undo` from here works only while your own step is on top (`window_edited` otherwise). Account-side settings of the window's account are edited through the window's character; a sibling opened privately has a read-only account slot that names the character to open instead. If the window switches files under you, the next call says `switched` — call `open` again.
+Sequence: `list_characters` → `open` (the account file is required; add the character file for column widths) → `overview_get` or `probes_get` → the edit tools → `save`.
 
 Rules:
 
@@ -14,11 +10,19 @@ Rules:
 2. Nothing reaches disk until `save`. Every edit tool changes memory and returns the new state. `restore_backup` is the one exception and says so.
 3. `save` fails with `conflict` when the file changed on disk since `open` — the game or the editor wrote it. Ask the user before retrying with `force: true`.
 4. Every save is backed up first. `list_backups` and `restore_backup` undo a save; `undo` reverts an unsaved edit.
-5. Group ids come from `groups_search`; state ids and labels come from `overview_get` under `names.states`; EVE's built-in presets come from `builtin_presets`.
+5. Group ids come from `groups_search`; state ids and labels from `overview_get` under `names.states`; EVE's built-in presets from `builtin_presets`.
+6. These WRITE IMMEDIATELY, not through `save`: `copy_apply`, `copy_files`, `slot_order_merge_apply`, `settings_preset_edit`.
+7. `open` with `discard: true` throws unsaved edits away — only when the user asks.
 
-Beyond the overview and probes, the same files hold: the window **layout** (`layout_get`, `layout_render` for a picture, `layout_edit`), the **Neocom** bar (`neocom_get`/`neocom_edit`) and **HUD** (`hud_get`/`hud_set`) — character file; **autofill** (`autofill_get`/`autofill_set`/`autofill_clear_all`), **keybinds** (`keybinds_get`/`keybind_set`), **chat** splits (`chat_get`/`chat_set_splits`) and **ship HUD racks** (`slot_order_get`/`slot_order_edit`) — account file; **fleet** settings (`fleet_get`/`fleet_edit`, `lookup_character`) — both. Three operations work across files and WRITE IMMEDIATELY rather than through `save`: **copy settings** (`copy_preview`, then `copy_apply`; `copy_files` for a whole file), **merging ship racks** across account files (`slot_order_merge_preview`, then `slot_order_merge_apply`) and **settings presets** (`settings_presets_list`, `settings_preset_edit`) — saved bundles this app keeps, unrelated to overview presets.
+Each account keeps its own workspace; `status` lists them. With the app window open, `status` says `mode: live`. Read `eve_guide workspaces` before editing several characters or in live mode.
 
-Unsure about a concept: `eve_guide` with `overview`, `presets`, `states`, `probes`, `layout`, `keybinds`, `racks` or `copy`.
+Other editors: `layout_get`/`layout_render`/`layout_edit`, `neocom_`, `hud_`, `autofill_`, `keybinds_`, `chat_`, `slot_order_` (ship racks), `fleet_`, `settings_presets_list` (saved bundles, not overview presets). Unsure: `eve_guide` with `workspaces`, `overview`, `presets`, `states`, `probes`, `layout`, `keybinds`, `racks` or `copy`.
+
+## workspaces
+
+`open` selects: each account keeps its own workspace for the whole conversation, so opening another character keeps the first one's unsaved edits, and reading five characters is five `open` calls with no reloads. An account's settings are edited through whichever of its characters is open; opening another character of the *same* account needs the current one saved (or undone) first — `unsaved_edits` says so. `status` lists every workspace and what is unsaved in it; `save` writes the current workspace, `save {all: true}` all of them. `open` with `discard: true` throws the unsaved edits away and reloads both files from disk, the window's own Discard — only when the user asks for it.
+
+When the app window is open, this server runs inside it: `status` says `mode: live` and shows what the window has open. Opening the window's character works in the user's own session — every edit appears there at once and the user can Ctrl+Z it; `undo` from here works only while your own step is on top (`window_edited` otherwise). Account-side settings of the window's account are edited through the window's character; a sibling opened privately has a read-only account slot that names the character to open instead. If the window switches files under you, the next call says `switched` — call `open` again.
 
 ## overview
 

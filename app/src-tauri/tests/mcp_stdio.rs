@@ -20,9 +20,8 @@ fn request(stdin: &mut impl Write, out: &mut impl BufRead, body: &str) -> serde_
     serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON-RPC: {e}: {line}"))
 }
 
-#[test]
-fn initialize_then_tools_list() {
-    let mut child = Command::new(exe())
+fn spawn() -> std::process::Child {
+    Command::new(exe())
         .arg("--mcp")
         // Pin headless: with a window open on a dev machine this would
         // otherwise relay to it and prove nothing about the headless path.
@@ -32,7 +31,12 @@ fn initialize_then_tools_list() {
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .expect("spawn --mcp");
+        .expect("spawn --mcp")
+}
+
+#[test]
+fn initialize_then_tools_list() {
+    let mut child = spawn();
     let mut stdin = child.stdin.take().unwrap();
     let mut out = BufReader::new(child.stdout.take().unwrap());
 
@@ -67,6 +71,29 @@ fn initialize_then_tools_list() {
             "slot_order_edit", "slot_order_get", "slot_order_merge_apply", "slot_order_merge_preview", "status", "undo",
         ]
     );
+
+    drop(stdin);
+    let _ = child.wait();
+}
+
+/// The 2026-07-28 revision drops `initialize` for per-request `_meta` and
+/// requires `ttlMs` and `cacheScope` on list results; Claude Code rejected the
+/// whole tool list without them (#147).
+#[test]
+fn tools_list_on_protocol_2026_07_28() {
+    let mut child = spawn();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+
+    let list = request(
+        &mut stdin,
+        &mut out,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+    );
+    let result = &list["result"];
+    assert!(result["tools"].as_array().is_some_and(|t| !t.is_empty()), "{list}");
+    assert!(result["ttlMs"].is_u64(), "ttlMs missing: {list}");
+    assert!(matches!(result["cacheScope"].as_str(), Some("public" | "private")), "cacheScope missing: {list}");
 
     drop(stdin);
     let _ = child.wait();
