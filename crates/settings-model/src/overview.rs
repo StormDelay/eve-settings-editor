@@ -602,6 +602,10 @@ pub fn copy_tab_columns(
 /// width, so there is no value to propagate.
 pub fn copy_tab_widths(char_tree: &mut Value, from: i64, to: &[i64]) -> Result<(), OverviewError> {
     let Some(src) = tab_widths_ordered(char_tree, from) else { return Ok(()) };
+    // A target's dict can hold the one stored copy of a column token that
+    // other tabs Ref; replacing the dict would destroy it. Inline first, as
+    // every other wholesale replace does.
+    crate::treewalk::inline_all(char_tree);
     let sizes_path = sort_headers_sizes_path(char_tree).ok_or(OverviewError::NoTab)?;
     // Immutable phase, mirroring `set_column_width`: resolve each target's
     // existing entry index by RESOLVED key (real files Ref/Shared-dedup the
@@ -1773,6 +1777,36 @@ mod tests {
         assert_eq!(tab_widths(&ch, 1).unwrap(), src, "existing target replaced, stale DISTANCE gone");
         assert_eq!(tab_widths(&ch, 2).unwrap(), src, "missing target created");
         assert_eq!(src.get("NAME"), Some(&120));
+    }
+
+    /// Real files store each column token once and Ref it from every other
+    /// tab's width dict. When the stored copy sits in a TARGET's dict,
+    /// replacing that dict destroyed it and every other tab — the source
+    /// included — lost the column.
+    #[test]
+    fn copying_widths_keeps_column_tokens_other_tabs_ref() {
+        let shared = |slot, s: &str| Value::Shared { slot, value: Box::new(b(s)) };
+        let mut ch = Value::Dict(vec![(
+            b("ui"),
+            Value::Dict(vec![(
+                b("SortHeadersSizes"),
+                Value::Tuple(vec![ts(), Value::Dict(vec![
+                    (Value::Tuple(vec![b("overviewScroll2"), Value::Int(3)]),
+                     Value::Dict(vec![(shared(1, "NAME"), Value::Int(97)), (shared(2, "ICON"), Value::Int(80))])),
+                    (Value::Tuple(vec![b("overviewScroll2"), Value::Int(0)]),
+                     Value::Dict(vec![(Value::Ref(1), Value::Int(118)), (Value::Ref(2), Value::Int(22))])),
+                    (Value::Tuple(vec![b("overviewScroll2"), Value::Int(5)]),
+                     Value::Dict(vec![(Value::Ref(1), Value::Int(60)), (Value::Ref(2), Value::Int(30))])),
+                ])]),
+            )]),
+        )]);
+        let src = tab_widths(&ch, 0).unwrap();
+        let other = tab_widths(&ch, 5).unwrap();
+        copy_tab_widths(&mut ch, 0, &[3]).unwrap();
+        let ch = blue_marshal::reshare::reshare(&ch);
+        assert_eq!(tab_widths(&ch, 0).unwrap(), src, "the source keeps its widths");
+        assert_eq!(tab_widths(&ch, 3).unwrap(), src, "the target gets them");
+        assert_eq!(tab_widths(&ch, 5).unwrap(), other, "a tab outside the copy is untouched");
     }
 
     #[test]
