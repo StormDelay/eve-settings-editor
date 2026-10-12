@@ -2323,11 +2323,21 @@ impl EveMcp {
     }
 }
 
+/// The newest MCP protocol version this server has been tested against.
+const MAX_PROTOCOL: ProtocolVersion = ProtocolVersion::V_2026_07_28;
+
 impl ServerHandler for EveMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("eve-settings-editor", env!("CARGO_PKG_VERSION")))
             .with_instructions(instructions())
+    }
+
+    /// Only the protocol versions tests/mcp_stdio.rs covers. rmcp's default
+    /// offers every version it knows, so a version nobody tested went live
+    /// the day a client adopted it (#147). Raise the ceiling with a test.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(ProtocolVersion::known_up_to(&MAX_PROTOCOL))
     }
 
     async fn list_tools(
@@ -3053,6 +3063,14 @@ mod tests {
             let v = s.call("eve_guide", &args(json!({ "topic": t }))).unwrap();
             assert!(v["text"].as_str().unwrap().contains(word), "{t} should mention {word}");
         }
+    }
+
+    #[test]
+    fn offers_protocol_versions_up_to_the_tested_ceiling() {
+        let s = EveMcp::for_tests();
+        let v = ServerHandler::supported_protocol_versions(&s);
+        assert_eq!(v.last(), Some(&MAX_PROTOCOL));
+        assert!(v.contains(&ProtocolVersion::V_2025_06_18));
     }
 
     #[test]
