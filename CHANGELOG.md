@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.44.0] - 2026-10-12
+
+Overview names with symbols work in game again, and the Layout view places docked windows where EVE does.
+
+### Changed
+- The Layout view and the MCP picture draw a window docked at the screen's left edge right of the Neocom, where EVE puts it.
+
+### Fixed
+- **Overview preset and tab names with symbols (✥, ❒, …) no longer make every overview window disappear in game; saving an affected file repairs it.**
+- Flag colours set in game show in the editor, and changing one no longer leaves a duplicate behind.
+- Exported overview packs keep flag colours and blinks.
+- Copying column widths between tabs no longer changes the widths of other tabs.
+
 ## [0.43.1] - 2026-10-12
 
 The MCP server's tools load in Claude Code again.
