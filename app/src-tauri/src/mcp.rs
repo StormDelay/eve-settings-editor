@@ -275,8 +275,8 @@ fn builtin_catalog() -> Vec<BuiltinPreset> {
     out
 }
 
-pub(crate) const TOPICS: [&str; 9] =
-    ["workflow", "overview", "presets", "states", "probes", "layout", "keybinds", "racks", "copy"];
+pub(crate) const TOPICS: [&str; 10] =
+    ["workflow", "workspaces", "overview", "presets", "states", "probes", "layout", "keybinds", "racks", "copy"];
 
 /// `(slug, body)` per `## ` heading, in file order.
 fn primer_sections() -> Vec<(&'static str, &'static str)> {
@@ -2323,6 +2323,9 @@ impl EveMcp {
     }
 }
 
+/// The newest MCP protocol version this server has been tested against.
+const MAX_PROTOCOL: ProtocolVersion = ProtocolVersion::V_2026_07_28;
+
 impl ServerHandler for EveMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
@@ -2330,12 +2333,21 @@ impl ServerHandler for EveMcp {
             .with_instructions(instructions())
     }
 
+    /// Only the protocol versions tests/mcp_stdio.rs covers. rmcp's default
+    /// offers every version it knows, so a version nobody tested went live
+    /// the day a client adopted it (#147). Raise the ceiling with a test.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(ProtocolVersion::known_up_to(&MAX_PROTOCOL))
+    }
+
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult::with_all_items(tools()))
+        // Protocol 2026-07-28 requires both on list results (#147). The list is
+        // fixed for the life of the process.
+        Ok(ListToolsResult::with_all_items(tools()).with_ttl_ms(3_600_000).with_cache_scope(CacheScope::Private))
     }
 
     async fn call_tool(
@@ -3054,9 +3066,20 @@ mod tests {
     }
 
     #[test]
+    fn offers_protocol_versions_up_to_the_tested_ceiling() {
+        let s = EveMcp::for_tests();
+        let v = ServerHandler::supported_protocol_versions(&s);
+        assert_eq!(v.last(), Some(&MAX_PROTOCOL));
+        assert!(v.contains(&ProtocolVersion::V_2025_06_18));
+    }
+
+    #[test]
     fn instructions_are_the_workflow_section() {
         assert_eq!(instructions(), primer("workflow").unwrap());
         assert!(instructions().contains("save"));
+        // Claude Code truncates server instructions past 2048 chars (#147);
+        // the rules must survive whole.
+        assert!(instructions().chars().count() <= 2048, "instructions are {} chars", instructions().chars().count());
     }
 
     #[test]
