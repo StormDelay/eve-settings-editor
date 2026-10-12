@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.43.1] - 2026-10-12
+
+The MCP server's tools load in Claude Code again.
+
+### Fixed
+- Claude Code no longer connects to the MCP server with zero tools.
+- The MCP server's instructions are no longer cut off by Claude Code.
+
 ## [0.43.0] - 2026-10-11
 
 Style overview tab names the way EVE draws them, and see your screen laid out exactly as the game places it.
