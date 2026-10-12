@@ -474,8 +474,9 @@ fn state_edits_survive_the_save_chain() {
         "resetting a colour must remove the entry, not write one"
     );
     // The colortag surface survives the round trip on its own key, and the
-    // background entry for the same state id is untouched by it.
-    assert_eq!(ov.appearance.flag_colors, vec![(13, [0.0, 0.0, 0.0, 1.0])]);
+    // background entry for the same state id is untouched by it. 48 is the
+    // fixture's client-written flag colour, keyed by string-table token (#151).
+    assert_eq!(ov.appearance.flag_colors, vec![(48, [1.0, 1.0, 0.0, 1.0]), (13, [0.0, 0.0, 0.0, 1.0])]);
 
     assert!(overview_bools(&back).iter().any(|(k, v)| k == "hideCorpTicker" && *v));
 }
