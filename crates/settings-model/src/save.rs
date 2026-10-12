@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use blue_marshal::{decode, encode};
+use blue_marshal::{decode, encode, Value};
 use serde::Serialize;
 
 use crate::document::{Document, Fidelity};
@@ -43,6 +43,8 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
     if let Fidelity::ReadOnly { reason } = &doc.fidelity {
         return Err(SaveError::ReadOnly(reason.clone()));
     }
+    // 0. Text in the shapes the client reads.
+    normalize_text(&mut doc.value).map_err(SaveError::Encode)?;
     // 1. Encode.
     let encoded = encode(&doc.value).map_err(|e| SaveError::Encode(e.to_string()))?;
     // 2. Verify: decode our own output and compare bit-exactly.
@@ -76,6 +78,58 @@ pub fn save(doc: &mut Document, force_conflict: bool) -> Result<SaveReport, Save
         }
     }
     Ok(SaveReport { backup_path, bytes_written: encoded.len() })
+}
+
+/// EVE stores non-ASCII text only as UTF8, and never shares it (0 of 10,376
+/// corpus files otherwise). A non-ASCII name stored as bytes, as the editors
+/// build them, made every overview window vanish in game; a shared UTF8 made
+/// the client replace the whole account file with defaults (#150). So any
+/// such bytes become UTF8 here, the one place every editor's write passes,
+/// and sharing is re-derived — `reshare` never shares text. A file without
+/// them is left exactly as it is.
+fn normalize_text(v: &mut Value) -> Result<(), String> {
+    fn is_text_bytes(b: &[u8]) -> bool {
+        !b.is_ascii() && std::str::from_utf8(b).is_ok()
+    }
+    fn any(v: &Value, hit: &dyn Fn(&Value) -> bool) -> bool {
+        hit(v) || match v {
+            Value::Shared { value, .. } => any(value, hit),
+            Value::Tuple(xs) | Value::List(xs) => xs.iter().any(|x| any(x, hit)),
+            Value::Dict(es) => es.iter().any(|(k, x)| any(k, hit) || any(x, hit)),
+            Value::Stream(inner) => any(inner, hit),
+            Value::Instance { class, state } => any(class, hit) || any(state, hit),
+            Value::Reduce { ctor, items, pairs, .. } => {
+                any(ctor, hit) || items.iter().any(|x| any(x, hit)) || pairs.iter().any(|(k, x)| any(k, hit) || any(x, hit))
+            }
+            _ => false,
+        }
+    }
+    fn convert(v: &mut Value) {
+        match v {
+            Value::Bytes(b) if is_text_bytes(b) => *v = Value::Str(String::from_utf8(std::mem::take(b)).unwrap()),
+            Value::Shared { value, .. } => convert(value),
+            Value::Tuple(xs) | Value::List(xs) => xs.iter_mut().for_each(convert),
+            Value::Dict(es) => es.iter_mut().for_each(|(k, x)| { convert(k); convert(x) }),
+            Value::Stream(inner) => convert(inner),
+            Value::Instance { class, state } => { convert(class); convert(state) }
+            Value::Reduce { ctor, items, pairs, .. } => {
+                convert(ctor);
+                items.iter_mut().for_each(convert);
+                pairs.iter_mut().for_each(|(k, x)| { convert(k); convert(x) });
+            }
+            _ => {}
+        }
+    }
+    if any(v, &|x| matches!(x, Value::Bytes(b) if is_text_bytes(b))) {
+        let mut flat = blue_marshal::inline(v);
+        convert(&mut flat);
+        *v = blue_marshal::reshare(&flat);
+    }
+    let shared_text = |x: &Value| matches!(x, Value::Shared { value, .. } if matches!(**value, Value::Str(_) | Value::StrUcs2(_)));
+    if any(v, &shared_text) {
+        return Err("shared text: the client would reset the whole file".into());
+    }
+    Ok(())
 }
 
 /// Copy `target` into `<dir>/eve-settings-editor-backups/<name>.<stamp>.bak`
@@ -170,6 +224,20 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_text_is_refused_and_plain_files_are_left_alone() {
+        let shared = Value::List(vec![
+            Value::Shared { slot: 1, value: Box::new(Value::Str("✥".into())) },
+            Value::Ref(1),
+        ]);
+        assert!(normalize_text(&mut shared.clone()).is_err());
+
+        let plain = Value::List(vec![Value::Shared { slot: 1, value: Box::new(Value::Bytes(b"ab".to_vec())) }, Value::Ref(1)]);
+        let mut v = plain.clone();
+        normalize_text(&mut v).unwrap();
+        assert!(v.bits_eq(&plain), "nothing to convert: sharing untouched");
+    }
 
     #[test]
     fn civil_from_days_known_dates() {

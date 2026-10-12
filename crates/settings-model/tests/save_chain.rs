@@ -2,6 +2,8 @@
 //! spec §5 invariants: backup-before-write, abort-leaves-file-untouched,
 //! conflict detection, and the ReadOnly refusal.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -115,4 +117,44 @@ fn read_only_document_refuses_to_save() {
         Err(SaveError::ReadOnly(_)) => {}
         other => panic!("expected ReadOnly, got {other:?}"),
     }
+}
+
+/// EVE stores non-ASCII text only as unshared UTF8. A name written as bytes
+/// made every overview window vanish in game, and a shared UTF8 made the
+/// client replace the whole account file with defaults (#150). Whatever the
+/// editors build in memory, the saved file must hold neither.
+#[test]
+fn non_ascii_names_are_saved_as_unshared_text() {
+    fn walk(v: &Value, shared: bool, bad: &mut Vec<String>) {
+        match v {
+            Value::Bytes(b) if !b.is_ascii() => bad.push(format!("bytes {}", String::from_utf8_lossy(b))),
+            Value::Str(s) | Value::StrUcs2(s) if shared => bad.push(format!("shared text {s}")),
+            Value::Shared { value, .. } => walk(value, true, bad),
+            Value::Tuple(xs) | Value::List(xs) => xs.iter().for_each(|x| walk(x, false, bad)),
+            Value::Dict(es) => es.iter().for_each(|(k, x)| { walk(k, false, bad); walk(x, false, bad) }),
+            _ => {}
+        }
+    }
+    let dir = temp_settings_dir("non-ascii");
+    let fixture = common::corpus().iter().find(|f| f.synthetic && f.name() == "core_user_80000001.dat").unwrap().bytes.clone();
+    let path = dir.join("core_user_80000001.dat");
+    fs::write(&path, &fixture).unwrap();
+    let mut doc = Document::load(&path).unwrap();
+    // The ops chain: edit, then reshare after each edit.
+    settings_model::create_preset(&mut doc.value, "hostile", "✥ Target: Drones").unwrap();
+    doc.value = blue_marshal::reshare(&doc.value);
+    settings_model::set_tab_preset(&mut doc.value, 0, "✥ Target: Drones").unwrap();
+    doc.value = blue_marshal::reshare(&doc.value);
+    settings_model::rename_tab(&mut doc.value, 0, "<b> ❒ </b>").unwrap();
+    doc.value = blue_marshal::reshare(&doc.value);
+    save(&mut doc, false).unwrap();
+
+    let back = blue_marshal::decode(&fs::read(&path).unwrap()).unwrap();
+    let mut bad = vec![];
+    walk(&back, false, &mut bad);
+    assert!(bad.is_empty(), "{bad:?}");
+    let ov = settings_model::project_overview(&back, None);
+    let tab = ov.tabs.iter().find(|t| t.index == 0).unwrap();
+    assert_eq!((tab.name.as_str(), tab.preset.as_str()), ("<b> ❒ </b>", "✥ Target: Drones"));
+    assert!(ov.presets.iter().any(|p| p.name == "✥ Target: Drones"));
 }
