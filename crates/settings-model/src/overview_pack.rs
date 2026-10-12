@@ -716,6 +716,8 @@ fn text<'a>(v: &'a Value, sh: &SharedTable<'a>) -> Option<String> {
     match effective(v, sh) {
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
         Value::Str(s) | Value::StrUcs2(s) => Some(s.clone()),
+        // The client writes `flag` in colour and blink keys this way (#151).
+        Value::StrTable(i) => blue_marshal::string_table::STRING_TABLE.get(*i as usize).map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -1171,7 +1173,8 @@ userSettings:
                  Value::Tuple(vec![Value::Float(0.42), Value::Float(0.42), Value::Float(0.42), Value::Float(1.0)])),
             ])])),
             (b("stateBlinks"), Value::Tuple(vec![ts(), Value::Dict(vec![
-                (Value::Tuple(vec![b("flag"), Value::Int(9)]), Value::Bool(true)),
+                // The client writes `flag` as string-table token 29 (#151).
+                (Value::Tuple(vec![Value::StrTable(29), Value::Int(9)]), Value::Bool(true)),
             ])])),
             (b("overviewBroadcastsToTop"), Value::Tuple(vec![ts(), Value::Bool(true)])),
         ]))])
