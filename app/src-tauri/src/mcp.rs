@@ -1335,7 +1335,7 @@ impl EveMcp {
                 // this cannot fail on that; the account file is optional and
                 // only costs the account-scoped furniture when absent.
                 let hud = ops::hud_layout(&self.state()).map_err(fail)?;
-                let (png, legend) = crate::mcp_render::layout_png(&wl, Some(&hud), width, &filter, &overrides);
+                let (png, legend) = crate::mcp_render::layout_png(wl, Some(&hud), width, &filter, &overrides);
                 let mut v = serde_json::to_value(legend).map_err(|e| err("serialize", e.to_string()))?;
                 v[PNG_KEY] = json!(base64::engine::general_purpose::STANDARD.encode(png));
                 v["window_view"] = json!(view);
