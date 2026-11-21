@@ -17,6 +17,7 @@ mod projection;
 mod save;
 mod treewalk;
 mod windows;
+mod window_sizes;
 mod hud;
 mod fleet;
 mod slot_order;
@@ -46,6 +47,7 @@ pub use path::{resolve, resolve_mut, NodePath, Step};
 pub use projection::{project, Node};
 pub use save::{save, SaveError, SaveReport};
 pub use windows::{chat_channel_keys, window_layout, BoolFlag, Geom, SetTarget, Stack, StackRef, StackRole, WindowLayout, WindowRect};
+pub use window_sizes::{window_limits, SizeLimits};
 pub use hud::{project_hud, set_hud_value, Hud, HudEntry, HudError, HudKind, HudScope};
 pub use fleet::{
     default_colour, project_fleet, set_broadcast_colour, set_fleet_field, set_watchlist_colour, Colour,
