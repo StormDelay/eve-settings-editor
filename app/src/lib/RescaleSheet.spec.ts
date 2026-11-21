@@ -33,6 +33,14 @@ describe("RescaleSheet", () => {
     expect(screen.getByText(/EVE lays this out on a 2560×1440 desktop/)).toBeTruthy();
   });
 
+  test("without a resolution the saved size is prefilled at 100%", async () => {
+    calls.stub("client_display", { resolution: null, ui_scale: 1.25 });
+    mount();
+    await waitFor(() => expect(field(/width/i).value).toBe("2560"));
+    expect(field(/ui scale/i).value).toBe("1");
+    expect(screen.getByText(/EVE lays this out on a 2560×1440 desktop/)).toBeTruthy();
+  });
+
   test("apply sends the resolution and scale", async () => {
     calls.stub("client_display", { resolution: [1920, 1080], ui_scale: 1 });
     calls.stub("rescale_layout", { desktop_w: 1241, desktop_h: 698, windows_changed: 3, held: [] });

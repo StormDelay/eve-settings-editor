@@ -36,7 +36,10 @@
   onMount(async () => {
     const d = await api.clientDisplay().catch(() => null);
     [width, height] = d?.resolution ?? [referenceW, referenceH];
-    scale = SCALES.some((s) => s.value === d?.ui_scale) ? d!.ui_scale : 1;
+    // No resolution on file means the saved size is prefilled, and that size is
+    // already the desktop, so its scale is 100% — keeping this machine's scale
+    // would shrink the layout on a bare click.
+    scale = d?.resolution && SCALES.some((s) => s.value === d.ui_scale) ? d.ui_scale : 1;
   });
 
   // Mirrors Rust's `desktop_size` (truncated, as `UIRoot.UpdateSize` does).

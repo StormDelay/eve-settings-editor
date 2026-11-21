@@ -3811,6 +3811,15 @@ mod tests {
         assert_eq!(e.code, "no_geometry");
     }
 
+    /// 1×1 at 125% truncates to a 0×0 desktop: refused, nothing written.
+    #[test]
+    fn rescale_to_an_empty_desktop_is_refused() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let e = ops::rescale_layout(&s.state(), 1, 1, 1.25).unwrap_err();
+        assert_eq!(e.code, "bad_target");
+        assert_eq!(undo::undo_state(&s.state()).depth, 0);
+    }
+
     #[test]
     fn rescale_is_one_undo_step_and_undo_restores_it() {
         let (s, _) = open_char(&layout_char_bytes());

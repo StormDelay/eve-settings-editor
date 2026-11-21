@@ -511,6 +511,11 @@ pub fn rescale_layout(state: &AppState, res_w: i64, res_h: i64, ui_scale: f64) -
     }
     let _group = undo::group(state);
     let (dw, dh) = settings_model::desktop_size(res_w, res_h, ui_scale);
+    if dw <= 0 || dh <= 0 {
+        // Every rect would be stamped with an empty screen, which no later
+        // rescale can read back — only undo could recover it.
+        return Err(ErrDto::new("bad_target", format!("{res_w}×{res_h} at {ui_scale} leaves EVE no desktop ({dw}×{dh})")));
+    }
     let wl = window_layout(state, Slot::Char)?;
     if !wl.windows.iter().any(|w| w.geom.is_some()) {
         return Err(ErrDto::new("no_geometry", "This character has no saved window positions to rescale."));

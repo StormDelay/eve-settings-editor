@@ -64,21 +64,17 @@ pub fn rescale_layout(
     target_h: i64,
     limits: &dyn Fn(&str) -> Option<SizeLimits>,
 ) -> Rescale {
-    // A stack's minimum is the largest of its members' (`stack.py`).
+    // A stack's minimum is the largest of its members' (`stack.py
+    // GetMinWidth/GetMinHeight`). A member's fixed size is NOT the stack's: the
+    // client applies it only when that window leaves the stack
+    // (`_SetRemovedWindowSize`), so the stack itself still scales.
     let mut stack_limits: HashMap<&str, SizeLimits> = HashMap::new();
     for s in &layout.stacks {
         let ids = std::iter::once(&s.container_id).chain(&s.members);
         let mut acc: Option<SizeLimits> = None;
         for l in ids.filter_map(|id| limits(id)) {
-            acc = Some(match acc {
-                None => l,
-                Some(a) => SizeLimits {
-                    min_w: a.min_w.max(l.min_w),
-                    min_h: a.min_h.max(l.min_h),
-                    fixed_w: a.fixed_w.or(l.fixed_w),
-                    fixed_h: a.fixed_h.or(l.fixed_h),
-                },
-            });
+            let a = acc.unwrap_or(SizeLimits { min_w: 0, min_h: 0, fixed_w: None, fixed_h: None });
+            acc = Some(SizeLimits { min_w: a.min_w.max(l.min_w), min_h: a.min_h.max(l.min_h), fixed_w: None, fixed_h: None });
         }
         if let Some(a) = acc {
             stack_limits.insert(s.container_id.as_str(), a);
@@ -308,6 +304,21 @@ mod tests {
         for id in ["C", "journal", "notepad"] {
             assert_eq!(after(&r, &l, id), (0, 0, 465, 300, 1920, 1080), "{id}");
         }
+    }
+
+    /// `stack.py` floors a stack at its members' largest minimum, but uses a
+    /// member's fixed size only when that window leaves the stack: the stack
+    /// itself still scales.
+    #[test]
+    fn a_fixed_member_does_not_fix_its_stack() {
+        let mut ws = vec![rect(0, "C", 400, 300, 1000, 800, 2560, 1440), rect(1, "fittingWnd", 400, 300, 1000, 800, 2560, 1440)];
+        ws[0].stack = Some(StackRef { container_id: "C".into(), role: StackRole::Container });
+        ws[1].stack = Some(StackRef { container_id: "C".into(), role: StackRole::Member });
+        let mut l = layout(ws);
+        l.stacks = vec![Stack { container_id: "C".into(), container_label: "C".into(), anchor_id: "C".into(), members: vec!["fittingWnd".into()] }];
+        let fixed = |id: &str| (id == "fittingWnd").then_some(SizeLimits { min_w: 256, min_h: 128, fixed_w: None, fixed_h: Some(800) });
+        let r = rescale_layout(&l, &no_hud(), 1920, 1080, &fixed);
+        assert_eq!(after(&r, &l, "C").3, 600, "the stack's height scales with the screen");
     }
 
     #[test]
