@@ -44,7 +44,10 @@
 
   // Mirrors Rust's `desktop_size` (truncated, as `UIRoot.UpdateSize` does).
   const desktop = $derived([Math.trunc(width / scale), Math.trunc(height / scale)]);
-  const valid = $derived(width > 0 && height > 0);
+  // Whole pixels only (the backend takes integers), and a size that still
+  // leaves EVE a desktop at this scale.
+  const valid = $derived(Number.isInteger(width) && Number.isInteger(height) && desktop[0] > 0 && desktop[1] > 0);
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
   async function apply() {
     busy = true;
@@ -75,7 +78,9 @@
   {#if error}<InlineMessage variant="error">{error}</InlineMessage>{/if}
   {#if done}
     <InlineMessage variant="success">
-      Rescaled {done.windows_changed} window{done.windows_changed === 1 ? "" : "s"} to {done.desktop_w}×{done.desktop_h}.
+      Rescaled {plural(done.windows_changed, "window")}{done.hud_changed
+        ? ` and ${plural(done.hud_changed, "HUD position")}`
+        : ""} to {done.desktop_w}×{done.desktop_h}.
       {#if done.held.length}
         Kept at their minimum or fixed size: {done.held.join(", ")} — they may overlap their neighbours.
       {/if}

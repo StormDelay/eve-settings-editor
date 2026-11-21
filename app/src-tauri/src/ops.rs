@@ -499,6 +499,9 @@ pub struct RescaleReport {
     pub desktop_w: i64,
     pub desktop_h: i64,
     pub windows_changed: usize,
+    /// HUD positions rewritten (ship offset, fighter panel, badge): a rescale
+    /// that changed only these still made an undo step.
+    pub hud_changed: usize,
     pub held: Vec<String>,
 }
 
@@ -539,7 +542,7 @@ pub fn rescale_layout(state: &AppState, res_w: i64, res_h: i64, ui_scale: f64) -
         state.history.lock().unwrap().rollback_group(&mut u, &mut c);
         return Err(e);
     }
-    Ok(RescaleReport { desktop_w: dw, desktop_h: dh, windows_changed: r.windows_changed, held: r.held })
+    Ok(RescaleReport { desktop_w: dw, desktop_h: dh, windows_changed: r.windows_changed, hud_changed: r.hud.len(), held: r.held })
 }
 
 /// Write one HUD field into whichever document its scope names, reshare, and

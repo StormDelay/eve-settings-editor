@@ -50,6 +50,10 @@ fn axis(pos: i64, len: i64, src: i64, dst: i64, min: i64, fixed: Option<i64>) ->
         (size, held) = (f, true);
     } else if size < min {
         (size, held) = (min, true);
+    } else {
+        // A rect saved larger than its own screen; only a minimum may exceed
+        // the desktop.
+        size = size.min(dst);
     }
     let lo = if far_docked && !near_docked { hi - size } else { lo };
     // The minimum beats the desktop, as in `InitializeSize`; only the position
@@ -261,6 +265,14 @@ mod tests {
         let l = layout(vec![rect(0, "market", 2000, 100, 400, 600, 2560, 1440)]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &market);
         assert_eq!(xw(&r, &l, "market"), (1270, 650));
+    }
+
+    /// A rect saved larger than its own screen still fits the new one.
+    #[test]
+    fn an_oversized_rect_is_clamped_to_the_desktop() {
+        let l = layout(vec![rect(0, "a", 100, 100, 3000, 300, 2560, 1440)]);
+        let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
+        assert_eq!(xw(&r, &l, "a"), (0, 1920));
     }
 
     #[test]

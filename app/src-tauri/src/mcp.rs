@@ -962,7 +962,7 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_edit",
-            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window} (a stack left with one window dissolves, as EVE does it, unless the stack is collapsed); stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}; rescale {width, height, ui_scale?} (convert the WHOLE layout — every window, and the HUD positions stored in pixels — to another screen: width and height are the SCREEN resolution, e.g. 1920×1080, and ui_scale EVE's UI scale, e.g. 1.25, defaulting to this machine's; EVE lays windows out on resolution ÷ scale, which every rect is converted to; docked windows stay docked and sizes scale too; a window that would shrink below EVE's minimum for it is held at that minimum and may overlap others; reported under rescale: desktop_w, desktop_h, windows_changed, held); chat_leave {window} (leave a player channel or private conversation — chatchannel_player_* / chatchannel_private_*; standing channels like local, corp, fleet are refused: removes the window and the channel from the character file, and its per-channel settings from the account file unless another character on the account is still in it; each is reported under chat_leave[].account.outcome: cleaned, nothing_to_clean, kept_shared, kept_unreadable, kept_no_account_file). Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window} (a stack left with one window dissolves, as EVE does it, unless the stack is collapsed); stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}; rescale {width, height, ui_scale?} (convert the WHOLE layout — every window, and the HUD positions stored in pixels — to another screen: width and height are the SCREEN resolution, e.g. 1920×1080, and ui_scale EVE's UI scale, e.g. 1.25, defaulting to this machine's; EVE lays windows out on resolution ÷ scale, which every rect is converted to; docked windows stay docked and sizes scale too; a window that would shrink below EVE's minimum for it is held at that minimum and may overlap others; reported under rescale: desktop_w, desktop_h, windows_changed, hud_changed, held); chat_leave {window} (leave a player channel or private conversation — chatchannel_player_* / chatchannel_private_*; standing channels like local, corp, fleet are refused: removes the window and the channel from the character file, and its per-channel settings from the account file unless another character on the account is still in it; each is reported under chat_leave[].account.outcome: cleaned, nothing_to_clean, kept_shared, kept_unreadable, kept_no_account_file). Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
             schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans", "rescale", "chat_leave"], json!({
                 "window": { "type": "string" },
                 "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
@@ -3824,13 +3824,14 @@ mod tests {
     fn rescale_is_one_undo_step_and_undo_restores_it() {
         let (s, _) = open_char(&layout_char_bytes());
         let st = s.state();
+        let bytes = |st: &AppState| encode(&st.char.lock().unwrap().as_ref().unwrap().value).unwrap();
+        let before = bytes(&st);
         let r = ops::rescale_layout(&st, 1920, 1080, 1.25).unwrap();
         assert_eq!((r.desktop_w, r.desktop_h), (1536, 864));
+        assert_ne!(bytes(&st), before);
         assert_eq!(undo::undo_state(&st).depth, 1);
         undo::undo(&st).unwrap();
-        let wl = ops::window_layout(&st, Slot::Char).unwrap();
-        let g = wl.windows.iter().find(|w| w.id == "overview").unwrap().geom.as_ref().unwrap();
-        assert_eq!((g.x, g.y, g.w, g.h, g.screen_w, g.screen_h), (100, 200, 400, 600, 2560, 1440));
+        assert_eq!(bytes(&st), before, "undo restores the character file exactly");
     }
 
     /// Window rects and a HUD field are two writes; the group makes them one step.
@@ -3845,7 +3846,8 @@ mod tests {
         ]))])).unwrap();
         let (s, _) = open_char(&bytes);
         let st = s.state();
-        ops::rescale_layout(&st, 1920, 1080, 1.0).unwrap();
+        let r = ops::rescale_layout(&st, 1920, 1080, 1.0).unwrap();
+        assert_eq!((r.windows_changed, r.hud_changed), (1, 1));
         let ship = |st: &AppState| ops::hud_layout(st).unwrap().entries.into_iter().find(|e| e.name == "ship_offset").unwrap().value;
         assert_eq!(ship(&st).as_deref(), Some("-90.375"));
         assert_eq!(undo::undo_state(&st).depth, 1);
@@ -3924,6 +3926,14 @@ mod tests {
         assert_eq!((m["w"].clone(), m["h"].clone()), (json!(650), json!(435)));
         assert!(v["rescale"]["held"].as_array().unwrap().contains(&json!("market")));
         assert_eq!(undo::undo_state(&s.state()).depth, 1);
+    }
+
+    /// No ui_scale and no settings file to read one from: EVE's default, 100%.
+    #[test]
+    fn layout_edit_rescale_defaults_to_this_machine_s_scale() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [{ "op": "rescale", "width": 1920, "height": 1080 }] }))).unwrap();
+        assert_eq!((v["rescale"]["desktop_w"].clone(), v["rescale"]["desktop_h"].clone()), (json!(1920), json!(1080)));
     }
 
     #[test]

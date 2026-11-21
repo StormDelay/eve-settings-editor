@@ -173,6 +173,8 @@ export interface RescaleReport {
   desktop_w: number;
   desktop_h: number;
   windows_changed: number;
+  /** HUD positions rewritten: ship offset, fighter panel, notification badge. */
+  hud_changed: number;
   /** Windows raised to their minimum or kept at a fixed size. */
   held: string[];
 }

@@ -43,7 +43,7 @@ describe("RescaleSheet", () => {
 
   test("apply sends the resolution and scale", async () => {
     calls.stub("client_display", { resolution: [1920, 1080], ui_scale: 1 });
-    calls.stub("rescale_layout", { desktop_w: 1241, desktop_h: 698, windows_changed: 3, held: [] });
+    calls.stub("rescale_layout", { desktop_w: 1241, desktop_h: 698, windows_changed: 3, hud_changed: 0, held: [] });
     const { onApplied } = mount();
     await waitFor(() => expect(field(/width/i).value).toBe("1920"));
     await fireEvent.input(field(/width/i), { target: { value: "1366" } });
@@ -55,9 +55,26 @@ describe("RescaleSheet", () => {
     await waitFor(() => expect(onApplied).toHaveBeenCalledOnce());
   });
 
+  test("a fractional size cannot be sent", async () => {
+    calls.stub("client_display", { resolution: [1920, 1080], ui_scale: 1 });
+    mount();
+    await waitFor(() => expect(field(/width/i).value).toBe("1920"));
+    await fireEvent.input(field(/width/i), { target: { value: "1920.5" } });
+    expect((screen.getByRole("button", { name: "Rescale" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("names the HUD positions it moved", async () => {
+    calls.stub("client_display", { resolution: [1920, 1080], ui_scale: 1 });
+    calls.stub("rescale_layout", { desktop_w: 1920, desktop_h: 1080, windows_changed: 0, hud_changed: 2, held: [] });
+    mount();
+    await waitFor(() => expect(field(/width/i).value).toBe("1920"));
+    await fireEvent.click(screen.getByRole("button", { name: "Rescale" }));
+    await waitFor(() => expect(screen.getByText(/Rescaled 0 windows and 2 HUD positions to 1920×1080/)).toBeTruthy());
+  });
+
   test("lists held windows", async () => {
     calls.stub("client_display", { resolution: [1920, 1080], ui_scale: 1 });
-    calls.stub("rescale_layout", { desktop_w: 1920, desktop_h: 1080, windows_changed: 4, held: ["market"] });
+    calls.stub("rescale_layout", { desktop_w: 1920, desktop_h: 1080, windows_changed: 4, hud_changed: 0, held: ["market"] });
     mount();
     await waitFor(() => expect(field(/width/i).value).toBe("1920"));
     await fireEvent.click(screen.getByRole("button", { name: "Rescale" }));

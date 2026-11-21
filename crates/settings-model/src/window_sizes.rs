@@ -36,6 +36,11 @@ fn table() -> &'static Table {
 /// code gave no constant answer: the client still clamps on load.
 pub fn window_limits(id: &str) -> Option<SizeLimits> {
     let t = table();
+    // `window_layout` keeps ids unique by suffixing a duplicate `#<n>`.
+    let id = match id.rsplit_once('#') {
+        Some((base, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => id,
+    };
     if let Some(l) = t.ids.get(id) {
         return Some(*l);
     }
@@ -63,5 +68,13 @@ mod tests {
         assert_eq!(window_limits("chatchannel_player_90000001").map(|l| (l.min_w, l.min_h)), Some((120, 120)));
         assert_eq!(window_limits("('Inventory', 1000000000001L)").map(|l| (l.min_w, l.min_h)), Some((100, 140)));
         assert_eq!(window_limits("('unknownthing', 1)"), None);
+    }
+
+    /// `window_layout` suffixes a duplicate id `#<n>`; it is still that window.
+    #[test]
+    fn a_deduplicated_id_finds_its_window() {
+        assert_eq!(window_limits("market#3").map(|l| (l.min_w, l.min_h)), Some((650, 435)));
+        assert_eq!(window_limits("chatchannel_local#7").map(|l| (l.min_w, l.min_h)), Some((120, 120)));
+        assert_eq!(window_limits("market#x"), None, "only a numeric suffix is the dedup one");
     }
 }
