@@ -59,6 +59,22 @@ function mount(over: Record<string, unknown> = {}) {
 /** The mutations of the single `runMutations` call, flattened. */
 const sent = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.flatMap((c) => c[0]);
 
+describe("rescale", () => {
+  test("is offered on an editable file", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    mount();
+    const btn = await screen.findByRole("button", { name: "Rescale layout…" });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test("is disabled on a read-only file", async () => {
+    calls.stub("window_layout", layout(win("overview")));
+    mount({ readOnly: true });
+    const btn = await screen.findByRole("button", { name: "Rescale layout…" });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe("loading", () => {
   test("reads the window layout for the slot it was given", async () => {
     calls.stub("window_layout", layout(win("overview")));

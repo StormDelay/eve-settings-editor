@@ -26,6 +26,7 @@
   import DetailParts from "$lib/DetailParts.svelte";
   import { shipHudParts, fighterParts, neocomParts, targetParts, windowDetail } from "$lib/detail";
   import InlineMessage from "./ui/InlineMessage.svelte";
+  import RescaleSheet from "$lib/RescaleSheet.svelte";
   import { toast } from "./ui/toasts.svelte";
   import { undoAction } from "./undo.svelte";
 
@@ -157,6 +158,18 @@
   const canvasHeight = $derived(toCanvas(layout?.reference_h ?? 0, scale));
   // Every window this document has — NOT the filtered set. See overrideCount.
   const documentWindowIds = $derived(new Set((layout?.windows ?? []).map((w) => w.id)));
+
+  // Rescale converts the character file's rects; the account file holds none.
+  let rescaleOpen = $state(false);
+  const rescaleBlocked = $derived(
+    readOnly
+      ? "This file is read-only"
+      : slot !== "char"
+        ? "Window positions live in the character file"
+        : !layout?.reference_w
+          ? "This character has no saved window positions"
+          : null,
+  );
 
   async function load() {
     loadError = null;
@@ -971,6 +984,11 @@
           label="Detail"
           value={detailOn()}
           onchange={(e) => setDetail((e.currentTarget as HTMLInputElement).checked)} />
+        <Button
+          disabled={rescaleBlocked !== null}
+          disabledReason={rescaleBlocked ?? undefined}
+          title="Convert every window, and the HUD, to another screen resolution or UI scale"
+          onclick={() => (rescaleOpen = true)}>Rescale layout…</Button>
       </div>
       <!-- The capture-phase blur is what gives the canvas the keyboard:
            startMove/startResize/startFurniture all preventDefault their
@@ -1181,6 +1199,16 @@
   </div>
 {/if}
 
+{#if rescaleOpen && layout}
+  <RescaleSheet
+    referenceW={layout.reference_w}
+    referenceH={layout.reference_h}
+    onApplied={() => {
+      onDirty("char");
+      load();
+    }}
+    onClose={() => (rescaleOpen = false)} />
+{/if}
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => (menu = null)} />
 {/if}
