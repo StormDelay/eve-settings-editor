@@ -115,6 +115,34 @@ pub(crate) fn scale_and_font(text: &str) -> (f64, i64) {
     (scale, font)
 }
 
+/// This machine's screen resolution and UI scale, for prefilling a rescale.
+#[derive(Debug, Serialize)]
+pub struct Display {
+    pub resolution: Option<(i64, i64)>,
+    pub ui_scale: f64,
+}
+
+/// `device.FullScreenResolution` in fullscreen (`WindowMode` 0), otherwise
+/// `WindowedResolution`; each is `[FILETIME, [w, h]]` or `[FILETIME, null]`, and
+/// an unset one falls back to the other, the way the scale does.
+pub(crate) fn display(text: &str) -> Display {
+    let doc = YamlLoader::load_from_str(text).ok().and_then(|d| d.into_iter().next()).unwrap_or(Yaml::Null);
+    let res = |key: &str| {
+        let v = &doc["device"][key][1];
+        Some((v[0].as_i64()?, v[1].as_i64()?)).filter(|(w, h)| *w > 0 && *h > 0)
+    };
+    let fullscreen = doc["device"]["WindowMode"][1].as_i64() == Some(0);
+    let (mine, other) = if fullscreen { ("FullScreenResolution", "WindowedResolution") } else { ("WindowedResolution", "FullScreenResolution") };
+    Display { resolution: res(mine).or_else(|| res(other)), ui_scale: scale_and_font(text).0 }
+}
+
+/// `display` for the open account's settings folder; EVE's defaults when there
+/// is no account file or no `core_public__.yaml` beside it.
+pub(crate) fn display_for(state: &AppState) -> Display {
+    let text = settings_dir(state).ok().and_then(|d| fs::read_to_string(d.join("core_public__.yaml")).ok()).unwrap_or_default();
+    display(&text)
+}
+
 /// Any EVE install's fonts, found through the profiles under
 /// `%LOCALAPPDATA%\CCP\EVE` — for the tests that need the real fonts, which
 /// the repository can't carry. None where EVE isn't installed.
@@ -192,6 +220,23 @@ fn sanitize(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_reads_the_mode_s_resolution() {
+        let both = "  WindowedResolution: [1, [1920, 1080]]\n  FullScreenResolution: [1, [2560, 1440]]\n  UIScaleWindowed: [1, 1.25]\n  UIScaleFullscreen: [1, 1.0]\n";
+        let d = display(&format!("device:\n{both}  WindowMode: [1, 2]\n"));
+        assert_eq!((d.resolution, d.ui_scale), (Some((1920, 1080)), 1.25));
+        let d = display(&format!("device:\n{both}  WindowMode: [1, 0]\n"));
+        assert_eq!((d.resolution, d.ui_scale), (Some((2560, 1440)), 1.0));
+        let unset = "device:\n  FullScreenResolution: [1, null]\n  WindowedResolution: [1, [1920, 1080]]\n  WindowMode: [1, 0]\n";
+        assert_eq!(display(unset).resolution, Some((1920, 1080)), "an unset mode falls back to the other");
+    }
+
+    #[test]
+    fn display_without_resolution_is_none() {
+        let d = display("device:\n  UIScaleWindowed: [1, 1.25]\n");
+        assert_eq!((d.resolution, d.ui_scale), (None, 1.25));
+    }
 
     #[test]
     fn reads_scale_by_window_mode_and_font_option() {

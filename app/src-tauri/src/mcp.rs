@@ -3783,6 +3783,47 @@ mod tests {
         assert_eq!(lookup_result(down).unwrap_err()["code"], "esi");
     }
 
+    #[test]
+    fn rescale_without_geometry_is_refused() {
+        let bytes = encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![]))])).unwrap();
+        let (s, _) = open_char(&bytes);
+        let e = ops::rescale_layout(&s.state(), 1920, 1080, 1.0).unwrap_err();
+        assert_eq!(e.code, "no_geometry");
+    }
+
+    #[test]
+    fn rescale_is_one_undo_step_and_undo_restores_it() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let st = s.state();
+        let r = ops::rescale_layout(&st, 1920, 1080, 1.25).unwrap();
+        assert_eq!((r.desktop_w, r.desktop_h), (1536, 864));
+        assert_eq!(undo::undo_state(&st).depth, 1);
+        undo::undo(&st).unwrap();
+        let wl = ops::window_layout(&st, Slot::Char).unwrap();
+        let g = wl.windows.iter().find(|w| w.id == "overview").unwrap().geom.as_ref().unwrap();
+        assert_eq!((g.x, g.y, g.w, g.h, g.screen_w, g.screen_h), (100, 200, 400, 600, 2560, 1440));
+    }
+
+    /// Window rects and a HUD field are two writes; the group makes them one step.
+    #[test]
+    fn rescale_with_a_hud_value_is_still_one_undo_step() {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let rect = BmValue::Tuple([100, 200, 400, 600, 2560, 1440].map(BmValue::Int).to_vec());
+        let bytes = encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
+            (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), rect)])])),
+            (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), BmValue::Bool(true))])])),
+            (b("shipuialignleftoffset"), BmValue::Tuple(vec![ts(), BmValue::Float(-120.5)])),
+        ]))])).unwrap();
+        let (s, _) = open_char(&bytes);
+        let st = s.state();
+        ops::rescale_layout(&st, 1920, 1080, 1.0).unwrap();
+        let ship = |st: &AppState| ops::hud_layout(st).unwrap().entries.into_iter().find(|e| e.name == "ship_offset").unwrap().value;
+        assert_eq!(ship(&st).as_deref(), Some("-90.375"));
+        assert_eq!(undo::undo_state(&st).depth, 1);
+        undo::undo(&st).unwrap();
+        assert_eq!(ship(&st).as_deref(), Some("-120.5"));
+    }
+
     /// A character file with three windows — `overview` open at a matching
     /// resolution, `market` open at a different one (so a move re-stamps the
     /// screen size), `fitting` closed — and a stack of journal+notepad in container C
