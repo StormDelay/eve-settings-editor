@@ -153,7 +153,9 @@ mod tests {
     use crate::path::Step;
     use crate::windows::{Geom, SetTarget, Stack, StackRef, StackRole, WindowRect};
 
-    fn rect(i: usize, id: &str, x: i64, y: i64, w: i64, h: i64, sw: i64, sh: i64) -> WindowRect {
+    /// `r` is the saved `(x, y, w, h, screen_w, screen_h)`.
+    fn rect(i: usize, id: &str, r: [i64; 6]) -> WindowRect {
+        let [x, y, w, h, sw, sh] = r;
         let p = |k| vec![Step::DictValue(i), Step::Tuple(k)];
         WindowRect {
             id: id.into(),
@@ -216,14 +218,14 @@ mod tests {
 
     #[test]
     fn left_docked_keeps_its_inset() {
-        let l = layout(vec![rect(0, "a", 16, 100, 400, 300, 2560, 1440)]);
+        let l = layout(vec![rect(0, "a", [16, 100, 400, 300, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(xw(&r, &l, "a"), (16, 296));
     }
 
     #[test]
     fn right_docked_flush_and_inset_stay_docked() {
-        let l = layout(vec![rect(0, "flush", 2160, 100, 400, 300, 2560, 1440), rect(1, "inset", 2144, 500, 400, 300, 2560, 1440)]);
+        let l = layout(vec![rect(0, "flush", [2160, 100, 400, 300, 2560, 1440]), rect(1, "inset", [2144, 500, 400, 300, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(xw(&r, &l, "flush"), (1620, 300));
         assert_eq!(xw(&r, &l, "inset"), (1608, 296));
@@ -231,7 +233,7 @@ mod tests {
 
     #[test]
     fn floating_neighbour_of_an_inset_dock_still_touches() {
-        let l = layout(vec![rect(0, "dock", 2144, 100, 400, 300, 2560, 1440), rect(1, "n", 1744, 100, 400, 300, 2560, 1440)]);
+        let l = layout(vec![rect(0, "dock", [2144, 100, 400, 300, 2560, 1440]), rect(1, "n", [1744, 100, 400, 300, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         let (nx, nw) = xw(&r, &l, "n");
         assert_eq!((nx, nx + nw), (1308, 1608));
@@ -240,14 +242,14 @@ mod tests {
 
     #[test]
     fn full_width_window_spans_the_target() {
-        let l = layout(vec![rect(0, "a", 0, 100, 2560, 300, 2560, 1440)]);
+        let l = layout(vec![rect(0, "a", [0, 100, 2560, 300, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(xw(&r, &l, "a"), (0, 1920));
     }
 
     #[test]
     fn market_floored_right_docked_grows_leftwards() {
-        let l = layout(vec![rect(0, "market", 2160, 100, 400, 600, 2560, 1440)]);
+        let l = layout(vec![rect(0, "market", [2160, 100, 400, 600, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &market);
         assert_eq!(xw(&r, &l, "market"), (1270, 650));
         assert_eq!(r.held, vec!["market".to_string()]);
@@ -255,14 +257,14 @@ mod tests {
 
     #[test]
     fn market_floored_floating_keeps_left_edge() {
-        let l = layout(vec![rect(0, "market", 1000, 100, 400, 600, 2560, 1440)]);
+        let l = layout(vec![rect(0, "market", [1000, 100, 400, 600, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &market);
         assert_eq!(xw(&r, &l, "market"), (750, 650));
     }
 
     #[test]
     fn floored_window_is_clamped_on_screen() {
-        let l = layout(vec![rect(0, "market", 2000, 100, 400, 600, 2560, 1440)]);
+        let l = layout(vec![rect(0, "market", [2000, 100, 400, 600, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &market);
         assert_eq!(xw(&r, &l, "market"), (1270, 650));
     }
@@ -270,7 +272,7 @@ mod tests {
     /// A rect saved larger than its own screen still fits the new one.
     #[test]
     fn an_oversized_rect_is_clamped_to_the_desktop() {
-        let l = layout(vec![rect(0, "a", 100, 100, 3000, 300, 2560, 1440)]);
+        let l = layout(vec![rect(0, "a", [100, 100, 3000, 300, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(xw(&r, &l, "a"), (0, 1920));
     }
@@ -278,7 +280,7 @@ mod tests {
     #[test]
     fn minimum_beats_a_smaller_desktop() {
         let tall = |_: &str| Some(SizeLimits { min_w: 0, min_h: 832, fixed_w: None, fixed_h: None });
-        let l = layout(vec![rect(0, "corporation", 100, 0, 800, 1000, 2560, 1440)]);
+        let l = layout(vec![rect(0, "corporation", [100, 0, 800, 1000, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1024, 768, &tall);
         let a = after(&r, &l, "corporation");
         assert_eq!((a.1, a.3), (0, 832));
@@ -287,7 +289,7 @@ mod tests {
     #[test]
     fn fixed_height_is_kept() {
         let fixed = |_: &str| Some(SizeLimits { min_w: 256, min_h: 128, fixed_w: None, fixed_h: Some(760) });
-        let l = layout(vec![rect(0, "fittingWnd", 400, 300, 1000, 760, 2560, 1440)]);
+        let l = layout(vec![rect(0, "fittingWnd", [400, 300, 1000, 760, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &fixed);
         assert_eq!(after(&r, &l, "fittingWnd").3, 760);
         assert_eq!(r.held, vec!["fittingWnd".to_string()]);
@@ -296,9 +298,9 @@ mod tests {
     #[test]
     fn stack_members_share_the_largest_minimum() {
         let mut ws = vec![
-            rect(0, "C", 0, 0, 100, 80, 2560, 1440),
-            rect(1, "journal", 0, 0, 100, 80, 2560, 1440),
-            rect(2, "notepad", 0, 0, 100, 80, 2560, 1440),
+            rect(0, "C", [0, 0, 100, 80, 2560, 1440]),
+            rect(1, "journal", [0, 0, 100, 80, 2560, 1440]),
+            rect(2, "notepad", [0, 0, 100, 80, 2560, 1440]),
         ];
         ws[0].stack = Some(StackRef { container_id: "C".into(), role: StackRole::Container });
         for w in &mut ws[1..] {
@@ -323,7 +325,7 @@ mod tests {
     /// itself still scales.
     #[test]
     fn a_fixed_member_does_not_fix_its_stack() {
-        let mut ws = vec![rect(0, "C", 400, 300, 1000, 800, 2560, 1440), rect(1, "fittingWnd", 400, 300, 1000, 800, 2560, 1440)];
+        let mut ws = vec![rect(0, "C", [400, 300, 1000, 800, 2560, 1440]), rect(1, "fittingWnd", [400, 300, 1000, 800, 2560, 1440])];
         ws[0].stack = Some(StackRef { container_id: "C".into(), role: StackRole::Container });
         ws[1].stack = Some(StackRef { container_id: "C".into(), role: StackRole::Member });
         let mut l = layout(ws);
@@ -335,7 +337,7 @@ mod tests {
 
     #[test]
     fn stale_resolution_window_converts_from_its_own_size() {
-        let l = layout(vec![rect(0, "stale", 10, 10, 300, 300, 1920, 1080), rect(1, "big", 100, 200, 400, 600, 2560, 1440)]);
+        let l = layout(vec![rect(0, "stale", [10, 10, 300, 300, 1920, 1080]), rect(1, "big", [100, 200, 400, 600, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(after(&r, &l, "stale"), (10, 10, 300, 300, 1920, 1080));
         assert_eq!(r.windows_changed, 1, "only the window saved at another size changed");
@@ -343,7 +345,7 @@ mod tests {
 
     #[test]
     fn already_at_target_is_a_no_op() {
-        let l = layout(vec![rect(0, "a", 10, 10, 300, 300, 1920, 1080), rect(1, "b", 16, 0, 300, 300, 1920, 1080)]);
+        let l = layout(vec![rect(0, "a", [10, 10, 300, 300, 1920, 1080]), rect(1, "b", [16, 0, 300, 300, 1920, 1080])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert!(r.mutations.is_empty());
         assert_eq!(r.windows_changed, 0);
@@ -351,14 +353,14 @@ mod tests {
 
     #[test]
     fn zero_resolution_window_is_skipped() {
-        let l = layout(vec![rect(0, "zero", 10, 10, 300, 300, 0, 0)]);
+        let l = layout(vec![rect(0, "zero", [10, 10, 300, 300, 0, 0])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert!(r.mutations.is_empty());
     }
 
     #[test]
     fn every_rewritten_tuple_is_restamped() {
-        let l = layout(vec![rect(0, "a", 100, 200, 400, 600, 2560, 1440)]);
+        let l = layout(vec![rect(0, "a", [100, 200, 400, 600, 2560, 1440])]);
         let r = rescale_layout(&l, &no_hud(), 1920, 1080, &none);
         assert_eq!(after(&r, &l, "a"), (75, 150, 300, 450, 1920, 1080));
     }

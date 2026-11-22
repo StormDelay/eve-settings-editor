@@ -509,7 +509,7 @@ pub struct RescaleReport {
 /// `ui_scale`: every window rect, and the HUD positions stored in pixels. One
 /// undo step; nothing reaches disk until save.
 pub fn rescale_layout(state: &AppState, res_w: i64, res_h: i64, ui_scale: f64) -> Result<RescaleReport, ErrDto> {
-    if res_w <= 0 || res_h <= 0 || !(ui_scale > 0.0) {
+    if res_w <= 0 || res_h <= 0 || !ui_scale.is_finite() || ui_scale <= 0.0 {
         return Err(ErrDto::new("bad_target", format!("{res_w}×{res_h} at {ui_scale} is not a screen")));
     }
     let _group = undo::group(state);
