@@ -4,10 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.45.0] - 2026-11-22
+
+Rescale a whole layout to another screen resolution or UI scale.
 
 ### Added
 - Rescale a character's whole layout to another resolution or UI scale, from the Layout view or over MCP.
+- **A window EVE won't let shrink that far is kept at its minimum size and named, since it may overlap its neighbours.**
+
+### Changed
+- The copy warning for a resolution mismatch says windows keep their size and may overlap, rather than land off-screen.
+
+### Fixed
+- Ctrl+K puts the cursor in the search box.
+- The overview column-fit preview uses the window's real width at UI scales other than 100%.
 
 ## [0.44.0] - 2026-10-12
 
