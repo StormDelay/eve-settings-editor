@@ -741,6 +741,11 @@ describe("opening the subject switcher", () => {
     await mount([profile(file("core_char_950.dat", "char", 950))]);
     await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     await waitFor(() => expect(panel()).toBeTruthy());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("searchbox", { name: /search characters, presets and commands/i }),
+      ),
+    );
   });
 });
 

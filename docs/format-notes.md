@@ -652,6 +652,61 @@ harmless — not yet verified).
   `(b"overviewScroll2", presetIndex)` → dict of column-name → width px
   (details to be confirmed in experiment 3).
 
+### How the client applies a saved rect at a different resolution
+
+Read from the decompiled client code on **2026-11-21** (`carbonui/control/window.py`,
+`carbonui/primitives/desktop.py`; build path `V24.02`), not measured in game.
+
+**`screenW`/`screenH` are UI-scaled pixels, not device pixels.** The desktop is
+sized `int(device.width / dpiScaling)` (`UIRoot.UpdateSize`), and
+`_RegisterWindowSizeAndPositionSetting` writes `uicore.desktop.width/height`
+into elements 4–5. A 2560×1440 client at UI scale 1.25 saves 2048×1152. To the
+window code, a UI-scale change and a resolution change are the same event.
+
+**On load the client repositions, but never rescales.**
+`GetRegisteredPositionAndSizeByClass` compares the saved `(cdw, cdh)` with the
+current desktop `(dw, dh)` and, per axis:
+
+| saved rect | horizontal | vertical |
+|---|---|---|
+| left/top edge at 0 or 16 | unchanged | unchanged |
+| right/bottom edge at `cdw`/`cdh` or 16 short of it | shifted by `dw − cdw` / `dh − cdh` (stays docked) | same |
+| anything else ("floating") | shifted by `int((cdw−w)/2 · dw/cdw) − (cdw−w)/2` | same, with `h` |
+
+Two consequences. The edge tests are **exact**: a window 1px off an edge is
+floating. And the floating shift is the one a *centred* window of that width
+would get, applied regardless of where the window is — so 2560→1920 moves every
+floating 400px-wide window 270px left; one at `x=100` lands at −170.
+
+Then `InitializeSize` clamps the size to the window's min/max and to the desktop,
+and `UpdatePosition` clamps the position fully on-screen
+(`0 ≤ left ≤ dw − width`, likewise top). Widths and heights are otherwise kept
+as saved, so a layout from a larger desktop **piles up rather than falling
+off-screen**. The neocom side offset is stripped before saving
+(`_AccountForSideAutoSnapDistance`), which is why a window docked against the
+neocom still saves `left` as 0 or 16.
+
+**Minimum, maximum and fixed sizes are class constants.** `Window` declares
+`default_minSize = (256, 128)`, `default_maxSize = (None, None)` and optional
+`default_fixedWidth`/`default_fixedHeight`. `InitializeSize` sets each dimension
+to `min(max, max(min, min(desktop, saved)))`, and a fixed dimension replaces the
+saved one outright. Subclasses override them, in the same UI px as the geometry:
+overview 128×128, chat 120×120, drones 240×120, inventory 100×140, probe scanner
+300×150, d-scan 300×124, journal 465×300, mail 500×350, market 650×435,
+corporation 700×832. The fitting window has a fixed height. Of 370 classes with
+a `default_windowID`, 58 fix their width and 41 their height. A stack's minimum
+is the largest of its members' (`stack.py GetMinWidth/GetMinHeight`). Two traps:
+`default_minSize` is evaluated once in the base class, so a subclass that only
+changes `default_width` keeps 256×128; and about 66 classes call `SetMinSize`
+at runtime (Selected Item, chat), so their static value is a floor, not the
+truth. `tools/gen-window-sizes.py` evaluates every class body and writes the
+table to `crates/settings-model/data/window-sizes.json` (359 ids on build
+V24.02); two classes sharing an id keep the smaller floor.
+
+Not read yet: what happens to already-open windows when the resolution or UI
+scale changes mid-session, and whether stack containers take a different path
+(`carbonui/window/stack.py` calls `RegisterPositionAndSize`, so probably not).
+
 ### `openWindows` does not predict what the client shows on launch
 
 Established **2026-07-31** against a live character file (`core_char_96000002`,

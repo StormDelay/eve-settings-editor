@@ -186,7 +186,9 @@ pub fn overview_fit(state: &AppState, req: FitReq) -> Result<Fit, ErrDto> {
 
     let row_width = ops::window_layout(state, Slot::Char).ok().and_then(|l| {
         let id = if window == 0 { "overview".to_string() } else { format!("overview_{window}") };
-        l.windows.into_iter().find(|w| w.id == id).and_then(|w| w.geom).map(|g| g.w as f64 / scale - WINDOW_INSET)
+        // Saved geometry is already in UI px (desktop = device / dpiScaling,
+        // docs/format-notes.md), the unit `fit_columns` compares against.
+        l.windows.into_iter().find(|w| w.id == id).and_then(|w| w.geom).map(|g| g.w as f64 - WINDOW_INSET)
     });
 
     let (regular, expanded) = client_env::fonts(&settings).map_err(|e| ErrDto::new("fonts", format!("EVE's fonts couldn't be read, so nothing can be measured: {e}")))?;
