@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Rescale a character's whole layout to another resolution or UI scale, from the Layout view or over MCP.
+
 ## [0.44.0] - 2026-10-12
 
 Overview names with symbols work in game again, and the Layout view places docked windows where EVE does.

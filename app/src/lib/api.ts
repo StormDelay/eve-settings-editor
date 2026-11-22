@@ -169,6 +169,21 @@ export interface HudEntry {
   set: SetTarget;
 }
 
+export interface RescaleReport {
+  desktop_w: number;
+  desktop_h: number;
+  windows_changed: number;
+  /** HUD positions rewritten: ship offset, fighter panel, notification badge. */
+  hud_changed: number;
+  /** Windows raised to their minimum or kept at a fixed size. */
+  held: string[];
+}
+
+export interface ClientDisplay {
+  resolution: [number, number] | null;
+  ui_scale: number;
+}
+
 export interface Hud {
   entries: HudEntry[];
 }
@@ -618,6 +633,11 @@ export const api = {
   hud: () => invoke<Hud>("hud_layout"),
   setHudValue: (name: string, text: string) =>
     invoke<Hud>("set_hud_value", { name, text }),
+  /** Convert the whole layout to a screen resolution and UI scale; one undo step. */
+  rescaleLayout: (width: number, height: number, uiScale: number) =>
+    invoke<RescaleReport>("rescale_layout", { width, height, uiScale }),
+  /** This machine's resolution and UI scale, from `core_public__.yaml`. */
+  clientDisplay: () => invoke<ClientDisplay>("client_display"),
   fleet: () => invoke<Fleet>("fleet_settings"),
   setFleetField: (name: string, text: string) =>
     invoke<Fleet>("set_fleet_field", { name, text }),

@@ -575,6 +575,19 @@ fn set_hud_value(
 ) -> Result<settings_model::Hud, ErrDto> {
     ops::set_hud_field(&state, &name, &text)
 }
+#[tauri::command]
+fn rescale_layout(
+    state: tauri::State<'_, AppState>,
+    width: i64,
+    height: i64,
+    ui_scale: f64,
+) -> Result<ops::RescaleReport, ErrDto> {
+    ops::rescale_layout(&state, width, height, ui_scale)
+}
+#[tauri::command]
+fn client_display(state: tauri::State<'_, AppState>) -> client_env::Display {
+    client_env::display_for(&state)
+}
 
 #[tauri::command]
 fn fleet_settings(state: tauri::State<'_, AppState>) -> Result<settings_model::Fleet, ErrDto> {
@@ -815,7 +828,7 @@ pub fn run() {
             launcher_proposals,
             begin_capture, resolve_capture, clear_capture,
             overview_columns, set_overview_visible, set_overview_order, set_overview_width,
-            overview_copy_columns, overview_fit,
+            overview_copy_columns, overview_fit, rescale_layout, client_display,
             tab_create, tab_rename, tab_rename_pieces, tab_name_parse, tab_name_format, tab_delete, tab_reorder, tab_move,
             overview_window_add, overview_window_remove, overview_create_window_mapping, overview_create,
             preset_create, preset_rename, preset_delete, tab_set_preset, preset_set_groups, preset_fork,

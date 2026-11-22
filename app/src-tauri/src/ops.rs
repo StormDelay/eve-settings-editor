@@ -494,6 +494,57 @@ fn chat_err(e: settings_model::ChatError) -> ErrDto {
     coded_err("chat", e)
 }
 
+#[derive(Debug, Serialize)]
+pub struct RescaleReport {
+    pub desktop_w: i64,
+    pub desktop_h: i64,
+    pub windows_changed: usize,
+    /// HUD positions rewritten (ship offset, fighter panel, badge): a rescale
+    /// that changed only these still made an undo step.
+    pub hud_changed: usize,
+    pub held: Vec<String>,
+}
+
+/// Convert the character's whole layout to a screen of `res_w`×`res_h` at
+/// `ui_scale`: every window rect, and the HUD positions stored in pixels. One
+/// undo step; nothing reaches disk until save.
+pub fn rescale_layout(state: &AppState, res_w: i64, res_h: i64, ui_scale: f64) -> Result<RescaleReport, ErrDto> {
+    if res_w <= 0 || res_h <= 0 || !ui_scale.is_finite() || ui_scale <= 0.0 {
+        return Err(ErrDto::new("bad_target", format!("{res_w}×{res_h} at {ui_scale} is not a screen")));
+    }
+    let _group = undo::group(state);
+    let (dw, dh) = settings_model::desktop_size(res_w, res_h, ui_scale);
+    if dw <= 0 || dh <= 0 {
+        // Every rect would be stamped with an empty screen, which no later
+        // rescale can read back — only undo could recover it.
+        return Err(ErrDto::new("bad_target", format!("{res_w}×{res_h} at {ui_scale} leaves EVE no desktop ({dw}×{dh})")));
+    }
+    let wl = window_layout(state, Slot::Char)?;
+    if !wl.windows.iter().any(|w| w.geom.is_some()) {
+        return Err(ErrDto::new("no_geometry", "This character has no saved window positions to rescale."));
+    }
+    let hud = hud_layout(state)?;
+    let r = settings_model::rescale_layout(&wl, &hud, dw, dh, &settings_model::window_limits);
+    let applied = (|| {
+        if !r.mutations.is_empty() {
+            apply_mutations(state, Slot::Char, &r.mutations)?;
+        }
+        for (name, text) in &r.hud {
+            set_hud_field(state, name, text)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = applied {
+        // A failed write already rolled itself back; one that succeeded before
+        // it did not. No-op when nothing was written.
+        let mut u = state.user.lock().unwrap();
+        let mut c = state.char.lock().unwrap();
+        state.history.lock().unwrap().rollback_group(&mut u, &mut c);
+        return Err(e);
+    }
+    Ok(RescaleReport { desktop_w: dw, desktop_h: dh, windows_changed: r.windows_changed, hud_changed: r.hud.len(), held: r.held })
+}
+
 /// Write one HUD field into whichever document its scope names, reshare, and
 /// re-project. The frontend marks that slot dirty from the entry's scope.
 pub fn set_hud_field(state: &AppState, name: &str, text: &str) -> Result<Hud, ErrDto> {

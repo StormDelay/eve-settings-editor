@@ -962,13 +962,14 @@ fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "layout_edit",
-            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window} (a stack left with one window dissolves, as EVE does it, unless the stack is collapsed); stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}; chat_leave {window} (leave a player channel or private conversation — chatchannel_player_* / chatchannel_private_*; standing channels like local, corp, fleet are refused: removes the window and the channel from the character file, and its per-channel settings from the account file unless another character on the account is still in it; each is reported under chat_leave[].account.outcome: cleaned, nothing_to_clean, kept_shared, kept_unreadable, kept_no_account_file). Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
-            schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans", "chat_leave"], json!({
+            description: "Edit the layout as a batch (one undo step; first failure rolls back). Ops: set_geometry {window, x?, y?, w?, h?} (pixels at reference_w/h; unmentioned axes keep their value; a window saved at another resolution is re-stamped to the reference; on a stacked window this moves the whole stack, as EVE keeps them together); set_flag {window, flag, on} (flag is one of layout_get's flag names — openWindows, pinnedWindows, lockedWindows, compactWindows, … — settable only when layout_get's settable_flags lists it); stack_create {a, b} (the stack lands at a's geometry); stack_add {window, container}; stack_unstack {window} (a stack left with one window dissolves, as EVE does it, unless the stack is collapsed); stack_reorder {container, members: [every member id in tab order]}; stack_delete_orphans {}; rescale {width, height, ui_scale?} (convert the WHOLE layout — every window, and the HUD positions stored in pixels — to another screen: width and height are the SCREEN resolution, e.g. 1920×1080, and ui_scale EVE's UI scale, e.g. 1.25, defaulting to this machine's; EVE lays windows out on resolution ÷ scale, which every rect is converted to; docked windows stay docked and sizes scale too; a window that would shrink below EVE's minimum for it is held at that minimum and may overlap others; reported under rescale: desktop_w, desktop_h, windows_changed, hud_changed, held); chat_leave {window} (leave a player channel or private conversation — chatchannel_player_* / chatchannel_private_*; standing channels like local, corp, fleet are refused: removes the window and the channel from the character file, and its per-channel settings from the account file unless another character on the account is still in it; each is reported under chat_leave[].account.outcome: cleaned, nothing_to_clean, kept_shared, kept_unreadable, kept_no_account_file). Returns the open, non-clutter windows as layout_get does by default. Nothing reaches disk until save. Unsure: eve_guide layout.",
+            schema: || obj(op_item(&["set_geometry", "set_flag", "stack_create", "stack_add", "stack_unstack", "stack_reorder", "stack_delete_orphans", "rescale", "chat_leave"], json!({
                 "window": { "type": "string" },
                 "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" },
                 "flag": { "type": "string" }, "on": { "type": "boolean" },
                 "a": { "type": "string" }, "b": { "type": "string" }, "container": { "type": "string" },
-                "members": { "type": "array", "items": { "type": "string" } }
+                "members": { "type": "array", "items": { "type": "string" } },
+                "width": { "type": "integer" }, "height": { "type": "integer" }, "ui_scale": { "type": "number" }
             })), &["ops"]),
         },
         ToolDef {
@@ -1346,10 +1347,22 @@ impl EveMcp {
                 // and reports a per-op outcome, so it is handled here rather
                 // than in the plain `layout_op`.
                 let left = std::cell::RefCell::new(Vec::new());
+                // rescale reports the desktop it produced and the windows held
+                // at their minimum, which the plain `layout_op` cannot return.
+                let rescaled = std::cell::RefCell::new(None);
                 let dir = self.dir.clone();
                 let v = self.batch(
                     args,
                     |st, a| {
+                        if a.get("op").and_then(Value::as_str) == Some("rescale") {
+                            let scale = match opt::<f64>(a, "ui_scale")? {
+                                Some(s) => s,
+                                None => crate::client_env::display_for(st).ui_scale,
+                            };
+                            let r = ops::rescale_layout(st, req(a, "width")?, req(a, "height")?, scale).map_err(fail)?;
+                            *rescaled.borrow_mut() = Some(r);
+                            return Ok(());
+                        }
                         if a.get("op").and_then(Value::as_str) != Some("chat_leave") {
                             return layout_op(st, a);
                         }
@@ -1363,8 +1376,15 @@ impl EveMcp {
                         Ok(layout_view(&wl, &window_filter(&Args::new(), s.window_view().as_ref())?, &s.overrides()))
                     },
                 )?;
-                let left = left.into_inner();
-                Ok(if left.is_empty() { v } else { let mut v = v; v["chat_leave"] = json!(left); v })
+                let (left, rescaled) = (left.into_inner(), rescaled.into_inner());
+                let mut v = v;
+                if !left.is_empty() {
+                    v["chat_leave"] = json!(left);
+                }
+                if let Some(r) = rescaled {
+                    v["rescale"] = json!(r);
+                }
+                Ok(v)
             }
             "autofill_get" => ok(ops::autofill_lists(&self.state()).map_err(fail)?),
             "autofill_set" => ok(ops::set_autofill_list(&self.state(), &req::<String>(args, "widget")?, req(args, "entries")?).map_err(fail)?),
@@ -3783,6 +3803,58 @@ mod tests {
         assert_eq!(lookup_result(down).unwrap_err()["code"], "esi");
     }
 
+    #[test]
+    fn rescale_without_geometry_is_refused() {
+        let bytes = encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![]))])).unwrap();
+        let (s, _) = open_char(&bytes);
+        let e = ops::rescale_layout(&s.state(), 1920, 1080, 1.0).unwrap_err();
+        assert_eq!(e.code, "no_geometry");
+    }
+
+    /// 1×1 at 125% truncates to a 0×0 desktop: refused, nothing written.
+    #[test]
+    fn rescale_to_an_empty_desktop_is_refused() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let e = ops::rescale_layout(&s.state(), 1, 1, 1.25).unwrap_err();
+        assert_eq!(e.code, "bad_target");
+        assert_eq!(undo::undo_state(&s.state()).depth, 0);
+    }
+
+    #[test]
+    fn rescale_is_one_undo_step_and_undo_restores_it() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let st = s.state();
+        let bytes = |st: &AppState| encode(&st.char.lock().unwrap().as_ref().unwrap().value).unwrap();
+        let before = bytes(&st);
+        let r = ops::rescale_layout(&st, 1920, 1080, 1.25).unwrap();
+        assert_eq!((r.desktop_w, r.desktop_h), (1536, 864));
+        assert_ne!(bytes(&st), before);
+        assert_eq!(undo::undo_state(&st).depth, 1);
+        undo::undo(&st).unwrap();
+        assert_eq!(bytes(&st), before, "undo restores the character file exactly");
+    }
+
+    /// Window rects and a HUD field are two writes; the group makes them one step.
+    #[test]
+    fn rescale_with_a_hud_value_is_still_one_undo_step() {
+        let ts = || BmValue::Long(vec![0u8; 8]);
+        let rect = BmValue::Tuple([100, 200, 400, 600, 2560, 1440].map(BmValue::Int).to_vec());
+        let bytes = encode(&BmValue::Dict(vec![(b("windows"), BmValue::Dict(vec![
+            (b("windowSizesAndPositions_1"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), rect)])])),
+            (b("openWindows"), BmValue::Tuple(vec![ts(), BmValue::Dict(vec![(b("overview"), BmValue::Bool(true))])])),
+            (b("shipuialignleftoffset"), BmValue::Tuple(vec![ts(), BmValue::Float(-120.5)])),
+        ]))])).unwrap();
+        let (s, _) = open_char(&bytes);
+        let st = s.state();
+        let r = ops::rescale_layout(&st, 1920, 1080, 1.0).unwrap();
+        assert_eq!((r.windows_changed, r.hud_changed), (1, 1));
+        let ship = |st: &AppState| ops::hud_layout(st).unwrap().entries.into_iter().find(|e| e.name == "ship_offset").unwrap().value;
+        assert_eq!(ship(&st).as_deref(), Some("-90.375"));
+        assert_eq!(undo::undo_state(&st).depth, 1);
+        undo::undo(&st).unwrap();
+        assert_eq!(ship(&st).as_deref(), Some("-120.5"));
+    }
+
     /// A character file with three windows — `overview` open at a matching
     /// resolution, `market` open at a different one (so a move re-stamps the
     /// screen size), `fitting` closed — and a stack of journal+notepad in container C
@@ -3837,6 +3909,41 @@ mod tests {
 
         let v = s.call("layout_get", &args(json!({ "include_closed": true }))).unwrap();
         assert_eq!(window(&v, "fitting")["open"], false, "present once include_closed is true");
+    }
+
+    #[test]
+    fn layout_edit_rescale_converts_and_reports() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [
+            { "op": "rescale", "width": 1920, "height": 1080, "ui_scale": 1.25 }
+        ]}))).unwrap();
+        assert_eq!(v["rescale"]["desktop_w"], 1536);
+        assert_eq!(v["rescale"]["desktop_h"], 864);
+        let g = &window(&v, "overview")["geom"];
+        assert_eq!((g["x"].clone(), g["y"].clone(), g["w"].clone(), g["h"].clone()), (json!(60), json!(120), json!(240), json!(360)));
+        assert_eq!(g["screen_w"], 1536);
+        let m = &window(&v, "market")["geom"]; // saved at 1920x1080, floored to the client's 650x435
+        assert_eq!((m["w"].clone(), m["h"].clone()), (json!(650), json!(435)));
+        assert!(v["rescale"]["held"].as_array().unwrap().contains(&json!("market")));
+        assert_eq!(undo::undo_state(&s.state()).depth, 1);
+    }
+
+    /// No ui_scale and no settings file to read one from: EVE's default, 100%.
+    #[test]
+    fn layout_edit_rescale_defaults_to_this_machine_s_scale() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let v = s.call("layout_edit", &args(json!({ "ops": [{ "op": "rescale", "width": 1920, "height": 1080 }] }))).unwrap();
+        assert_eq!((v["rescale"]["desktop_w"].clone(), v["rescale"]["desktop_h"].clone()), (json!(1920), json!(1080)));
+    }
+
+    #[test]
+    fn rescale_to_the_current_size_adds_no_undo_step() {
+        let (s, _) = open_char(&layout_char_bytes());
+        let op = json!({ "ops": [{ "op": "rescale", "width": 1920, "height": 1080, "ui_scale": 1.25 }] });
+        s.call("layout_edit", &args(op.clone())).unwrap();
+        let v = s.call("layout_edit", &args(op)).unwrap();
+        assert_eq!(v["rescale"]["windows_changed"], 0);
+        assert_eq!(undo::undo_state(&s.state()).depth, 1);
     }
 
     #[test]
