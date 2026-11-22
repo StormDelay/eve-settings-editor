@@ -50,8 +50,8 @@ impl AspectWrites {
     pub fn writes_char(&self) -> bool {
         self.char_full_copy || !self.char_categories.is_empty()
     }
-    /// True when the char write copies window geometry (drives the off-screen
-    /// resolution warning): a full char copy, or a Layout splice.
+    /// True when the char write copies window geometry (drives the
+    /// resolution-mismatch warning): a full char copy, or a Layout splice.
     pub fn copies_char_geometry(&self) -> bool {
         self.char_full_copy || self.char_categories.contains(&Category::Layout)
     }

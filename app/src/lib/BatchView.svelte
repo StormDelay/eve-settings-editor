@@ -554,7 +554,7 @@
         {:else}
           <p>Will write {plan.char_writes.length + plan.account_writes.length} file(s) — each is backed up first.</p>
           {#each plan.char_writes.filter((w) => w.resolution_mismatch) as w}
-            <InlineMessage variant="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution differs from the source — copied windows may land off-screen.</InlineMessage>
+            <InlineMessage variant="warn">⚠ {nameOfChar(w.char_id, "")}: screen resolution or UI scale differs from the source — EVE keeps copied windows on screen but not their sizes, so they may overlap.</InlineMessage>
           {/each}
           {#each plan.account_writes as w}
             <InlineMessage variant="warn">⚠ {w.full_copy ? "Entire account settings replaced" : `${changedAspectNames.join(" / ")} changed${resetsToDefaults ? " — and any of those the source leaves at EVE's default is reset to that default here, not left as it is" : ""}`} for account {accountLabel(w.user_id)}{dirOf(w.path) === folder ? "" : ` in ${folderLabelOf(dirOf(w.path))}`}{#if w.collateral_char_ids.length > 0} — also changes: {w.collateral_char_ids.map((id) => nameOfChar(id, `char ${id}`)).join(", ")}{/if}. Other characters on this account that aren't paired yet are affected too — pair them in the Accounts view to see them by name.</InlineMessage>
